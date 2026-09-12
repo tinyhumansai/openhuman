@@ -12,4 +12,5 @@ pub use definitions::schemas;
 pub use registry::{all_controller_schemas, all_registered_controllers};
 
 #[cfg(test)]
+#[path = "schema_tests.rs"]
 mod tests;

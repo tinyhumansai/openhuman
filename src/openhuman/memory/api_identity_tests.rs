@@ -82,13 +82,14 @@ fn provider_contract_is_the_contract_crates() {
 }
 
 /// The **inbound** half of the seam. `memory::api::host` deliberately re-exports
-/// two types rather than the whole `tinymemory_api::host` namespace: that
+/// named types rather than the whole `tinymemory_api::host` namespace: that
 /// namespace is the in-process engine-embedding seam (the persisted
 /// `MemoryConfig` sections, `MemoryHostConfig`, `EmbeddingProvider`,
-/// `MemoryEventSink`), none of which touches the bus. These two do —
+/// `MemoryEventSink`), none of which touches the bus. These do —
 /// `modules/memory_host.rs` publishes `MemoryEvent` back onto the host's event
-/// bus and answers the module's NLP callback with `SpacyResponse` — so these
-/// two are contract, and must be the crate's types rather than lookalikes.
+/// bus, answers the module's NLP callback with `SpacyResponse`, and replies to
+/// the module's `ComposioHost` calls with the two Composio types — so each is
+/// contract, and must be the crate's type rather than a lookalike.
 #[test]
 fn host_seam_types_are_the_contract_crates() {
     fn event(
@@ -104,6 +105,23 @@ fn host_seam_types_are_the_contract_crates() {
         s
     }
     let _ = spacy as fn(_) -> _;
+
+    fn connection(
+        c: crate::openhuman::memory::api::host::ComposioConnection,
+    ) -> tinyconnectors_bus::ComposioConnection {
+        c
+    }
+    let _ = connection as fn(_) -> _;
+
+    // Also the type `integrations::composio::types` re-exports, which is what
+    // makes the bus reply and the host's own Composio client one type rather
+    // than two that serialise the same today.
+    fn execute(
+        r: crate::openhuman::memory::api::host::ComposioExecuteResponse,
+    ) -> crate::openhuman::integrations::composio::types::ComposioExecuteResponse {
+        r
+    }
+    let _ = execute as fn(_) -> _;
 }
 
 /// Version negotiation is contract. `memory::binding` and `memory::ops::provider`

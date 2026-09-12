@@ -4,15 +4,9 @@
 [submodule "vendor/tinyflows"]
 	path = vendor/tinyflows
 	url = https://github.com/tinyhumansai/tinyflows
-[submodule "vendor/tinycortex"]
-	path = vendor/tinycortex
-	url = https://github.com/tinyhumansai/tinycortex
 [submodule "vendor/tinychannels"]
 	path = vendor/tinychannels
 	url = https://github.com/tinyhumansai/tinychannels
-[submodule "vendor/tinyplace"]
-	path = vendor/tinyplace
-	url = https://github.com/tinyhumansai/tiny.place.git
 [submodule "vendor/tinyhumans-sdk"]
 	path = vendor/tinyhumans-sdk
 	url = https://github.com/tinyhumansai/sdk.git
@@ -52,4 +46,8 @@
 [submodule "vendor/tinyjuice"]
 	path = vendor/tinyjuice
 	url = https://github.com/tinyhumansai/tinyjuice
+	branch = main
+[submodule "vendor/tinyconnectors"]
+	path = vendor/tinyconnectors
+	url = https://github.com/tinyhumansai/tinyconnectors
 	branch = main

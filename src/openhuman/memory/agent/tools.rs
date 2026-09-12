@@ -19,7 +19,7 @@ use crate::openhuman::tools::traits::{
 };
 use async_trait::async_trait;
 use serde_json::json;
-use tinyagents::harness::tool::ToolExecutionContext;
+use tinytools::ToolRunContext;
 
 const AGENT_ID: &str = "agent_memory";
 
@@ -104,7 +104,7 @@ impl Tool for CallMemoryAgentTool {
         &self,
         args: serde_json::Value,
         _options: ToolCallOptions,
-        tool_context: Option<&ToolExecutionContext>,
+        tool_context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
         let query = args
             .get("query")
@@ -178,7 +178,7 @@ impl Tool for CallMemoryAgentTool {
             task_id
         );
 
-        let workspace_descriptor = tool_context.and_then(|ctx| ctx.workspace.clone());
+        let workspace_descriptor = tool_context.and_then(|ctx| ctx.workspace().cloned());
         let worktree_action_dir = workspace_descriptor
             .as_ref()
             .map(|descriptor| descriptor.root.clone());

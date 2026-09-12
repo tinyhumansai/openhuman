@@ -77,12 +77,6 @@ vi.mock('../../components/flows/WorkflowCopilotPanel', () => ({
   },
 }));
 
-// The page auto-collapses the app sidebar via `useRootSidebar` (redux-backed);
-// this test renders without a Provider, so stub the hook to no-ops.
-vi.mock('../../components/layout/shell/RootShellLayout', () => ({
-  useRootSidebar: () => ({ visible: true, toggle: () => {}, show: () => {}, hide: () => {} }),
-}));
-
 function makeFlow(overrides: Partial<Flow> = {}): Flow {
   return {
     id: 'test-id',

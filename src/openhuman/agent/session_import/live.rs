@@ -22,7 +22,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use tinyagents::harness::store::{AppendStore, Store};
+use tinyagents_harness::store::{AppendStore, Store};
 
 use crate::openhuman::agent::harness::session::transcript::SessionTranscript;
 

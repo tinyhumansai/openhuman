@@ -9,9 +9,35 @@ import SettingsPanel from '../layout/SettingsPanel';
 
 const MODE_BADGE_VARIANT: Record<string, 'success' | 'warning' | 'neutral' | 'danger'> = {
   os_keyring: 'success',
+  // Operator-configured encrypted_file backend: secrets.enc, unlocked by a
+  // master key in the OS keychain. A deliberate posture, not a degraded one.
+  local_encrypted_file: 'success',
+  // Consent fallback after the OS keyring failed.
   local_encrypted: 'warning',
+  // Plaintext dev-keychain.json, no encryption at all.
+  local_plaintext_file: 'danger',
   consent_pending: 'neutral',
   declined: 'danger',
+};
+
+/**
+ * `activeMode` arrives snake_case from the core; the `keyring.settings.mode.*`
+ * i18n keys are camelCase. Without this map every lookup missed and the badge
+ * rendered the literal key ("keyring.settings.mode.os_keyring") — `declined`
+ * was the only mode that ever resolved, because it is spelled the same in both
+ * conventions.
+ *
+ * An unrecognised mode deliberately falls through to the raw value, keeping the
+ * existing version-skew behaviour: the badge shows what the core reported
+ * instead of silently mislabelling it as a mode this build does know.
+ */
+const MODE_I18N_KEY: Record<string, string> = {
+  os_keyring: 'osKeychain',
+  local_encrypted: 'encryptedFile',
+  local_encrypted_file: 'localEncryptedFile',
+  local_plaintext_file: 'localPlaintextFile',
+  consent_pending: 'consentPending',
+  declined: 'declined',
 };
 
 const SecurityPanel = () => {
@@ -23,6 +49,7 @@ const SecurityPanel = () => {
   const keyringStatus = snapshot.keyringStatus;
   const modeBadgeVariant =
     MODE_BADGE_VARIANT[keyringStatus.activeMode] ?? MODE_BADGE_VARIANT.consent_pending;
+  const modeI18nKey = MODE_I18N_KEY[keyringStatus.activeMode] ?? keyringStatus.activeMode;
 
   const handleRetryProbe = async () => {
     setIsLoading(true);
@@ -58,9 +85,7 @@ const SecurityPanel = () => {
             control={
               <div className="flex items-center gap-3">
                 <SettingsBadge variant={modeBadgeVariant}>
-                  {t(
-                    `keyring.settings.mode.${keyringStatus.activeMode}` as Parameters<typeof t>[0]
-                  )}
+                  {t(`keyring.settings.mode.${modeI18nKey}` as Parameters<typeof t>[0])}
                 </SettingsBadge>
                 <span className="text-xs text-content-muted">
                   {t('keyring.settings.backend')}: {keyringStatus.backendName}

@@ -3,10 +3,97 @@
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 
+use std::sync::Arc;
+
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::tree::tree_runtime::{engine, store};
+use crate::openhuman::memory::api::error::MemoryError;
+use crate::openhuman::memory::api::provider::{MemoryProvider, MemoryTree};
+// The summary-tree node vocabulary, named at the **contract** (#5560).
+//
+// This was `use tinycortex::memory::tree::runtime::*;`, a glob whose entire
+// live contribution to this file was two names: `estimate_tokens` (the token
+// figure reported on an ingest) and `QueryResult` (the node + children envelope
+// `tree_summarizer_query` serialises). Both are `tinymemory-bus` items that the
+// engine crate merely re-exported — `tinycortex::memory::tree::runtime` aliases
+// its `types` module to `tinycortex_api::tree`, and `tinycortex-api` is a
+// deprecated re-export of `tinymemory-bus` — so this names the *same items*
+// under the path the module contract already uses, and no wire byte changes.
+// The sibling `tree_runtime/mod.rs` re-exports the same set for the same
+// reason; see its comment on the node model.
+use crate::openhuman::memory::api::tree::{estimate_tokens, QueryResult};
+use crate::openhuman::memory::guard::MemoryGuard;
 use crate::rpc::RpcOutcome;
-use tinycortex::memory::tree::runtime::*;
+
+// ── How these handlers reach the tree ───────────────────────────────────────
+//
+// Every one of them used to call `tree_runtime::{engine, store}` — the glob
+// over `tinymemory_core::tree::tree_runtime` — and run the markdown time tree
+// in *this* process. They ask the bound driver now, through the six runtime
+// doors the contract grew for exactly this surface (#5560):
+//
+// | was                          | is                             |
+// | ---------------------------- | ------------------------------ |
+// | `store::buffer_write`        | `MemoryTree::runtime_buffer_write` |
+// | `store::read_node`           | `MemoryTree::runtime_read_node`    |
+// | `store::read_children`       | `MemoryTree::runtime_read_children`|
+// | `store::get_tree_status`     | `MemoryTree::runtime_tree_status`  |
+// | `engine::run_summarization`  | `MemoryTree::runtime_summarize`    |
+// | `engine::rebuild_tree`       | `MemoryTree::runtime_rebuild`      |
+//
+// The doors are shaped to *this* reply, which is why they are six rather than
+// the four coarser members that already existed. `seal` runs the same pass as
+// `runtime_summarize` and answers with tree state; `drill_down` folds "no such
+// node" into a `NotFound` of its own wording and always pays for the child
+// read. Either would have changed what this RPC reports, and a door that
+// changes what the host reports is a new surface rather than a migration.
+//
+// `store::validate_namespace` / `validate_node_id` went with them: the driver
+// makes the same two refusals, in the same order, with the same message —
+// which is why [`driver_error`] unwraps `Invalid` rather than rendering it.
+
+/// The guarded driver for `config`'s workspace.
+///
+/// Returned as the owning `Arc` because [`MemoryProvider::as_tree`] hands back
+/// a *borrow* of the guard; a helper that resolved the family in one step would
+/// be returning a reference to a temporary. Each handler binds this, then asks
+/// [`tree_of`] for the family.
+///
+/// Guarded rather than raw: these five handlers now have typed contract twins,
+/// which is the condition `memory::ops::guard` states for taking the guarded
+/// door — an ingest that carries user prose and two passes that spend on a
+/// model are exactly the calls the seven policy steps exist for. Resolved from
+/// the caller's `Config` (as `memory::tree::health::report::run_doctor` does)
+/// rather than from the ambient context, because the `tree-summarizer` CLI
+/// loads its own config and has no context to be ambient in.
+fn tree_guard(config: &Config) -> Result<Arc<MemoryGuard>, String> {
+    crate::openhuman::memory::binding::for_config(config).map(|binding| binding.guard())
+}
+
+/// The `Tree` family on a bound guard.
+fn tree_of(guard: &MemoryGuard) -> Result<&dyn MemoryTree, String> {
+    guard
+        .as_tree()
+        .ok_or_else(|| format!("driver '{}' does not serve Tree", guard.driver_id()))
+}
+
+/// A driver error in the string shape this RPC surface has always returned.
+///
+/// [`MemoryError::Invalid`] is **unwrapped, not rendered**. The refusals this
+/// surface used to make host-side — a namespace `validate_namespace` rejects,
+/// content that is blank after trimming, a node id that is not `root` or
+/// `YYYY[/MM[/DD[/HH]]]` — are the same refusals the doors answer `Invalid`
+/// for, carrying the same message, because the driver calls the same
+/// validators. Rendering it would prefix every one of them with "invalid
+/// input: " and change strings the callers and their tests match on.
+///
+/// Everything else keeps the handler's own context prefix, which is what the
+/// `map_err` at each call site used to supply.
+fn driver_error(context: &str, error: MemoryError) -> String {
+    match error {
+        MemoryError::Invalid(message) => message,
+        other => format!("{context}: {other}"),
+    }
+}
 
 /// Append raw content to the ingestion buffer.
 pub async fn tree_summarizer_ingest(
@@ -16,14 +103,18 @@ pub async fn tree_summarizer_ingest(
     timestamp: Option<DateTime<Utc>>,
     metadata: Option<&Value>,
 ) -> Result<RpcOutcome<Value>, String> {
-    store::validate_namespace(namespace)?;
-    if content.trim().is_empty() {
-        return Err("content must not be empty".to_string());
-    }
-
+    // Defaulted here rather than driver-side, exactly as before: the reply
+    // echoes the instant the content was filed under, and a timestamp the
+    // driver resolved would disagree with the one reported here by however
+    // long the call took to cross. The contract makes the parameter required
+    // for that reason.
     let ts = timestamp.unwrap_or_else(Utc::now);
-    let path = store::buffer_write(config, namespace.trim(), content, &ts, metadata)
-        .map_err(|e| format!("buffer write failed: {e}"))?;
+
+    let guard = tree_guard(config)?;
+    let path = tree_of(&guard)?
+        .runtime_buffer_write(namespace, content, ts, metadata.cloned())
+        .await
+        .map_err(|error| driver_error("buffer write failed", error))?;
 
     Ok(RpcOutcome::single_log(
         json!({
@@ -31,7 +122,9 @@ pub async fn tree_summarizer_ingest(
             "namespace": namespace.trim(),
             "timestamp": ts.to_rfc3339(),
             "tokens": estimate_tokens(content),
-            "path": path.display().to_string(),
+            // The driver's own `display()` of the `PathBuf` it wrote — the same
+            // string this handler produced when it held the path itself.
+            "path": path,
             "has_metadata": metadata.is_some(),
         }),
         format!("content buffered for namespace '{}'", namespace.trim()),
@@ -43,12 +136,22 @@ pub async fn tree_summarizer_run(
     config: &Config,
     namespace: &str,
 ) -> Result<RpcOutcome<Value>, String> {
-    store::validate_namespace(namespace)?;
+    // #002 FR-007's consent gate stays **host-side**, and this is the one thing
+    // the door does not carry across. `runtime_summarize` builds the fold's
+    // provider driver-side, "the way every scheduled seal builds it" — which is
+    // `chat_host::create_chat_model_with_model_id("summarization", …)`, this
+    // host's ordinary role routing. That routing has no notion of
+    // `memory_tree.cloud_summarization_opt_in`, so dropping this call would
+    // turn an explicit privacy refusal into a silent cloud send. Resolving here
+    // (and discarding the model — construction is cheap and network-free, as
+    // `summarizer_available` already documents) keeps the refusal, and its
+    // exact wording, unchanged.
+    let _ = create_provider(config)?;
 
-    let (provider, _model) = create_provider(config)?;
     let ts = Utc::now();
+    let guard = tree_guard(config)?;
 
-    match engine::run_summarization(config, provider.as_ref(), namespace.trim(), ts).await {
+    match tree_of(&guard)?.runtime_summarize(namespace, ts).await {
         Ok(Some(node)) => Ok(RpcOutcome::single_log(
             serde_json::to_value(&node).map_err(|e| e.to_string())?,
             format!(
@@ -65,7 +168,7 @@ pub async fn tree_summarizer_run(
                 namespace.trim()
             ),
         )),
-        Err(e) => Err(format!("summarization failed: {e:#}")),
+        Err(error) => Err(driver_error("summarization failed", error)),
     }
 }
 
@@ -75,13 +178,19 @@ pub async fn tree_summarizer_query(
     namespace: &str,
     node_id: Option<&str>,
 ) -> Result<RpcOutcome<Value>, String> {
-    store::validate_namespace(namespace)?;
-
     let target_id = node_id.unwrap_or("root");
-    store::validate_node_id(target_id)?;
 
-    let node = store::read_node(config, namespace.trim(), target_id)
-        .map_err(|e| format!("read node: {e}"))?
+    let guard = tree_guard(config)?;
+    let tree = tree_of(&guard)?;
+
+    // Absence is `Ok(None)` on the door, so the "not found" message is shaped
+    // here — where it always was. `drill_down` would have raised its own
+    // `NotFound` instead, which is the reason this pair of reads is two members
+    // rather than that one.
+    let node = tree
+        .runtime_read_node(namespace, target_id)
+        .await
+        .map_err(|error| driver_error("read node", error))?
         .ok_or_else(|| {
             format!(
                 "node '{}' not found in namespace '{}'",
@@ -90,8 +199,10 @@ pub async fn tree_summarizer_query(
             )
         })?;
 
-    let children = store::read_children(config, namespace.trim(), target_id)
-        .map_err(|e| format!("read children: {e}"))?;
+    let children = tree
+        .runtime_read_children(namespace, target_id)
+        .await
+        .map_err(|error| driver_error("read children", error))?;
 
     let result = QueryResult { node, children };
     Ok(RpcOutcome::single_log(
@@ -109,10 +220,11 @@ pub async fn tree_summarizer_status(
     config: &Config,
     namespace: &str,
 ) -> Result<RpcOutcome<Value>, String> {
-    store::validate_namespace(namespace)?;
-
-    let status =
-        store::get_tree_status(config, namespace.trim()).map_err(|e| format!("get status: {e}"))?;
+    let guard = tree_guard(config)?;
+    let status = tree_of(&guard)?
+        .runtime_tree_status(namespace)
+        .await
+        .map_err(|error| driver_error("get status", error))?;
 
     Ok(RpcOutcome::single_log(
         serde_json::to_value(&status).map_err(|e| e.to_string())?,
@@ -125,13 +237,14 @@ pub async fn tree_summarizer_rebuild(
     config: &Config,
     namespace: &str,
 ) -> Result<RpcOutcome<Value>, String> {
-    store::validate_namespace(namespace)?;
+    // The consent gate, for the reason `tree_summarizer_run` gives.
+    let _ = create_provider(config)?;
 
-    let (provider, _model) = create_provider(config)?;
-
-    let status = engine::rebuild_tree(config, provider.as_ref(), namespace.trim())
+    let guard = tree_guard(config)?;
+    let status = tree_of(&guard)?
+        .runtime_rebuild(namespace)
         .await
-        .map_err(|e| format!("rebuild failed: {e:#}"))?;
+        .map_err(|error| driver_error("rebuild failed", error))?;
 
     Ok(RpcOutcome::single_log(
         serde_json::to_value(&status).map_err(|e| e.to_string())?,
@@ -165,17 +278,41 @@ pub async fn tree_summarizer_rebuild(
 ///    the user must opt in to cloud summarization via the
 ///    `memory_tree.cloud_summarization_opt_in` setting.
 ///
-/// Visibility note: `pub(crate)` so the embedded memory driver's
-/// [`MemoryTree`](tinycortex_api::provider::MemoryTree) `seal`/`cascade` reach
-/// the **same** resolver the RPC path uses. Duplicating the local-AI /
-/// cloud-opt-in precedence in the driver would be new policy logic, and the
-/// `summarizer_available` doc below is explicit that this function is the
-/// single source of truth.
+/// # What this still decides, and what it no longer does (#5560)
+///
+/// It used to *be* the summariser: the model it built ran the fold. It does not
+/// any more. `tree_summarizer_run` and `tree_summarizer_rebuild` go through
+/// `MemoryTree::{runtime_summarize, runtime_rebuild}`, and the contract is
+/// explicit that the fold runs on **the driver's** chat provider, built the way
+/// every scheduled `seal` builds it — `chat_host::create_chat_model_with_model_id`,
+/// i.e. this host's `"summarization"` role route.
+///
+/// So what survives here is the *precondition*, and it survives because the
+/// driver's route cannot express it. The role ladder resolves
+/// `config.memory_provider` and knows nothing about
+/// `memory_tree.cloud_summarization_opt_in`; without this call an opted-out
+/// user's memory summaries would go to a cloud provider on the first "run now".
+/// The two handlers therefore resolve a provider and drop it, purely for the
+/// refusal.
+///
+/// **The fold does consult this ladder — through the seam, not this call.**
+/// The model resolved here is dropped; the one the fold actually runs on is
+/// resolved when the driver's `"summarization"`-role chat call crosses back
+/// into `modules::memory_host::resolve_chat_model`, which routes that role
+/// through this same function. So an explicit run folds locally when local AI
+/// is enabled, the scheduled `seal`/`cascade` passes do too, and the cloud
+/// route stays behind `memory_tree.cloud_summarization_opt_in` everywhere.
+/// The precondition here is still worth its construction cost: it refuses
+/// before any driver work begins, with an error that names the setting.
+///
+/// Visibility note: `pub(crate)` is load-bearing — `modules::memory_host`'s
+/// chat seam is the second caller, so the module's folds and this handler's
+/// precondition resolve through one ladder that cannot drift apart.
 pub(crate) fn create_provider(
     config: &Config,
 ) -> Result<
     (
-        std::sync::Arc<dyn tinyagents::harness::model::ChatModel<()>>,
+        std::sync::Arc<dyn tinyinference::model::ChatModel<()>>,
         String,
     ),
     String,
@@ -246,260 +383,5 @@ pub fn summarizer_available(config: &Config) -> (bool, &'static str) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use chrono::TimeZone;
-    use tempfile::TempDir;
-
-    fn rfc3339_z(ts: DateTime<Utc>) -> String {
-        ts.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
-    }
-
-    fn config_in_tempdir() -> (TempDir, Config) {
-        let tmp = TempDir::new().expect("tempdir");
-        let mut cfg = Config::default();
-        cfg.workspace_dir = tmp.path().to_path_buf();
-        (tmp, cfg)
-    }
-
-    fn test_node(
-        namespace: &str,
-        node_id: &str,
-        summary: &str,
-        created_at: DateTime<Utc>,
-        child_count: u32,
-    ) -> TreeNode {
-        TreeNode {
-            node_id: node_id.to_string(),
-            namespace: namespace.to_string(),
-            level: level_from_node_id(node_id),
-            parent_id: derive_parent_id(node_id),
-            summary: summary.to_string(),
-            token_count: estimate_tokens(summary),
-            child_count,
-            created_at,
-            updated_at: created_at,
-            metadata: None,
-        }
-    }
-
-    #[test]
-    fn create_provider_uses_local_model_when_local_ai_enabled() {
-        // #002 FR-007: local path returns the user's local chat model.
-        let mut cfg = Config::default();
-        cfg.local_ai.runtime_enabled = true;
-        cfg.local_ai.chat_model_id = "qwen2.5:7b".to_string();
-        let (_provider, model) = create_provider(&cfg).expect("local provider should build");
-        assert_eq!(model, "qwen2.5:7b");
-    }
-
-    #[test]
-    fn create_provider_errors_without_cloud_opt_in() {
-        // By default, cloud summarization is off — memory summaries are
-        // sensitive, so an explicit opt-in is required before routing them to
-        // an external provider.
-        let mut cfg = Config::default();
-        cfg.local_ai.runtime_enabled = false;
-        // cloud_summarization_opt_in defaults to false
-        match create_provider(&cfg) {
-            Err(e) => assert!(
-                e.contains("no summarization provider"),
-                "unexpected error: {e}"
-            ),
-            Ok(_) => panic!("expected error without cloud opt-in"),
-        }
-    }
-
-    #[test]
-    fn create_provider_uses_cloud_when_opted_in_and_local_ai_off() {
-        // #002 FR-007: with explicit opt-in Build Summary Trees uses the
-        // configured cloud provider when local AI is disabled.
-        let mut cfg = Config::default();
-        cfg.local_ai.runtime_enabled = false;
-        cfg.memory_tree.cloud_summarization_opt_in = true;
-        let (_provider, model) =
-            create_provider(&cfg).expect("cloud fallback should build when opted in");
-        assert!(
-            !model.trim().is_empty(),
-            "cloud fallback must resolve a model"
-        );
-    }
-
-    #[tokio::test]
-    async fn tree_summarizer_ingest_rejects_blank_content() {
-        let (_tmp, cfg) = config_in_tempdir();
-        let err = tree_summarizer_ingest(&cfg, "team", "   ", None, None)
-            .await
-            .expect_err("blank content should be rejected");
-        assert!(err.contains("content must not be empty"));
-    }
-
-    #[tokio::test]
-    async fn tree_summarizer_ingest_writes_buffer_and_reports_metadata() {
-        let (_tmp, cfg) = config_in_tempdir();
-        let ts = chrono::Utc
-            .with_ymd_and_hms(2026, 5, 24, 12, 30, 0)
-            .unwrap();
-        let meta = json!({"source": "unit-test"});
-        let outcome =
-            tree_summarizer_ingest(&cfg, "Team / Notes", "hello world", Some(ts), Some(&meta))
-                .await
-                .expect("ingest should succeed");
-
-        assert_eq!(
-            outcome.logs,
-            vec!["content buffered for namespace 'Team / Notes'".to_string()]
-        );
-        assert_eq!(outcome.value["buffered"], true);
-        assert_eq!(outcome.value["namespace"], "Team / Notes");
-        assert_eq!(
-            outcome.value["tokens"],
-            json!(estimate_tokens("hello world"))
-        );
-        assert_eq!(outcome.value["has_metadata"], true);
-
-        let path = outcome.value["path"]
-            .as_str()
-            .expect("path string in response");
-        let written = std::fs::read_to_string(path).expect("buffer file should exist");
-        assert!(written.contains("hello world"));
-        assert!(written.contains("\"source\":\"unit-test\""));
-    }
-
-    #[tokio::test]
-    async fn tree_summarizer_status_reports_empty_tree_defaults() {
-        let (_tmp, cfg) = config_in_tempdir();
-        let outcome = tree_summarizer_status(&cfg, "fresh-ns")
-            .await
-            .expect("status on fresh namespace");
-        assert_eq!(
-            outcome.logs,
-            vec!["tree status for namespace 'fresh-ns'".to_string()]
-        );
-        assert_eq!(outcome.value["namespace"], "fresh-ns");
-        assert_eq!(outcome.value["total_nodes"], 0);
-        assert_eq!(outcome.value["depth"], 0);
-    }
-
-    #[tokio::test]
-    async fn tree_summarizer_query_errors_when_node_is_missing() {
-        let (_tmp, cfg) = config_in_tempdir();
-        let err = tree_summarizer_query(&cfg, "fresh-ns", Some("root"))
-            .await
-            .expect_err("missing node should error");
-        assert!(err.contains("node 'root' not found in namespace 'fresh-ns'"));
-    }
-
-    #[tokio::test]
-    async fn tree_summarizer_query_returns_node_and_children() {
-        let (_tmp, cfg) = config_in_tempdir();
-        let ts = chrono::Utc
-            .with_ymd_and_hms(2026, 5, 24, 12, 30, 0)
-            .unwrap();
-        let root = test_node("team", "root", "root summary", ts, 1);
-        let year = test_node("team", "2026", "year summary", ts, 1);
-        store::write_node(&cfg, &root).expect("write root");
-        store::write_node(&cfg, &year).expect("write year");
-
-        let outcome = tree_summarizer_query(&cfg, "team", None)
-            .await
-            .expect("query should succeed");
-
-        assert_eq!(
-            outcome.logs,
-            vec!["queried node 'root' in namespace 'team'"]
-        );
-        assert_eq!(outcome.value["node"]["node_id"], "root");
-        assert_eq!(outcome.value["node"]["summary"], "root summary");
-        assert_eq!(
-            outcome.value["children"],
-            json!([{
-                "node_id": "2026",
-                "namespace": "team",
-                "level": "year",
-                "parent_id": "root",
-                "summary": "year summary",
-                "token_count": estimate_tokens("year summary"),
-                "child_count": 1,
-                "created_at": rfc3339_z(ts),
-                "updated_at": rfc3339_z(ts)
-            }])
-        );
-    }
-
-    #[tokio::test]
-    async fn tree_summarizer_status_reports_populated_tree_details() {
-        let (_tmp, cfg) = config_in_tempdir();
-        let early = chrono::Utc.with_ymd_and_hms(2026, 5, 24, 8, 0, 0).unwrap();
-        let late = chrono::Utc.with_ymd_and_hms(2026, 5, 24, 17, 0, 0).unwrap();
-        for node in [
-            test_node("team", "root", "root summary", early, 1),
-            test_node("team", "2026", "year summary", early, 1),
-            test_node("team", "2026/05", "month summary", early, 1),
-            test_node("team", "2026/05/24", "day summary", early, 2),
-            test_node("team", "2026/05/24/08", "hour one", early, 0),
-            test_node("team", "2026/05/24/17", "hour two", late, 0),
-        ] {
-            store::write_node(&cfg, &node).expect("write test node");
-        }
-
-        let outcome = tree_summarizer_status(&cfg, "team")
-            .await
-            .expect("status should succeed");
-
-        assert_eq!(outcome.logs, vec!["tree status for namespace 'team'"]);
-        assert_eq!(outcome.value["namespace"], "team");
-        assert_eq!(outcome.value["total_nodes"], 6);
-        assert_eq!(outcome.value["depth"], 5);
-        assert_eq!(outcome.value["oldest_entry"], rfc3339_z(early));
-        assert_eq!(outcome.value["newest_entry"], rfc3339_z(late));
-        assert_eq!(outcome.value["last_run_at"], Value::Null);
-    }
-
-    #[tokio::test]
-    async fn tree_summarizer_run_skips_when_buffer_is_empty() {
-        let (_tmp, mut cfg) = config_in_tempdir();
-        cfg.local_ai.runtime_enabled = true;
-
-        let outcome = tree_summarizer_run(&cfg, "team")
-            .await
-            .expect("empty buffer should skip");
-
-        assert_eq!(
-            outcome.logs,
-            vec!["summarization skipped for 'team': no buffered data"]
-        );
-        assert_eq!(
-            outcome.value,
-            json!({ "skipped": true, "reason": "no buffered data" })
-        );
-        assert!(
-            !store::buffer_dir(&cfg, "team").exists(),
-            "skip path should not create a buffer directory"
-        );
-    }
-
-    #[tokio::test]
-    async fn tree_summarizer_run_skips_cleanly_with_cloud_fallback_and_empty_buffer() {
-        // #002 FR-007 (Gray review updated): with local AI off AND explicit cloud
-        // opt-in, run/rebuild do not hard-error on the provider precondition.
-        // With an empty buffer, `run` reports the normal "no buffered data" skip.
-        let (_tmp, mut cfg) = config_in_tempdir();
-        cfg.local_ai.runtime_enabled = false;
-        cfg.memory_tree.cloud_summarization_opt_in = true;
-
-        let outcome = tree_summarizer_run(&cfg, "team")
-            .await
-            .expect("run should not error on the provider precondition when opted in");
-        assert_eq!(
-            outcome.value,
-            json!({ "skipped": true, "reason": "no buffered data" })
-        );
-
-        // Rebuild on an empty tree returns the (zero-node) status, not an error.
-        let rebuilt = tree_summarizer_rebuild(&cfg, "team")
-            .await
-            .expect("rebuild should not error on the provider precondition when opted in");
-        assert_eq!(rebuilt.value["total_nodes"], 0);
-    }
-}
+#[path = "ops_tests.rs"]
+mod tests;

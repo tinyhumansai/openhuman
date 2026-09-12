@@ -209,5 +209,5 @@ pub async fn ingest_session_transcript(
 }
 
 #[cfg(test)]
-#[path = "tests.rs"]
+#[path = "transcript_ingest_tests.rs"]
 mod tests;

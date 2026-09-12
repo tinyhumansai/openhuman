@@ -19,14 +19,14 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use serde_json::Value;
-use tinyagents::graph::export::GraphTopology;
-use tinyagents::graph::recursion::RecursionPolicy;
-use tinyagents::graph::{
+use tinyagents_graph::export::GraphTopology;
+use tinyagents_graph::recursion::RecursionPolicy;
+use tinyagents_graph::{
     ClosureStateReducer, Command, CompiledGraph, GraphBuilder, NodeContext, NodeResult,
 };
 
 use crate::openhuman::config::Config;
-use tinyagents::session::run_ledger::get_workflow_run;
+use tinyagents_session::run_ledger::get_workflow_run;
 
 use super::engine::{execute_phase, select_next_phase, PhaseExecOutcome, PhaseSelection};
 use super::types::{WorkflowDefinition, WorkflowPhase};
@@ -35,8 +35,8 @@ use super::types::{WorkflowDefinition, WorkflowPhase};
 /// so a ledger-write/spawn failure fails the run (and propagates back out via
 /// [`drive_phases`]). A *phase* that merely failed is not an error here — it is a
 /// normal `Terminated` outcome that persists `Failed` and routes to `done`.
-fn graph_err(e: anyhow::Error) -> tinyagents::TinyAgentsError {
-    tinyagents::TinyAgentsError::Graph(e.to_string())
+fn graph_err(e: anyhow::Error) -> tinyagents_harness::TinyAgentsError {
+    tinyagents_harness::TinyAgentsError::Graph(e.to_string())
 }
 
 /// Typed state threaded through the scheduler graph: the phase `dispatch`
@@ -108,7 +108,7 @@ where
         let run = run.clone();
         async move {
             let phase = s.phase.clone().ok_or_else(|| {
-                tinyagents::TinyAgentsError::Graph(
+                tinyagents_harness::TinyAgentsError::Graph(
                     "workflow run_phase reached with no selected phase".to_string(),
                 )
             })?;

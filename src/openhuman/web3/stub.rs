@@ -36,17 +36,5 @@ pub fn all_web3_agent_tools() -> Vec<Box<dyn Tool>> {
 // it pins the empty controller/tool surface that `core/all.rs` + `tools/ops.rs`
 // consume without per-call `#[cfg]`.
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn registration_entry_points_are_empty() {
-        assert!(all_web3_registered_controllers().is_empty());
-        assert!(all_web3_controller_schemas().is_empty());
-    }
-
-    #[test]
-    fn agent_tools_are_absent() {
-        assert!(all_web3_agent_tools().is_empty());
-    }
-}
+#[path = "stub_tests.rs"]
+mod tests;

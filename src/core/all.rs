@@ -134,12 +134,9 @@ pub enum DomainGroup {
     /// Desktop-shell-facing surfaces a headless or embedded host has no use for
     /// (`desktop/`).
     Desktop,
-    /// Clients of the hosted TinyHumans backend — billing, team, referral,
-    /// announcements, the hosted orchestration brain (`hosted/`). A self-hosted
-    /// build drops these as a unit.
+    /// Clients of the hosted TinyHumans backend — billing, team, referral, and
+    /// announcements (`hosted/`). A self-hosted build drops these as a unit.
     Hosted,
-    /// The multi-agent relay surface (`tinyplace/`).
-    Relay,
     /// Loadable native modules: the module host, its registry, and the `modules`
     /// RPC surface (`modules/`).
     Modules,
@@ -149,7 +146,7 @@ pub enum DomainGroup {
 
 impl DomainGroup {
     /// Number of variants. Kept in sync by `domain_group_all_lists_every_variant`.
-    pub const COUNT: usize = 22;
+    pub const COUNT: usize = 21;
 
     /// Every variant, for exhaustive iteration in drift guards.
     ///
@@ -180,7 +177,6 @@ impl DomainGroup {
         DomainGroup::Runtimes,
         DomainGroup::Desktop,
         DomainGroup::Hosted,
-        DomainGroup::Relay,
         DomainGroup::Modules,
         DomainGroup::Platform,
     ];
@@ -209,9 +205,8 @@ impl DomainGroup {
             DomainGroup::Runtimes => 16,
             DomainGroup::Desktop => 17,
             DomainGroup::Hosted => 18,
-            DomainGroup::Relay => 19,
-            DomainGroup::Modules => 20,
-            DomainGroup::Platform => 21,
+            DomainGroup::Modules => 19,
+            DomainGroup::Platform => 20,
         }
     }
 }
@@ -323,7 +318,7 @@ fn capability_allowed_in(caps: Capabilities, capability: Option<Capability>) -> 
 static REGISTRY: OnceLock<Vec<GroupedController>> = OnceLock::new();
 
 /// Internal-only controllers: registered for RPC dispatch but NOT in the agent-facing
-/// schema catalog.  These handlers are callable by trusted callers (e.g. the Tauri scanner)
+/// schema catalog.  These handlers are callable by trusted callers (e.g. the desktop shell)
 /// but should not be advertised to agents via tool listings or schema discovery.
 static INTERNAL_REGISTRY: OnceLock<Vec<GroupedController>> = OnceLock::new();
 
@@ -849,13 +844,6 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         Some(Capability::Sources),
         crate::openhuman::memory::sources::all_memory_sources_registered_controllers(),
     );
-    // Memory diff — snapshot-based change tracking for memory sources
-    push_cap(
-        &mut controllers,
-        DomainGroup::Memory,
-        Some(Capability::Diff),
-        crate::openhuman::memory::diff::all_memory_diff_registered_controllers(),
-    );
     // Referral and growth tracking
     push(
         &mut controllers,
@@ -969,18 +957,13 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         DomainGroup::Desktop,
         crate::openhuman::desktop::notifications::all_notifications_registered_controllers(),
     );
-    // Structured WhatsApp Web data has NO core RPC controllers: the SQLite
-    // store + ingest + list/search moved to the Tauri shell
-    // (`app/src-tauri/src/whatsapp_data/`). The agent's read-only query tools
-    // live in `openhuman::channels::whatsapp_data::tools` and reach the shell store via
-    // the in-process native request bus, not the controller registry.
     // Mobile device pairing and management
     push(
         &mut controllers,
         DomainGroup::Security,
         crate::openhuman::security::devices::all_devices_registered_controllers(),
     );
-    // Durable agent session database — queryable index over transcripts, lineage, tool calls
+    // Durable agent/workflow run ledger — read surface over run state, lineage, events, telemetry
     push(
         &mut controllers,
         DomainGroup::Agent,
@@ -1028,11 +1011,9 @@ fn build_registered_controllers() -> Vec<GroupedController> {
 /// Aggregates controllers that are registered for RPC routing but NOT exposed to agents.
 ///
 /// These are write-path or internal-only handlers callable by trusted callers
-/// (e.g. the Tauri scanner ingest path) that should not appear in agent tool listings.
+/// (e.g. the desktop shell) that should not appear in agent tool listings.
 fn build_internal_only_controllers() -> Vec<GroupedController> {
     let mut controllers = Vec::new();
-    // (whatsapp_data ingest is no longer a core RPC path — the scanner writes
-    // the shell-side store directly over the in-process native request bus.)
     // MCP write audit list: internal-only so the desktop UI/CLI can inspect
     // local write history without exposing cross-client history as an MCP tool.
     push(
@@ -1049,28 +1030,6 @@ fn build_internal_only_controllers() -> Vec<GroupedController> {
         &mut controllers,
         DomainGroup::Modules,
         crate::openhuman::modules::all_registered_controllers(),
-    );
-    // tiny.place A2A social-network integration: renderer-callable via core_rpc_relay
-    // but NOT advertised to agents in tool listings or schema discovery.
-    push(
-        &mut controllers,
-        DomainGroup::Relay,
-        crate::openhuman::tinyplace::all_tinyplace_registered_controllers(),
-    );
-    // User-consented tiny.place pairing for wrapped agent sessions: UI-callable
-    // via core_rpc_relay, but excluded from agent tool listings/schema discovery.
-    push(
-        &mut controllers,
-        DomainGroup::Agent,
-        crate::openhuman::agent::orchestration::all_pairing_registered_controllers(),
-    );
-    // Orchestration read surface (stage 7): the TinyPlaceOrchestrationTab reads
-    // sessions/messages, sends Master steering DMs, marks read, and polls status.
-    // Renderer-only — not advertised to agents.
-    push(
-        &mut controllers,
-        DomainGroup::Hosted,
-        crate::openhuman::hosted::orchestration::all_registered_controllers(),
     );
     controllers
 }
@@ -1176,9 +1135,6 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "memory_sources" => Some(
             "User-configured data connectors (Composio, folders, GitHub repos, RSS, web pages) that feed memory.",
         ),
-        "memory_diff" => Some(
-            "Snapshot-based change tracking for memory sources — capture state, compute diffs, and surface changes to agents.",
-        ),
         "referral" => Some("Referral codes, stats, and apply flows via the hosted backend API."),
         "run_ledger" => Some(
             "Durable agent and workflow run state, child lineage, events, telemetry, and checkpoint references.",
@@ -1191,12 +1147,6 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         ),
         "agent_team" => Some(
             "Durable agent-team coordination: teams, members, dependency-aware task claiming, and teammate messaging.",
-        ),
-        "orchestration_pairing" => Some(
-            "User-consented tiny.place contact pairing for wrapped agent sessions.",
-        ),
-        "orchestration" => Some(
-            "Subconscious-orchestration read surface: chat windows (master/subconscious/per-session), message history, Master steering DMs, read state, and steering status.",
         ),
         "billing" => Some("Subscription plan, payment links, and credit top-up via the backend."),
         "announcements" => {
@@ -1241,9 +1191,6 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         ),
         "subsystems" => Some(
             "Kernel subsystem slots and their bound drivers: class, health, contract version, and advertised capabilities.",
-        ),
-        "tinyplace" => Some(
-            "tiny.place A2A social-network integration: directory, explorer, and search over the agent network.",
         ),
         _ => None,
     }
@@ -1380,6 +1327,55 @@ pub fn schema_for_rpc_method(method: &str) -> Option<ControllerSchema> {
 }
 
 /// Validates that the provided parameters match the requirements of the controller schema.
+///
+/// This is the *single* pre-dispatch gate for every registered controller. Each
+/// path that reaches `try_invoke_registered_rpc` validates first:
+///
+/// | entry point | validates in |
+/// | --- | --- |
+/// | HTTP JSON-RPC | `core::jsonrpc` |
+/// | dynamic dispatch fallback | `core::dispatch::try_registry_dispatch` |
+/// | CLI | `core::cli` |
+/// | MCP read and write tools | `openhuman::mcp::server::tools::params` |
+///
+/// The one call site that does not validate for itself is
+/// `openhuman::mcp::server::write_dispatch`, whose sole caller
+/// (`openhuman::mcp::server::tools::dispatch`) validates immediately before it.
+/// That is not a gap today, but it is the place a refactor could open one.
+///
+/// # Relationship to handler-side parameter checks (#6073)
+///
+/// Many handlers re-check required params themselves, in wording of their own
+/// (`missing required param: id`, ``missing required `class` ``,
+/// `invalid params: …`). For an *absent*, *unknown* or *wrong-typed* param a
+/// caller never reaches those: this function refuses first, and its message
+/// carries the field's *schema comment* as a suffix —
+/// `missing required param 'id': Session ID.` — so the two are not
+/// interchangeable strings.
+///
+/// They are not redundant, though. This function deliberately accepts an
+/// explicit JSON `null` for any declared type: the required check tests key
+/// *presence*, and `check_type` returns early on null (see
+/// `validate_params_null_for_required_is_acceptable`). A dispatched
+/// `{"class": null}` therefore passes this gate and runs the handler, whose own
+/// refusal is exactly what the caller sees. On that path the handler-side check
+/// is the only guard there is.
+///
+/// Two further reasons they stay:
+///
+/// - Not every `missing required param` in the tree belongs to a registered
+///   controller. Agent *tool* handlers take model-produced arguments and are
+///   not dispatched through this function at all, so their checks are
+///   load-bearing.
+/// - A `RegisteredController`'s handler can be invoked directly, and several
+///   `tests/raw_coverage` suites do exactly that, asserting the handler's own
+///   refusal.
+///
+/// The practical consequence is for whoever writes the next test: a
+/// *missing-key* case asserted against handler wording is testing the handler,
+/// not the dispatch path. To pin what a caller actually observes, go through
+/// one of the entry points above — see
+/// `tests/raw_coverage/dispatch_param_validation_e2e.rs`.
 ///
 /// # Errors
 ///

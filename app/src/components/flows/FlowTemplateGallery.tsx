@@ -20,8 +20,7 @@ import {
   templateNameKey,
 } from '../../lib/flows/templates';
 import { useT } from '../../lib/i18n/I18nContext';
-import Badge from '../ui/Badge';
-import Button from '../ui/Button';
+import { Badge, Button } from '../ui';
 
 const log = createDebug('app:flows:templates');
 

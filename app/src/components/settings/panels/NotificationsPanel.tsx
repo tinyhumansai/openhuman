@@ -10,37 +10,41 @@ interface NotificationsPanelProps {
   embedded?: boolean;
 }
 
-const CATEGORIES: { id: NotificationCategory; title: string; description: string }[] = [
+const CATEGORIES: { id: NotificationCategory; titleKey: string; descKey: string }[] = [
   {
     id: 'messages',
-    title: 'Messages',
-    description: 'New messages from embedded webview accounts (Slack, WhatsApp, …).',
+    titleKey: 'settings.notifications.category.messages.title',
+    descKey: 'settings.notifications.category.messages.desc',
   },
   {
     id: 'agents',
-    title: 'Agent activity',
-    description: 'Agent task completions and long-running responses.',
+    titleKey: 'settings.notifications.category.agents.title',
+    descKey: 'settings.notifications.category.agents.desc',
   },
-  { id: 'skills', title: 'Skills', description: 'Skill sync events and OAuth status changes.' },
+  {
+    id: 'skills',
+    titleKey: 'settings.notifications.category.skills.title',
+    descKey: 'settings.notifications.category.skills.desc',
+  },
   {
     id: 'system',
-    title: 'System',
-    description: 'Connection issues, background process errors, updates.',
+    titleKey: 'settings.notifications.category.system.title',
+    descKey: 'settings.notifications.category.system.desc',
   },
   {
     id: 'meetings',
-    title: 'Meetings',
-    description: 'Upcoming meetings and calendar events detected by heartbeat.',
+    titleKey: 'settings.notifications.category.meetings.title',
+    descKey: 'settings.notifications.category.meetings.desc',
   },
   {
     id: 'reminders',
-    title: 'Reminders',
-    description: 'Upcoming reminders and scheduled tasks from cron jobs.',
+    titleKey: 'settings.notifications.category.reminders.title',
+    descKey: 'settings.notifications.category.reminders.desc',
   },
   {
     id: 'important',
-    title: 'Important events',
-    description: 'Urgent or time-sensitive events surfaced from connected sources.',
+    titleKey: 'settings.notifications.category.important.title',
+    descKey: 'settings.notifications.category.important.desc',
   },
 ];
 
@@ -59,18 +63,22 @@ const NotificationsPanel = ({ embedded = false }: NotificationsPanelProps = {}) 
         {CATEGORIES.map(cat => {
           const enabled = preferences[cat.id];
           const switchId = `switch-notif-${cat.id}`;
+          const title = t(cat.titleKey);
           return (
             <SettingsRow
               key={cat.id}
               htmlFor={switchId}
-              label={cat.title}
-              description={cat.description}
+              label={title}
+              description={t(cat.descKey)}
               control={
                 <SettingsSwitch
                   id={switchId}
                   checked={enabled}
                   onCheckedChange={() => handleToggle(cat.id)}
-                  aria-label={`Toggle ${cat.title} notifications`}
+                  aria-label={t('settings.notifications.categoryToggleAria').replace(
+                    '{name}',
+                    title
+                  )}
                 />
               }
             />

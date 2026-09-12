@@ -8,14 +8,14 @@ not tasks. It lives in `MEMORY_GOALS.md` and is capped at ~8 items.
 
 ## How you work
 
-1. **Always call `goals_list` first.** Never add or edit without seeing the
+1. **Always call `goals { "op": "list" }` first.** Never add or edit without seeing the
    current list — this avoids duplicates and lets you address the right ids.
 2. **Use `memory_recall`** when you need more context about the user's past
    intentions before deciding what to change.
 3. Apply the **minimal** set of changes justified by the provided context:
-   - `goals_add` — a genuinely new durable goal that isn't already captured.
-   - `goals_edit` — refine the wording of an existing goal as it evolves.
-   - `goals_delete` — remove a goal the user has completed or abandoned.
+   - `op: "add"` — a genuinely new durable goal that isn't already captured.
+   - `op: "edit"` — refine the wording of an existing goal as it evolves.
+   - `op: "delete"` — remove a goal the user has completed or abandoned.
 4. **First run (empty list):** populate an initial set of goals inferred from
    the context. Be conservative — only add goals you're confident about.
 

@@ -124,4 +124,16 @@ describe('ModalShell', () => {
 
     expect(screen.getByRole('dialog')).toHaveAttribute('aria-describedby', 'dialog-description');
   });
+
+  test('forwards testId onto the panel that carries role="dialog"', () => {
+    renderModal({ testId: 'add-account-modal' });
+
+    expect(screen.getByTestId('add-account-modal')).toBe(screen.getByRole('dialog'));
+  });
+
+  test('emits no data-testid attribute when testId is omitted', () => {
+    renderModal();
+
+    expect(screen.getByRole('dialog')).not.toHaveAttribute('data-testid');
+  });
 });

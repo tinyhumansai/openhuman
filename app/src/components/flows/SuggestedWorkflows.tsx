@@ -45,7 +45,7 @@ import {
   type FlowSuggestion,
   listSuggestions,
 } from '../../services/api/flowsApi';
-import Button from '../ui/Button';
+import { Button } from '../ui';
 
 const log = createDebug('app:flows:suggested');
 
@@ -273,7 +273,9 @@ export default function SuggestedWorkflows() {
       </div>
 
       {error && (
-        <p className="mt-2 text-xs text-coral" data-testid="flow-suggestions-error">
+        <p
+          className="mt-2 text-xs text-coral-600 dark:text-coral-400"
+          data-testid="flow-suggestions-error">
           {error}
         </p>
       )}

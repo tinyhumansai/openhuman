@@ -26,10 +26,10 @@ const selectHasComposer = (s: AssistantState) => s.optional.composer != null;
  * app shell that mounts no runtime of its own does not error — it silently
  * inherits the app-wide one from `ChatRuntimeProvider`, which is bound to
  * `state.thread.selectedThreadId`, the HOME chat's thread. Two surfaces were in
- * exactly that position (the flows Workflow Copilot, whose own provider closed
- * around its transcript only, and the orchestration agent chat, which has no
- * chat thread at all); both now mount their own runtime explicitly, because a
- * composer pointed at an unrelated conversation is a data-loss-shaped bug.
+ * in exactly that position: the flows Workflow Copilot, whose own provider
+ * closed around its transcript only. It now mounts its own runtime explicitly,
+ * because a composer pointed at an unrelated conversation is a data-loss-shaped
+ * bug.
  *
  * This boundary is the net under that decision, not a replacement for it. Where
  * a runtime already exists it is a pass-through and the surface keeps whatever

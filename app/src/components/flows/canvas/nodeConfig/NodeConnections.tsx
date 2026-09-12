@@ -11,7 +11,7 @@ import { useMemo } from 'react';
 
 import type { FlowEdge } from '../../../../lib/flows/graphAdapter';
 import { useT } from '../../../../lib/i18n/I18nContext';
-import ListRow from '../../../ui/ListRow';
+import { ListRow } from '../../../ui';
 
 interface NodeConnectionsProps {
   nodeId: string;

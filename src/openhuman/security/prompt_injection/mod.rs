@@ -12,4 +12,5 @@ pub use detector::{
 };
 
 #[cfg(test)]
+#[path = "prompt_injection_tests.rs"]
 mod tests;

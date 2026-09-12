@@ -1,3 +1,4 @@
+import { cn } from '../../lib/cn';
 import type { Translate } from '../../lib/flows/cron';
 import type { FlowRunStatus as FlowRunStatusValue } from '../../services/api/flowsApi';
 
@@ -90,7 +91,7 @@ export function FlowRunStatus({
       <span
         data-testid={testId}
         data-status={status}
-        className={`h-2 w-2 shrink-0 rounded-full ${flowRunStatusDotClass(status)} ${className}`.trim()}
+        className={cn('h-2 w-2 shrink-0 rounded-full', flowRunStatusDotClass(status), className)}
         aria-hidden
       />
     );
@@ -100,7 +101,11 @@ export function FlowRunStatus({
     <span
       data-testid={testId}
       data-status={status}
-      className={`inline-flex items-center rounded-full border px-2 py-0.5 font-medium ${flowRunStatusAccentClass(status)} ${className}`.trim()}>
+      className={cn(
+        'inline-flex items-center rounded-full border px-2 py-0.5 font-medium',
+        flowRunStatusAccentClass(status),
+        className
+      )}>
       {label}
     </span>
   );

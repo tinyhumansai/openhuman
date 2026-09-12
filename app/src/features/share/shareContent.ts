@@ -36,6 +36,19 @@ const REDACTIONS: ReadonlyArray<{ re: RegExp; with: string }> = [
   { re: /\bBearer\s+[A-Za-z0-9._-]{12,}\b/gi, with: '[redacted]' },
   // AWS access key ids.
   { re: /\bAKIA[0-9A-Z]{16}\b/g, with: '[redacted]' },
+  // Vendor-prefixed credentials whose body is lower-case and digits only. The
+  // last-resort rule below cannot reach these: it requires an upper-case letter so
+  // it does not fire on prose, and an all-lower-case token slips straight past it.
+  // The `_` is optional because `stripMarkdown` strips emphasis characters before
+  // this runs, so `hf_abc…` arrives here as `hfabc…`.
+  { re: /\b(?:xox[abeprs]|xapp)-[A-Za-z0-9-]{10,}/g, with: '[redacted]' },
+  { re: /\bglpat-[A-Za-z0-9_-]{16,}/g, with: '[redacted]' },
+  { re: /\bhf_?[a-z0-9]{20,}\b/g, with: '[redacted]' },
+  // Webhook URLs carry the secret in the path, so the whole URL has to go.
+  {
+    re: /\bhttps?:\/\/(?:hooks\.slack\.com|discord(?:app)?\.com\/api\/webhooks)\/[^\s"'`)]+/gi,
+    with: '[redacted]',
+  },
   // Long opaque hex runs (>= 32 chars) that look like secrets, not prose.
   { re: /\b[A-Fa-f0-9]{32,}\b/g, with: '[redacted]' },
   // Long opaque base64/base64url runs (>= 24 chars) that mix upper/lower/digit,

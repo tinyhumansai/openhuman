@@ -14,7 +14,18 @@ export interface CoreTransport {
   readonly kind: TransportKind;
 
   /** Make a JSON-RPC call and return the result. */
-  call<T>(method: string, params: unknown, opts?: { signal?: AbortSignal }): Promise<T>;
+  /**
+   * `timeoutMs`, when given, replaces the transport's own default deadline for
+   * this one call. The RPC client forwards a caller's per-call budget here so a
+   * request that legitimately runs for minutes (a memory source sync, a
+   * coding-session import) is not cut off at the transport's default while the
+   * core keeps working on it.
+   */
+  call<T>(
+    method: string,
+    params: unknown,
+    opts?: { signal?: AbortSignal; timeoutMs?: number }
+  ): Promise<T>;
 
   /** Stream a JSON-RPC method that produces sequential chunks. */
   stream<T>(method: string, params: unknown, opts?: { signal?: AbortSignal }): AsyncIterable<T>;

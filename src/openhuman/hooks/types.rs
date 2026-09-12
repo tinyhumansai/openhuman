@@ -182,6 +182,11 @@ impl HookEvent {
                 // Reasoning blocks are not projected onto the post-turn seam
                 // the bridge rides.
                 | HookEvent::AfterAgentThought
+                // `ops::subagent_stopped` exists and is complete, but nothing
+                // calls it: `subagent_runner` fires the start side and returns
+                // from a dozen places without a stop. Until one lands, a
+                // configured `subagentStop` hook never runs.
+                | HookEvent::SubagentStop
         )
     }
 

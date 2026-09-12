@@ -80,37 +80,48 @@ export const UsageLedgerSection = ({
     <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-3">
       <MetricTile
         label={t('settings.ai.weekBudget')}
-        value={usage ? formatUsd(usage.cycleBudgetUsd) : 'n/a'}
-        detail={`resets ${formatDateTime(usage?.cycleEndsAt)}`}
+        value={usage ? formatUsd(usage.cycleBudgetUsd) : t('common.notAvailable')}
+        detail={t('settings.ai.resetsAt').replace('{time}', formatDateTime(usage?.cycleEndsAt))}
       />
       <MetricTile
         label={t('settings.ai.cycleRemaining')}
-        value={usage ? formatUsd(usage.remainingUsd) : 'n/a'}
-        detail={usage ? `${formatUsd(usage.cycleSpentUsd)} used` : undefined}
+        value={usage ? formatUsd(usage.remainingUsd) : t('common.notAvailable')}
+        detail={
+          usage
+            ? t('settings.ai.usedAmount').replace('{amount}', formatUsd(usage.cycleSpentUsd))
+            : undefined
+        }
       />
       <MetricTile
         label={t('settings.ai.cycleTotalSpend')}
-        value={usage ? formatUsd(usage.insights.totals.totalUsd) : 'n/a'}
+        value={usage ? formatUsd(usage.insights.totals.totalUsd) : t('common.notAvailable')}
         detail={
           usage
-            ? `inference ${formatUsd(usage.insights.totals.inferenceUsd)} + integrations ${formatUsd(usage.insights.totals.integrationsUsd)}`
+            ? t('settings.ai.inferenceIntegrationsBreakdown')
+                .replace('{inference}', formatUsd(usage.insights.totals.inferenceUsd))
+                .replace('{integrations}', formatUsd(usage.insights.totals.integrationsUsd))
             : undefined
         }
       />
       <MetricTile
         label={t('settings.ai.avgSpendRow')}
-        value={spendAvgRowUsd > 0 ? formatUsd(spendAvgRowUsd) : 'n/a'}
-        detail={`${spendRows.length} recent spend rows`}
+        value={spendAvgRowUsd > 0 ? formatUsd(spendAvgRowUsd) : t('common.notAvailable')}
+        detail={t('settings.ai.recentSpendRowsCount').replace('{count}', String(spendRows.length))}
       />
       <MetricTile
         label={t('settings.ai.backgroundApiReads')}
-        value={`${formatCount(backgroundApiReadsPerWeek)}/week`}
-        detail={`${formatCount(calendarPlannerCallsPerWeek)} planner + ${formatCount(composioConnectionScansPerWeek)} sync`}
+        value={t('settings.ai.perWeek').replace('{count}', formatCount(backgroundApiReadsPerWeek))}
+        detail={t('settings.ai.plannerSyncBreakdown')
+          .replace('{planner}', formatCount(calendarPlannerCallsPerWeek))
+          .replace('{sync}', formatCount(composioConnectionScansPerWeek))}
       />
       <MetricTile
         label={t('settings.ai.backgroundWakeups')}
-        value={`${formatCount(backgroundWakeupsPerWeek)}/week`}
-        detail={`${formatCount(memoryPollsPerWeek)} memory polls`}
+        value={t('settings.ai.perWeek').replace('{count}', formatCount(backgroundWakeupsPerWeek))}
+        detail={t('settings.ai.memoryPollsDetail').replace(
+          '{count}',
+          formatCount(memoryPollsPerWeek)
+        )}
       />
     </div>
 
@@ -121,29 +132,45 @@ export const UsageLedgerSection = ({
       <div className="mt-2 grid gap-2">
         <FormulaRow
           label={t('settings.ai.rowsLeft')}
-          value={estimatedRowsLeft !== null ? formatCount(estimatedRowsLeft) : 'n/a'}
+          value={
+            estimatedRowsLeft !== null ? formatCount(estimatedRowsLeft) : t('common.notAvailable')
+          }
           detail={
             estimatedRowsLeft !== null
-              ? `remaining / avg row = ${formatUsd(usage?.remainingUsd ?? 0)} / ${formatUsd(spendAvgRowUsd)}`
-              : 'Need recent spend rows to estimate.'
+              ? t('settings.ai.rowsLeftFormula')
+                  .replace('{remaining}', formatUsd(usage?.remainingUsd ?? 0))
+                  .replace('{avgRow}', formatUsd(spendAvgRowUsd))
+              : t('settings.ai.needSpendRowsToEstimate')
           }
         />
         <FormulaRow
           label={t('settings.ai.rowsPerFullWeekBudget')}
-          value={estimatedRowsPerBudget !== null ? formatCount(estimatedRowsPerBudget) : 'n/a'}
+          value={
+            estimatedRowsPerBudget !== null
+              ? formatCount(estimatedRowsPerBudget)
+              : t('common.notAvailable')
+          }
           detail={
             estimatedRowsPerBudget !== null
-              ? `cycle budget / avg row = ${formatUsd(usage?.cycleBudgetUsd ?? 0)} / ${formatUsd(spendAvgRowUsd)}`
-              : 'Need recent spend rows to estimate.'
+              ? t('settings.ai.rowsPerBudgetFormula')
+                  .replace('{budget}', formatUsd(usage?.cycleBudgetUsd ?? 0))
+                  .replace('{avgRow}', formatUsd(spendAvgRowUsd))
+              : t('settings.ai.needSpendRowsToEstimate')
           }
         />
         <FormulaRow
           label={t('settings.ai.sampleBurnRate')}
-          value={spendPerHour > 0 ? `${formatUsd(spendPerHour)}/hr` : 'n/a'}
+          value={
+            spendPerHour > 0
+              ? t('settings.ai.perHour').replace('{amount}', formatUsd(spendPerHour))
+              : t('common.notAvailable')
+          }
           detail={
             spendSampleHours > 0
-              ? `${formatCount(rowsPerHour)} rows/hr across ${spendSampleHours.toFixed(1)}h sample`
-              : 'Need timestamps from at least two spend rows.'
+              ? t('settings.ai.burnRateSampleDetail')
+                  .replace('{rows}', formatCount(rowsPerHour))
+                  .replace('{hours}', spendSampleHours.toFixed(1))
+              : t('settings.ai.needTimestampsForBurnRate')
           }
         />
         <FormulaRow
@@ -151,21 +178,29 @@ export const UsageLedgerSection = ({
           value={projectedExhaustAt}
           detail={
             projectedHoursLeft !== null
-              ? `${projectedHoursLeft.toFixed(1)}h after latest spend at recent burn rate`
-              : 'No projection without recent hourly spend.'
+              ? t('settings.ai.projectedEmptyDetail').replace(
+                  '{hours}',
+                  projectedHoursLeft.toFixed(1)
+                )
+              : t('settings.ai.noProjectionWithoutSpend')
           }
         />
         <FormulaRow
           label={t('settings.ai.apiReadsPerDollarRemaining')}
           value={
             scheduledCallsPerRemainingDollar !== null
-              ? `${formatCount(scheduledCallsPerRemainingDollar)} reads/$`
-              : 'n/a'
+              ? t('settings.ai.readsPerDollar').replace(
+                  '{count}',
+                  formatCount(scheduledCallsPerRemainingDollar)
+                )
+              : t('common.notAvailable')
           }
           detail={
             usage
-              ? `background API reads/week / remaining = ${formatCount(backgroundApiReadsPerWeek)} / ${formatUsd(usage.remainingUsd)}`
-              : 'Need usage response to estimate.'
+              ? t('settings.ai.apiReadsFormula')
+                  .replace('{reads}', formatCount(backgroundApiReadsPerWeek))
+                  .replace('{remaining}', formatUsd(usage.remainingUsd))
+              : t('settings.ai.needUsageToEstimate')
           }
         />
       </div>
@@ -178,18 +213,27 @@ export const UsageLedgerSection = ({
       <div className="mt-2 grid gap-2">
         <FormulaRow
           label={t('settings.ai.composioSyncScans')}
-          value={`${formatCount(composioConnectionScansPerWeek)}/week`}
-          detail={`${activeConnectionsCount} active integration connection(s) scanned every 20 min`}
+          value={t('settings.ai.perWeek').replace(
+            '{count}',
+            formatCount(composioConnectionScansPerWeek)
+          )}
+          detail={t('settings.ai.composioSyncScansDetail').replace(
+            '{count}',
+            String(activeConnectionsCount)
+          )}
         />
         <FormulaRow
           label={t('settings.ai.totalBackgroundApiReadBudget')}
-          value={`${formatCount(backgroundApiReadsPerWeek)}/week`}
-          detail={`calendar planner reads + periodic integration scans; excludes user-initiated chat tools`}
+          value={t('settings.ai.perWeek').replace(
+            '{count}',
+            formatCount(backgroundApiReadsPerWeek)
+          )}
+          detail={t('settings.ai.totalApiReadBudgetDetail')}
         />
         <FormulaRow
           label={t('settings.ai.memoryWorkerPolls')}
-          value={`${formatCount(memoryPollsPerWeek)}/week max`}
-          detail={`4 workers * 5s poll; LLM calls only for queued jobs`}
+          value={t('settings.ai.perWeekMax').replace('{count}', formatCount(memoryPollsPerWeek))}
+          detail={t('settings.ai.memoryWorkerPollsDetail')}
         />
       </div>
     </div>

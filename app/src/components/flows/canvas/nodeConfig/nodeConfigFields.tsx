@@ -21,19 +21,19 @@ import { useCallback, useId, useMemo, useState } from 'react';
 import { cn } from '../../../../lib/cn';
 import { useT } from '../../../../lib/i18n/I18nContext';
 import type { FlowConnection } from '../../../../services/api/flowsApi';
-import Button from '../../../ui/Button';
-import UiInput from '../../../ui/Input';
-import { InputGroupAddon, InputGroupInput, InputGroupRoot } from '../../../ui/InputGroup';
-import NativeSelect from '../../../ui/NativeSelect';
-import UiTextArea from '../../../ui/TextArea';
+import {
+  Button,
+  InputGroupAddon,
+  InputGroupInput,
+  InputGroupRoot,
+  NativeSelect,
+  Input as UiInput,
+  TextArea as UiTextArea,
+} from '../../../ui';
 import type { UpstreamExpressionOption } from './upstreamOptions';
 
 const log = createDebug('app:flows:nodeConfig:fields');
 
-export const INPUT_CLASS =
-  'w-full rounded-lg border border-line-strong bg-surface px-2.5 py-1.5 text-sm text-content ' +
-  'placeholder-content-faint transition-colors focus:border-primary-500 focus:outline-hidden ' +
-  'focus:ring-2 focus:ring-primary-500/20 disabled:opacity-50';
 export const MONO_CLASS = 'font-mono text-[13px]';
 
 /** Read a string field off a free-form config object, defaulting to `''`. */

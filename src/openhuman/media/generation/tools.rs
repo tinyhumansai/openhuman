@@ -27,7 +27,7 @@ use crate::openhuman::integrations::IntegrationClient;
 use crate::openhuman::tools::traits::{
     PermissionLevel, Tool, ToolCallOptions, ToolCategory, ToolResult,
 };
-use tinyagents::harness::tool::ToolExecutionContext;
+use tinytools::ToolRunContext;
 
 use super::download::persist_media;
 use super::types::MediaResponse;
@@ -172,10 +172,10 @@ async fn generate_and_persist(
 
 fn action_dir_for_context(
     default_action_dir: &Path,
-    context: Option<&ToolExecutionContext>,
+    context: Option<&dyn ToolRunContext>,
     tool_name: &str,
 ) -> PathBuf {
-    if let Some(workspace) = context.and_then(|ctx| ctx.workspace.as_ref()) {
+    if let Some(workspace) = context.and_then(|ctx| ctx.workspace()) {
         tracing::debug!(
             tool = tool_name,
             workspace_root = %workspace.root.display(),
@@ -290,7 +290,7 @@ impl Tool for MediaGenerateImageTool {
         &self,
         args: Value,
         _options: ToolCallOptions,
-        context: Option<&ToolExecutionContext>,
+        context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
         let action_dir = action_dir_for_context(&self.action_dir, context, self.name());
         self.run(args, &action_dir).await
@@ -397,7 +397,7 @@ impl Tool for MediaGenerateVideoTool {
         &self,
         args: Value,
         _options: ToolCallOptions,
-        context: Option<&ToolExecutionContext>,
+        context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
         let action_dir = action_dir_for_context(&self.action_dir, context, self.name());
         self.run(args, &action_dir).await

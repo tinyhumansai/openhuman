@@ -163,8 +163,6 @@ const STATES = {
 
 export type DotMatrixState = keyof typeof STATES;
 
-const dotMatrixStates = Object.keys(STATES) as readonly DotMatrixState[];
-
 export type DotMatrixProps = Omit<ComponentProps<'span'>, 'children'> & {
   state?: DotMatrixState;
   label?: string;
@@ -227,4 +225,4 @@ function DotMatrix({ className, state = 'loading', label, ...props }: DotMatrixP
   );
 }
 
-export { DotMatrix, dotMatrixStates };
+export { DotMatrix };

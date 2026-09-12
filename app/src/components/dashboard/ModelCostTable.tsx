@@ -18,8 +18,7 @@ const PROVIDER_PALETTE: Record<string, string> = {
   groq: 'bg-amber-500/15 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300 ring-amber-500/30',
 };
 
-const PROVIDER_FALLBACK =
-  'bg-surface-strong text-content-secondary ring-stone-300 dark:ring-neutral-700';
+const PROVIDER_FALLBACK = 'bg-surface-strong text-content-secondary ring-line-strong';
 
 function providerChipClass(provider: string | null): string {
   if (!provider) return PROVIDER_FALLBACK;

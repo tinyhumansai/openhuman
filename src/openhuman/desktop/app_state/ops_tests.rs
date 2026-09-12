@@ -4,7 +4,15 @@ use parking_lot::Mutex as TestMutex;
 use serde_json::json;
 use tempfile::tempdir;
 
-static APP_STATE_CACHE_TEST_LOCK: TestLazy<TestMutex<()>> = TestLazy::new(|| TestMutex::new(()));
+/// Serialises every test that reads or writes the process-global snapshot
+/// caches. A `tokio` mutex rather than a `parking_lot` one so async tests can
+/// hold it across an `.await` — sibling `ops_current_user_backoff_tests.rs`
+/// guards its own global the same way.
+///
+/// `pub(super)` for `ops_snapshot_latency_tests.rs`, which seeds the positive
+/// cache and so has to serialise against the readers here.
+pub(super) static APP_STATE_CACHE_TEST_LOCK: TestLazy<tokio::sync::Mutex<()>> =
+    TestLazy::new(|| tokio::sync::Mutex::new(()));
 
 #[test]
 fn sanitize_snapshot_user_drops_empty_payloads() {
@@ -142,7 +150,7 @@ fn save_and_reload_stored_app_state_round_trips() {
 
 #[test]
 fn peek_cached_current_user_identity_plucks_known_fields() {
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.blocking_lock();
     struct CacheResetGuard;
     impl Drop for CacheResetGuard {
         fn drop(&mut self) {
@@ -170,7 +178,7 @@ fn peek_cached_current_user_identity_plucks_known_fields() {
 
 #[test]
 fn peek_cached_current_user_identity_returns_none_when_only_empty_fields_exist() {
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.blocking_lock();
     struct CacheResetGuard;
     impl Drop for CacheResetGuard {
         fn drop(&mut self) {
@@ -203,7 +211,7 @@ impl Drop for SnapshotCacheResetGuard {
 
 #[test]
 fn runtime_snapshot_cache_hit_within_ttl() {
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.blocking_lock();
     let _reset = SnapshotCacheResetGuard;
 
     let dummy = build_dummy_runtime_snapshot();
@@ -224,7 +232,7 @@ fn runtime_snapshot_cache_hit_within_ttl() {
 
 #[test]
 fn runtime_snapshot_cache_miss_after_ttl() {
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.blocking_lock();
     let _reset = SnapshotCacheResetGuard;
 
     *RUNTIME_SNAPSHOT_CACHE.lock() = Some(CachedRuntimeSnapshot {
@@ -243,7 +251,7 @@ fn runtime_snapshot_cache_miss_after_ttl() {
 
 #[test]
 fn fresh_cached_runtime_snapshot_returns_entry_within_ttl() {
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.blocking_lock();
     let _reset = SnapshotCacheResetGuard;
 
     let dummy = build_dummy_runtime_snapshot();
@@ -260,7 +268,7 @@ fn fresh_cached_runtime_snapshot_returns_entry_within_ttl() {
 
 #[test]
 fn fresh_cached_runtime_snapshot_misses_when_stale_or_empty() {
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.blocking_lock();
     let _reset = SnapshotCacheResetGuard;
 
     let cfg = Config::default();
@@ -280,7 +288,7 @@ fn fresh_cached_runtime_snapshot_misses_when_stale_or_empty() {
 
 #[test]
 fn fresh_cached_runtime_snapshot_misses_on_config_key_mismatch() {
-    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.lock();
+    let _cache_lock = APP_STATE_CACHE_TEST_LOCK.blocking_lock();
     let _reset = SnapshotCacheResetGuard;
 
     // A fresh entry cached for one workspace must never be served to another
@@ -325,9 +333,11 @@ fn degraded_runtime_snapshot_has_expected_degraded_fields() {
 #[test]
 fn auth_fetch_timeout_constant_is_below_rpc_timeout() {
     // The 30s RPC timeout on the frontend means auth fetch + runtime snapshot
-    // must fit comfortably. Verify the constants are sane.
+    // must fit comfortably. Asserted across the whole configurable range
+    // (#5930), not just the default, because the operator override is what
+    // could push the pair past the ceiling.
     assert!(
-        AUTH_FETCH_TIMEOUT.as_secs() < 15,
+        MAX_AUTH_FETCH_TIMEOUT_SECS < 15,
         "auth fetch timeout should be well under the 30s RPC timeout"
     );
     assert!(
@@ -335,9 +345,92 @@ fn auth_fetch_timeout_constant_is_below_rpc_timeout() {
         "runtime snapshot timeout should be well under the 30s RPC timeout"
     );
     assert!(
-        AUTH_FETCH_TIMEOUT + RUNTIME_SNAPSHOT_TIMEOUT < Duration::from_secs(30),
-        "total of auth + runtime timeouts must fit within the 30s RPC timeout"
+        Duration::from_secs(MAX_AUTH_FETCH_TIMEOUT_SECS) + RUNTIME_SNAPSHOT_TIMEOUT
+            < Duration::from_secs(30),
+        "even the widest permitted auth timeout plus the runtime timeout must fit within the 30s RPC timeout"
     );
+    assert!(
+        (MIN_AUTH_FETCH_TIMEOUT_SECS..=MAX_AUTH_FETCH_TIMEOUT_SECS)
+            .contains(&DEFAULT_AUTH_FETCH_TIMEOUT_SECS),
+        "the default must itself be an accepted override value"
+    );
+}
+
+// ── Configurable auth fetch timeout (#5930) ─────────────────────────────────
+//
+// "5s may be too tight" is the issue's first acceptance criterion. The risk in
+// answering it is that a wider timeout re-opens #5624: the backoff's first step
+// was a fixed 10s, so an operator setting 20s would make every poll find the
+// window already closed and pay the full 20s again. The clamp and the derived
+// base are what stop that, so both are pinned here.
+
+#[test]
+fn parse_auth_fetch_timeout_secs_clamps_and_falls_back() {
+    assert_eq!(
+        parse_auth_fetch_timeout_secs(None),
+        DEFAULT_AUTH_FETCH_TIMEOUT_SECS,
+        "an unset override leaves the default in place"
+    );
+    assert_eq!(
+        parse_auth_fetch_timeout_secs(Some("not-a-number")),
+        DEFAULT_AUTH_FETCH_TIMEOUT_SECS
+    );
+    assert_eq!(
+        parse_auth_fetch_timeout_secs(Some("")),
+        DEFAULT_AUTH_FETCH_TIMEOUT_SECS
+    );
+    assert_eq!(
+        parse_auth_fetch_timeout_secs(Some("0")),
+        DEFAULT_AUTH_FETCH_TIMEOUT_SECS,
+        "0 would disable the timeout entirely and is rejected"
+    );
+    assert_eq!(
+        parse_auth_fetch_timeout_secs(Some(&(MIN_AUTH_FETCH_TIMEOUT_SECS - 1).to_string())),
+        DEFAULT_AUTH_FETCH_TIMEOUT_SECS,
+        "below the floor is rejected rather than clamped up, so a typo is visible in the logs"
+    );
+    assert_eq!(
+        parse_auth_fetch_timeout_secs(Some(&(MAX_AUTH_FETCH_TIMEOUT_SECS + 1).to_string())),
+        DEFAULT_AUTH_FETCH_TIMEOUT_SECS,
+        "above the ceiling is rejected rather than clamped down"
+    );
+    assert_eq!(
+        parse_auth_fetch_timeout_secs(Some("  7  ")),
+        7,
+        "surrounding whitespace is tolerated"
+    );
+
+    for secs in MIN_AUTH_FETCH_TIMEOUT_SECS..=MAX_AUTH_FETCH_TIMEOUT_SECS {
+        assert_eq!(
+            parse_auth_fetch_timeout_secs(Some(&secs.to_string())),
+            secs,
+            "{secs}s is inside the accepted range and must pass through unchanged"
+        );
+    }
+}
+
+#[test]
+fn the_derived_backoff_base_outlasts_every_permitted_fetch_timeout() {
+    // This is #5624's invariant, restated as a property over the range #5930
+    // opened up. A first step shorter than the fetch timeout means the next
+    // poll finds the window already closed and pays the full timeout again —
+    // which is the bug, not the fix.
+    for secs in MIN_AUTH_FETCH_TIMEOUT_SECS..=MAX_AUTH_FETCH_TIMEOUT_SECS {
+        let timeout = Duration::from_secs(secs);
+        let base = current_user_backoff_base_for(timeout);
+        assert!(
+            base > timeout,
+            "first backoff step {base:?} must exceed the fetch timeout {timeout:?}"
+        );
+        assert!(
+            base > CURRENT_USER_REFRESH_TTL,
+            "first backoff step {base:?} must exceed the cache TTL {CURRENT_USER_REFRESH_TTL:?}"
+        );
+        assert!(
+            base <= CURRENT_USER_BACKOFF_MAX,
+            "first backoff step {base:?} must not start at or above the cap {CURRENT_USER_BACKOFF_MAX:?}"
+        );
+    }
 }
 
 fn build_dummy_runtime_snapshot() -> RuntimeSnapshot {
@@ -402,273 +495,119 @@ async fn current_user_fetch_carries_the_product_identity() {
     crate::api::product::reset_product_identity_for_test();
 }
 
-// ── Current-user failure backoff (#5624) ────────────────────────────────────
-//
-// While the backend is unreachable, every `app_state_snapshot` poll used to
-// re-attempt `auth_get_me` and re-pay the full `AUTH_FETCH_TIMEOUT`, because a
-// failure was never recorded anywhere: `fetch_current_user_cached` cached only
-// successes, and on a timeout its future was dropped before it could cache
-// anything at all. 51 timeouts in one session is what that costs at a 5s poll
-// cadence. These cover the record, the window, and the fact that the fetch
-// actually consults it.
+#[path = "ops_signout_cache_tests.rs"]
+mod signout_cache_tests;
 
-/// Serializes the tests that seed `CURRENT_USER_FAILURE`.
-///
-/// Async-aware rather than the `parking_lot` guard the positive-cache tests
-/// use, because one of these tests has to hold it across an `.await` — the
-/// whole point of that test is that `fetch_current_user_cached` consults the
-/// record. Kept distinct from `APP_STATE_CACHE_TEST_LOCK` because the two guard
-/// different globals and nothing here writes the positive cache.
-static CURRENT_USER_FAILURE_TEST_LOCK: TestLazy<tokio::sync::Mutex<()>> =
-    TestLazy::new(|| tokio::sync::Mutex::new(()));
+// Serialises the `OPENHUMAN_WORKSPACE` env mutations below so two of these tests
+// can't race each other on the process-global var.
+static WORKSPACE_ENV_TEST_LOCK: TestLazy<TestMutex<()>> = TestLazy::new(|| TestMutex::new(()));
 
-/// Drops the seeded outage on the way out, so one test cannot leak into the next.
-struct CurrentUserFailureResetGuard;
+/// RAII guard for `OPENHUMAN_WORKSPACE`. Captures the prior value on
+/// construction and restores it (set or remove) on drop, so a test that panics
+/// between the mutation and the end of the test can't leak the override into a
+/// sibling test. Must be constructed while holding `WORKSPACE_ENV_TEST_LOCK`:
+/// mutating a process env var while another thread reads it is unsafe, and the
+/// lock serialises every test in this group.
+struct WorkspaceEnvGuard {
+    prior: Option<std::ffi::OsString>,
+}
 
-impl Drop for CurrentUserFailureResetGuard {
+impl WorkspaceEnvGuard {
+    fn set(value: &std::path::Path) -> Self {
+        let prior = std::env::var_os("OPENHUMAN_WORKSPACE");
+        std::env::set_var("OPENHUMAN_WORKSPACE", value);
+        Self { prior }
+    }
+
+    fn set_empty() -> Self {
+        let prior = std::env::var_os("OPENHUMAN_WORKSPACE");
+        std::env::set_var("OPENHUMAN_WORKSPACE", "");
+        Self { prior }
+    }
+
+    fn unset() -> Self {
+        let prior = std::env::var_os("OPENHUMAN_WORKSPACE");
+        std::env::remove_var("OPENHUMAN_WORKSPACE");
+        Self { prior }
+    }
+}
+
+impl Drop for WorkspaceEnvGuard {
     fn drop(&mut self) {
-        clear_current_user_failure();
+        match &self.prior {
+            Some(value) => std::env::set_var("OPENHUMAN_WORKSPACE", value),
+            None => std::env::remove_var("OPENHUMAN_WORKSPACE"),
+        }
     }
 }
 
-/// Overwrite the failure record with one that failed `age` ago, so a test can
-/// sit either side of a backoff window without sleeping.
-fn seed_current_user_failure(
-    api_base: &str,
-    token: &str,
-    consecutive: u32,
-    age: Duration,
-    error: CurrentUserFetchError,
-) {
-    *CURRENT_USER_FAILURE.lock() = Some(CurrentUserFailure {
-        api_base: api_base.to_string(),
-        token: token.to_string(),
-        failed_at: Instant::now()
-            .checked_sub(age)
-            .expect("test ages are far smaller than process uptime"),
-        consecutive,
-        error,
-    });
-}
-
+/// The #6079 twin: `config_dir_for_workspace_env` must resolve the modern
+/// `<root>/.openhuman/workspace` layout to its parent `<root>/.openhuman` (the
+/// real config dir), NOT the doubled `<root>/.openhuman/.openhuman`. The private
+/// reimplementation this replaced produced the doubled path, so
+/// `config_is_workspace_env_scoped` disagreed with the loader and mis-scoped
+/// credentials on session revalidation. Delegating to the shared
+/// `resolve_config_dir_for_workspace` keeps the two in lockstep.
+///
+/// The workspace root is named `default_root_dir_name()` (`.openhuman` /
+/// `.openhuman-staging`) so the modern-layout arm — which keys on that name —
+/// fires regardless of the ambient `OPENHUMAN_APP_ENV`, and a temp dir isolates
+/// it from any real `.openhuman` on the host.
 #[test]
-fn current_user_backoff_doubles_and_saturates_at_the_cap() {
-    assert_eq!(current_user_backoff(1), CURRENT_USER_BACKOFF_BASE);
-    assert_eq!(current_user_backoff(2), CURRENT_USER_BACKOFF_BASE * 2);
-    assert_eq!(current_user_backoff(3), CURRENT_USER_BACKOFF_BASE * 4);
-    assert_eq!(current_user_backoff(u32::MAX), CURRENT_USER_BACKOFF_MAX);
-    // 0 is not a state the recorder can produce, but the function must not
-    // answer it with a zero-length window.
-    assert_eq!(current_user_backoff(0), CURRENT_USER_BACKOFF_BASE);
+fn config_dir_for_workspace_env_modern_layout_does_not_double_openhuman() {
+    let _g = WORKSPACE_ENV_TEST_LOCK.lock();
+    let tmp = tempdir().unwrap();
+    let root = tmp
+        .path()
+        .join(crate::openhuman::config::default_root_dir_name());
+    let workspace = root.join("workspace");
+    let _env = WorkspaceEnvGuard::set(&workspace);
 
-    let mut previous = Duration::ZERO;
-    for consecutive in 1..=12 {
-        let window = current_user_backoff(consecutive);
-        assert!(
-            window >= previous,
-            "backoff must never narrow as failures accumulate: {consecutive} gave {window:?} after {previous:?}"
-        );
-        assert!(
-            window <= CURRENT_USER_BACKOFF_MAX,
-            "backoff must stay under the cap: {consecutive} gave {window:?}"
-        );
-        previous = window;
-    }
+    let resolved = config_dir_for_workspace_env();
+
+    assert_eq!(resolved, Some(root.clone()));
+    assert_ne!(
+        resolved,
+        Some(root.join(crate::openhuman::config::default_root_dir_name())),
+        "must never return the doubled .openhuman/.openhuman path"
+    );
 }
 
+/// A fresh legacy layout (`<proj>/workspace` with no sibling `.openhuman` on
+/// disk) must resolve to the sibling `<proj>/.openhuman`, matching the loader —
+/// not nest the workspace inside itself. Guards the same seam as the
+/// `dirs.rs` fresh-legacy test, one level up through the app_state resolver.
 #[test]
-fn the_first_backoff_step_outlasts_both_the_fetch_timeout_and_the_poll() {
-    // This is the property that actually stops the treadmill, and the one a
-    // future constant change could silently break. A first step shorter than
-    // the fetch timeout means the next poll finds the window already closed and
-    // pays the full 5s again — which is the bug, not the fix. It must also
-    // outlast the positive-cache TTL, because that TTL is what governs how soon
-    // a poll asks for a live fetch at all.
-    assert!(
-        current_user_backoff(1) > AUTH_FETCH_TIMEOUT,
-        "first backoff step {:?} must exceed the fetch timeout {:?}",
-        current_user_backoff(1),
-        AUTH_FETCH_TIMEOUT
-    );
-    assert!(
-        current_user_backoff(1) > CURRENT_USER_REFRESH_TTL,
-        "first backoff step {:?} must exceed the current-user cache TTL {:?}",
-        current_user_backoff(1),
-        CURRENT_USER_REFRESH_TTL
-    );
-}
+fn config_dir_for_workspace_env_fresh_legacy_resolves_to_sibling() {
+    let _g = WORKSPACE_ENV_TEST_LOCK.lock();
+    let tmp = tempdir().unwrap();
+    let project = tmp.path().join("some-project");
+    let workspace = project.join("workspace");
+    let _env = WorkspaceEnvGuard::set(&workspace);
 
-#[test]
-fn a_recorded_failure_suppresses_a_retry_inside_its_window() {
-    let _failure_lock = CURRENT_USER_FAILURE_TEST_LOCK.blocking_lock();
-    let _reset = CurrentUserFailureResetGuard;
-
-    record_current_user_failure(
-        "https://api.example.test",
-        "token-a",
-        CurrentUserFetchError::FetchFailed("request timed out after 5s".to_string()),
-    );
-
-    let (error, consecutive, remaining) =
-        suppressed_current_user_failure("https://api.example.test", "token-a")
-            .expect("a just-recorded failure must suppress the next attempt");
-    assert_eq!(consecutive, 1);
-    assert_eq!(error.message(), "request timed out after 5s");
-    assert!(remaining <= CURRENT_USER_BACKOFF_BASE && !remaining.is_zero());
-}
-
-#[test]
-fn a_recorded_failure_stops_suppressing_once_its_window_closes() {
-    let _failure_lock = CURRENT_USER_FAILURE_TEST_LOCK.blocking_lock();
-    let _reset = CurrentUserFailureResetGuard;
-
-    seed_current_user_failure(
-        "https://api.example.test",
-        "token-a",
-        1,
-        CURRENT_USER_BACKOFF_BASE + Duration::from_millis(1),
-        CurrentUserFetchError::FetchFailed("boom".to_string()),
-    );
-
-    assert!(
-        suppressed_current_user_failure("https://api.example.test", "token-a").is_none(),
-        "a failure older than its window must let the next attempt through"
-    );
-}
-
-#[test]
-fn consecutive_failures_widen_the_window() {
-    let _failure_lock = CURRENT_USER_FAILURE_TEST_LOCK.blocking_lock();
-    let _reset = CurrentUserFailureResetGuard;
-
-    for _ in 0..3 {
-        record_current_user_failure(
-            "https://api.example.test",
-            "token-a",
-            CurrentUserFetchError::FetchFailed("boom".to_string()),
-        );
-    }
-
-    let (_, consecutive, _) =
-        suppressed_current_user_failure("https://api.example.test", "token-a")
-            .expect("still inside the widened window");
-    assert_eq!(consecutive, 3);
-
-    // Three failures in, an attempt that would have been let through at the
-    // first window is still suppressed.
-    seed_current_user_failure(
-        "https://api.example.test",
-        "token-a",
-        3,
-        CURRENT_USER_BACKOFF_BASE + Duration::from_millis(1),
-        CurrentUserFetchError::FetchFailed("boom".to_string()),
-    );
-    assert!(
-        suppressed_current_user_failure("https://api.example.test", "token-a").is_some(),
-        "the third failure's window must outlast the first failure's"
-    );
-}
-
-#[test]
-fn a_rejected_credential_is_never_recorded() {
-    let _failure_lock = CURRENT_USER_FAILURE_TEST_LOCK.blocking_lock();
-    let _reset = CurrentUserFailureResetGuard;
-
-    record_current_user_failure(
-        "https://api.example.test",
-        "token-a",
-        CurrentUserFetchError::Rejected("401 Unauthorized".to_string()),
-    );
-
-    // Replaying a rejection from a cache would either delay the deferred-session
-    // cleanup the snapshot caller drives off that variant, or hand it a
-    // different variant than the backend produced.
-    assert!(
-        suppressed_current_user_failure("https://api.example.test", "token-a").is_none(),
-        "an auth rejection must not be backed off"
-    );
-}
-
-#[test]
-fn a_different_token_or_backend_bypasses_the_record() {
-    let _failure_lock = CURRENT_USER_FAILURE_TEST_LOCK.blocking_lock();
-    let _reset = CurrentUserFailureResetGuard;
-
-    record_current_user_failure(
-        "https://api.example.test",
-        "token-a",
-        CurrentUserFetchError::FetchFailed("boom".to_string()),
-    );
-
-    assert!(
-        suppressed_current_user_failure("https://api.example.test", "token-b").is_none(),
-        "signing in as someone else must not inherit the previous session's outage"
-    );
-    assert!(
-        suppressed_current_user_failure("https://other.example.test", "token-a").is_none(),
-        "switching environment must not inherit the previous backend's outage"
-    );
-    // …and the run it was recorded against is untouched by those probes.
-    assert!(suppressed_current_user_failure("https://api.example.test", "token-a").is_some());
-}
-
-#[test]
-fn clearing_the_record_lets_the_next_attempt_through() {
-    let _failure_lock = CURRENT_USER_FAILURE_TEST_LOCK.blocking_lock();
-    let _reset = CurrentUserFailureResetGuard;
-
-    record_current_user_failure(
-        "https://api.example.test",
-        "token-a",
-        CurrentUserFetchError::FetchFailed("boom".to_string()),
-    );
-    assert!(suppressed_current_user_failure("https://api.example.test", "token-a").is_some());
-
-    // What sign-out and every success both call. Missing either is the failure
-    // mode that matters: a record outliving its cause strands the app on the
-    // stored snapshot after the backend is back.
-    clear_current_user_failure();
-
-    assert!(
-        suppressed_current_user_failure("https://api.example.test", "token-a").is_none(),
-        "a cleared record must not keep suppressing"
-    );
-}
-
-#[tokio::test]
-async fn fetch_current_user_cached_replays_a_recorded_failure_without_calling_the_backend() {
-    let _failure_lock = CURRENT_USER_FAILURE_TEST_LOCK.lock().await;
-    let _reset = CurrentUserFailureResetGuard;
-
-    let mut config = Config::default();
-    // A closed loopback port. Nothing here should reach it — the point of the
-    // test is that the recorded failure short-circuits first — but if the probe
-    // is removed the call fails locally with a connection error instead of
-    // reaching out to the real backend.
-    config.api_url = Some("http://127.0.0.1:9/".to_string());
-    let api_base = current_user_api_base(&config);
-    assert!(
-        api_base.starts_with("http://127.0.0.1:9"),
-        "precondition: the override must survive backend-url resolution, got {api_base}; \
-         otherwise this test would talk to a real backend"
-    );
-
-    let token = "token-a";
-    seed_current_user_failure(
-        &api_base,
-        token,
-        1,
-        Duration::from_millis(1),
-        CurrentUserFetchError::FetchFailed("seeded outage marker".to_string()),
-    );
-
-    let error = fetch_current_user_cached(&config, token, true)
-        .await
-        .expect_err("a recorded failure inside its window must be replayed");
+    let resolved = config_dir_for_workspace_env();
 
     assert_eq!(
-        error.message(),
-        "seeded outage marker",
-        "the fetch must replay the recorded failure rather than issue a request"
+        resolved,
+        Some(project.join(".openhuman")),
+        "a fresh legacy workspace must resolve to its sibling .openhuman"
+    );
+}
+
+/// An unset / empty `OPENHUMAN_WORKSPACE` yields `None` so the caller falls back
+/// to user-scoped resolution rather than treating the empty string as a path.
+#[test]
+fn config_dir_for_workspace_env_none_when_unset_or_empty() {
+    let _g = WORKSPACE_ENV_TEST_LOCK.lock();
+    {
+        let _env = WorkspaceEnvGuard::unset();
+        assert_eq!(config_dir_for_workspace_env(), None);
+    }
+
+    let _env = WorkspaceEnvGuard::set_empty();
+    assert_eq!(
+        config_dir_for_workspace_env(),
+        None,
+        "an empty override must not be treated as a path"
     );
 }

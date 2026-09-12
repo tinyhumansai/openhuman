@@ -149,7 +149,7 @@ test.describe('Settings - Account Preferences', () => {
   test('opens the billing route and settles the redirect status copy', async ({ page }) => {
     await gotoSettingsRoute(page, '/settings/billing');
 
-    await expect(page.getByRole('heading', { name: 'Open billing dashboard' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Billing' })).toBeVisible();
     // Billing no longer auto-opens the browser; the panel explains billing
     // moved to the web and offers an explicit open button.
     await expect(

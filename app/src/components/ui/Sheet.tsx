@@ -43,6 +43,26 @@ export interface SheetContentProps
   /** Portal target — see `DialogContent`. Defaults to `document.body`. */
   container?: HTMLElement | null;
   overlayClassName?: string;
+  /**
+   * `data-testid` for the panel.
+   *
+   * `data-testid` already reaches the panel through `...rest` — the three
+   * existing drawers pass it that way — so this prop exists for discoverability
+   * and for symmetry with `ModalShell.testId`, not because the attribute had no
+   * route. It is applied *before* the spread, so a caller passing
+   * `data-testid` directly still wins and nothing rendering today changes.
+   */
+  testId?: string;
+  /**
+   * `data-testid` for the scrim.
+   *
+   * The hand-rolled drawers this replaces render their backdrop as a `<Button>`
+   * carrying its own hook (`flow-runs-backdrop`, `flow-run-inspector-backdrop`).
+   * Radix's overlay is a plain element, so the specs' `type`/accessible-name
+   * assertions have to be rewritten against `onPointerDownOutside` regardless —
+   * but the hook itself needs somewhere to land, and this is it.
+   */
+  overlayTestId?: string;
   children: ReactNode;
 }
 
@@ -51,14 +71,17 @@ export const SheetContent = ({
   className,
   overlayClassName,
   container,
+  testId,
+  overlayTestId,
   children,
   ...rest
 }: SheetContentProps) => (
   <DialogPrimitive.Portal container={container ?? undefined}>
-    <DialogOverlay className={overlayClassName} />
+    <DialogOverlay className={overlayClassName} data-testid={overlayTestId} />
     <DialogPrimitive.Content
       data-slot="sheet-content"
       data-side={side ?? 'right'}
+      data-testid={testId}
       className={cn(sheetVariants({ side }), className)}
       {...rest}>
       {children}

@@ -162,6 +162,19 @@ export function SyncAuditPanel() {
                     <span className="text-sage-500" title={t('sync.status.success', 'Success')}>
                       ✓
                     </span>
+                  ) : (e.tree_ingest_failures ?? 0) > 0 || e.tree_error ? (
+                    // openhuman#5820: the fetch committed but the memory-tree
+                    // half dropped items — a distinct partial verdict, not the
+                    // plain ✗ (which reads as "nothing was fetched"). The
+                    // tooltip carries the core's tree_error so the row
+                    // explains itself.
+                    <span
+                      className="text-amber-500"
+                      title={
+                        e.tree_error ?? t('sync.status.partial', 'Fetched, memory ingest failed')
+                      }>
+                      ⚠
+                    </span>
                   ) : (
                     <span
                       className="text-coral-500"

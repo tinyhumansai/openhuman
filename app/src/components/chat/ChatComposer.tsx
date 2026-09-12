@@ -173,8 +173,8 @@ export interface ChatComposerProps {
  * `ComposerPrimitive.*` reads its runtime from React context, so every surface
  * rendering this component should sit under a runtime scoped to *its own*
  * thread. Two did not, and would have inherited the app-wide one bound to
- * `selectedThreadId` — the home chat's thread; both now mount their own (see
- * `WorkflowCopilotPanel` and `orchestration/AgentChatPanel`). The default
+ * `selectedThreadId` — the home chat's thread; `WorkflowCopilotPanel` now
+ * mounts its own. The default
  * export wraps this body in `ComposerRuntimeBoundary`, which supplies an inert
  * runtime when there is none at all; read that file before assuming the
  * boundary makes the per-surface decision unnecessary — it cannot, because an

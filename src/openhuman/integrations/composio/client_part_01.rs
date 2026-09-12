@@ -1,0 +1,666 @@
+use std::sync::Arc;
+use std::time::Duration;
+
+use anyhow::Result;
+use serde_json::{json, Value};
+
+use crate::openhuman::integrations::IntegrationClient;
+
+use super::types::{
+    ComposioActiveTriggersResponse, ComposioAuthorizeResponse, ComposioAvailableTriggersResponse,
+    ComposioConnectionsResponse, ComposioCreateTriggerResponse, ComposioDeleteResponse,
+    ComposioDisableTriggerResponse, ComposioEnableTriggerResponse, ComposioExecuteResponse,
+    ComposioGithubReposResponse, ComposioToolkitsResponse, ComposioToolsResponse,
+};
+
+const POST_OAUTH_ACTION_RETRY_DELAY: Duration = Duration::from_secs(10);
+/// Literal error fragments Composio's gateway emits during the post-OAuth
+/// readiness gap. Matching is case-insensitive and substring-based so
+/// trailing punctuation or wrapper text from the gateway does not silently
+/// disable the retry.
+const POST_OAUTH_AUTH_ERROR_STRINGS: &[&str] = &["connection error, try to authenticate"];
+const AUTHORIZE_OAUTH_SCOPES_FIELD: &str = "oauth_scopes";
+const GMAIL_REQUIRED_OAUTH_SCOPES: &[&str] = &["https://www.googleapis.com/auth/gmail.readonly"];
+
+/// High-level client for all backend-proxied Composio operations.
+#[derive(Clone)]
+pub struct ComposioClient {
+    inner: Arc<IntegrationClient>,
+}
+
+impl ComposioClient {
+    pub fn new(inner: Arc<IntegrationClient>) -> Self {
+        Self { inner }
+    }
+
+    /// Access the underlying integration client (useful for tests or for
+    /// callers that need to reuse the same reqwest pool for bespoke calls).
+    pub fn inner(&self) -> &Arc<IntegrationClient> {
+        &self.inner
+    }
+
+    // ── Toolkits ────────────────────────────────────────────────────
+
+    /// `GET /agent-integrations/composio/toolkits` — server-enforced
+    /// allowlist of toolkits that composio calls may target.
+    pub async fn list_toolkits(&self) -> Result<ComposioToolkitsResponse> {
+        tracing::debug!("[composio] list_toolkits");
+        self.inner
+            .get::<ComposioToolkitsResponse>("/agent-integrations/composio/toolkits")
+            .await
+    }
+
+    // ── Connections ─────────────────────────────────────────────────
+
+    /// `GET /agent-integrations/composio/connections` — active connected
+    /// accounts for the authenticated user, filtered to the allowlist.
+    pub async fn list_connections(&self) -> Result<ComposioConnectionsResponse> {
+        tracing::debug!("[composio] list_connections");
+        self.inner
+            .get::<ComposioConnectionsResponse>("/agent-integrations/composio/connections")
+            .await
+    }
+
+    /// `POST /agent-integrations/composio/authorize` — begin an OAuth
+    /// handoff for `toolkit` and return the hosted `connectUrl` the user
+    /// must open in a browser.
+    ///
+    /// `extra_params` is an optional JSON object whose key/value pairs are
+    /// merged into the request body. Some toolkits (e.g. `whatsapp`) require
+    /// additional fields (e.g. `waba_id`) that Composio will reject the
+    /// authorization without.
+    pub async fn authorize(
+        &self,
+        toolkit: &str,
+        extra_params: Option<serde_json::Value>,
+    ) -> Result<ComposioAuthorizeResponse> {
+        let toolkit = toolkit.trim();
+        if toolkit.is_empty() {
+            anyhow::bail!("composio.authorize: toolkit must not be empty");
+        }
+        tracing::debug!(toolkit = %toolkit, has_extra_params = extra_params.is_some(), "[composio] authorize");
+        let mut body = serde_json::json!({ "toolkit": toolkit });
+        if let Some(extra) = extra_params {
+            const RESERVED: &[&str] = &["toolkit", "toolkit_version", "auth", "client_id"];
+            let extra_obj = extra.as_object().ok_or_else(|| {
+                anyhow::anyhow!("composio.authorize: extra_params must be a JSON object")
+            })?;
+            let obj = body.as_object_mut().ok_or_else(|| {
+                anyhow::anyhow!("composio.authorize: internal payload must be an object")
+            })?;
+            for (k, v) in extra_obj {
+                if RESERVED.contains(&k.as_str()) {
+                    anyhow::bail!(
+                        "composio.authorize: extra_params cannot override reserved key '{k}'"
+                    );
+                }
+                obj.insert(k.clone(), v.clone());
+            }
+        }
+        merge_required_oauth_scopes(&mut body, toolkit)?;
+        self.inner
+            .post::<ComposioAuthorizeResponse>("/agent-integrations/composio/authorize", &body)
+            .await
+    }
+
+    /// `DELETE /agent-integrations/composio/connections/{id}`.
+    ///
+    /// The backend verifies that the caller owns the connection before
+    /// deleting it. We call this via `POST` with a synthetic `_method`
+    /// body because [`IntegrationClient`] does not currently expose a
+    /// generic `delete()` — the backend accepts the method override.
+    pub async fn delete_connection(&self, connection_id: &str) -> Result<ComposioDeleteResponse> {
+        let connection_id = connection_id.trim();
+        if connection_id.is_empty() {
+            anyhow::bail!("composio.delete_connection: connectionId must not be empty");
+        }
+        tracing::debug!(connection_id = %connection_id, "[composio] delete_connection");
+        // Fall through to the reusable raw HTTP delete helper below.
+        self.raw_delete::<ComposioDeleteResponse>(&format!(
+            "/agent-integrations/composio/connections/{connection_id}"
+        ))
+        .await
+    }
+
+    // ── Tools ───────────────────────────────────────────────────────
+
+    /// `GET /agent-integrations/composio/tools?toolkits=<csv>&tags=<csv>` — fetch
+    /// OpenAI function-calling schemas. Omit `toolkits` to get every enabled
+    /// toolkit's tools. `tags` narrows by Composio action tag (OR semantics —
+    /// multiple tags broaden the result).
+    pub async fn list_tools(
+        &self,
+        toolkits: Option<&[String]>,
+        tags: Option<&[String]>,
+    ) -> Result<ComposioToolsResponse> {
+        let mut params: Vec<String> = Vec::new();
+        if let Some(list) = toolkits {
+            let joined = list
+                .iter()
+                .map(|t| t.trim())
+                .filter(|t| !t.is_empty())
+                .map(|t| urlencoding::encode(t).into_owned())
+                .collect::<Vec<_>>()
+                .join(",");
+            if !joined.is_empty() {
+                params.push(format!("toolkits={joined}"));
+            }
+        }
+        if let Some(list) = tags {
+            let joined = list
+                .iter()
+                .map(|t| t.trim())
+                .filter(|t| !t.is_empty())
+                .map(|t| urlencoding::encode(t).into_owned())
+                .collect::<Vec<_>>()
+                .join(",");
+            if !joined.is_empty() {
+                params.push(format!("tags={joined}"));
+            }
+        }
+        let path = if params.is_empty() {
+            "/agent-integrations/composio/tools".to_string()
+        } else {
+            format!("/agent-integrations/composio/tools?{}", params.join("&"))
+        };
+        tracing::debug!(path = %path, "[composio] list_tools");
+        self.inner.get::<ComposioToolsResponse>(&path).await
+    }
+
+    // ── Execute ─────────────────────────────────────────────────────
+
+    /// `POST /agent-integrations/composio/execute` — run a Composio
+    /// action and return the provider result + cost.
+    pub async fn execute_tool(
+        &self,
+        tool: &str,
+        arguments: Option<serde_json::Value>,
+    ) -> Result<ComposioExecuteResponse> {
+        self.execute_tool_with_connection(tool, arguments, None)
+            .await
+    }
+
+    /// `POST /agent-integrations/composio/execute` — run a Composio action
+    /// against one specific connected account.
+    ///
+    /// `connection_id = None` preserves [`Self::execute_tool`]'s ambient-account
+    /// behavior. A non-empty id is forwarded as `connectionId`; the backend
+    /// verifies that the authenticated user owns it before dispatching.
+    pub async fn execute_tool_with_connection(
+        &self,
+        tool: &str,
+        arguments: Option<serde_json::Value>,
+        connection_id: Option<&str>,
+    ) -> Result<ComposioExecuteResponse> {
+        let tool = tool.trim();
+        if tool.is_empty() {
+            anyhow::bail!("composio.execute_tool: tool slug must not be empty");
+        }
+        // Egress spine (privacy epic S2, #4436): a Composio tool call ships the
+        // (already-normalized) arguments to the third-party provider — disclose
+        // the transfer before the round-trip. S4 will add an approval arm here.
+        let egress = crate::openhuman::security::egress::EgressDescriptor::composio(tool);
+        // Local-only enforcement (privacy epic S7, #4441): refuse the external
+        // tool call under LocalOnly BEFORE disclosing or sending it.
+        crate::openhuman::security::egress::enforce_egress(&egress)?;
+        crate::openhuman::security::egress::emit_external_transfer(egress);
+        // PR #1827 routes all execute-side argument normalization
+        // (including the bare-date → RFC 3339 fix #1802 brought to
+        // `normalize_calendar_query_args` on `main`) through the
+        // centralized `prepare_execute_arguments` helper. The helper
+        // covers the same calendar query case and is the shared entry
+        // point for `composio_execute`, per-action tools, and direct-
+        // mode dispatch.
+        let arguments = super::execute_prepare::prepare_execute_arguments(tool, arguments)
+            .map_err(anyhow::Error::msg)?;
+        let connection_id = connection_id.map(str::trim).filter(|id| !id.is_empty());
+        tracing::debug!(
+            tool = %tool,
+            connection_id = ?connection_id,
+            "[composio] execute_tool"
+        );
+        let mut body = json!({ "tool": tool, "arguments": arguments });
+        if let Some(connection_id) = connection_id {
+            body["connectionId"] = json!(connection_id);
+        }
+        let mut resp = self
+            .execute_tool_with_post_oauth_retry(tool, &body, POST_OAUTH_ACTION_RETRY_DELAY)
+            .await?;
+        if !resp.successful {
+            if let Some(ref err) = resp.error {
+                resp.error = Some(super::error_mapping::format_provider_error(tool, err));
+            }
+        }
+        Ok(resp)
+    }
+
+    /// `POST /agent-integrations/composio/execute` — single, non-retrying
+    /// HTTP round-trip. Use this when the caller owns the retry loop
+    /// (e.g. `auth_retry`) to avoid double-retry. In particular,
+    /// [`super::auth_retry::execute_with_auth_retry`] uses this entry
+    /// point so its `must retry exactly once` contract still holds
+    /// after PR #1707 introduced the inner retry.
+    pub(crate) async fn execute_tool_once(
+        &self,
+        tool: &str,
+        arguments: Option<serde_json::Value>,
+    ) -> Result<ComposioExecuteResponse> {
+        let tool = tool.trim();
+        if tool.is_empty() {
+            anyhow::bail!("composio.execute_tool_once: tool slug must not be empty");
+        }
+        // Egress spine (privacy epic S2, #4436): see `execute_tool`. This is the
+        // caller-owns-retry entry point (e.g. `auth_retry`), disjoint from
+        // `execute_tool`, so each logical tool call emits exactly once.
+        let egress = crate::openhuman::security::egress::EgressDescriptor::composio(tool);
+        // Local-only enforcement (privacy epic S7, #4441): same gate as
+        // `execute_tool` — this disjoint entry point must block too.
+        crate::openhuman::security::egress::enforce_egress(&egress)?;
+        crate::openhuman::security::egress::emit_external_transfer(egress);
+        let arguments = super::execute_prepare::prepare_execute_arguments(tool, arguments)
+            .map_err(anyhow::Error::msg)?;
+        tracing::debug!(tool = %tool, "[composio] execute_tool_once (no built-in retry)");
+        let body = json!({ "tool": tool, "arguments": arguments });
+        let result = self.post_execute_tool(&body).await;
+        match &result {
+            Ok(resp) => tracing::debug!(
+                tool = %tool,
+                successful = resp.successful,
+                has_error = resp.error.is_some(),
+                "[composio] execute_tool_once completed"
+            ),
+            Err(err) => tracing::warn!(
+                tool = %tool,
+                error = %err,
+                "[composio] execute_tool_once failed"
+            ),
+        }
+        result.map_err(|e| {
+            anyhow::Error::msg(super::error_mapping::remap_transport_error(
+                tool,
+                &e.to_string(),
+            ))
+        })
+    }
+
+    pub(super) async fn execute_tool_with_post_oauth_retry(
+        &self,
+        tool: &str,
+        body: &serde_json::Value,
+        retry_delay: Duration,
+    ) -> Result<ComposioExecuteResponse> {
+        tracing::debug!(
+            tool = %tool,
+            retry_delay_ms = retry_delay.as_millis() as u64,
+            attempt = 1u8,
+            "[composio] execute_tool_with_post_oauth_retry attempt"
+        );
+        let first = self.post_execute_tool(body).await?;
+        let should_retry = is_post_oauth_auth_readiness_error(&first);
+        tracing::debug!(
+            tool = %tool,
+            attempt = 1u8,
+            successful = first.successful,
+            has_error = first.error.is_some(),
+            should_retry,
+            "[composio] execute_tool_with_post_oauth_retry branch decision"
+        );
+        if !should_retry {
+            return Ok(first);
+        }
+
+        tracing::warn!(
+            tool = %tool,
+            retry_delay_ms = retry_delay.as_millis() as u64,
+            "[composio] action returned post-OAuth auth-readiness error; retrying once"
+        );
+        if !retry_delay.is_zero() {
+            tokio::time::sleep(retry_delay).await;
+        }
+        tracing::debug!(
+            tool = %tool,
+            retry_delay_ms = retry_delay.as_millis() as u64,
+            attempt = 2u8,
+            "[composio] execute_tool_with_post_oauth_retry retry dispatch"
+        );
+        let retry = self.post_execute_tool(body).await;
+        match &retry {
+            Ok(resp) => tracing::debug!(
+                tool = %tool,
+                attempt = 2u8,
+                successful = resp.successful,
+                has_error = resp.error.is_some(),
+                "[composio] execute_tool_with_post_oauth_retry retry completed"
+            ),
+            Err(err) => tracing::debug!(
+                tool = %tool,
+                attempt = 2u8,
+                error = %err,
+                "[composio] execute_tool_with_post_oauth_retry retry failed"
+            ),
+        }
+        retry
+    }
+
+    async fn post_execute_tool(&self, body: &serde_json::Value) -> Result<ComposioExecuteResponse> {
+        self.inner
+            .post::<ComposioExecuteResponse>("/agent-integrations/composio/execute", body)
+            .await
+    }
+
+    /// `GET /agent-integrations/composio/github/repos` — list repositories
+    /// available via the user's authorized GitHub connected account.
+    pub async fn list_github_repos(
+        &self,
+        connection_id: Option<&str>,
+    ) -> Result<ComposioGithubReposResponse> {
+        let path = match connection_id.map(str::trim).filter(|id| !id.is_empty()) {
+            Some(id) => format!("/agent-integrations/composio/github/repos?connectionId={id}"),
+            None => "/agent-integrations/composio/github/repos".to_string(),
+        };
+        tracing::debug!(path = %path, "[composio] list_github_repos");
+        self.inner.get::<ComposioGithubReposResponse>(&path).await
+    }
+
+    /// `POST /agent-integrations/composio/triggers` — create a trigger
+    /// instance for the authenticated user.
+    pub async fn create_trigger(
+        &self,
+        slug: &str,
+        connection_id: Option<&str>,
+        trigger_config: Option<serde_json::Value>,
+    ) -> Result<ComposioCreateTriggerResponse> {
+        let slug = slug.trim();
+        if slug.is_empty() {
+            anyhow::bail!("composio.create_trigger: slug must not be empty");
+        }
+        let mut body = json!({ "slug": slug });
+        if let Some(connection_id) = connection_id.map(str::trim).filter(|id| !id.is_empty()) {
+            body["connectionId"] = json!(connection_id);
+        }
+        if let Some(config) = trigger_config {
+            body["triggerConfig"] = config;
+        }
+        tracing::debug!(slug = %slug, "[composio] create_trigger");
+        self.inner
+            .post::<ComposioCreateTriggerResponse>("/agent-integrations/composio/triggers", &body)
+            .await
+    }
+
+    // ── Trigger management (PR #671) ────────────────────────────────
+
+    /// `GET /agent-integrations/composio/triggers/available` — catalog of
+    /// triggers the user could enable for a toolkit. For GitHub the
+    /// backend fans out into per-repo entries scoped by `connection_id`.
+    pub async fn list_available_triggers(
+        &self,
+        toolkit: &str,
+        connection_id: Option<&str>,
+    ) -> Result<ComposioAvailableTriggersResponse> {
+        let toolkit = toolkit.trim();
+        if toolkit.is_empty() {
+            anyhow::bail!("composio.list_available_triggers: toolkit must not be empty");
+        }
+        let toolkit_q = urlencoding::encode(toolkit);
+        let path = match connection_id.map(str::trim).filter(|id| !id.is_empty()) {
+            Some(id) => format!(
+                "/agent-integrations/composio/triggers/available?toolkit={toolkit_q}&connectionId={}",
+                urlencoding::encode(id)
+            ),
+            None => format!(
+                "/agent-integrations/composio/triggers/available?toolkit={toolkit_q}"
+            ),
+        };
+        tracing::debug!(path = %path, "[composio] list_available_triggers");
+        self.inner
+            .get::<ComposioAvailableTriggersResponse>(&path)
+            .await
+    }
+
+    /// `GET /agent-integrations/composio/triggers` — currently enabled
+    /// triggers for the user, optionally filtered to a toolkit.
+    pub async fn list_active_triggers(
+        &self,
+        toolkit: Option<&str>,
+    ) -> Result<ComposioActiveTriggersResponse> {
+        let path = match toolkit.map(str::trim).filter(|t| !t.is_empty()) {
+            Some(t) => format!(
+                "/agent-integrations/composio/triggers?toolkit={}",
+                urlencoding::encode(t)
+            ),
+            None => "/agent-integrations/composio/triggers".to_string(),
+        };
+        tracing::debug!(path = %path, "[composio] list_active_triggers");
+        self.inner
+            .get::<ComposioActiveTriggersResponse>(&path)
+            .await
+    }
+
+    /// `POST /agent-integrations/composio/triggers` — enable a single
+    /// trigger on a connection the caller owns.
+    pub async fn enable_trigger(
+        &self,
+        connection_id: &str,
+        slug: &str,
+        trigger_config: Option<serde_json::Value>,
+    ) -> Result<ComposioEnableTriggerResponse> {
+        let connection_id = connection_id.trim();
+        let slug = slug.trim();
+        if connection_id.is_empty() {
+            anyhow::bail!("composio.enable_trigger: connectionId must not be empty");
+        }
+        if slug.is_empty() {
+            anyhow::bail!("composio.enable_trigger: slug must not be empty");
+        }
+        let mut body = json!({ "connectionId": connection_id, "slug": slug });
+        if let Some(config) = trigger_config {
+            body["triggerConfig"] = config;
+        }
+        tracing::debug!(slug = %slug, connection_id = %connection_id, "[composio] enable_trigger");
+        self.inner
+            .post::<ComposioEnableTriggerResponse>("/agent-integrations/composio/triggers", &body)
+            .await
+    }
+
+    /// `DELETE /agent-integrations/composio/triggers/:triggerId`.
+    pub async fn disable_trigger(
+        &self,
+        trigger_id: &str,
+    ) -> Result<ComposioDisableTriggerResponse> {
+        let trigger_id = trigger_id.trim();
+        if trigger_id.is_empty() {
+            anyhow::bail!("composio.disable_trigger: triggerId must not be empty");
+        }
+        tracing::debug!(trigger_id = %trigger_id, "[composio] disable_trigger");
+        self.raw_delete::<ComposioDisableTriggerResponse>(&format!(
+            "/agent-integrations/composio/triggers/{}",
+            urlencoding::encode(trigger_id)
+        ))
+        .await
+    }
+
+    // ── Raw DELETE ──────────────────────────────────────────────────
+
+    /// Perform an HTTP DELETE and parse the standard backend envelope.
+    ///
+    /// [`IntegrationClient`] only exposes `get` / `post` today, and the
+    /// composio route actually requires a DELETE. We re-implement the
+    /// envelope handling here so we don't have to widen the shared
+    /// client's public surface just for one caller.
+    async fn raw_delete<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T> {
+        #[derive(serde::Deserialize)]
+        struct Envelope<T> {
+            #[serde(default)]
+            success: bool,
+            data: Option<T>,
+            #[serde(default)]
+            error: Option<String>,
+        }
+
+        let url = crate::api::config::api_url(&self.inner.backend_url, path);
+        tracing::debug!("[composio] DELETE {}", url);
+
+        // Build a fresh lightweight reqwest client for this DELETE.
+        // Note: this allocates a *new* connection pool — it does NOT
+        // reuse the pool inside `self.inner`. To reuse the shared pool
+        // we'd need to clone or expose the existing `reqwest::Client`
+        // from `IntegrationClient`, which we intentionally avoid so the
+        // public surface of that type doesn't widen for one caller.
+        //
+        // Mirror the TLS settings of the shared client so this path has the
+        // same connection behaviour as the other backend calls.
+        // Platform-appropriate TLS backend — see [`crate::openhuman::util::tls`].
+        let http_client = crate::openhuman::util::tls::tls_client_builder()
+            .http1_only()
+            .timeout(std::time::Duration::from_secs(60))
+            .connect_timeout(std::time::Duration::from_secs(15))
+            .build()?;
+
+        let resp = http_client
+            .delete(&url)
+            .header("Authorization", format!("Bearer {}", self.inner.auth_token))
+            .send()
+            .await?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body_text = resp.text().await.unwrap_or_default();
+            let detail = crate::openhuman::integrations::client::extract_error_detail(
+                &body_text,
+                crate::openhuman::integrations::client::MAX_ERROR_BODY_LEN,
+            );
+            // Use the same UTF-8-safe truncation for the debug-log preview
+            // — direct byte-slicing (`&body_text[..len.min(300)]`) panics
+            // when the cutoff lands inside a multibyte codepoint.
+            let logged_body =
+                crate::openhuman::integrations::client::extract_error_detail(&body_text, 300);
+            tracing::debug!(
+                "[composio] DELETE {} → {} body={}",
+                url,
+                status,
+                logged_body
+            );
+            let status_str = status.as_u16().to_string();
+            // Mirrors the integrations post()/get() sites — see
+            // OPENHUMAN-TAURI-BC. 4xx user-input / auth-state shapes
+            // demote via the observability classifier; 5xx and
+            // non-transient 4xx still surface as actionable events.
+            crate::core::observability::report_error_or_expected(
+                format!("Backend returned {status} for DELETE {url}: {detail}").as_str(),
+                "composio",
+                "delete",
+                &[
+                    ("path", path),
+                    ("status", status_str.as_str()),
+                    ("failure", "non_2xx"),
+                ],
+            );
+            anyhow::bail!("Backend returned {status} for DELETE {url}: {detail}");
+        }
+
+        let envelope: Envelope<T> = resp.json().await?;
+        if !envelope.success {
+            let msg = envelope
+                .error
+                .unwrap_or_else(|| "unknown backend error".into());
+            // Mirrors the integrations envelope-error sites — route through
+            // the observability classifier so user-state envelope failures
+            // (composio "Toolkit X is not enabled" / "Trigger type …
+            // not found" / "Missing required fields: …" — OPENHUMAN-TAURI-3R
+            // / -3S / -34 / -97) demote to a breadcrumb instead of firing
+            // a Sentry event. Genuine backend bugs still surface.
+            crate::core::observability::report_error_or_expected(
+                msg.as_str(),
+                "composio",
+                "delete",
+                &[("path", path), ("failure", "envelope_error")],
+            );
+            anyhow::bail!("Backend error for DELETE {}: {}", url, msg);
+        }
+        envelope.data.ok_or_else(|| {
+            anyhow::anyhow!("Backend returned success but no data for DELETE {}", url)
+        })
+    }
+}
+
+fn is_post_oauth_auth_readiness_error(resp: &ComposioExecuteResponse) -> bool {
+    if resp.successful {
+        return false;
+    }
+    let Some(error) = resp.error.as_deref() else {
+        return false;
+    };
+    let normalized = error.trim().to_ascii_lowercase();
+    POST_OAUTH_AUTH_ERROR_STRINGS
+        .iter()
+        .any(|needle| normalized.contains(needle))
+}
+
+fn required_oauth_scopes_for_toolkit(toolkit: &str) -> &'static [&'static str] {
+    match toolkit.trim().to_ascii_lowercase().as_str() {
+        // GMAIL_NEW_GMAIL_MESSAGE and the native Gmail sync path need read access
+        // to messages. Without this hint fresh OAuth handoffs can complete with a
+        // profile-only Google token and trigger enable fails with 403 insufficient
+        // authentication scopes (#2186).
+        "gmail" => GMAIL_REQUIRED_OAUTH_SCOPES,
+        _ => &[],
+    }
+}
+
+fn merge_required_oauth_scopes(body: &mut Value, toolkit: &str) -> anyhow::Result<()> {
+    let required = required_oauth_scopes_for_toolkit(toolkit);
+    if required.is_empty() {
+        return Ok(());
+    }
+
+    let obj = body
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("composio.authorize: internal payload must be an object"))?;
+    match obj.get_mut(AUTHORIZE_OAUTH_SCOPES_FIELD) {
+        Some(existing) => append_missing_oauth_scopes(existing, required)?,
+        None => {
+            obj.insert(AUTHORIZE_OAUTH_SCOPES_FIELD.to_string(), json!(required));
+        }
+    }
+    Ok(())
+}
+
+fn append_missing_oauth_scopes(value: &mut Value, required: &[&str]) -> anyhow::Result<()> {
+    let mut scopes = match value {
+        Value::Null => Vec::new(),
+        Value::String(raw) => raw
+            .split(|ch: char| ch == ',' || ch.is_whitespace())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string)
+            .collect(),
+        Value::Array(items) => {
+            let mut out = Vec::with_capacity(items.len() + required.len());
+            for item in items {
+                let Some(scope) = item.as_str() else {
+                    anyhow::bail!(
+                        "composio.authorize: {AUTHORIZE_OAUTH_SCOPES_FIELD} entries must be strings"
+                    );
+                };
+                let scope = scope.trim();
+                if !scope.is_empty() {
+                    out.push(scope.to_string());
+                }
+            }
+            out
+        }
+        _ => {
+            anyhow::bail!(
+                "composio.authorize: {AUTHORIZE_OAUTH_SCOPES_FIELD} must be a string or array"
+            );
+        }
+    };
+
+    for scope in required {
+        if !scopes.iter().any(|existing| existing == scope) {
+            scopes.push((*scope).to_string());
+        }
+    }
+    *value = json!(scopes);
+    Ok(())
+}

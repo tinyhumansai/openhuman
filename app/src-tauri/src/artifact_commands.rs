@@ -1,69 +1,27 @@
-//! Tauri commands for exporting agent-generated artifacts (#2779, #3162).
+//! Tauri commands for exporting agent-generated artifacts (#2779).
 //!
-//! Two export paths, both fed by the frontend resolving an artifact's
-//! absolute source path via the `openhuman.ai_get_artifact` core RPC:
+//! One export path, fed by the frontend resolving an artifact's absolute
+//! source path via the `openhuman.ai_get_artifact` core RPC:
+//! [`download_artifact_to_downloads`] copies the artifact into the user's
+//! Downloads directory with a non-colliding name and returns the dest path
+//! so the UI can offer "Reveal in Finder". Cross-platform.
 //!
-//! 1. [`save_artifact_via_dialog`] (#3162) — opens a native Save-As
-//!    dialog (macOS / Windows / Linux) pre-filled with the artifact's
-//!    filename and copies the bytes to the user-chosen destination.
-//!    Returns `Ok(None)` when the user cancels. Backed by the `rfd`
-//!    crate, which talks to the OS dialog APIs directly and does NOT
-//!    pull `tauri-plugin-fs` (whose `schemars` version conflict was the
-//!    reason the original #2779 work shipped the Downloads fallback
-//!    below instead of a dialog).
-//! 2. [`download_artifact_to_downloads`] (#2779) — copies the artifact
-//!    into the user's Downloads directory with a non-colliding name and
-//!    returns the dest path so the UI can offer "Reveal in Finder".
-//!    Retained as the fallback the frontend uses when the dialog is
-//!    unavailable (e.g. no portal on headless Linux) or the user cancels.
-//!    Cross-platform — previously macOS/Linux-only, un-gated so the
-//!    Save-As fallback works on Windows too.
+//! **The native Save-As dialog (#3162) was removed.** It was one call into
+//! `rfd`, and `rfd` carried 13 packages — the xdg-desktop-portal client
+//! (`ashpd`), `zbus`, and the `async-io`/`polling` executor stack — into a
+//! binary that already reaches D-Bus through other paths. The frontend's
+//! `saveArtifactViaDialog` had a Downloads fallback for hosts with no
+//! portal from the day it landed, so that fallback is simply the only path
+//! now; the user still gets the file plus "Reveal in Finder", one dialog
+//! fewer. If a real Save-As is wanted again, prefer the destination-picking
+//! surface Tauri itself already links over re-adding a second dialog stack.
 //!
-//! Both validate that the source is an existing file inside the
-//! OpenHuman data dir's `artifacts/` tree, and sanitize the filename
-//! hint, so the renderer can never copy an arbitrary local file out nor
-//! write outside the chosen directory.
+//! It validates that the source is an existing file inside the OpenHuman
+//! data dir's `artifacts/` tree, and sanitizes the filename hint, so the
+//! renderer can never copy an arbitrary local file out nor write outside
+//! the Downloads directory.
 
 use std::path::{Path, PathBuf};
-
-/// Open a native Save-As dialog pre-filled with `suggested_filename` and
-/// copy the artifact at `source_path` to the chosen destination (#3162).
-///
-/// Returns:
-/// - `Ok(Some(dest))` — the absolute path the user saved to.
-/// - `Ok(None)` — the user dismissed the dialog (not an error; the
-///   frontend simply stops).
-/// - `Err(_)` — bad inputs or a copy failure; the frontend falls back to
-///   [`download_artifact_to_downloads`] where available.
-#[tauri::command]
-pub async fn save_artifact_via_dialog(
-    source_path: String,
-    suggested_filename: String,
-) -> Result<Option<String>, String> {
-    let source = validate_source(&source_path)?;
-    let sanitized = sanitize_filename(&suggested_filename)?;
-
-    // `rfd` drives the OS-native dialog. On Linux this is the xdg-desktop
-    // portal (no GTK link); on macOS/Windows the system panel. The await
-    // resolves when the user picks a path or cancels.
-    let handle = rfd::AsyncFileDialog::new()
-        .set_file_name(&sanitized)
-        .save_file()
-        .await;
-
-    let Some(file) = handle else {
-        log::info!("[artifact_commands] save_artifact_via_dialog cancelled by user");
-        return Ok(None);
-    };
-
-    let dest = file.path().to_path_buf();
-    let bytes = copy_to_path(&source, &dest).await?;
-    log::info!(
-        "[artifact_commands] save_artifact_via_dialog bytes={bytes} dest={}",
-        dest.display()
-    );
-    Ok(Some(dest.display().to_string()))
-}
 
 /// Validate a renderer-supplied source path: must be a non-empty,
 /// absolute path that exists on disk AND resolve inside the OpenHuman
@@ -115,9 +73,8 @@ fn assert_artifact_source(source: &Path, root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Copy `source` to `dest`, returning the byte count. Shared by the
-/// Save-As dialog flow; isolated so it is unit-testable without driving
-/// a real OS dialog.
+/// Copy `source` to `dest`, returning the byte count. Isolated so it is
+/// unit-testable without touching the real Downloads directory.
 async fn copy_to_path(source: &Path, dest: &Path) -> Result<u64, String> {
     tokio::fs::copy(source, dest)
         .await
@@ -303,16 +260,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn save_via_dialog_rejects_bad_source() {
-        // Validation runs before any dialog is shown, so these resolve
-        // without user interaction.
+    async fn download_rejects_bad_source() {
+        // Source validation runs before the Downloads directory is touched,
+        // so these resolve without writing anything.
         assert!(
-            save_artifact_via_dialog(String::new(), "x.pptx".to_string())
+            download_artifact_to_downloads(String::new(), "x.pptx".to_string())
                 .await
                 .is_err()
         );
         assert!(
-            save_artifact_via_dialog("relative".to_string(), "x.pptx".to_string())
+            download_artifact_to_downloads("relative".to_string(), "x.pptx".to_string())
                 .await
                 .is_err()
         );

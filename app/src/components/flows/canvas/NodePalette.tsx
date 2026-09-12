@@ -19,7 +19,7 @@ import {
   type PaletteEntry,
 } from '../../../lib/flows/nodeKindMeta';
 import { useT } from '../../../lib/i18n/I18nContext';
-import Button from '../../ui/Button';
+import { Button } from '../../ui';
 
 /** dataTransfer MIME key for a palette drag — read by the canvas `onDrop`. */
 export const PALETTE_DND_MIME = 'application/tinyflows-node';

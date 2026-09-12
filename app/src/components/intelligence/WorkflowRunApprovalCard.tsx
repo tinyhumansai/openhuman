@@ -58,6 +58,9 @@ const WorkflowRunApprovalCard: React.FC<Props> = ({
   const { t } = useT();
 
   return (
+    // Not `ui/Alert`: this card must render as an opaque solid, never Alert's
+    // translucent `dark:bg-amber-500/10`, so background chat thread text
+    // never bleeds through underneath it (#3783 — see the regression test).
     <div
       role="alertdialog"
       aria-label={t('orchestration.approval.title')}

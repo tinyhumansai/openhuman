@@ -8,7 +8,12 @@ use crate::openhuman::memory::rpc::{self, SyncChannelParams};
 
 use super::{parse_params, to_json};
 
-pub(super) const FUNCTIONS: &[&str] = &["sync_channel", "sync_all", "ingestion_status"];
+pub(super) const FUNCTIONS: &[&str] = &[
+    "sync_channel",
+    "sync_all",
+    "ingestion_status",
+    "scheduler_override",
+];
 
 pub(super) fn controllers() -> Vec<RegisteredController> {
     vec![
@@ -23,6 +28,10 @@ pub(super) fn controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schema("ingestion_status").unwrap(),
             handler: handle_ingestion_status,
+        },
+        RegisteredController {
+            schema: schema("scheduler_override").unwrap(),
+            handler: handle_scheduler_override,
         },
     ]
 }
@@ -67,6 +76,25 @@ pub(super) fn schema(function: &str) -> Option<ControllerSchema> {
                 FieldSchema { name: "last_success", ty: TypeSchema::Option(Box::new(TypeSchema::Bool)), comment: "Whether the most recent job succeeded.", required: false },
             ],
         },
+        "scheduler_override" => ControllerSchema {
+            namespace: "memory",
+            function: "scheduler_override",
+            description: "Open a bounded manual-override window on the memory module's background \
+                          scheduler gate, so user-requested maintenance runs even while the gate \
+                          is paused (mode=off, signed out, on battery). Clamped to one hour. \
+                          Operator/CLI surface by design for now -- the in-app affordance is \
+                          tracked in #5935 and lands with the UI half of that issue.",
+            inputs: vec![FieldSchema {
+                name: "seconds",
+                ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                comment: "Window length in seconds; default 600, clamped to 3600.",
+                required: false,
+            }],
+            outputs: vec![
+                FieldSchema { name: "overridden", ty: TypeSchema::Bool, comment: "True when the module accepted the window.", required: true },
+                FieldSchema { name: "seconds", ty: TypeSchema::U64, comment: "The clamped window actually opened.", required: true },
+            ],
+        },
         _ => return None,
     })
 }
@@ -86,26 +114,13 @@ fn handle_ingestion_status(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move { to_json(rpc::memory_ingestion_status().await?) })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn sync_schema_exposes_all_functions() {
-        assert_eq!(FUNCTIONS, &["sync_channel", "sync_all", "ingestion_status"]);
-        assert_eq!(controllers().len(), FUNCTIONS.len());
-    }
-
-    #[test]
-    fn unknown_sync_schema_returns_none() {
-        assert!(schema("not_real").is_none());
-    }
-
-    #[test]
-    fn sync_channel_schema_requires_channel_id() {
-        let schema = schema("sync_channel").unwrap();
-        assert_eq!(schema.inputs.len(), 1);
-        assert_eq!(schema.inputs[0].name, "channel_id");
-        assert!(schema.inputs[0].required);
-    }
+fn handle_scheduler_override(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let seconds = params.get("seconds").and_then(Value::as_u64);
+        to_json(rpc::memory_scheduler_override(seconds).await?)
+    })
 }
+
+#[cfg(test)]
+#[path = "sync_tests.rs"]
+mod tests;

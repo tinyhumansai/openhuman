@@ -23,9 +23,10 @@ import chatRuntimeReducer, {
   bumpInferenceHeartbeatForThread,
   markInferenceTurnStreaming,
   setInferenceStatusForThread,
+  setPendingPlanReviewForThread,
   setStreamingAssistantForThread,
   setToolTimelineForThread,
-  setTurnTimelinesForThread,
+  setWorkflowProposalForThread,
 } from '../../store/chatRuntimeSlice';
 import layoutReducer from '../../store/layoutSlice';
 import socketReducer from '../../store/socketSlice';
@@ -76,6 +77,15 @@ vi.mock('../../services/api/threadApi', () => ({
     getThreadMessages: mockGetThreadMessages,
     getTurnState: vi.fn().mockResolvedValue(null),
     getTurnStateHistory: vi.fn().mockResolvedValue([]),
+    getDerivedTranscript: vi
+      .fn()
+      .mockResolvedValue({
+        threadId: 'none',
+        items: [],
+        total: 0,
+        hasMore: false,
+        hasTranscript: false,
+      }),
     getTaskBoard: vi
       .fn()
       .mockResolvedValue({ threadId: 't-1', cards: [], updatedAt: '2026-05-04T10:00:00Z' }),
@@ -380,6 +390,31 @@ function setComposerText(textarea: HTMLElement, text: string) {
   fireEvent.input(textarea, { data: text, inputType: 'insertText' });
 }
 
+/**
+ * Drive one IME composition the way a browser does: keystrokes arrive as `input`
+ * events carrying the PRE-EDIT text with `isComposing` set, then the commit lands
+ * on `compositionend`.
+ *
+ * `fireEvent.input` builds an `InputEvent` from these props, so `isComposing` is a
+ * real property on the native event rather than something the handler has to be
+ * told about.
+ */
+function typeImePreEdits(textarea: HTMLElement, preEdits: string[]) {
+  for (const preEdit of preEdits) {
+    textarea.textContent = preEdit;
+    fireEvent.input(textarea, {
+      data: preEdit,
+      inputType: 'insertCompositionText',
+      isComposing: true,
+    });
+  }
+}
+
+function commitIme(textarea: HTMLElement, committed: string) {
+  textarea.textContent = committed;
+  fireEvent.compositionEnd(textarea, { data: committed });
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
@@ -598,6 +633,15 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       'Long agent output with enough structure to prefer a text view.'
     );
     expect(screen.getByText('Can you summarize this?')).toBeInTheDocument();
+    // Message rows must retain their measured layout/paint while off-screen.
+    // `content-visibility:auto` plus a guessed intrinsic height makes WebKit
+    // reveal/re-size rows as they cross the viewport, producing scroll flicker.
+    const assistantRoot = screen.getByTestId('agent-message');
+    const userRoot = document.querySelector('[data-slot="aui_user-message-root"]');
+    expect(assistantRoot.className).not.toContain('content-visibility');
+    expect(userRoot?.className).not.toContain('content-visibility');
+    expect(assistantRoot.className).not.toContain('contain-intrinsic-size');
+    expect(userRoot?.className).not.toContain('contain-intrinsic-size');
   });
 
   it("renders a past turn's process trail above the answer it produced (Phase 5)", async () => {
@@ -641,9 +685,18 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
     mockGetThreadMessages.mockResolvedValue({ messages, count: messages.length });
 
-    let store: ReturnType<typeof buildStore> | undefined;
+    vi.mocked(threadApi.getDerivedTranscript).mockResolvedValueOnce({
+      threadId: thread.id,
+      items: [
+        { kind: 'toolCall', callId: 'tc-1', name: 'read_file', status: 'success' },
+        { kind: 'turnBoundary', requestId: 'req-1' },
+      ],
+      total: 2,
+      hasMore: false,
+      hasTranscript: true,
+    });
     await act(async () => {
-      store = await renderConversations({
+      await renderConversations({
         thread: {
           ...selectedThreadState(thread),
           messagesByThreadId: { [thread.id]: messages },
@@ -653,24 +706,8 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       });
     });
 
-    // No past-turn tool call before hydration.
-    expect(screen.queryByText(/read_file/)).not.toBeInTheDocument();
-
-    // Hydrate the older turn's timeline (as fetchAndHydrateTurnHistory would).
-    await act(async () => {
-      store!.dispatch(
-        setTurnTimelinesForThread({
-          threadId: thread.id,
-          timelines: {
-            'req-1': [{ id: 'tc-1', name: 'read_file', round: 0, seq: 0, status: 'success' }],
-          },
-        })
-      );
-    });
-
-    // The past turn's tool call is projected into assistant-ui exactly once.
-    fireEvent.click(await screen.findByRole('button', { name: /1 tool call/ }));
-    expect(await screen.findByText('read_file')).toBeInTheDocument();
+    // The past turn's core transcript is projected into assistant-ui exactly once.
+    expect(await screen.findByTestId('assistant-ui-tool-call')).toHaveTextContent('Read File');
   });
 
   it('keeps assistant message copy available through assistant-ui', async () => {
@@ -955,9 +992,148 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     // The send cleared the composer; with an empty composer mid-send the Send
     // button morphs into the Stop button, so there is no Send affordance left
     // to fire a duplicate send.
-    expect(screen.getByRole('button', { name: 'Stop generating' })).toBeInTheDocument();
+    const stopButton = screen.getByRole('button', { name: 'Stop generating' });
+    expect(stopButton).toBeInTheDocument();
+    expect(stopButton).toHaveClass(
+      'bg-primary-500',
+      'text-content-inverted',
+      'hover:bg-primary-600'
+    );
     expect(screen.queryByRole('button', { name: 'Send message' })).not.toBeInTheDocument();
     resolveSend?.();
+  });
+
+  // #5763. The DOM->store bridge on the composer fired on every `input`, and an
+  // IME emits one per keystroke carrying the PRE-EDIT text. In a browser the
+  // resulting store write re-renders the editor and cancels the composition, so
+  // `nihao` + Enter committed as `n ni nihao 你好`. jsdom has no real Lexical
+  // composition to cancel, so what it shows instead is the other half of the same
+  // fault: the committed text never arrives and the last pre-edit stands. Either
+  // way the composer must end up holding what the user committed.
+  it('does not push the pre-edit into the composer while an IME composition runs', async () => {
+    const { textarea } = await renderSelectedConversation();
+
+    await act(async () => {
+      typeImePreEdits(textarea, ['n', 'ni', 'nihao']);
+    });
+
+    // Nothing was committed, so the composer must still be empty. Before the fix
+    // each pre-edit keystroke was written straight into the store, which is the
+    // write that cancels the composition in a real browser (#5763).
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Send message' })).toBeNull();
+    });
+  });
+
+  it('takes the committed IME text when the composition ends', async () => {
+    const { textarea, thread } = await renderSelectedConversation();
+
+    await act(async () => {
+      typeImePreEdits(textarea, ['n', 'ni', 'nihao']);
+      commitIme(textarea, '你好');
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    });
+
+    await waitFor(() => {
+      expect(chatSend).toHaveBeenCalledTimes(1);
+    });
+    expect(chatSend).toHaveBeenCalledWith(
+      expect.objectContaining({ threadId: thread.id, message: '你好' })
+    );
+  });
+
+  // The store write is deferred by a microtask, so a fast typist can open the
+  // NEXT composition before it runs. #5764 (@ligjn) named that hazard: the stale
+  // write rebuilds the editor mid-composition and cancels it, which is #5763 one
+  // composition later. The gate is therefore re-checked inside the microtask.
+  it('drops a deferred store write once the next composition has begun', async () => {
+    const { textarea, thread } = await renderSelectedConversation();
+
+    await act(async () => {
+      fireEvent.compositionStart(textarea);
+      typeImePreEdits(textarea, ['n', 'ni', 'nihao']);
+      commitIme(textarea, '你好');
+      // Still inside the same task, so the write queued by `commitIme` has not
+      // run yet — and the user has already started composing the next word.
+      fireEvent.compositionStart(textarea);
+    });
+
+    // The stale write was dropped: nothing reached the store while a
+    // composition is open.
+    expect(screen.queryByRole('button', { name: 'Send message' })).toBeNull();
+
+    // Nothing was lost either — the next commit reads the whole DOM.
+    await act(async () => {
+      typeImePreEdits(textarea, ['你好sh', '你好shi']);
+      commitIme(textarea, '你好世界');
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    });
+    await waitFor(() => {
+      expect(chatSend).toHaveBeenCalledTimes(1);
+    });
+    expect(chatSend).toHaveBeenCalledWith(
+      expect.objectContaining({ threadId: thread.id, message: '你好世界' })
+    );
+  });
+
+  // A cancelled composition (Escape, or clicking away) still fires
+  // `compositionend`, but the finalized DOM is legitimately empty. The store
+  // must end up empty too rather than holding the last pre-edit.
+  it('does not resurrect the pre-edit when a composition is cancelled', async () => {
+    const { textarea } = await renderSelectedConversation();
+
+    await act(async () => {
+      fireEvent.compositionStart(textarea);
+      typeImePreEdits(textarea, ['n', 'ni', 'nihao']);
+      commitIme(textarea, '');
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Send message' })).toBeNull();
+    });
+
+    // The gate reopened, so ordinary typing after the cancellation still syncs.
+    await act(async () => {
+      setComposerText(textarea, 'after cancel');
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+    });
+  });
+
+  // The gate keys on `isComposing`, so ordinary typing must be untouched. This is
+  // the property the 22 existing composer tests depend on: in jsdom the bridge is
+  // the only path from a synthetic `input` to the store.
+  it('still syncs ordinary typing, which carries no composition flag', async () => {
+    const { textarea, thread } = await renderSelectedConversation();
+
+    await act(async () => {
+      setComposerText(textarea, 'plain text');
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    });
+
+    await waitFor(() => {
+      expect(chatSend).toHaveBeenCalledTimes(1);
+    });
+    expect(chatSend).toHaveBeenCalledWith(
+      expect.objectContaining({ threadId: thread.id, message: 'plain text' })
+    );
   });
 
   it('cancels the in-flight generation when the in-composer Stop button is clicked', async () => {
@@ -1928,5 +2104,122 @@ describe('Conversations — external-transfer disclosure card removed', () => {
     });
 
     expect(screen.queryByText('Leaving your device')).toBeNull();
+  });
+});
+
+/**
+ * The two turn gates the agent parks on. Both used to render only inside
+ * `legacyMainPanel`, which `/chat` never mounts — the text surface is
+ * assistant-ui and the two panels are an either/or — so a parked plan review
+ * hung the turn with nothing to decide, and a `propose_workflow` draft lost its
+ * only route to `flows_create`. They are now rendered from the shared
+ * `agentGateCards` fragment, which the assistant-ui composer header carries.
+ */
+describe('Conversations — turn gates on the assistant-ui surface', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    window.localStorage.clear();
+    mockGetThreads.mockResolvedValue({ threads: [], count: 0 });
+    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
+  });
+
+  async function renderGatedConversation() {
+    const thread = makeThread({ id: 'gate-thread', title: 'Gate Thread' });
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
+
+    let store: ReturnType<typeof buildStore> | undefined;
+    await act(async () => {
+      store = await renderConversations({
+        thread: selectedThreadState(thread),
+        socket: socketState('connected'),
+      });
+    });
+    // The default composer is 'text', so this is the assistant-ui panel — the
+    // legacy panel is not in the tree at all.
+    expect(screen.getByTestId('chat-message-input')).toBeInTheDocument();
+    return { thread, store: store! };
+  }
+
+  it('surfaces a parked plan review above the assistant-ui composer', async () => {
+    const { thread, store } = await renderGatedConversation();
+
+    await act(async () => {
+      store.dispatch(
+        setPendingPlanReviewForThread({
+          threadId: thread.id,
+          review: {
+            requestId: 'plan-req-1',
+            summary: 'Refactor the billing module',
+            steps: ['Read the invoices module', 'Extract the tax helper'],
+          },
+        })
+      );
+    });
+
+    const card = await screen.findByTestId('plan-review-card');
+    expect(card).toBeInTheDocument();
+    expect(within(card).getByText('Refactor the billing module')).toBeInTheDocument();
+    expect(within(card).getByText('Extract the tax helper')).toBeInTheDocument();
+  });
+
+  it('surfaces a drafted workflow proposal above the assistant-ui composer', async () => {
+    const { thread, store } = await renderGatedConversation();
+
+    await act(async () => {
+      store.dispatch(
+        setWorkflowProposalForThread({
+          threadId: thread.id,
+          proposal: {
+            name: 'Morning digest',
+            graph: { nodes: [], edges: [] },
+            requireApproval: false,
+            summary: {
+              trigger: 'schedule: 0 9 * * *',
+              steps: [{ kind: 'agent', name: 'Summarize inbox' }],
+            },
+          },
+        })
+      );
+    });
+
+    const card = await screen.findByTestId('workflow-proposal-card');
+    expect(card).toBeInTheDocument();
+    expect(within(card).getByText('Morning digest')).toBeInTheDocument();
+  });
+
+  it('keeps half-typed plan feedback across an unrelated host re-render', async () => {
+    const { thread, store } = await renderGatedConversation();
+
+    await act(async () => {
+      store.dispatch(
+        setPendingPlanReviewForThread({
+          threadId: thread.id,
+          review: { requestId: 'plan-req-2', summary: 'Ship it', steps: [] },
+        })
+      );
+    });
+
+    const feedback = await screen.findByTestId('plan-review-feedback');
+    await act(async () => {
+      fireEvent.change(feedback, { target: { value: 'use the staging bucket' } });
+    });
+    expect(screen.getByTestId('plan-review-feedback')).toHaveValue('use the staging bucket');
+
+    // Any unrelated re-render of Conversations rebuilds the composer-header
+    // node. The header is rendered by component type (`thread.tsx`), so a
+    // header component that closes over that node changes type every render and
+    // React remounts the whole subtree — silently wiping this textarea.
+    await act(async () => {
+      store.dispatch(bumpInferenceHeartbeatForThread({ threadId: thread.id }));
+      store.dispatch(
+        setStreamingAssistantForThread({
+          threadId: thread.id,
+          streaming: { requestId: 'req-x', content: 'thinking out loud', thinking: '' },
+        })
+      );
+    });
+
+    expect(screen.getByTestId('plan-review-feedback')).toHaveValue('use the staging bucket');
   });
 });

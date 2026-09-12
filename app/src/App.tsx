@@ -50,6 +50,7 @@ import {
 } from './services/internetStatusListener';
 import { persistor, store } from './store';
 import { DEV_FORCE_ONBOARDING } from './utils/config';
+import { installExternalLinkGuard } from './utils/externalLinkGuard';
 
 startNativeNotificationsService();
 // Connectivity status (#1527): wire navigator.onLine + start core sidecar
@@ -69,6 +70,13 @@ if (import.meta.hot) {
 
 function App() {
   const onMobile = getIsMobile();
+
+  // The desktop shell is one webview with no back button, so a link that
+  // navigates it away strands the user on that page with no route back to the
+  // chat. Chat bubbles route their own links through `openUrl`; this guard
+  // covers every other anchor the app renders. Installed here, above the
+  // router, so it is live for the whole session.
+  useEffect(() => installExternalLinkGuard(), []);
 
   // On mobile (iOS or Android) the SocketProvider would try to connect to the
   // local core HTTP socket, which does not exist on device (the core runs on
@@ -224,11 +232,15 @@ export function AppShellDesktop() {
   const onHiddenChromePath = ['/', '/login'].some(
     path => location.pathname === path || location.pathname.startsWith(`${path}/`)
   );
-  // The workflow graph canvas (`/flows/:id`, `/flows/draft`) owns the full
-  // viewport for a focused builder — no app sidebar. The `/flows` list (and its
-  // in-page Runs / Discoveries sub-views on `?view=`) keep their chrome.
-  const onWorkflowCanvas = location.pathname.startsWith('/flows/');
-  const chromeless = !token || onOnboardingRoute || onHiddenChromePath || onWorkflowCanvas;
+  // The workflow graph canvas (`/flows/:id`, `/flows/draft`) used to be listed
+  // here too, as "a focused builder — no app sidebar". It is back in the shell:
+  // going chromeless cost it the app nav AND the sidebar slot, so the builder
+  // had to hand-roll its own 240px run-history rail inside the page (`hidden
+  // lg:flex w-60 border-r`) — a second sidebar sitting where the real one would
+  // have been. It now projects that rail through `SidebarContent` like every
+  // other page, and a user who wants the focused view collapses the sidebar,
+  // which is what `collapsible="icon"` is for.
+  const chromeless = !token || onOnboardingRoute || onHiddenChromePath;
 
   const content = (
     <div ref={scrollRef} className="relative h-full overflow-y-auto">

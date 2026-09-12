@@ -59,7 +59,7 @@ case "$PLATFORM" in
     fi
     ;;
   Linux)
-    LINUX_BIN="$APP_DIR/src-tauri/target/debug/openhuman"
+    LINUX_BIN="$APP_DIR/src-tauri/target/debug/OpenHuman"
     LINUX_DEB="$APP_DIR/src-tauri/target/debug/bundle/deb"
     if [[ -f "$LINUX_BIN" ]]; then
       BINARY_FOUND=1
@@ -70,7 +70,7 @@ case "$PLATFORM" in
     fi
     ;;
   MINGW*|MSYS*|CYGWIN*|Windows*)
-    WIN_BIN="$APP_DIR/src-tauri/target/debug/openhuman.exe"
+    WIN_BIN="$APP_DIR/src-tauri/target/debug/OpenHuman.exe"
     if [[ -f "$WIN_BIN" ]]; then
       BINARY_FOUND=1
       BINARY_PATH="$WIN_BIN"

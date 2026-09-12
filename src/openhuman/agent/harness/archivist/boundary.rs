@@ -262,4 +262,5 @@ fn truncate_utf8_safe(s: &str, max_chars: usize) -> String {
 }
 
 #[cfg(test)]
+#[path = "boundary/boundary_tests.rs"]
 mod tests;

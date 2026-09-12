@@ -8,7 +8,7 @@
 //! execution.
 //!
 //! This PR ships the definition model + the read surface (list definitions,
-//! list/get durable runs from `tinyagents::session::run_ledger`). The live execution
+//! list/get durable runs from `tinyagents_session::run_ledger`). The live execution
 //! engine is deferred to a follow-up.
 
 use serde::Serialize;

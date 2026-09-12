@@ -22,7 +22,6 @@ pub mod rpc;
 pub mod tui;
 
 pub use openhuman::config::DaemonConfig;
-pub use tinymemory_core::store::{MemoryClient, MemoryState};
 
 /// Embeddable core composition API. Host the OpenHuman core in any process —
 /// the Tauri shell, a CLI, a stdio MCP server, or a cloud/team server — via
@@ -41,12 +40,11 @@ pub use embed::McpServer;
 ///
 /// ```no_run
 /// # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
-/// use openhuman_core::{Harness, Provider, Session, Workspace};
+/// use openhuman_core::{Harness, Provider, Workspace};
 ///
 /// let harness = Harness::builder()
 ///     .provider(Provider::openai_compatible("https://api.example/v1", "sk-…").model("gpt-5"))
 ///     .workspace(Workspace::Ephemeral)
-///     .session(Session::local("my-host"))
 ///     .build()
 ///     .await?;
 ///

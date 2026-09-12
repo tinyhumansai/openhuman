@@ -5,8 +5,6 @@
  * This module is pure data — no JSX, no React imports.  Icons are owned by
  * BottomTabBar.tsx and mapped from tab.id.
  */
-import { BILLING_DASHBOARD_URL } from '../utils/links';
-
 // ── Tab bar ──────────────────────────────────────────────────────────────────
 
 export interface NavTab {
@@ -29,10 +27,6 @@ export interface NavTab {
 /**
  * Ordered list of sidebar nav entries:
  *   chat → brain → flows → connections → rewards
- *
- * Orchestration (TinyPlace multi-agent coordination) is no longer a top-level
- * tab — it was folded back under Brain as the `/brain?tab=orchestration`
- * sub-tab, so the sidebar stays lean.
  *
  * Human has no primary tab: `/human` is reached from the chat composer, whose
  * primary button becomes the mascot when there is nothing to send (see
@@ -118,8 +112,8 @@ export const AVATAR_MENU_ITEMS: AvatarMenuItem[] = [
   {
     id: 'billing',
     labelKey: 'nav.avatarMenu.billing',
-    target: BILLING_DASHBOARD_URL,
-    kind: 'openUrl',
+    target: '/settings/billing',
+    kind: 'navigate',
     cloudOnly: true,
   },
   {

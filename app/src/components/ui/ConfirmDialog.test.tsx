@@ -124,4 +124,60 @@ describe('ConfirmDialog', () => {
     expect(screen.getByRole('button', { name: 'Delete forever' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Keep' })).toBeInTheDocument();
   });
+
+  /**
+   * The three hooks below are what let a hand-rolled confirm overlay move onto
+   * this component without its spec being rewritten — `FlowCanvasPage`'s two
+   * inline confirms assert `flow-action-confirm` / `-cancel` /
+   * `-confirm-accept` and `flow-leave-confirm` / `-stay` / `-discard`.
+   */
+  test('forwards testId, confirmTestId and cancelTestId to the right nodes', () => {
+    render(
+      <ConfirmDialog
+        {...baseProps()}
+        testId="flow-action-confirm"
+        confirmTestId="flow-action-confirm-accept"
+        cancelTestId="flow-action-cancel"
+      />
+    );
+
+    expect(screen.getByTestId('flow-action-confirm')).toBe(screen.getByRole('dialog'));
+    expect(screen.getByTestId('flow-action-confirm-accept')).toBe(
+      screen.getByRole('button', { name: 'common.confirm' })
+    );
+    expect(screen.getByTestId('flow-action-cancel')).toBe(
+      screen.getByRole('button', { name: 'common.cancel' })
+    );
+  });
+
+  test('the forwarded hooks still drive the real callbacks', async () => {
+    const props = baseProps();
+    const user = userEvent.setup();
+    render(
+      <ConfirmDialog {...props} confirmTestId="flow-leave-discard" cancelTestId="flow-leave-stay" />
+    );
+
+    await user.click(screen.getByTestId('flow-leave-discard'));
+    await user.click(screen.getByTestId('flow-leave-stay'));
+
+    expect(props.onConfirm).toHaveBeenCalledTimes(1);
+    expect(props.onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Every existing call site passes none of the three, so the historical
+   * hardcoded confirm hook has to survive and no new attribute may appear on
+   * the panel or the cancel button — otherwise this is not an additive change.
+   */
+  test('keeps the historical confirm hook and adds nothing else when the props are omitted', () => {
+    render(<ConfirmDialog {...baseProps()} />);
+
+    expect(screen.getByTestId('confirm-dialog-confirm')).toBe(
+      screen.getByRole('button', { name: 'common.confirm' })
+    );
+    expect(screen.getByRole('dialog')).not.toHaveAttribute('data-testid');
+    expect(screen.getByRole('button', { name: 'common.cancel' })).not.toHaveAttribute(
+      'data-testid'
+    );
+  });
 });

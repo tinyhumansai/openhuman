@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tinyagents::harness::model::{ChatModel, ModelRequest, ModelResponse};
+use tinyinference::model::{ChatModel, ModelRequest, ModelResponse};
 
 // ── Test helpers ────────────────────────────────────────────────────────────
 
@@ -69,7 +69,7 @@ impl ChatModel<()> for FixedResponseModel {
         &self,
         _state: &(),
         _request: ModelRequest,
-    ) -> tinyagents::Result<ModelResponse> {
+    ) -> tinyinference::Result<ModelResponse> {
         Ok(ModelResponse::assistant(self.response))
     }
 }
@@ -89,7 +89,7 @@ fn make_test_context(
         default_provider: Arc::new("test-provider".to_string()),
         memory: crate::openhuman::memory::guard::in_memory::FixedRecallProvider::guarded(Vec::new()),
         tools_registry: Arc::new(vec![]),
-        system_prompt: Arc::new("test-system-prompt".to_string()),
+        system_prompt: crate::openhuman::channels::ChannelSystemPrompt::fixed("test-system-prompt"),
         model: Arc::new("test-model".to_string()),
         temperature: 0.0,
         auto_save_memory: false,

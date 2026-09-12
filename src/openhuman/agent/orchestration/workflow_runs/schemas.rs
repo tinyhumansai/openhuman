@@ -11,7 +11,7 @@ use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::config::rpc as config_rpc;
 use crate::rpc::RpcOutcome;
-use tinyagents::session::run_ledger::WorkflowRunListRequest;
+use tinyagents_session::run_ledger::WorkflowRunListRequest;
 
 /// Controller schemas exposed by the workflow-runs module.
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
@@ -325,23 +325,5 @@ fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn registered_controllers_match_schemas() {
-        let schemas = all_controller_schemas();
-        let registered = all_registered_controllers();
-        assert_eq!(schemas.len(), registered.len());
-        assert_eq!(
-            schemas.len(),
-            6,
-            "expected 3 read + 3 execution controllers"
-        );
-        assert!(schemas.iter().all(|s| s.namespace == "workflow_run"));
-        assert_eq!(schema_for("workflow_run_get").function, "get");
-        assert_eq!(schema_for("workflow_run_start").function, "start");
-        assert_eq!(schema_for("workflow_run_stop").function, "stop");
-        assert_eq!(schema_for("workflow_run_resume").function, "resume");
-    }
-}
+#[path = "schemas_tests.rs"]
+mod tests;

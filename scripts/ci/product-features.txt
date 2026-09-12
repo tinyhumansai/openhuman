@@ -90,9 +90,19 @@ contacts
 # its static liblzma C build.
 runtime-node
 
-# Git-backed memory diff (snapshots/checkpoints/read markers) and the git wiki
-# mirror of summary nodes. Carries git2 + vendored libgit2.
-memory-git
+# NOTE: `memory-git` no longer exists. The gate, the `memory::diff` RPC surface
+# and schemas, the `memory_diff` agent tool and the `memory_artifacts_e2e`
+# target were all deleted — not merely un-shipped — so there is nothing here to
+# re-enable. It carried `git2`, which brought `libgit2-sys` and `libz-sys`: 2 of
+# the 4 native C builds in this profile, now down to `libsqlite3-sys` and `ring`,
+# both load-bearing. `git2` is absent from the resolved graph entirely
+# (`cargo tree -i git2` finds no package), so the shed holds by construction
+# rather than by a flag someone can flip.
+#
+# tinycortex still owns the only libgit2 code in the stack and keeps its
+# `git-diff` / `wiki-git` features; nothing in this repository enables them.
+# `Capability::Diff` remains in the TinyMemory bus contract and a driver may
+# still advertise it — there is simply no RPC surface here behind it.
 
 # The `hosting_*` agent tools: put a workspace on a real hosting provider and
 # manage its sites, databases, environment, domains and deployments over the

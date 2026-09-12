@@ -2,15 +2,15 @@
 //! (issue #4249).
 //!
 //! The harness historically only **front-trimmed** a long transcript
-//! ([`tinyagents::harness::middleware::MessageTrimMiddleware`] with
-//! [`TrimStrategy::MaxTokens`][tinyagents::harness::summarization::TrimStrategy]),
+//! ([`tinyagents_harness::middleware::MessageTrimMiddleware`] with
+//! [`TrimStrategy::MaxTokens`][tinyagents_harness::summarization::TrimStrategy]),
 //! dropping the oldest turns wholesale once the thread neared the model's
 //! context window. That is lossy: the dropped turns vanish.
 //!
 //! This module supplies the missing **summarization step** the per-folder graphs
 //! install: an LLM-backed [`Summarizer`] that condenses the older slice of the
 //! transcript into a single system message, driven by the crate's
-//! [`ContextCompressionMiddleware`][tinyagents::harness::middleware::ContextCompressionMiddleware]
+//! [`ContextCompressionMiddleware`][tinyagents_harness::middleware::ContextCompressionMiddleware]
 //! and a context-window-aware [`SummarizationPolicy`]. The policy only fires once
 //! the running token estimate crosses [`SUMMARIZE_THRESHOLD_FRACTION`] of the
 //! **current model's** context window — so the trigger is keyed to "whatever
@@ -27,14 +27,14 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
-use tinyagents::error::{Result as TaResult, TinyAgentsError};
-use tinyagents::harness::message::Message as TaMessage;
-use tinyagents::harness::summarization::{
+use tinyagents_harness::error::{Result as TaResult, TinyAgentsError};
+use tinyagents_harness::summarization::{
     estimate_tokens, CompressionProvenance, SummarizationPolicy, Summarizer, SummaryRecord,
 };
+use tinyinference::message::Message as TaMessage;
 
-use tinyagents::harness::message::Message as HarnessMessage;
-use tinyagents::harness::model::{ChatModel, ModelRequest};
+use tinyinference::message::Message as HarnessMessage;
+use tinyinference::model::{ChatModel, ModelRequest};
 
 /// Fraction of the model's context window at which summarization fires.
 ///
@@ -182,7 +182,7 @@ struct CachedSummary {
 /// Fault-tolerant, per-turn-caching [`Summarizer`] adapter (issue #4461).
 ///
 /// Wraps the real (LLM-backed) [`ModelSummarizer`] the turn hands the
-/// crate [`ContextCompressionMiddleware`][tinyagents::harness::middleware::ContextCompressionMiddleware]
+/// crate [`ContextCompressionMiddleware`][tinyagents_harness::middleware::ContextCompressionMiddleware]
 /// and hardens two regressions the crate introduced versus the legacy engine:
 ///
 /// 1. **Failure no longer aborts the turn.** The crate's `before_model` does
@@ -253,8 +253,8 @@ impl FaultTolerantCachingSummarizer {
     /// Deterministic, LLM-free fallback: front-drop the oldest messages until the
     /// remaining slice fits [`fallback_trim_budget`][Self::fallback_trim_budget]
     /// tokens (the same front-drop semantics as
-    /// [`MessageTrimMiddleware`][tinyagents::harness::middleware::MessageTrimMiddleware]
-    /// with [`TrimStrategy::MaxTokens`][tinyagents::harness::summarization::TrimStrategy]),
+    /// [`MessageTrimMiddleware`][tinyagents_harness::middleware::MessageTrimMiddleware]
+    /// with [`TrimStrategy::MaxTokens`][tinyagents_harness::summarization::TrimStrategy]),
     /// then render the survivors into a single system checkpoint message. Never
     /// fails, spends no tokens, and produces the same [`SummaryRecord`] shape the
     /// LLM path does so provenance still surfaces downstream.
@@ -386,7 +386,7 @@ impl Summarizer for FaultTolerantCachingSummarizer {
 /// `context_window * `[`SUMMARIZE_THRESHOLD_FRACTION`] and keeps the most recent
 /// [`SUMMARIZE_KEEP_LAST`] non-system messages (plus all system messages)
 /// verbatim. Pair it with [`ModelSummarizer`] via
-/// [`ContextCompressionMiddleware::with_summarizer`][tinyagents::harness::middleware::ContextCompressionMiddleware::with_summarizer].
+/// [`ContextCompressionMiddleware::with_summarizer`][tinyagents_harness::middleware::ContextCompressionMiddleware::with_summarizer].
 pub(super) fn summarization_policy(context_window: u64) -> SummarizationPolicy {
     let mut policy = SummarizationPolicy::default()
         .with_context_window(context_window)
@@ -442,25 +442,5 @@ Files read, created, or modified, with a one-line note on each.\n\
 Anything else essential to continue correctly (constraints, environment facts, gotchas).";
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn policy_is_context_window_aware_at_the_configured_threshold() {
-        let policy = summarization_policy(200_000);
-        assert_eq!(policy.context_window, Some(200_000));
-        assert_eq!(policy.threshold_fraction, SUMMARIZE_THRESHOLD_FRACTION);
-        assert_eq!(policy.keep_last, SUMMARIZE_KEEP_LAST);
-    }
-
-    #[test]
-    fn threshold_fraction_leaves_headroom_below_the_window() {
-        // The policy must trigger *before* the window is full, so the summary
-        // call itself has room — 90% by default.
-        assert!(SUMMARIZE_THRESHOLD_FRACTION > 0.0 && SUMMARIZE_THRESHOLD_FRACTION < 1.0);
-        let policy = summarization_policy(100_000);
-        // 90% of 100k = 90k tokens is the effective trigger point.
-        let effective = (policy.context_window.unwrap() as f64 * policy.threshold_fraction) as u64;
-        assert_eq!(effective, 90_000);
-    }
-}
+#[path = "summarize_tests.rs"]
+mod tests;

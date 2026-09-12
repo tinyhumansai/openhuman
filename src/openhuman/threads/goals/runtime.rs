@@ -21,8 +21,8 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 
-use tinyagents::graph::goals::budget as crate_budget;
-use tinyagents::graph::goals::{BudgetVerdict, GoalBudgetGuard};
+use tinyagents_graph::goals::budget as crate_budget;
+use tinyagents_graph::goals::{BudgetVerdict, GoalBudgetGuard};
 
 use super::migration::goals_store;
 use super::store;
@@ -90,6 +90,54 @@ pub async fn pause_for_current_thread(workspace_dir: &Path) {
     }
 }
 
+/// Mark the active goal for the ambient thread `Complete` (the originating
+/// task settled successfully). Best-effort; safe to call when there is no goal
+/// or no thread scope. Emits `ThreadGoalUpdated` so the UI chip refreshes.
+///
+/// This is the lifecycle counterpart the pause/resume pair was missing: without
+/// a settle, a goal a finished task left behind stays `Active` and is
+/// re-injected as an `[active_goal]` block on every later turn — including
+/// unrelated chat (#1725). A caller that owns a task's lifecycle calls this
+/// when the task reaches a terminal, satisfied state so the goal can't linger.
+pub async fn complete_for_current_thread(workspace_dir: &Path) {
+    let Some(thread_id) = current_thread_id() else {
+        return;
+    };
+    match store::complete(workspace_dir, &thread_id).await {
+        Ok(goal) => {
+            if matches!(goal.status, ThreadGoalStatus::Complete) {
+                BUS.publish(DomainEvent::ThreadGoalUpdated {
+                    thread_id: goal.thread_id.clone(),
+                    goal_id: goal.goal_id.clone(),
+                    status: goal.status.as_str().to_string(),
+                });
+            }
+        }
+        Err(e) => {
+            tracing::debug!(thread_id = %thread_id, error = %e, "[thread_goals] complete_for_current_thread failed");
+        }
+    }
+}
+
+/// Delete the goal row for the ambient thread entirely (the originating task was
+/// abandoned / superseded, and no completion contract should persist).
+/// Best-effort; safe to call when there is no goal or no thread scope.
+///
+/// Clearing removes the row rather than moving it to a terminal status, so a
+/// later turn loads `None` and injects no `[active_goal]` block at all — the
+/// strongest guarantee that a stale objective cannot leak forward (#1725).
+pub async fn clear_for_current_thread(workspace_dir: &Path) {
+    let Some(thread_id) = current_thread_id() else {
+        return;
+    };
+    match store::clear(workspace_dir, &thread_id).await {
+        Ok(_existed) => {}
+        Err(e) => {
+            tracing::debug!(thread_id = %thread_id, error = %e, "[thread_goals] clear_for_current_thread failed");
+        }
+    }
+}
+
 /// The per-turn token total used for budget accounting (prompt + completion).
 fn turn_tokens(input: u64, output: u64) -> u64 {
     crate_budget::turn_tokens(input, output)
@@ -114,7 +162,7 @@ fn is_goal_continuation_turn() -> bool {
 /// Account a finished turn's usage against the ambient thread's goal.
 ///
 /// The accounting rules are the crate's
-/// ([`crate_budget::account_turn`](tinyagents::graph::goals::account_turn)):
+/// ([`crate_budget::account_turn`](tinyagents_graph::goals::account_turn)):
 /// only **active** goals are charged, so a paused/complete/budget-limited goal
 /// doesn't accrue usage from incidental chat, and a user-initiated turn clears
 /// the one-shot continuation suppression (a continuation turn must not clear
@@ -171,7 +219,7 @@ pub async fn account_turn_against_goal(workspace_dir: &Path, input: u64, output:
 /// tokens so far) would meet or exceed its budget.
 ///
 /// The decision is the crate's
-/// [`GoalBudgetGuard`](tinyagents::graph::goals::GoalBudgetGuard); this is the
+/// [`GoalBudgetGuard`](tinyagents_graph::goals::GoalBudgetGuard); this is the
 /// adapter that votes it into OpenHuman's [`StopHook`] chain. #4469 item 1: the
 /// stop is a graceful *pause*, not an instantaneous abort — the vote fires in
 /// the stop-hook middleware's `after_model`, and the harness drains the pause
@@ -224,122 +272,5 @@ impl StopHook for GoalBudgetStopHook {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::openhuman::agent::cost::TurnCost;
-    use crate::openhuman::inference::provider::UsageInfo;
-
-    fn cost_with_tokens(input: u64, output: u64) -> TurnCost {
-        let mut tc = TurnCost::new();
-        tc.add_call(
-            "agentic-v1",
-            &UsageInfo {
-                input_tokens: input,
-                output_tokens: output,
-                ..Default::default()
-            },
-        );
-        tc
-    }
-
-    #[tokio::test]
-    async fn account_turn_charges_active_goal_and_trips_budget() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().to_path_buf();
-        crate::openhuman::agent::tinyagents::thread_context::with_thread_id("t-acct", async {
-            store::set(&dir, "t-acct", "obj", Some(100)).await.unwrap();
-            account_turn_against_goal(&dir, 80, 40, 3).await; // 120 >= 100
-            let g = store::get(&dir, "t-acct").await.unwrap().unwrap();
-            assert_eq!(g.tokens_used, 120);
-            assert_eq!(g.status, ThreadGoalStatus::BudgetLimited);
-        })
-        .await;
-    }
-
-    #[tokio::test]
-    async fn account_turn_skips_non_active_goal() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().to_path_buf();
-        crate::openhuman::agent::tinyagents::thread_context::with_thread_id("t-paused", async {
-            store::set(&dir, "t-paused", "obj", Some(1000))
-                .await
-                .unwrap();
-            store::pause(&dir, "t-paused").await.unwrap();
-            account_turn_against_goal(&dir, 500, 500, 1).await;
-            let g = store::get(&dir, "t-paused").await.unwrap().unwrap();
-            assert_eq!(g.tokens_used, 0, "paused goal must not accrue usage");
-        })
-        .await;
-    }
-
-    #[tokio::test]
-    async fn account_turn_clears_suppression_without_losing_usage() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().to_path_buf();
-        crate::openhuman::agent::tinyagents::thread_context::with_thread_id(
-            "t-suppressed",
-            async {
-                let goal = store::set(&dir, "t-suppressed", "obj", Some(1000))
-                    .await
-                    .unwrap();
-                store::set_continuation_suppressed_if(&dir, "t-suppressed", &goal.goal_id, true)
-                    .await
-                    .unwrap();
-
-                account_turn_against_goal(&dir, 80, 40, 3).await;
-
-                let updated = store::get(&dir, "t-suppressed").await.unwrap().unwrap();
-                assert_eq!(updated.goal_id, goal.goal_id);
-                assert!(!updated.continuation_suppressed);
-                assert_eq!(updated.tokens_used, 120);
-                assert_eq!(updated.time_used_seconds, 3);
-            },
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn budget_stop_hook_fires_on_crossing() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().to_path_buf();
-        let goal = store::set(&dir, "t-hook", "obj", Some(1000)).await.unwrap();
-        // 600 already used in a prior turn.
-        store::account_usage(&dir, "t-hook", &goal.goal_id, 600, 0)
-            .await
-            .unwrap();
-        let goal = store::get(&dir, "t-hook").await.unwrap().unwrap();
-        let hook = GoalBudgetStopHook::for_goal(&dir, &goal).expect("budgeted active goal");
-
-        // This turn so far: 300 in + 200 out = 500. 600 + 500 = 1100 >= 1000.
-        let cost = cost_with_tokens(300, 200);
-        let ctx = TurnState {
-            iteration: 2,
-            max_iterations: 10,
-            cost: &cost,
-            model: "agentic-v1",
-        };
-        assert!(matches!(hook.check(&ctx).await, StopDecision::Stop { .. }));
-
-        // Under the cap continues.
-        let small = cost_with_tokens(100, 100); // 600 + 200 = 800 < 1000
-        let ctx2 = TurnState {
-            iteration: 1,
-            max_iterations: 10,
-            cost: &small,
-            model: "agentic-v1",
-        };
-        assert!(matches!(hook.check(&ctx2).await, StopDecision::Continue));
-    }
-
-    #[tokio::test]
-    async fn no_hook_without_budget_or_when_inactive() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().to_path_buf();
-        let no_budget = store::set(&dir, "a", "obj", None).await.unwrap();
-        assert!(GoalBudgetStopHook::for_goal(&dir, &no_budget).is_none());
-        store::set(&dir, "b", "obj", Some(100)).await.unwrap();
-        store::pause(&dir, "b").await.unwrap();
-        let paused = store::get(&dir, "b").await.unwrap().unwrap();
-        assert!(GoalBudgetStopHook::for_goal(&dir, &paused).is_none());
-    }
-}
+#[path = "runtime_tests.rs"]
+mod tests;

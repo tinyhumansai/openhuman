@@ -55,7 +55,7 @@ pub(crate) use tinydocs_bus as format;
 mod types;
 
 #[cfg(test)]
-#[path = "tests.rs"]
+#[path = "document_tests.rs"]
 mod tests;
 
 use self::types::{validate_input, GenerateDocumentInput, GenerateDocumentOutput};

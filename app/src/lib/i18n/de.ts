@@ -330,128 +330,11 @@ const messages: TranslationMap = {
   'nav.flows': 'Workflows',
   'nav.workflowRuns': 'Workflow-Ausführungen',
   'nav.workflowDiscoveries': 'Workflows entdecken',
-  'nav.orchestration': 'Orchestrierung',
-  'orchestration.cloudUnreachable':
-    'Cloud-Gehirn nicht erreichbar – zwischengespeicherte Ansicht wird angezeigt.',
-  'orchPage.subtitle': 'Koordiniere deinen Hauptagenten',
-  'orchPage.group.agent': 'Agent',
-  'orchPage.group.network': 'Netzwerk',
-  'orchPage.group.insights': 'Einblicke',
-  'orchPage.overview.nav': 'Agenten-Graph',
-  'orchPage.overview.desc':
-    'Eine Live-Karte deines Agenten und der von ihm koordinierten Unteragenten.',
-  'orchPage.network.desc': 'Peer-Agenten, mit denen du verbunden bist, Entdeckung und Nutzung.',
+
   'wallet.tabs.balance': 'Wallet-Guthaben',
   'wallet.tabs.recovery': 'Wiederherstellung',
   'wallet.ariaLabel': 'Wallet-Ansichten',
-  'orchPage.medulla.nav': 'Übersicht',
-  'orchPage.medulla.badge': 'Demnächst verfügbar',
-  'orchPage.medulla.title': 'Medulla',
-  'orchPage.medulla.tagline': 'Das Orchestrierungsmodell von OpenHuman',
-  'orchPage.medulla.body':
-    'Medulla ist das eigens entwickelte LLM von OpenHuman. Es ist darauf ausgelegt, Tausende Agenten gleichzeitig zu orchestrieren, verfügt über ein Kontextfenster von 10 Millionen Tokens und ermöglicht eine radikal kostengünstigere Orchestrierung.',
-  'orchPage.medulla.featAgents': 'Tausende Agenten',
-  'orchPage.medulla.featContext': 'Kontext mit 10M Tokens',
-  'orchPage.medulla.featCost': 'Kostengünstige Orchestrierung',
-  'orchPage.medulla.subscriberTitle': 'OpenHuman-Abonnenten',
-  'orchPage.medulla.subscriberNote':
-    'Sobald Medulla live geht, ist es exklusiv für OpenHuman-Abonnenten.',
-  'orchPage.medulla.subscriberCta': 'Abo abschließen',
-  'orchPage.medulla.discordTitle': 'Tritt dem Discord bei',
-  'orchPage.medulla.earlyAccess':
-    'Früh dabei sein? Tritt unserem Discord bei und sichere dir eine Early-Access-Einladung.',
-  'orchPage.medulla.cta': 'Tritt unserem Discord bei',
-  'orchPage.demo.banner':
-    'Dies ist ein Beispiel dafür, wie Orchestrierung im großen Maßstab aussehen würde.',
-  'orchPage.demo.device': 'Gerät',
-  'orchPage.demo.taskRoute': 'Eingehende Anfrage weiterleiten',
-  'orchPage.demo.taskSummarize': 'Konversation zusammenfassen',
-  'orchPage.demo.taskEnrich': 'Kontaktdatensatz anreichern',
-  'orchPage.demo.taskSchedule': 'Follow-up planen',
-  'orchPage.demo.taskDraft': 'Antwort entwerfen',
-  'orchPage.demo.taskSync': 'Datenquelle synchronisieren',
-  'orchPage.demo.networkTitle': 'Peer-Agenten',
-  'orchPage.demo.networkSummary': '{peers} verbunden · {sessions} aktive Sub-Agenten',
-  'orchPage.demo.peer.connected': 'Verbunden',
-  'orchPage.demo.peer.connecting': 'Verbindung wird hergestellt',
-  'orchPage.demo.peer.idle': 'Inaktiv',
-  'orchPage.demo.peerSessions': '{count} Sub-Agenten',
-  'orchPage.demo.chat.user1': 'Koordiniere die Outreach-Kampagne über alle meine Kanäle.',
-  'orchPage.demo.chat.assistant1':
-    'Wird gemacht: ich starte 120 Agenten auf 2 Geräten, um Outreach, Anreicherung und Follow-ups parallel auszuführen.',
-  'orchPage.demo.chat.activity1': 'Gerät 1 · 100 Agenten leiten 1.284 Konversationen weiter',
-  'orchPage.demo.chat.activity2': 'Gerät 2 · 20 Agenten reichern 512 Kontakte an',
-  'orchPage.demo.chat.activity3': '640 personalisierte Antworten werden entworfen',
-  'orchPage.demo.chat.assistant2':
-    'Fertig. 120 Agenten haben 1.796 Konversationen in 38 Sekunden verarbeitet.',
-  'orchPage.demo.chat.composerDisabled': 'Der Chat ist mit Medulla-Zugang verfügbar',
-  'orchPage.tasks.nav': 'Aufgaben',
-  'orchPage.tasks.subtitle': 'Die globale Aufgabentafel des Orchestrators',
-  'orchPage.tasks.colPending': 'Ausstehend',
-  'orchPage.tasks.colActive': 'Aktiv',
-  'orchPage.tasks.colBlocked': 'Blockiert',
-  'orchPage.tasks.colCompleted': 'Abgeschlossen',
-  'orchPage.overview.core': 'Agent-Kern',
-  'orchPage.overview.empty': 'Noch keine Sub-Agenten zum Visualisieren',
-  'orchPage.agent.nav': 'Chat',
-  'orchPage.agent.mainTab': 'Hauptagent',
-  'orchPage.agent.consciousTab': 'Bewusstsein',
-  'orchPage.agent.subconsciousTab': 'Unterbewusstsein',
-  'orchPage.agent.modeLabel': 'Agentengeist',
-  'orchPage.agent.description': 'Chatte mit dem Hauptagenten und beobachte sein Unterbewusstsein',
-  'orchPage.agent.viewSession': 'Sitzung ansehen',
-  'orchPage.sessions.railTitle': 'Aktive Agenten',
-  'orchPage.sessions.empty': 'Noch keine aktiven Agenten',
-  'orchPage.sessions.statusConnected': 'Verbunden',
-  'orchPage.sessions.statusDisconnected': 'Getrennt',
-  'orchPage.sessions.statusWaiting': 'Wartet auf Eingabe',
-  'orchPage.session.runtime': 'Laufzeit',
-  'orchPage.session.directory': 'Verzeichnis',
-  'orchPage.session.runningOn': 'Läuft auf',
-  'orchPage.connections.nav': 'Verbindungen',
-  'orchPage.connections.title': 'Verknüpfte Agenten',
-  'orchPage.connections.description':
-    'Peers, mit denen dein Agent zusammenarbeitet: erweitere einen, um deine Sitzungen damit anzuzeigen',
-  'orchPage.connections.empty': 'Noch keine Verbindungen.',
-  'orchPage.connections.emptyCta': 'Verbindung hinzufügen',
-  'orchPage.connections.statContacts': 'Verbindungen',
-  'orchPage.connections.statPending': 'Ausstehend',
-  'orchPage.connections.statSessions': 'Sitzungen',
-  'orchPage.connections.sessionCount': '{n} Sitzungen',
-  'orchPage.connections.noSessions': 'Keine Sitzungen',
-  'orchPage.connections.messageCount': '{n} Nachrichten',
-  'orchPage.connections.back': 'Verbindungen',
-  'orchPage.connections.replyPlaceholder': 'Antworten…',
-  'orchPage.connections.initTitle': 'Einen Agenten oder eine Instanz initialisieren',
-  'orchPage.connections.initDesc':
-    'Starte einen neuen Sub-Agenten, der an deiner Seite arbeitet. Öffne den Agent-Chat und beschreibe Rolle, Ziel und Tools: OpenHuman stellt eine eigene Instanz bereit, die du von hier aus steuerst.',
-  'orchPage.connections.initCta': 'Im Chat starten',
-  'orchPage.connections.status.needsYou': 'Braucht dich',
-  'orchPage.connections.status.running': 'Läuft',
-  'orchPage.connections.status.idle': 'Inaktiv',
-  'orchPage.connections.status.done': 'Fertig',
-  'orchPage.connections.status.error': 'Fehler',
-  'orchPage.connections.pendingHint': 'Warten auf Annahme',
-  'orchPage.discover.nav': 'Entdecken',
-  'orchPage.discover.linkAction': 'Hinzufügen',
-  'orchPage.discover.identityTitle': 'Deine Auffindbarkeit',
-  'orchPage.discover.notDiscoverableGuide':
-    'Registriere ein @handle, damit andere Agenten dich finden und dir schreiben können.',
-  'orchPage.discover.linkTitle': 'Neuen Agenten verknüpfen',
-  'orchPage.discover.linkDescription':
-    'Füge eine Agenten-ID ein, um eine Verbindungsanfrage zu senden.',
-  'orchPage.discover.noRequests': 'Keine eingehenden Anfragen.',
-  'orchPage.usage.nav': 'Nutzung',
-  'orchPage.usage.connections': 'Verbindungen',
-  'orchPage.usage.balance': 'Guthaben',
-  'orchPage.usage.balanceHint': 'Aktion + Aufladung',
-  'orchPage.usage.cycleSpend': 'Zyklusausgaben',
-  'orchPage.usage.ofBudget': 'von',
-  'orchPage.usage.inferenceCalls': 'Modellaufrufe',
-  'orchPage.usage.integrationCalls': 'Integrationsaufrufe',
-  'orchPage.usage.tokensSaved': 'Gesparte Tokens',
-  'orchPage.usage.saved': 'gespart',
-  'orchPage.usage.footnote': 'Die Nutzung bezieht sich auf deinen aktuellen Abrechnungszeitraum.',
+
   'nav.wallet': 'Wallet',
   'nav.avatarMenu.account': 'Konto',
   'nav.avatarMenu.billing': 'Abrechnung',
@@ -479,89 +362,10 @@ const messages: TranslationMap = {
   'brain.goals.actionError': 'Etwas ist schiefgelaufen. Bitte versuche es erneut.',
   'brain.tabs.sources': 'Quellen',
   'brain.tabs.sync': 'Synchronisierung',
-  'brain.tabs.orchestration': 'Orchestrierung',
-  'tinyplaceOrchestration.title': 'TinyPlace-Relay',
-  'tinyplaceOrchestration.subtitle': 'Angepinnte Agentenkanäle und App-Sitzungs-Chats',
-  'tinyplaceOrchestration.refresh': 'Aktualisieren',
-  'tinyplaceOrchestration.newInstance': 'Neue Instanz',
-  'tinyplaceOrchestration.newInstanceSoon': 'Demnächst verfügbar',
-  'tinyplaceOrchestration.pinned': 'Angepinnt',
-  'tinyplaceOrchestration.sessions': 'Sitzungen',
-  'tinyplaceOrchestration.contacts': 'Kontakte',
-  'tinyplaceOrchestration.noContacts': 'Noch keine Kontakte.',
-  'tinyplaceOrchestration.newSession': 'Neue Sitzung',
-  'tinyplaceOrchestration.otherSessions': 'Andere Sitzungen',
-  'tinyplaceOrchestration.loading': 'TinyPlace-Chats werden geladen…',
-  'tinyplaceOrchestration.paymentRequired': 'TinyPlace-Zugriff erfordert eine Zahlung.',
-  'tinyplaceOrchestration.failedToLoad': 'TinyPlace-Chats konnten nicht geladen werden',
-  'tinyplaceOrchestration.noSessions': 'Noch keine TinyPlace-App-Sitzungen.',
-  'tinyplaceOrchestration.noMessages': 'Noch keine Nachrichten in diesem Chat.',
-  'tinyplaceOrchestration.active': 'Aktiv',
-  'tinyplaceOrchestration.inactive': 'Inaktiv',
-  'tinyplaceOrchestration.encryptedBody': 'Verschlüsselte TinyPlace-Nachricht',
-  'tinyplaceOrchestration.unknownSender': 'Unbekannter Absender',
-  'tinyplaceOrchestration.master.title': 'Agent / Mensch',
-  'tinyplaceOrchestration.master.subtitle': 'Master-Chat',
-  'tinyplaceOrchestration.master.preview': 'Direkte Koordination zwischen dir und OpenHuman.',
-  'tinyplaceOrchestration.subconscious.title': 'Unterbewusstsein',
-  'tinyplaceOrchestration.subconscious.subtitle': 'Interne Agenten-Chats',
-  'tinyplaceOrchestration.subconscious.preview':
-    'Agentenkoordination im Hintergrund und Gedächtnisschleifen.',
-  'tinyplaceOrchestration.session.subtitle': 'TinyPlace-App-Sitzung',
-  'tinyplaceOrchestration.pairing.linkLabel': 'Sitzung verknüpfen',
-  'tinyplaceOrchestration.pairing.linkPlaceholder': 'Sitzungs-Agent-ID einfügen',
-  'tinyplaceOrchestration.pairing.linkAction': 'Verknüpfen',
-  'tinyplaceOrchestration.pairing.requests': 'Kontaktanfragen',
-  'tinyplaceOrchestration.pairing.accept': 'Annehmen',
-  'tinyplaceOrchestration.pairing.decline': 'Ablehnen',
-  'tinyplaceOrchestration.pairing.block': 'Blockieren',
-  'tinyplaceOrchestration.pairing.linked': 'Verknüpft',
-  'tinyplaceOrchestration.pairing.pending': 'Ausstehend',
-  'tinyplaceOrchestration.pairing.unlinked': 'Nicht verknüpft',
-  'tinyplaceOrchestration.pairing.incoming': 'Eingehend',
-  'tinyplaceOrchestration.pairing.outgoing': 'Ausgehend',
-  'tinyplaceOrchestration.master.you': 'Du',
-  'tinyplaceOrchestration.composer.placeholder': 'Nachricht an OpenHuman…',
-  'tinyplaceOrchestration.composer.send': 'Senden',
-  'tinyplaceOrchestration.composer.sendFailed': 'Nachricht konnte nicht gesendet werden',
-  'tinyplaceOrchestration.steering.label': 'Steuerung',
-  'tinyplaceOrchestration.relay.staging': 'Staging',
-  'tinyplaceOrchestration.relay.prod': 'Produktion',
-  'tinyplaceOrchestration.identity.loading': 'Identität wird geladen…',
-  'tinyplaceOrchestration.identity.noHandle': 'Noch kein @handle',
-  'tinyplaceOrchestration.identity.copy': 'Kopieren',
-  'tinyplaceOrchestration.identity.copied': 'Kopiert',
-  'tinyplaceOrchestration.identity.discoverable': 'Auffindbar',
-  'tinyplaceOrchestration.identity.undiscoverable': 'Nicht auffindbar',
-  'tinyplaceOrchestration.identity.undiscoverableHint':
-    'Veröffentliche deine Verzeichniskarte und deinen Verschlüsselungsschlüssel, damit Peers dir schreiben können.',
-  'tinyplaceOrchestration.identity.makeDiscoverable': 'Auffindbar machen',
-  'tinyplaceOrchestration.identity.republish': 'Schlüssel neu veröffentlichen',
-  'tinyplaceOrchestration.identity.publishing': 'Wird veröffentlicht…',
-  'tinyplaceOrchestration.identity.publishFailed':
-    'Veröffentlichung fehlgeschlagen: erneut versuchen',
-  'tinyplaceOrchestration.identity.card': 'Verzeichniskarte',
-  'tinyplaceOrchestration.identity.key': 'Verschlüsselungsschlüssel',
-  'tinyplaceOrchestration.identity.published': 'Veröffentlicht',
-  'tinyplaceOrchestration.identity.notPublished': 'Nicht veröffentlicht',
-  'tinyplaceOrchestration.roster.instances': 'Instanzen',
-  'tinyplaceOrchestration.roster.empty': 'Noch keine Agent-Instanzen',
-  'tinyplaceOrchestration.roster.other': 'Andere',
-  'tinyplaceOrchestration.status.running': 'Läuft',
-  'tinyplaceOrchestration.status.idle': 'Inaktiv',
-  'tinyplaceOrchestration.status.waitingApproval': 'Warten auf Freigabe',
-  'tinyplaceOrchestration.status.errored': 'Fehler',
-  'tinyplaceOrchestration.status.stopped': 'Gestoppt',
-  'tinyplaceOrchestration.attention.title': 'Braucht dich',
-  'tinyplaceOrchestration.attention.empty': 'Alles erledigt',
-  'tinyplaceOrchestration.attention.unread': 'Ungelesene Nachrichten',
-  'tinyplaceOrchestration.attention.review': 'Prüfen',
-  'tinyplaceOrchestration.attention.open': 'Öffnen',
-  'tinyplaceOrchestration.attention.kind.approval': 'Freigabe',
-  'tinyplaceOrchestration.attention.kind.needsInput': 'Eingabe nötig',
-  'tinyplaceOrchestration.attention.kind.unread': 'Ungelesen',
   'brain.empty': 'Dein Gehirn ist noch leer – verbinde eine Quelle, um Speicher aufzubauen.',
   'brain.error': 'Dein Gehirn konnte nicht geladen werden. Bitte versuche es erneut.',
+  'brain.refreshError':
+    'Dein Gehirn konnte nicht aktualisiert werden. Angezeigt werden die zuletzt geladenen Daten.',
   'common.cancel': 'Abbrechen',
   'common.save': 'Speichern',
   'common.confirm': 'Bestätigen',
@@ -592,6 +396,7 @@ const messages: TranslationMap = {
   'sync.timeAgo.days': 'vor {n} T.',
   'sync.status.success': 'Erfolg',
   'sync.status.failed': 'Fehlgeschlagen',
+  'sync.status.partial': 'Abgerufen, Speicherung im Gedächtnis fehlgeschlagen',
   'common.error': 'Fehler',
   'common.success': 'Erfolg',
   'common.back': 'Zurück',
@@ -751,6 +556,8 @@ const messages: TranslationMap = {
   'settings.developerMode.enabledByBuild': 'In Entwicklungs-Builds immer aktiviert',
   'settings.clearAppData': 'App-Daten löschen',
   'settings.clearAppDataDesc': 'Melde dich ab und lösche alle lokalen App-Daten dauerhaft',
+  'settings.clearAppDataIrreversible': 'Dies kann nicht rückgängig gemacht werden.',
+  'settings.clearAppDataAction': 'Daten löschen',
   'settings.logOut': 'Abmelden',
   'settings.logOutDesc': 'Melde dich von deinem Konto ab',
   'settings.exitLocalSession': 'Lokale Sitzung beenden',
@@ -1183,7 +990,8 @@ const messages: TranslationMap = {
     'Pausieren Sie, um die erneute Einnahme zu stoppen. Vorhandenes Wiki bleibt abfragbar.',
   'memoryTree.status.statusTile': 'Status',
   'memoryTree.status.lastSyncTile': 'Letzte Synchronisierung',
-  'memoryTree.status.totalChunksTile': 'Gesamtstückzahl',
+  'memoryTree.status.totalChunksTile': 'Blätter des Zusammenfassungsbaums',
+  'memoryTree.status.storedItemsTile': 'Gespeicherte Elemente',
   'memoryTree.status.wikiSizeTile': 'Wiki-Größe',
   'memoryTree.status.statusRunning': 'Laufend',
   'memoryTree.status.statusPaused': 'Angehalten',
@@ -1620,7 +1428,7 @@ const messages: TranslationMap = {
   'settings.search.menuDesc':
     'Verwenden Sie standardmäßig die von OpenHuman verwaltete Suche oder verbinden Sie Ihren eigenen Anbieter mit einem API-Schlüssel.',
   'settings.search.description':
-    'Wählen Sie die Suchmaschine, die der Agent verwendet, oder deaktivieren Sie Suchwerkzeuge vollständig. „Verwaltet“ nutzt das Backend von OpenHuman (keine Einrichtung erforderlich). Parallel, Brave, Querit und Exa laufen direkt von Ihrem Gerät aus und verwenden Ihren API-Schlüssel.',
+    'Wählen Sie die Suchmaschine, die der Agent verwendet, oder deaktivieren Sie Suchwerkzeuge vollständig. „Verwaltet“ nutzt das Backend von OpenHuman (keine Einrichtung erforderlich). Parallel, Brave, Querit, Exa und Tavily laufen direkt von Ihrem Gerät aus und verwenden Ihren API-Schlüssel.',
   'settings.search.engineAria': 'Suchmaschine',
   'settings.search.engineDisabledLabel': 'Disabled',
   'settings.search.engineDisabledDesc':
@@ -1629,7 +1437,7 @@ const messages: TranslationMap = {
   'settings.search.engineManagedDesc':
     'Standard. Wird über das OpenHuman-Backend geleitet, aktuell betrieben von Exa: kein API-Schlüssel erforderlich.',
   'settings.search.localManagedUnavailable':
-    'Die von OpenHuman verwaltete Suche ist für lokale Benutzer nicht verfügbar. Füge deinen eigenen Parallel-, Brave-, Querit- oder Exa-API-Schlüssel hinzu, um die Websuche zu aktivieren.',
+    'Die von OpenHuman verwaltete Suche ist für lokale Benutzer nicht verfügbar. Fügen Sie Ihren eigenen Parallel-, Brave-, Querit-, Exa- oder Tavily-API-Schlüssel hinzu, um die Websuche zu aktivieren.',
   'settings.search.engineParallelLabel': 'Parallel',
   'settings.search.engineParallelDesc':
     'Direct Parallel API: Such-, Extrahierungs-, Chat-, Recherche-, Anreicherungs- und Datensatz-Tools.',
@@ -1642,6 +1450,9 @@ const messages: TranslationMap = {
   'settings.search.engineExaLabel': 'Exa',
   'settings.search.engineExaDesc':
     'Neuronale Suche von Exa. Erfordert deinen eigenen Exa-API-Schlüssel. Fügt Werkzeuge für Suche, ähnliche Seiten und Seiteninhalte hinzu.',
+  'settings.search.engineTavilyLabel': 'Tavily',
+  'settings.search.engineTavilyDesc':
+    'Web-, Nachrichten- und Finanzsuche von Tavily. Erfordert deinen eigenen Tavily-API-Schlüssel. Fügt Werkzeuge für Suche und Seitenextraktion hinzu.',
   'settings.search.statusConfigured': 'Konfiguriert',
   'settings.search.statusNeedsKey': 'Benötigt API-Schlüssel',
   'settings.search.fallbackToManaged':
@@ -1663,6 +1474,8 @@ const messages: TranslationMap = {
   'settings.search.placeholderBrave': 'BSA...',
   'settings.search.placeholderQuerit': 'Fragen Sie den API-Schlüssel ab',
   'settings.search.placeholderExa': 'Füge deinen Exa-API-Schlüssel ein…',
+  'settings.search.tavilyKeyLabel': 'Tavily-API-Schlüssel',
+  'settings.search.placeholderTavily': 'tvly-...',
   'settings.search.allowedSitesLabel': 'Erlaubte Websites',
   'settings.search.allowedSitesHint':
     'Hosts, die der Assistent öffnen und lesen darf – per Web-Abruf und Browser-Tool – einer pro Zeile, z. B. reuters.com. Ein Host schließt auch seine Subdomains ein. Die Websuche selbst wird durch diese Liste nicht eingeschränkt.',
@@ -1677,11 +1490,6 @@ const messages: TranslationMap = {
   'settings.search.accessBlockAllHint':
     'Der gesamte Webzugriff ist blockiert – der Assistent kann keine Website öffnen oder lesen.',
   // ─── Settings global search bar ────────────────────────────
-  'settings.settingsSearch.placeholder': 'Einstellungen durchsuchen…',
-  'settings.settingsSearch.ariaLabel': 'Einstellungen durchsuchen',
-  'settings.settingsSearch.clear': 'Suche löschen',
-  'settings.settingsSearch.resultsLabel': 'Suchergebnisse',
-  'settings.settingsSearch.noResults': 'Keine Einstellungen für „{query}“ gefunden',
   'settings.embeddings.title': 'Einbettungen',
   'settings.embeddings.description':
     'Wählen Sie den Embedding-Anbieter, der Erinnerungen in Vektoren für die semantische Suche umwandelt. Das Ändern des Anbieters, Modells oder der Dimensionen macht gespeicherte Vektoren ungültig und erfordert einen vollständigen Speicher-Reset.',
@@ -2852,8 +2660,6 @@ const messages: TranslationMap = {
   'reflections.act': 'Handeln',
   'reflections.dismiss': 'Entlassen',
   'reflections.viewConversation': 'Ansehen',
-  'whatsapp.chatsSynced': 'Chats synchronisiert',
-  'whatsapp.chatSynced': 'Chat synchronisiert',
   'sync.active': 'Aktiv',
   'sync.recent': 'Neu',
   'sync.idle': 'Leerlauf',
@@ -2890,6 +2696,8 @@ const messages: TranslationMap = {
   'memorySources.comingSoon': 'Demnächst',
   'memorySources.composioListFailed': 'Fehler beim Laden der Composio-Verbindungen.',
   'memorySources.browse': 'Durchsuchen…',
+  'memorySources.folderPathUnavailable':
+    'Der Speicherort dieses Ordners konnte nicht ermittelt werden. Geben Sie stattdessen den vollständigen Pfad ein.',
   'memorySources.folderPathPlaceholder': '/Users/you/notes',
   'memorySources.globPatternPlaceholder': 'Md. ',
   'memorySources.repoUrlPlaceholder': 'https://github.com/org/repo',
@@ -2912,6 +2720,9 @@ const messages: TranslationMap = {
   'memorySources.sync.itemsSynced': 'Elemente synchronisiert',
   'memorySources.sync.upToDate': 'Aktuell',
   'memorySources.sync.failedLabel': 'Fehlgeschlagen',
+  'memorySources.sync.morePending': 'Mehr zu synchronisieren. Erneut auf Synchronisieren klicken',
+  'memorySources.sync.budgetSpent':
+    'Das heutige Anfragebudget ist aufgebraucht. Morgen erneut versuchen',
   'time.justNow': 'gerade eben',
   'time.secondsAgoSuffix': 'vor {count} Sek.',
   'time.minutesAgoSuffix': 'vor {count} Min.',
@@ -2951,6 +2762,23 @@ const messages: TranslationMap = {
   'memorySources.allIn.cancel': 'Nein',
   'memorySources.allIn.success': 'Alle Quellen ohne Limits aktiviert. Synchronisierung gestartet.',
   'memorySources.allIn.failed': 'Konnte „Alles aktivieren" nicht anwenden. Bitte erneut versuchen.',
+  'memorySources.allIn.allFailed':
+    'Keine Synchronisierung konnte gestartet werden. Prüfe jede Quelle, um den Grund zu sehen.',
+  'memorySources.allIn.partial':
+    'Gestartete Synchronisierungen: {triggered}. Nicht startbar: {failed}.',
+  'memorySources.repair.button': 'Ältere Erinnerungen reparieren',
+  'memorySources.repair.title': 'Ältere Erinnerungen reparieren?',
+  'memorySources.repair.message':
+    'Bis zu {scanned} synchronisierte Dokumente wurden gespeichert, bevor die Ablage im Gedächtnisbaum korrigiert wurde, und sind im Gedächtnisgraphen unsichtbar. Das Ablegen verbraucht Embedding-Guthaben. Bereits abgelegte Dokumente werden übersprungen.',
+  'memorySources.repair.confirm': 'Reparieren',
+  'memorySources.repair.cancel': 'Nicht jetzt',
+  'memorySources.repair.nothing':
+    'Nichts zu reparieren. Keine synchronisierten Dokumente warten auf die Ablage.',
+  'memorySources.repair.success':
+    '{ingested} im Gedächtnisbaum abgelegt ({already} bereits vorhanden, {skipped} übersprungen).',
+  'memorySources.repair.morePending':
+    'Es sind noch weitere übrig. Erneut auf „Ältere Erinnerungen reparieren“ klicken.',
+  'memorySources.repair.failed': 'Ältere Erinnerungen konnten nicht repariert werden.',
   'memorySources.settings.button': 'Einstellungen',
   'memorySources.settings.title': 'Synchronisierungseinstellungen',
   'memorySources.settings.maxPrs': 'Maximale Pull-Requests',
@@ -2964,7 +2792,6 @@ const messages: TranslationMap = {
   'memorySources.settings.unlimited': 'Unbegrenzt',
   'memorySources.settings.unlimitedTooltip':
     'Du hast dich entschieden, das Maximum für {toolkit} zu synchronisieren. Du kannst die Limits hier ändern.',
-  'memorySources.settings.maxed': 'Voll',
   'memorySources.settings.save': 'Speichern',
   'memorySources.settings.saving': 'Speichern…',
   'memorySources.settings.saved': 'Einstellungen gespeichert',
@@ -2981,10 +2808,6 @@ const messages: TranslationMap = {
   'backend.localDescription':
     'Führe Modelle auf deinem eigenen Computer mit Ollama aus. Vollständige Privatsphäre, erfordert eine Einrichtung.',
   'backend.ramRecommended': '16 GB+ RAM empfohlen',
-  'tinyplaceOrchestration.subconsciousBadge': 'Unterbewusstsein · Steuerung',
-  'tinyplaceOrchestration.steeringHeader.current': 'Aktive Anweisung',
-  'tinyplaceOrchestration.steeringHeader.none': 'Keine aktive Anweisung',
-  'tinyplaceOrchestration.steeringHeader.expires': 'läuft nach {n} Zyklen ab',
   'actionable.complete': 'Komplett',
   'actionable.dismiss': 'Entlassen',
   'actionable.snooze': 'Schlummern',
@@ -3643,6 +3466,10 @@ const messages: TranslationMap = {
   'conversations.subagent.statusFailed': 'fehlgeschlagen',
   'conversations.subagent.statusAwaitingUser': 'warte auf Benutzer',
   'conversations.subagent.statusCancelled': 'abgebrochen',
+  'conversations.subagent.awaitingTitle': 'Wartet auf deine Antwort',
+  'conversations.subagent.answerPlaceholder': 'Antwort eingeben',
+  'conversations.subagent.answerSend': 'Antwort senden',
+  'conversations.subagent.answerSent': 'Antwort gesendet',
   'conversations.agentTaskInsights.title': 'Agenten-Aufgabeneinblicke',
   'conversations.agentTaskInsights.response': 'Antwort',
   'conversations.agentTaskInsights.processSourceTitle': 'Agentenprozess-Quelle',
@@ -4029,9 +3856,6 @@ const messages: TranslationMap = {
   'flows.suggest.trigger.manual': 'Auf Abruf',
   'flows.copilot.open': 'Assistent',
   'flows.copilot.title': 'Workflow-Assistent',
-  'flows.copilot.subtitle':
-    'Bitte um Änderungen und prüfe jeden Vorschlag, bevor du ihn übernimmst.',
-  'flows.copilot.close': 'Assistent schließen',
   'flows.copilot.placeholder': 'Bitte um eine Änderung…',
   'flows.copilot.send': 'Senden',
   'flows.copilot.thinking': 'Denkt nach…',
@@ -4071,6 +3895,8 @@ const messages: TranslationMap = {
     'Dieser Workflow konnte nicht importiert werden. Überprüfe die Datei und versuche es erneut.',
   'flows.import.warningTitle': 'Importwarnung',
   'flows.canvas.title': 'Workflow',
+  'flows.canvas.description':
+    'Erstellen Sie diese Automatisierung Schritt für Schritt, speichern Sie sie und führen Sie sie aus.',
   'flows.canvas.loading': 'Workflow wird geladen…',
   'flows.canvas.loadError':
     'Dieser Workflow konnte nicht geladen werden. Bitte versuche es erneut.',
@@ -4662,7 +4488,7 @@ const messages: TranslationMap = {
   'settings.ai.claudeCode.signIn': 'Mit Claude anmelden',
   'settings.ai.claudeCode.reconnect': 'Erneut verbinden',
   'settings.ai.claudeCode.loginHint':
-    'Öffnet ein Terminal, das claude login ausführt. Klicke nach Abschluss auf „Erneut prüfen“.',
+    'Öffnet ein Terminal, das claude auth login --claudeai ausführt. Klicke nach Abschluss auf „Erneut prüfen“.',
   'settings.ai.claudeCode.loginError':
     'Das Anmelde-Terminal konnte nicht geöffnet werden. Bitte versuche es erneut.',
   'settings.ai.claudeCode.fullAccess': 'Voller Zugriff',
@@ -5257,6 +5083,9 @@ const messages: TranslationMap = {
   'settings.developerMenu.eventLog.title': 'Ereignisprotokoll',
   'settings.developerMenu.eventLog.desc':
     'Farbcodierter Live-Stream aller Agenten-, Tool- und Systemereignisse',
+  'settings.developerMenu.eventLog.workspaceScope': 'Arbeitsbereich',
+  'settings.developerMenu.eventLog.workspaceScopeActive': 'Dieser Arbeitsbereich',
+  'settings.developerMenu.eventLog.workspaceScopeAll': 'Alle Arbeitsbereiche',
   'settings.developerMenu.eventLog.allTypes': 'Alle Typen',
   'settings.developerMenu.eventLog.filterAgent': 'Filter&#xA0;…',
   'settings.developerMenu.eventLog.download': 'Herunterladen',
@@ -5264,6 +5093,10 @@ const messages: TranslationMap = {
   'settings.developerMenu.eventLog.live': 'Live',
   'settings.developerMenu.eventLog.disconnected': 'Nicht verbunden',
   'settings.developerMenu.eventLog.waiting': 'Warten auf Ereignisse...',
+  'settings.developerMenu.eventLog.waitingHint':
+    'Ereignisse erscheinen hier, sobald Agenten, Tools und das System arbeiten. Bisher ist nichts passiert.',
+  'settings.developerMenu.eventLog.notConnectedHint':
+    'Verbinden Sie sich erneut mit dem Core, um den Stream fortzusetzen.',
   'settings.developerMenu.eventLog.notConnected': 'Mit dem Hauptprogramm verbundenName',
   'settings.developerMenu.eventLog.jumpToLatest': 'Zur neuesten Seite springen',
   'settings.developerMenu.eventLog.badge.tool': 'TOOL',
@@ -5353,10 +5186,6 @@ const messages: TranslationMap = {
   'settings.agentAccess.autoApproveAll.label': 'Alle Aktionen automatisch genehmigen',
   'settings.agentAccess.autoApproveAll.desc':
     'Wenn aktiviert, genehmigt der Agent automatisch alle zulässigen Aktionen, ohne vorher deine Zustimmung einzuholen. Dazu gehören Dateischreibvorgänge, Shell-Befehle, Netzwerkanfragen und andere Aktionen mit externen Auswirkungen. Feste Sicherheitssperren (Anmeldeinformationen und Systemverzeichnisse) gelten weiterhin, und Aktionen aus nicht vertrauenswürdigen oder unbekannten Quellen werden nie automatisch genehmigt.',
-  'settings.agentAccess.tinyplaceAutopilot.title': 'Autonomer tiny.place-Agent',
-  'settings.agentAccess.tinyplaceAutopilot.desc':
-    'Lass OpenHuman eigenständig auf tiny.place handeln: zeitgesteuert sucht es lohnende Arbeit – zuerst offene Bounties –, erledigt Passendes und handelt über deine Identität. Es läuft unbeaufsichtigt und kann Geld ausgeben; nutze beim Testen devnet. Standardmäßig aus.',
-  'settings.agentAccess.tinyplaceAutopilot.label': 'Automatisch ausführen',
   'settings.agentAccess.timeout.label': 'Aktions-Timeout',
   'settings.agentAccess.timeout.desc':
     'Wie lange ein einzelnes Werkzeug oder eine Aktion laufen darf, bevor sie abgebrochen wird. Erhöhen Sie diesen Wert, wenn ein großes lokales Modell unterbrochen wird, bevor es seine Antwort beendet.',
@@ -5511,7 +5340,6 @@ const messages: TranslationMap = {
   'settings.theme.backdrop.solid': 'Einfarbig',
   'settings.theme.backdrop.image': 'Bild',
   'settings.theme.backdropImageUrl': 'URL des Hintergrundbilds',
-  'settings.theme.backdropDots': 'Hintergrundpunkte anzeigen',
   'settings.theme.backdropHint':
     'Netz zeigt den animierten Farbverlauf; Einfarbig nutzt einen flachen Hintergrund; Bild verwendet dein eigenes.',
   'settings.theme.autoForkHint':
@@ -6101,9 +5929,6 @@ const messages: TranslationMap = {
   'walkthrough.steps.connectionsTab.title': 'Verbindungen verwalten',
   'walkthrough.steps.connectionsTab.content':
     'Connections ist immer in der Hauptnavigation verfügbar, wenn du Dienste hinzufügen oder anpassen möchtest.',
-  'walkthrough.steps.feedbackTab.title': 'Feedback senden',
-  'walkthrough.steps.feedbackTab.content':
-    'Feedback ist der direkte Ort, um Probleme zu melden oder Verbesserungen vorzuschlagen.',
   'walkthrough.steps.allSet.title': 'Alles bereit!',
   'walkthrough.steps.allSet.content':
     'Dein Assistent hat dir eine Willkommensnotiz hinterlassen: Hier kannst du chatten, fragen oder Ideen sammeln. Viel Spaß!',
@@ -6214,7 +6039,6 @@ const messages: TranslationMap = {
     'Konfiguriere KI-Triage-Einstellungen für Composio-Integrationsauslöser',
   'memory.sourceFilterAria': 'Nach Quelle filtern',
   'calls.comingSoonDescription': 'KI-unterstützte Anrufe folgen in Kürze. Bleiben Sie dran.',
-  'whatsapp.title': 'WhatsApp',
   'settings.appearance': 'Aussehen',
   'settings.appearanceDesc': 'Wähle hell, dunkel oder passend zu deinem Systemthema',
   'settings.mascot': 'Maskottchen',
@@ -6427,6 +6251,7 @@ const messages: TranslationMap = {
   'settings.agents.editor.modelHints': 'Routing-Hinweise',
   'settings.agents.editor.modelTiers': 'Modellstufen',
   'settings.agents.editor.modelCustom': 'Benutzerdefinierte Modell-ID…',
+  'settings.agents.editor.modelManaged': 'Verwaltete Modelle',
   'settings.agents.editor.modelCustomPlaceholder': 'z. B. anthropic/claude-sonnet-4',
   'settings.agents.editor.selectTools': 'Tools hinzufügen',
   'settings.agents.editor.toolsAllSelected': 'Alle Tools',
@@ -6575,6 +6400,8 @@ const messages: TranslationMap = {
   'keyring.settings.storageMode': 'Geheimnisspeicher-Modus',
   'keyring.settings.mode.osKeychain': 'OS-Schlüsselbund',
   'keyring.settings.mode.encryptedFile': 'Lokal verschlüsselt',
+  'keyring.settings.mode.localEncryptedFile': 'Verschlüsselte Datei',
+  'keyring.settings.mode.localPlaintextFile': 'Unverschlüsselte Datei',
   'keyring.settings.mode.consentPending': 'Nicht konfiguriert',
   'keyring.settings.mode.declined': 'Abgelehnt',
   'keyring.settings.availability': 'Schlüsselbund-Verfügbarkeit',
@@ -6793,9 +6620,7 @@ const messages: TranslationMap = {
   'notch.speaking': 'Spreche…',
   'notch.transcribing': 'Transkribiere…',
   'notch.executing': 'Führe aus…',
-  'memory.tab.orchestration': 'Orchestrierung',
-  'memory.tab.orchestrationDescription':
-    'Führe Multi-Agenten-Workflows aus: verteile eine Frage auf parallele Agenten, gleiche ihre Ergebnisse ab und sieh zu, wie jede Phase zu einer zusammengeführten Antwort wird.',
+
   'orchestration.subtitle':
     'Starte einen Multi-Agenten-Workflow, verfolge seinen Phasenfortschritt und lies das zusammengeführte Ergebnis.',
   'orchestration.loading': 'Lade Workflows…',
@@ -6928,6 +6753,13 @@ const messages: TranslationMap = {
   'userErrors.localModelUnavailable.title': 'Lokales Modell nicht verfügbar',
   'userErrors.localModelUnavailable.body':
     'Ollama ist unter dem konfigurierten Endpunkt nicht erreichbar, oder das benötigte Modell ist dort nicht installiert. Starte Ollama und lade das Modell auf diesem Endpunkt, oder verlagere diese Arbeit auf einen Cloud-Anbieter.',
+  'userErrors.replyDeliveryFailed.title': 'Antwort konnte nicht angezeigt werden',
+  'userErrors.replyDeliveryFailed.body':
+    'Der Agent hat diese Runde beendet, seine Antwort ließ sich aber weder speichern noch erneut lesen. Frag noch einmal, damit er sie wiederholt.',
+  'userErrors.memoryStoreCorrupt.title': 'Gedächtnisindex war beschädigt',
+  'userErrors.memoryStoreCorrupt.body':
+    'Die Datenbank des Gedächtnisbaums war beschädigt. Die beschädigte Datei wurde neben deinen Gedächtnisdaten aufbewahrt und ein leerer Index neu aufgebaut. Synchronisiere deine Gedächtnisquellen erneut, um ihn wieder zu füllen.',
+  'userErrors.action.openMemorySync': 'Gedächtnis neu synchronisieren',
   'userErrors.scope.chat': 'Chat',
   'userErrors.scope.cron': 'Geplante Aufgabe',
   'userErrors.scope.workspace': 'Arbeitsbereich',
@@ -6941,10 +6773,6 @@ const messages: TranslationMap = {
   'memoryBudget.exhaustedMessage':
     'Dein Embedding-Budget ist aufgebraucht, daher werden keine neuen Inhalte mehr ins Gedächtnis aufgenommen. Richte lokale Embeddings ein oder hinterlege deinen eigenen API-Schlüssel, um fortzufahren.',
   'memoryBudget.cta': 'Embeddings einrichten',
-  'tinyplaceSunset.title': 'Tiny Place zieht aus der App aus',
-  'tinyplaceSunset.message':
-    'Um tiny.place weiter zu nutzen, besuche tiny.place. Nach dem 31. August 2026 wird es aus der App entfernt.',
-  'tinyplaceSunset.cta': 'tiny.place öffnen',
   'userErrors.scope.memory': 'Speicher',
 
   // Code block chrome
@@ -6972,6 +6800,28 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'Löschen',
   'flows.delete.deleting': 'Wird gelöscht…',
   'flows.canvas.renameLabel': 'Workflow umbenennen',
+  'settings.ai.openaiOauthTitle': 'Mit ChatGPT anmelden',
+  'settings.ai.openaiOauthDescription':
+    'Melde dich mit deinem ChatGPT-Konto an, um OpenAI-Modelle ohne API-Schlüssel zu verwenden.',
+  'settings.ai.openaiOauthConnect': 'Mit ChatGPT anmelden',
+  'settings.ai.openaiOauthConnected': 'Mit ChatGPT verbunden',
+  'settings.ai.openaiOauthOpening': 'Anmeldung wird geöffnet…',
+  'settings.ai.openaiOauthCallbackHint':
+    'Füge nach der Anmeldung die vollständige Weiterleitungs-URL aus deinem Browser ein (beginnt mit http://127.0.0.1:1455/).',
+  'settings.ai.openaiOauthCallbackPlaceholder':
+    'http://127.0.0.1:1455/auth/callback?code=...&state=...',
+  'settings.ai.openaiOauthFinish': 'ChatGPT-Anmeldung abschließen',
+  'settings.ai.openaiOauthDisconnect': 'ChatGPT-Verbindung trennen',
+  'settings.ai.openaiOauthDesktopOnly':
+    'Die ChatGPT-Anmeldung ist nur in der Desktop-App verfügbar.',
+  'settings.ai.openaiOauthStartError':
+    'Die ChatGPT-Anmeldung konnte nicht gestartet werden. Versuche es erneut oder verwende einen API-Schlüssel.',
+  'settings.ai.openaiOauthCompleteError':
+    'Die ChatGPT-Anmeldung wurde nicht abgeschlossen. Prüfe die Weiterleitungs-URL und versuche es erneut.',
+  'settings.ai.openaiOauthCallbackRequired':
+    'Füge nach der Anmeldung die Weiterleitungs-URL aus deinem Browser ein.',
+  'settings.ai.openaiOauthDisconnectError':
+    'Die ChatGPT-Verbindung konnte nicht getrennt werden. Bitte versuche es erneut.',
   'memorySources.codingSessions.title': 'Coding-Agent-Sitzungen',
   'memorySources.codingSessions.description':
     'Verwandle Entscheidungen und Korrekturen aus Codex und Claude Code in private Persona-Erinnerungen.',
@@ -6996,6 +6846,9 @@ const messages: TranslationMap = {
     '{processed} Sitzungen ergaben {observations} Persona-Beobachtungen.',
   'memorySources.codingSessions.partialFailure':
     '{failed} Sitzungen sind fehlgeschlagen, während {processed} verarbeitet wurden. Starten Sie das Einlesen erneut.',
+  'memorySources.codingSessions.stillRunning': 'Import läuft noch',
+  'memorySources.codingSessions.stillRunningMessage':
+    'Bisher importierte Sitzungen: {processed}. Der Import wurde nicht innerhalb seines Zeitbudgets fertig, läuft aber im Hintergrund weiter. Schauen Sie in einer Minute noch einmal nach, statt ihn neu zu starten.',
   'memorySources.codingSessions.failed': 'Einlesen der Coding-Sitzungen fehlgeschlagen',
   'flows.canvas.sidePanelToggle': 'Seitenleiste',
   'flows.canvas.legendTab': 'Manuell',
@@ -7008,6 +6861,8 @@ const messages: TranslationMap = {
   'sync.pipeline.ingestedOnly': 'Nur aufgenommen',
   'sync.pipeline.storedWithoutVectors':
     'Ohne Vektoren gespeichert. Semantische Suche nicht verfügbar.',
+  'sync.pipeline.vectorsPending':
+    'Brocken, die auf Vektoren warten: {count}. Die semantische Suche deckt sie in Kürze ab.',
   'sync.pipeline.signInToEnable': 'Zum Aktivieren anmelden',
   'sync.pipeline.extractionFailed':
     'Extraktion der Speicherstruktur fehlgeschlagen. Das Wiki ist möglicherweise unvollständig.',
@@ -7064,6 +6919,125 @@ const messages: TranslationMap = {
   'devOptions.gateway': 'Ort',
   'devOptions.provisionedCore': 'Von dieser App gestarteter Kern',
   'devOptions.gatewayId': 'Ort',
+  // S9 i18n audit fixes (hardcoded English in files that already hold useT()).
+  'settings.ai.picker.title': 'Anbieter und Modell wählen',
+  'settings.ai.picker.subtitle': 'Konfigurierte Anbieter und verfügbare Modelle durchsuchen.',
+  'settings.ai.picker.useThisModel': 'Dieses Modell verwenden',
+  'settings.ai.picker.searchPlaceholder': 'Anbieter und Modelle suchen',
+  'settings.ai.picker.providersLabel': 'Anbieter',
+  'settings.ai.picker.modelIdPlaceholder': 'Modell-ID eingeben',
+  'settings.ai.picker.claudeCodeHint':
+    'Verwende einen Claude-Code-Modellalias oder eine Modell-ID.',
+  'settings.ai.loops.memoryTreeWorkers.name': 'Speicherbaum-Worker',
+  'settings.ai.loops.cadence.queue': 'Warteschlange',
+  'settings.ai.loops.memoryTreeWorkers.work':
+    'Extrahiert Abschnitte, versiegelt Zweige, erstellt tägliche Zusammenfassungen und ordnet Themen zu.',
+  'settings.ai.loops.memoryTreeWorkers.risk':
+    '{workers} Worker fragen alle {seconds}s ab; das LLM wird nur aufgerufen, wenn die Warteschlange Extrahier-, Versiegel-, Zusammenfassungs- oder Themenaufgaben enthält.',
+  'settings.ai.loops.reflectionRebuild.name': 'Reflexions-Neuaufbau',
+  'settings.ai.loops.cadence.thirtyMin': '30 Min.',
+  'settings.ai.loops.reflectionRebuild.work':
+    'Aktualisiert den Reflexionsstatus nach Speicheraktivität.',
+  'settings.ai.loops.reflectionRebuild.risk':
+    '{count} Aufwachvorgänge/Woche; das LLM arbeitet nur, wenn der Neuaufbau Reflexion benötigt.',
+  'settings.ai.loops.composioSync.name': 'Composio-Synchronisierung',
+  'settings.ai.loops.cadence.twentyMin': '20 Min.',
+  'settings.ai.loops.composioSync.route': 'Integrations-APIs',
+  'settings.ai.loops.composioSync.work':
+    'Fragt verbundene Tools ab, wenn eine Anbieter-Synchronisierung fällig ist.',
+  'settings.ai.loops.composioSync.risk':
+    '{count} Aufwachvorgänge/Woche; durchsucht {active} aktive Verbindung(en).',
+  'common.notAvailable': 'n/a',
+  'settings.ai.resetsAt': 'wird zurückgesetzt am {time}',
+  'settings.ai.usedAmount': '{amount} verbraucht',
+  'settings.ai.inferenceIntegrationsBreakdown':
+    'Inferenz {inference} + Integrationen {integrations}',
+  'settings.ai.recentSpendRowsCount': '{count} aktuelle Ausgabenzeilen',
+  'settings.ai.perWeek': '{count}/Woche',
+  'settings.ai.perWeekMax': '{count}/Woche max.',
+  'settings.ai.perHour': '{amount}/Std.',
+  'settings.ai.plannerSyncBreakdown': '{planner} Planer + {sync} Synchronisierung',
+  'settings.ai.memoryPollsDetail': '{count} Speicherabfragen',
+  'settings.ai.rowsLeftFormula': 'verbleibend / durchschnittliche Zeile = {remaining} / {avgRow}',
+  'settings.ai.needSpendRowsToEstimate':
+    'Für eine Schätzung werden aktuelle Ausgabenzeilen benötigt.',
+  'settings.ai.rowsPerBudgetFormula':
+    'Zyklusbudget / durchschnittliche Zeile = {budget} / {avgRow}',
+  'settings.ai.burnRateSampleDetail': '{rows} Zeilen/Std. über eine Stichprobe von {hours}h',
+  'settings.ai.needTimestampsForBurnRate':
+    'Es werden Zeitstempel von mindestens zwei Ausgabenzeilen benötigt.',
+  'settings.ai.projectedEmptyDetail':
+    '{hours}h nach der letzten Ausgabe bei aktueller Verbrauchsrate',
+  'settings.ai.noProjectionWithoutSpend': 'Keine Prognose ohne aktuelle stündliche Ausgaben.',
+  'settings.ai.readsPerDollar': '{count} Abfragen/$',
+  'settings.ai.apiReadsFormula':
+    'API-Hintergrundabfragen/Woche / verbleibend = {reads} / {remaining}',
+  'settings.ai.needUsageToEstimate': 'Für eine Schätzung wird die Nutzungsantwort benötigt.',
+  'settings.ai.composioSyncScansDetail':
+    '{count} aktive Integrationsverbindung(en), alle 20 Min. gescannt',
+  'settings.ai.totalApiReadBudgetDetail':
+    'Kalenderplaner-Abfragen + regelmäßige Integrationsscans; schließt vom Nutzer gestartete Chat-Tools aus',
+  'settings.ai.memoryWorkerPollsDetail':
+    '4 Worker fragen alle 5s ab; das LLM wird nur für Aufgaben in der Warteschlange aufgerufen',
+  'settings.mcpServer.tools.listTools': 'Listet alle verfügbaren MCP-Tools auf',
+  'settings.mcpServer.tools.toolInstructions': 'Ruft die Nutzungshinweise für ein Tool ab',
+  'settings.mcpServer.tools.listSubagents': 'Listet verfügbare Subagenten auf',
+  'settings.mcpServer.tools.runSubagent':
+    'Führt einen Subagenten mit einer Eingabeaufforderung aus',
+  'settings.mcpServer.tools.memorySearch': 'Durchsucht den Speicher per semantischer Abfrage',
+  'settings.mcpServer.tools.memoryRecall': 'Ruft bestimmte Erinnerungen anhand der ID ab',
+  'settings.mcpServer.tools.treeReadChunk': 'Liest einen Abschnitt des Speicherbaums',
+  'settings.mcpServer.tools.treeBrowse': 'Durchsucht die Struktur des Speicherbaums',
+  'settings.mcpServer.tools.treeTopEntities':
+    'Ruft die wichtigsten Entitäten aus dem Speicherbaum ab',
+  'settings.mcpServer.tools.treeListSources': 'Listet die Quellen des Speicherbaums auf',
+  'settings.notifications.category.messages.title': 'Nachrichten',
+  'settings.notifications.category.messages.desc':
+    'Neue Nachrichten von eingebetteten Webview-Konten (Slack, WhatsApp, …).',
+  'settings.notifications.category.agents.title': 'Agentenaktivität',
+  'settings.notifications.category.agents.desc':
+    'Abgeschlossene Agentenaufgaben und lang laufende Antworten.',
+  'settings.notifications.category.skills.title': 'Skills',
+  'settings.notifications.category.skills.desc':
+    'Skill-Synchronisierungsereignisse und OAuth-Statusänderungen.',
+  'settings.notifications.category.system.title': 'System',
+  'settings.notifications.category.system.desc':
+    'Verbindungsprobleme, Fehler im Hintergrundprozess, Aktualisierungen.',
+  'settings.notifications.category.meetings.title': 'Meetings',
+  'settings.notifications.category.meetings.desc':
+    'Anstehende Meetings und vom Heartbeat erkannte Kalenderereignisse.',
+  'settings.notifications.category.reminders.title': 'Erinnerungen',
+  'settings.notifications.category.reminders.desc':
+    'Anstehende Erinnerungen und geplante Aufgaben aus Cron-Jobs.',
+  'settings.notifications.category.important.title': 'Wichtige Ereignisse',
+  'settings.notifications.category.important.desc':
+    'Dringende oder zeitkritische Ereignisse aus verbundenen Quellen.',
+  'settings.notifications.categoryToggleAria':
+    'Benachrichtigungen für {name} ein- oder ausschalten',
+  'settings.cron.jobs.runFinishedAt': '{status} um {time}',
+  'settings.cron.jobs.scheduleAt': 'um {time}',
+  'settings.cron.jobs.scheduleEvery': 'alle {ms}ms',
+  'skills.category.all': 'Alle',
+  'skills.category.builtIn': 'Integriert',
+  'skills.category.channels': 'Kanäle',
+  'skills.category.productivity': 'Produktivität',
+  'skills.category.chat': 'Chat',
+  'skills.category.toolsAutomation': 'Tools und Automatisierung',
+  'skills.category.social': 'Sozial',
+  'skills.category.platform': 'Plattform',
+  'skills.category.other': 'Sonstiges',
+  'workspace.wipeSuccessTitle': 'Speicher gelöscht',
+  'workspace.wipeSuccessMessage':
+    '{rows} Zeile(n) und {dirs} Ordner entfernt; {cursors} Sync-Status-Cursor gelöscht. Klicke bei einer verbundenen Quelle auf Synchronisieren, um neu zu befüllen.',
+  'workspace.wipeFailedTitle': 'Zurücksetzen fehlgeschlagen',
+  'workspace.resetTreeSuccessTitle': 'Speicherbaum wird neu aufgebaut',
+  'workspace.resetTreeSuccessMessage':
+    '{treeRows} Baumzeile(n) gelöscht; {chunks} Abschnitt(e) neu eingereiht ({jobs} Extraktionsaufgaben). Der Graph füllt sich, sobald der Worker fertig ist.',
+  'workspace.resetTreeFailedTitle': 'Speicherbaum konnte nicht zurückgesetzt werden',
+  'workspace.buildTreesFailedTitle': 'Zusammenfassungsbäume konnten nicht erstellt werden',
+  'invites.redeemHeading': 'Hast du einen Empfehlungscode?',
+  'invites.redeemPlaceholder': 'Empfehlungscode',
+  'invites.redeemSubmit': 'Einlösen',
 };
 
 export default messages;

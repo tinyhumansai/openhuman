@@ -33,7 +33,6 @@ function seedState(accounts: Account[]): AccountsState {
     messages: {},
     unread: {},
     logs: {},
-    overlayOpen: false,
   };
   for (const acct of accounts) {
     state.accounts[acct.id] = acct;

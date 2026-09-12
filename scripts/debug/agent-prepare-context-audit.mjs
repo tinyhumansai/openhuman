@@ -527,7 +527,6 @@ agent_tier = "worker"
 omit_identity = true
 omit_memory_context = true
 omit_safety_preamble = true
-omit_skills_catalog = true
 omit_profile = false
 omit_memory_md = false
 

@@ -268,8 +268,8 @@ export function ObsidianVaultSection({ contentRootAbs, onToast }: ObsidianVaultS
             console.debug('[ui-flow][obsidian-vault] dismiss: outside click');
           }}
           className="absolute right-0 top-full z-20 mt-2 w-xl max-w-[calc(100vw-2rem)]
-                     rounded-lg border border-violet-200 bg-violet-50 p-4 pr-10 text-sm shadow-xl
-                     dark:border-violet-500/30 dark:bg-violet-950">
+                     rounded-lg border border-primary-200 bg-primary-50 p-4 pr-10 text-sm shadow-xl
+                     dark:border-primary-500/30 dark:bg-primary-950">
           <PopoverClose asChild>
             <Button
               variant="tertiary"
@@ -277,8 +277,8 @@ export function ObsidianVaultSection({ contentRootAbs, onToast }: ObsidianVaultS
               iconOnly
               data-testid="obsidian-vault-close"
               aria-label={t('common.close')}
-              className="absolute right-2 top-2 h-auto w-auto p-1 hover:bg-violet-100
-                         dark:hover:bg-violet-500/20">
+              className="absolute right-2 top-2 h-auto w-auto p-1 hover:bg-primary-100
+                         dark:hover:bg-primary-500/20">
               <CloseIcon />
             </Button>
           </PopoverClose>
@@ -306,8 +306,8 @@ export function ObsidianVaultSection({ contentRootAbs, onToast }: ObsidianVaultS
               onClick={openAnyway}
               disabled={crossHostOs !== null}
               data-testid="obsidian-open-anyway"
-              className="border-violet-300 text-violet-700 hover:bg-violet-50 dark:border-violet-500/40
-                         dark:text-violet-300">
+              className="border-primary-300 text-primary-700 hover:bg-primary-100 dark:border-primary-500/40
+                         dark:text-primary-300">
               {t('workspace.openAnyway')}
             </Button>
             <Button
@@ -324,7 +324,7 @@ export function ObsidianVaultSection({ contentRootAbs, onToast }: ObsidianVaultS
             size="sm"
             onClick={() => setShowAdvanced(v => !v)}
             data-testid="obsidian-advanced-toggle"
-            className="mt-3 h-auto p-0 font-medium text-violet-600 hover:underline hover:bg-transparent dark:text-violet-300">
+            className="mt-3 h-auto p-0 font-medium text-primary-600 hover:underline hover:bg-transparent dark:text-primary-300">
             {t('workspace.obsidianAdvanced')}
           </Button>
 
@@ -353,8 +353,7 @@ export function ObsidianVaultSection({ contentRootAbs, onToast }: ObsidianVaultS
                   size="sm"
                   onClick={saveConfigDir}
                   disabled={checking}
-                  data-testid="obsidian-config-dir-save"
-                  className="bg-violet-500 hover:bg-violet-600">
+                  data-testid="obsidian-config-dir-save">
                   {t('common.save')}
                 </Button>
               </div>

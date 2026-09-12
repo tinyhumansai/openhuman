@@ -46,6 +46,7 @@ pub(super) const FUNCTIONS_CORE_RECALL: &[&str] = &[
     "init",
     "list_documents",
     "list_namespaces",
+    "namespace_summaries",
     "delete_document",
     "query_namespace",
     "recall_context",
@@ -75,6 +76,10 @@ pub(super) fn controllers_core_recall() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schema("list_namespaces").unwrap(),
             handler: handle_list_namespaces,
+        },
+        RegisteredController {
+            schema: schema("namespace_summaries").unwrap(),
+            handler: handle_namespace_summaries,
         },
         RegisteredController {
             schema: schema("delete_document").unwrap(),
@@ -182,6 +187,28 @@ pub(super) fn schema(function: &str) -> Option<ControllerSchema> {
                 comment: "Envelope with namespaces array and count.",
                 required: true,
             }],
+        },
+        "namespace_summaries" => ControllerSchema {
+            namespace: "memory",
+            function: "namespace_summaries",
+            description: "Per-namespace stored-document counts plus the grand total -- the \
+                          verification surface for whether a sync's items actually landed. \
+                          list_namespaces answers names alone; this carries the numbers.",
+            inputs: vec![],
+            outputs: vec![
+                FieldSchema {
+                    name: "namespaces",
+                    ty: TypeSchema::Json,
+                    comment: "One row per namespace: namespace, count, last_updated.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "total_documents",
+                    ty: TypeSchema::U64,
+                    comment: "Sum of every namespace's stored-document count.",
+                    required: true,
+                },
+            ],
         },
         "delete_document" => ControllerSchema {
             namespace: "memory",
@@ -480,6 +507,10 @@ fn handle_list_namespaces(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move { to_json(rpc::memory_list_namespaces(EmptyRequest {}).await?) })
 }
 
+fn handle_namespace_summaries(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { to_json(rpc::memory_namespace_summaries().await?) })
+}
+
 fn handle_delete_document(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let payload = parse_params::<DeleteDocumentRequest>(params)?;
@@ -573,62 +604,5 @@ fn handle_clear_namespace(params: Map<String, Value>) -> ControllerFuture {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn documents_schema_exposes_all_functions() {
-        assert_eq!(controllers_core_recall().len(), FUNCTIONS_CORE_RECALL.len());
-        assert_eq!(controllers_documents().len(), FUNCTIONS_DOCUMENTS.len());
-        assert_eq!(controllers_ingest().len(), FUNCTIONS_INGEST.len());
-        assert!(FUNCTIONS_CORE_RECALL.contains(&"init"));
-        assert!(FUNCTIONS_CORE_RECALL.contains(&"clear_namespace"));
-        assert!(FUNCTIONS_DOCUMENTS.contains(&"doc_put"));
-        assert!(FUNCTIONS_INGEST.contains(&"doc_ingest"));
-    }
-
-    /// The three partitions must be disjoint and must cover the file — a
-    /// function that fell out of all three would silently lose its
-    /// registration, since `core::all` now pushes the parts, not the whole.
-    #[test]
-    fn capability_partitions_are_disjoint_and_total() {
-        let mut all: Vec<&str> = Vec::new();
-        all.extend(FUNCTIONS_CORE_RECALL);
-        all.extend(FUNCTIONS_DOCUMENTS);
-        all.extend(FUNCTIONS_INGEST);
-        let mut sorted = all.clone();
-        sorted.sort_unstable();
-        sorted.dedup();
-        assert_eq!(sorted.len(), all.len(), "a function appears in two parts");
-        assert_eq!(all.len(), 15, "the documents file advertises 15 functions");
-        for f in &all {
-            assert!(schema(f).is_some(), "{f} has no schema");
-        }
-    }
-
-    #[test]
-    fn unknown_document_schema_returns_none() {
-        assert!(schema("not_real").is_none());
-    }
-
-    #[test]
-    fn query_namespace_schema_requires_namespace_and_query() {
-        let schema = schema("query_namespace").unwrap();
-        let required: Vec<&str> = schema
-            .inputs
-            .iter()
-            .filter(|f| f.required)
-            .map(|f| f.name)
-            .collect();
-        assert!(required.contains(&"namespace"));
-        assert!(required.contains(&"query"));
-    }
-
-    #[test]
-    fn clear_namespace_schema_requires_namespace() {
-        let schema = schema("clear_namespace").unwrap();
-        assert_eq!(schema.inputs.len(), 1);
-        assert_eq!(schema.inputs[0].name, "namespace");
-        assert!(schema.inputs[0].required);
-    }
-}
+#[path = "documents_tests.rs"]
+mod tests;

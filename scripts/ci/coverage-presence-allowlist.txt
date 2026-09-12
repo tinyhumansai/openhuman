@@ -25,3 +25,9 @@
 # `disabled.rs` because it answers as a runtime that is "disabled", not as a
 # generic facade stub.
 src/openhuman/runtime/client/disabled.rs
+
+# `helper.rs` includes this fragment only to build the macOS Swift accessibility
+# helper. The production feature set is compiled for Linux in this coverage lane,
+# so the fragment's `#[cfg(target_os = "macos")]` definition is intentionally
+# absent. It is exercised by the macOS desktop E2E matrix instead.
+src/openhuman/desktop/accessibility/helper_part_02.rs

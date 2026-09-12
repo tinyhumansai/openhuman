@@ -170,7 +170,7 @@ use openhuman_core::openhuman::agent::tinyagents::thread_context::{current_threa
 use openhuman_core::openhuman::threads::todos::ops::BoardLocation;
 use openhuman_core::openhuman::inference::tokenjuice::AgentTokenjuiceCompression;
 use openhuman_core::openhuman::tools::{Tool, ToolResult, ToolSpec};
-use tinyagents::harness::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
+use tinyinference::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
 
 static ENV_LOCK: &std::sync::OnceLock<std::sync::Mutex<()>> = &crate::SHARED_ENV_LOCK;
 
@@ -246,7 +246,7 @@ impl ChatModel<()> for EchoModel {
         &self,
         _state: &(),
         request: ModelRequest,
-    ) -> tinyagents::Result<ModelResponse> {
+    ) -> tinyinference::Result<ModelResponse> {
         Ok(ModelResponse::assistant(
             request
                 .messages
@@ -1515,7 +1515,6 @@ named = ["todo", "plan_exit"]
         omit_identity: true,
         omit_memory_context: true,
         omit_safety_preamble: true,
-        omit_skills_catalog: true,
         omit_profile: true,
         omit_memory_md: true,
         model: ModelSpec::Inherit,
@@ -1955,17 +1954,21 @@ async fn inference_provider_factory_and_classifiers_cover_user_state_edges() {
     config.reasoning_provider = None;
     config.memory_provider = None;
     assert_eq!(provider_for_role("chat", &config), "mock:chat-model@0.25");
+    // #6109: `reasoning` is unset, and an unset route no longer borrows a
+    // sibling's BYOK provider. It resolves through `primary_cloud` like every
+    // other unset workload — the same answer `memory` gives just below.
     assert_eq!(
         provider_for_role("reasoning", &config),
-        "mock:chat-model@0.25"
+        "openhuman",
+        "an unset reasoning route must not inherit chat's BYOK provider"
     );
     assert_eq!(provider_for_role("memory", &config), "openhuman");
 }
 
 #[tokio::test]
 async fn inference_openhuman_backend_provider_covers_authless_and_streaming_edges() {
-    use tinyagents::harness::message::Message;
-    use tinyagents::harness::model::{ChatModel, ModelRequest};
+    use tinyinference::message::Message;
+    use tinyinference::model::{ChatModel, ModelRequest};
 
     let state_dir = tempdir().expect("openhuman provider state");
     let provider = OpenHumanBackendModel::new(
@@ -2916,13 +2919,12 @@ fn agent_pformat_and_prompt_renderers_cover_public_paths() {
         "You are a narrow coverage sub-agent.".into(),
         false,
         false,
-        true,
     )
     .build(&ctx)
     .expect("subagent builder");
     assert!(built.contains("coverage soul"));
     assert!(built.contains("coverage profile"));
-    assert!(built.contains("Output style"));
+    assert!(built.contains("# Writing style"));
 
     let narrow = render_subagent_system_prompt(
         workspace.path(),
@@ -2934,7 +2936,6 @@ fn agent_pformat_and_prompt_renderers_cover_public_paths() {
         SubagentRenderOptions {
             include_safety_preamble: true,
             include_identity: true,
-            include_skills_catalog: false,
             include_profile: true,
             include_memory_md: true,
         },
@@ -2964,10 +2965,9 @@ fn agent_pformat_and_prompt_renderers_cover_public_paths() {
     assert!(PromptTool::with_schema("x", "desc", "{}".into())
         .parameters_schema
         .is_some());
-    let options = SubagentRenderOptions::from_definition_flags(false, true, false, true, false);
+    let options = SubagentRenderOptions::from_definition_flags(false, true, true, false);
     assert!(options.include_identity);
     assert!(!options.include_safety_preamble);
-    assert!(options.include_skills_catalog);
     assert!(!options.include_profile);
     assert!(options.include_memory_md);
 }
@@ -3035,6 +3035,7 @@ async fn agent_public_tools_cover_validation_and_metadata_paths() {
         AskClarificationTool, DelegateToPersonalityTool, DelegateTool, RunWorkflowTool, TodoTool,
         RUN_WORKFLOW_TOOL_NAME,
     };
+    use openhuman_core::openhuman::agent::orchestration::tools::DelegationTarget;
     use openhuman_core::openhuman::tools::{ArchetypeDelegationTool, SkillDelegationTool};
 
     let ask = AskClarificationTool::new();
@@ -3083,7 +3084,11 @@ async fn agent_public_tools_cover_validation_and_metadata_paths() {
 
     let archetype = ArchetypeDelegationTool {
         tool_name: "delegate_researcher".into(),
-        agent_id: "researcher".into(),
+        // Constructed explicitly rather than via `.into()`: `DelegationTarget`
+        // exists so a routing target cannot be an anonymous string, and an
+        // ambient `From<&str>` would let any `.into()` mint one silently —
+        // re-opening the hole the newtype was added to close.
+        agent_id: DelegationTarget("researcher".into()),
         tool_description: "Use for research.".into(),
     };
     assert_eq!(
@@ -3159,7 +3164,7 @@ async fn agent_public_tools_cover_validation_and_metadata_paths() {
 
 #[tokio::test]
 async fn agent_preference_tools_tree_loader_and_triage_events_cover_public_edges() {
-    let memory = Arc::new(RecordingMemory::default());
+    let _memory = Arc::new(RecordingMemory::default());
     let security = Arc::new(SecurityPolicy::default());
 
     assert_eq!(FacetClass::parse(" Tooling "), Some(FacetClass::Tooling));

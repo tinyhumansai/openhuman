@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useT } from '../../lib/i18n/I18nContext';
 import { channelConnectionsApi } from '../../services/api/channelConnectionsApi';
 import type { BotPermissionCheck, DiscordGuild, DiscordTextChannel } from '../../types/channels';
+import { Spinner } from '../ui';
 import NativeSelect from '../ui/NativeSelect';
 
 const log = debug('channels:discord:picker');
@@ -246,7 +247,7 @@ const DiscordServerChannelPicker = ({
       {/* Permission check result */}
       {state === 'checking_permissions' && (
         <div className="flex items-center gap-2 text-xs text-content-muted">
-          <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-line-strong border-t-primary-500" />
+          <Spinner className="h-3 w-3" />
           {t('channels.discord.picker.checkingPermissions')}
         </div>
       )}

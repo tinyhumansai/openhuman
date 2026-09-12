@@ -1,5 +1,5 @@
 //! Task prompt construction — a thin binding of
-//! [`tinyagents::graph::todos::dispatch::prompt`] to OpenHuman's tool names.
+//! [`tinyagents_graph::todos::dispatch::prompt`] to OpenHuman's tool names.
 //!
 //! The crate owns the rendering (objective, plan, acceptance criteria, source
 //! provenance, and the "block rather than guess" progress addendum). All this
@@ -9,8 +9,8 @@
 
 use std::sync::LazyLock;
 
-use tinyagents::graph::todos::dispatch::prompt as crate_prompt;
-use tinyagents::graph::todos::dispatch::TaskPromptTools;
+use tinyagents_graph::todos::dispatch::prompt as crate_prompt;
+use tinyagents_graph::todos::dispatch::TaskPromptTools;
 
 use crate::openhuman::agent::task_board::TaskBoardCard;
 

@@ -8,7 +8,6 @@ agent_tier = "worker"
 omit_identity = true
 omit_memory_context = false
 omit_safety_preamble = false
-omit_skills_catalog = true
 omit_profile = true
 omit_memory_md = true
 # No eager memory pre-fetch. `omit_memory_context = false` keeps the cheap

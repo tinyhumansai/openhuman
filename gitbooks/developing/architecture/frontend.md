@@ -44,7 +44,6 @@ app/src/
 ├── pages/                  # Route-level screens (incl. onboarding/, ios/, dev/)
 ├── features/               # Feature verticals (human/, conversations/, meet/, voice/)
 ├── components/             # Shared UI (incl. settings/, layout/shell/, accounts/)
-├── agentworld/             # tiny.place Agent World surface (/agent-world/*)
 ├── hooks/                  # App hooks
 ├── utils/                  # Config, Tauri command wrappers, routing utilities
 └── assets/                 # Icons and static assets
@@ -408,7 +407,6 @@ Current desktop routes (read `AppRoutes.tsx` for the authoritative table — the
 /human                 → HumanPage (dedicated mascot stage)
 /brain                 → Brain (memory knowledge-graph)
 /flows                 → FlowsPage · /flows/draft → draft canvas · /flows/:id → FlowCanvasPage
-/orchestration         → OrchestrationPage (TinyPlace multi-agent coordination)
 /workflows/run         → WorkflowsRun (single-purpose Skill runner)
 /connections           → Skills page (connections hub)
 /chat/:threadId?       → Accounts (unified chat: agent + connected web apps)
@@ -418,7 +416,6 @@ Current desktop routes (read `AppRoutes.tsx` for the authoritative table — the
 /rewards               → Rewards
 /ptt-overlay           → PttOverlayPage (push-to-talk overlay window)
 /dev/agent-insights    → dev-only preview
-/agent-world/*         → AgentWorld (tiny.place A2A social network)
 *                      → DefaultRedirect
 ```
 
@@ -429,10 +426,9 @@ Back-compat redirects (all `Navigate replace`, query params preserved):
 /activity    → /settings/notifications   /channels    → /connections?tab=messaging
 /intelligence→ /settings/notifications   /routines    → /settings/automations
 /workflows   → /settings/automations     /webhooks    → /settings/integrations#webhooks
-/brain/tinyplace-orchestration → /orchestration
 ```
 
-There is **no** `/login` route — authentication flows through the Welcome page, the `/auth` callback, and deep links. Desktop **Settings is not an inline route**: when the URL is `/settings/*`, `AppShellDesktop` keeps rendering the _background_ location and mounts `SettingsModal` on top (see [Settings](frontend.md#settings)). Note that `/agents` does not exist; the agent-social surface is `/agent-world/*`.
+There is **no** `/login` route — authentication flows through the Welcome page, the `/auth` callback, and deep links. Desktop **Settings is not an inline route**: when the URL is `/settings/*`, `AppShellDesktop` keeps rendering the _background_ location and mounts `SettingsModal` on top (see [Settings](frontend.md#settings)). Note that `/agents` does not exist.
 
 ### Route guards
 

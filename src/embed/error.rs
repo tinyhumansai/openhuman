@@ -98,6 +98,14 @@ pub enum CoreError {
         /// The sanitized endpoint (credentials stripped) that was refused.
         endpoint: String,
     },
+
+    /// A per-turn route was supplied but would be discarded by the inference
+    /// controller because one of its required halves is blank.
+    #[error("{method}: routed inference requires a non-blank endpoint and api key")]
+    InvalidRoute {
+        /// RPC method the invalid route was attached to.
+        method: &'static str,
+    },
 }
 
 impl CoreError {
@@ -147,7 +155,8 @@ impl CoreError {
             | CoreError::Rpc { method, .. }
             | CoreError::Encode { method, .. }
             | CoreError::Decode { method, .. }
-            | CoreError::InsecureRoute { method, .. } => method,
+            | CoreError::InsecureRoute { method, .. }
+            | CoreError::InvalidRoute { method } => method,
         }
     }
 

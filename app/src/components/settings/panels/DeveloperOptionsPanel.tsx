@@ -227,20 +227,20 @@ const CoreModeBadge = () => {
     // gateway's own name is available to show, which is also the only part a
     // developer reading this panel needs in order to find it in Settings.
     return (
-      <div className="px-4 py-3 rounded-xl border border-sage-300 dark:border-sage-500/40 bg-sage-50 dark:bg-sage-500/10">
-        <div className="flex items-center gap-2">
-          <span className="px-2 py-0.5 rounded-full bg-sage-600 text-content-inverted text-[11px] font-medium">
-            {t('devOptions.gateway')}
-          </span>
-          <span className="text-sm font-semibold text-sage-900 dark:text-sage-200">
-            {t('devOptions.provisionedCore')}
-          </span>
+      <Alert variant="success">
+        <div className="w-full">
+          <div className="flex items-center gap-2">
+            <Badge variant="success">{t('devOptions.gateway')}</Badge>
+            <span className="text-sm font-semibold text-content">
+              {t('devOptions.provisionedCore')}
+            </span>
+          </div>
+          <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
+            <dt className="text-content-secondary">{t('devOptions.gatewayId')}:</dt>
+            <dd className="font-mono text-content truncate">{mode.gatewayId}</dd>
+          </dl>
         </div>
-        <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
-          <dt className="text-sage-700 dark:text-sage-300">{t('devOptions.gatewayId')}:</dt>
-          <dd className="font-mono text-sage-900 dark:text-sage-200 truncate">{mode.gatewayId}</dd>
-        </dl>
-      </div>
+      </Alert>
     );
   }
 

@@ -20,7 +20,7 @@ The agent tool layer. Defines the core [`Tool`] trait every agent-callable capab
 
 | File | Role |
 | --- | --- |
-| `src/openhuman/tools/mod.rs` | Export hub. Declares submodules, re-exports built-in impls and the domain-owned tool sets (`agent`, `voice::audio_toolkit`, `codegraph`, `composio`, `cron`, `integrations`, `memory`, `wallet`, `whatsapp_data`), and the `all_tools_*` controller pair. |
+| `src/openhuman/tools/mod.rs` | Export hub. Declares submodules, re-exports built-in impls and the domain-owned tool sets (`agent`, `voice::audio_toolkit`, `codegraph`, `composio`, `cron`, `integrations`, `memory`, `wallet`), and the `all_tools_*` controller pair. |
 | `src/openhuman/tools/traits.rs` | The `Tool` trait + `ToolResult`/`ToolContent` re-export, `ToolSpec`, `PermissionLevel`, `ToolScope`, `ToolCategory`, `ToolCallOptions`. Defines per-tool hooks: permission level (incl. args-aware), scope, category, concurrency safety, `external_effect[_with_args]` (drives approval gating), `max_result_size_chars`, markdown preference, generated-runtime context. |
 | `src/openhuman/tools/ops.rs` | Registry assembly: `default_tools`, `default_tools_with_runtime`, `all_tools`, `all_tools_with_runtime`, `browser_allowed_domains`. All config-gating logic lives here. |
 | `src/openhuman/tools/schemas.rs` | JSON-RPC `tools` namespace controllers + `handle_*` fns. `all_controller_schemas` / `all_registered_controllers` (re-exported as `all_tools_*`). |
@@ -73,7 +73,7 @@ This module **owns** the cross-cutting built-in tools (the only ones that belong
 - **Generic network**: `http_request`, `web_fetch`, `curl`, `gitbooks_search`/`gitbooks_get_page`, MCP bridge (`mcp` list/call), `mcp_setup` tools, `gmail_unsubscribe`.
 - **Search**: `web_search` and provider-specific search families are registered by `openhuman::search::registry`; `search.engine = "disabled"` suppresses this surface entirely.
 
-Domain-owned tools (memory, cron, wallet, composio, codegraph, integrations, whatsapp_data, voice::audio_toolkit, agent sub-dispatch like `spawn_subagent`/`spawn_async_subagent`/`delegate`/`todo`/`plan_exit`/`run_skill`) are **registered** in `all_tools` but implemented in their respective domains and only re-exported through this module.
+Domain-owned tools (memory, cron, wallet, composio, codegraph, integrations, voice::audio_toolkit, agent sub-dispatch like `spawn_subagent`/`spawn_async_subagent`/`delegate`/`todo`/`plan_exit`/`run_skill`) are **registered** in `all_tools` but implemented in their respective domains and only re-exported through this module.
 
 ## Events
 
@@ -96,7 +96,7 @@ None. No `store.rs`; the module holds no persisted state. Tools that persist (me
 - `openhuman::mcp::config_servers` / `openhuman::mcp::registry` — generic remote MCP server registry + bridge tools.
 - `openhuman::skills` — `skills::types::{ToolResult, ToolContent}` (the unified result type) + skill-run spawning.
 - `openhuman::agent::learning` — LinkedIn enrichment scrape/render for the Apify RPC handler.
-- `openhuman::web3::wallet`, `openhuman::cron`, `openhuman::codegraph`, `openhuman::voice::audio_toolkit`, `openhuman::channels::whatsapp_data` — domain-owned tools re-exported and registered.
+- `openhuman::web3::wallet`, `openhuman::cron`, `openhuman::codegraph`, `openhuman::voice::audio_toolkit` — domain-owned tools re-exported and registered.
 - `openhuman::security::approval`, `openhuman::agent::context`, `openhuman::security::credentials`, `openhuman::platform::update`, `openhuman::util` — supporting types used by individual tools.
 - `core::all` — `ControllerSchema`, `FieldSchema`, `TypeSchema`, `RegisteredController`, `ControllerFuture` for the RPC controller surface.
 
@@ -107,7 +107,7 @@ None. No `store.rs`; the module holds no persisted state. Tools that persist (me
 - `openhuman::channels`, `openhuman::routing`, `openhuman::inference::provider` — build tool sets / clean schemas per provider.
 - `openhuman::tools::agent_policy`, `openhuman::security::approval` — read tool metadata (category, external-effect) for policy/approval decisions.
 - `openhuman::tools::registry`, `openhuman::runtime::node`, `openhuman::mcp::server` — registry/exposure consumers.
-- Many domains re-export their own tools through this module (cron, memory, wallet, composio, integrations, codegraph, whatsapp_data, voice::audio_toolkit).
+- Many domains re-export their own tools through this module (cron, memory, wallet, composio, integrations, codegraph, voice::audio_toolkit).
 
 ## Notes / gotchas
 

@@ -1,9 +1,5 @@
 import { persistor } from '../store';
-import {
-  resetOpenHumanDataAndRestartCore,
-  restartApp,
-  scheduleCefProfilePurge,
-} from './tauriCommands';
+import { resetOpenHumanDataAndRestartCore, restartApp } from './tauriCommands';
 
 const ACTIVE_USER_KEY = 'OPENHUMAN_ACTIVE_USER_ID';
 
@@ -57,20 +53,17 @@ interface ClearAllAppDataOptions {
   // skipped silently if the caller cannot/does not provide it (e.g. pre-login
   // recovery from a corrupt key file, where there is no live session).
   clearSession?: () => Promise<unknown>;
-  // User scope passed to the CEF profile purge so per-user browser data is
-  // queued for deletion on the next launch. `null` purges the unauthenticated
-  // default profile.
+  // User scope passed to the core reset so only the active account is deleted.
   userId?: string | null;
 }
 
 /**
  * Sign out + wipe every local data store and restart the app:
  *
- *  1. Queue the CEF profile directory for deletion on next launch.
- *  2. Best-effort `clearSession` to drop the core's auth state.
- *  3. Reset the openhuman workspace dir + restart the core sidecar.
- *  4. Purge redux-persist + window storage.
- *  5. Restart the desktop shell so CEF reboots into the fresh profile.
+ *  1. Best-effort `clearSession` to drop the core's auth state.
+ *  2. Reset the openhuman workspace dir + restart the core sidecar.
+ *  3. Purge redux-persist + window storage.
+ *  4. Restart the desktop shell into the cleared session.
  *
  * Used by Settings (Danger Zone) and the Welcome screen's decryption-recovery
  * action. Throws on the first step that can't be recovered from — callers are
@@ -80,16 +73,7 @@ export const clearAllAppData = async ({
   clearSession,
   userId = null,
 }: ClearAllAppDataOptions = {}): Promise<void> => {
-  // 1. Queue the active user-scoped CEF profile for deletion on next launch.
-  //    The CEF process may still hold SQLite/cache handles, so we delete
-  //    after the shell restarts.
-  try {
-    await scheduleCefProfilePurge(userId);
-  } catch (err) {
-    console.warn('[clearAllAppData] Failed to queue CEF profile purge:', err);
-  }
-
-  // 2. Best-effort core-side session clear. If the core is wedged or there is
+  // 1. Best-effort core-side session clear. If the core is wedged or there is
   //    no session yet (pre-login recovery), keep going — we still want to wipe
   //    local data.
   if (clearSession) {
@@ -100,8 +84,8 @@ export const clearAllAppData = async ({
     }
   }
 
-  // 3. Delete the signed-in user's data dir + restart core. We pass `userId`
-  //    explicitly: step 2's `clearSession()` already ran `auth_clear_session`,
+  // 2. Delete the signed-in user's data dir + restart core. We pass `userId`
+  //    explicitly: step 1's `clearSession()` already ran `auth_clear_session`,
   //    which removes the `active_user.toml` marker. If the reset resolved its
   //    target from that (now-absent) marker it would fall back to the pre-login
   //    `users/local` dir and delete an empty directory — leaving the real
@@ -111,12 +95,12 @@ export const clearAllAppData = async ({
   //    pins the deletion to the correct user regardless of marker state.
   await resetOpenHumanDataAndRestartCore(userId);
 
-  // 4. Purge redux-persist + browser storage. `persistor.purge()` wipes the
+  // 3. Purge redux-persist + browser storage. `persistor.purge()` wipes the
   //    persisted backend; `clearUserScopedStorage` removes only the active
   //    user's localStorage keys so other accounts' data is not destroyed.
   await persistor.purge();
   clearUserScopedStorage(userId);
 
-  // 5. Full app restart so CEF reboots into the fresh pre-login profile.
+  // 4. Full app restart into the fresh pre-login session.
   await restartApp();
 };

@@ -1,5 +1,6 @@
 import { useT } from '../../lib/i18n/I18nContext';
 import { type NotificationItem } from '../../store/notificationSlice';
+import Badge from '../ui/Badge';
 import NotificationBody from './NotificationBody';
 
 /** Relative human-readable time string from epoch ms, e.g. "2m ago". */
@@ -51,9 +52,7 @@ const CoreNotificationCard = ({ notification: n }: Props) => {
         <div className="flex-1 min-w-0 text-left">
           {/* Header row: category badge + timestamp */}
           <div className="flex items-center gap-2 mb-1">
-            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border bg-surface-subtle text-content-secondary border-line">
-              {t(`notifications.category.${n.category}`)}
-            </span>
+            <Badge>{t(`notifications.category.${n.category}`)}</Badge>
             <span className="ml-auto text-[11px] text-content-faint shrink-0">
               {relativeTime(n.timestamp)}
             </span>

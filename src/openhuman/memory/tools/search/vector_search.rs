@@ -16,10 +16,181 @@ use crate::openhuman::memory::api::provider::ChunkQuery;
 use crate::openhuman::memory::api::provider::MemoryProvider;
 use crate::openhuman::memory::ops::guard::active_memory_guard;
 use crate::openhuman::tools::traits::{Tool, ToolResult};
-use tinycortex::memory::retrieval::mmr::{mmr_select, MmrCandidate};
-use tinycortex::memory::store::vectors::cosine_similarity;
 
 pub struct MemoryVectorSearchTool;
+
+// ── Ranking maths, brought home from the engine crate (#5560) ────────────────
+//
+// `cosine_similarity` and the MMR selector below were reached at
+// `tinycortex::memory::{store::vectors, retrieval::mmr}`. They are ported here
+// verbatim rather than routed at the module contract because there is nothing
+// on the contract to route them *at*, and nothing that would benefit if there
+// were: both are pure arithmetic over `&[f32]` slices this host already holds
+// in memory. The chunks and their embeddings come back over the bus
+// (`MemoryChunks::list_chunks` + `chunk_embeddings`); what happens to the
+// numbers afterwards is this tool's ranking policy, and shipping vectors back
+// across a bus boundary to have someone else multiply them would be a round
+// trip bought for nothing.
+//
+// That is also why they are private to this file rather than a shared module:
+// this tool is the only caller in the host. `archivist::boundary` keeps its own
+// `f32` cosine for its own threshold — see the divergence note on
+// [`cosine_similarity`], which is the reason those two are deliberately not
+// unified.
+
+/// Cosine similarity between two vectors, in `[-1.0, 1.0]`.
+///
+/// Returns `0.0` for mismatched lengths, empty vectors, or a zero-magnitude
+/// vector on either side. Accumulates in `f64` regardless of the `f32` inputs,
+/// so a long vector does not lose precision in the dot product.
+///
+/// # The `[0.0, 1.0]` clamp this does *not* do
+///
+/// The engine's `retrieval::mmr` module docs claim this function "clamps its
+/// result to `[0.0, 1.0]`", which would make an anti-correlated candidate
+/// indistinguishable from an orthogonal one inside [`mmr_select`]. **That
+/// comment is stale**: the code clamps to `[-1.0, 1.0]` — the mathematical
+/// range — and only to absorb floating-point drift. The port follows the code,
+/// so a negatively-correlated candidate keeps its sign and is treated by MMR as
+/// *more* diverse than an orthogonal one, which is the behaviour this tool has
+/// actually had. Do not "restore" the clamp the stale comment describes.
+///
+/// Distinct from `archivist::boundary`'s private `cosine_similarity`, which is
+/// `f32`-valued and unclamped; that one feeds a segment-boundary threshold, not
+/// a ranking, and the two are independent on purpose.
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+    let mut dot = 0.0_f64;
+    let mut norm_a = 0.0_f64;
+    let mut norm_b = 0.0_f64;
+    for (x, y) in a.iter().zip(b.iter()) {
+        let x = f64::from(*x);
+        let y = f64::from(*y);
+        dot += x * y;
+        norm_a += x * x;
+        norm_b += y * y;
+    }
+    let denom = norm_a.sqrt() * norm_b.sqrt();
+    if denom <= f64::EPSILON {
+        return 0.0;
+    }
+    (dot / denom).clamp(-1.0, 1.0)
+}
+
+/// A candidate for MMR selection.
+struct MmrCandidate<'a> {
+    /// Caller-side index, echoed back on the result so the candidate can be
+    /// resolved to its original record.
+    index: usize,
+    /// Candidate embedding; must share dimensionality with every other
+    /// candidate, since cosine similarity is computed pairwise.
+    embedding: &'a [f32],
+    /// Precomputed relevance of this candidate to the query (here, its cosine
+    /// score). Higher is more relevant; weighted by `lambda` in the MMR
+    /// formula.
+    relevance: f64,
+}
+
+/// Result of MMR selection: the original index and its MMR score.
+struct MmrResult {
+    /// Caller-side index echoed from the chosen [`MmrCandidate::index`], used
+    /// to resolve the result back to its original record.
+    index: usize,
+    /// The MMR score at the step this item was selected:
+    /// `lambda · relevance − (1 − lambda) · max_similarity(c, selected)`.
+    /// Not comparable across runs with different `lambda`.
+    ///
+    /// Unread by this tool — the output reports each hit's *cosine* score, not
+    /// its MMR score, because the latter depends on selection order and would
+    /// read as an unstable percentage. Kept so the port stays a faithful copy
+    /// of the engine's shape rather than a narrowed re-derivation.
+    #[allow(
+        dead_code,
+        reason = "faithful port; this tool reports the cosine score instead"
+    )]
+    score: f64,
+}
+
+/// Select up to `limit` items from `candidates` using Maximal Marginal
+/// Relevance, balancing relevance against redundancy within the selected set.
+///
+/// `lambda` controls the relevance-diversity tradeoff:
+/// - `1.0` = pure relevance (no diversity)
+/// - `0.0` = pure diversity (ignores relevance)
+/// - `0.7` = the value this tool passes
+///
+/// For each selection step:
+/// `mmr(c) = lambda · relevance(c) − (1 − lambda) · max_similarity(c, selected)`.
+///
+/// `lambda` is clamped to `[0.0, 1.0]`; `limit` is clamped to
+/// `candidates.len()`. Returns `Vec::new()` immediately if `candidates` is
+/// empty or `limit == 0`.
+///
+/// # Relevance is precomputed, not derived from a query vector here
+///
+/// The engine's signature took a `query_vec` first argument and never read it —
+/// relevance came entirely from [`MmrCandidate::relevance`], which the caller
+/// had already derived from the query with the same [`cosine_similarity`] used
+/// below. The parameter is dropped in this port because the one call site fills
+/// `relevance` exactly that way, so it was provably inert; the selection is
+/// bit-for-bit what it was. If a future revision wants query-aware scoring
+/// inside the loop, add the parameter back *and wire it*, rather than
+/// reinstating a placeholder.
+fn mmr_select(candidates: &[MmrCandidate<'_>], limit: usize, lambda: f64) -> Vec<MmrResult> {
+    if candidates.is_empty() || limit == 0 {
+        return Vec::new();
+    }
+
+    let lambda = lambda.clamp(0.0, 1.0);
+    let limit = limit.min(candidates.len());
+
+    let mut selected_embeddings: Vec<&[f32]> = Vec::with_capacity(limit);
+    let mut results: Vec<MmrResult> = Vec::with_capacity(limit);
+    let mut available: Vec<bool> = vec![true; candidates.len()];
+
+    for _ in 0..limit {
+        let mut best_idx: Option<usize> = None;
+        let mut best_mmr = f64::NEG_INFINITY;
+
+        for (i, candidate) in candidates.iter().enumerate() {
+            if !available[i] {
+                continue;
+            }
+            let max_sim_to_selected = if selected_embeddings.is_empty() {
+                0.0
+            } else {
+                // Seeded with NEG_INFINITY, not 0.0: when every selected
+                // similarity is negative, a 0.0 seed would win the fold and
+                // report an anti-correlated candidate as orthogonal — the
+                // exact collapse the `[0.0, 1.0]` note on
+                // [`cosine_similarity`] warns against reintroducing. The
+                // iterator is non-empty on this branch, so the seed never
+                // escapes.
+                selected_embeddings
+                    .iter()
+                    .map(|sel| cosine_similarity(candidate.embedding, sel))
+                    .fold(f64::NEG_INFINITY, f64::max)
+            };
+            let mmr_score = lambda * candidate.relevance - (1.0 - lambda) * max_sim_to_selected;
+            if mmr_score > best_mmr {
+                best_mmr = mmr_score;
+                best_idx = Some(i);
+            }
+        }
+
+        let Some(idx) = best_idx else { break };
+        available[idx] = false;
+        selected_embeddings.push(candidates[idx].embedding);
+        results.push(MmrResult {
+            index: candidates[idx].index,
+            score: best_mmr,
+        });
+    }
+
+    results
+}
 
 #[derive(Debug, Deserialize)]
 struct Args {
@@ -171,6 +342,10 @@ impl Tool for MemoryVectorSearchTool {
             limit: Some(1000),
             offset: None,
             exclude_dropped: false,
+            // The filtered-listing predicates this caller does not use. An
+            // empty predicate is unfiltered, so the defaults leave the query
+            // exactly as narrow as the fields above already make it.
+            ..Default::default()
         };
 
         let chunks = chunk_reader
@@ -224,7 +399,7 @@ impl Tool for MemoryVectorSearchTool {
                     relevance: *score,
                 })
                 .collect();
-            let mmr_results = mmr_select(&query_vec, &candidates, limit, 0.7);
+            let mmr_results = mmr_select(&candidates, limit, 0.7);
             mmr_results
                 .into_iter()
                 .map(|r| {
@@ -273,3 +448,7 @@ impl Tool for MemoryVectorSearchTool {
         Ok(ToolResult::success(output))
     }
 }
+
+#[cfg(test)]
+#[path = "vector_search_tests.rs"]
+mod tests;

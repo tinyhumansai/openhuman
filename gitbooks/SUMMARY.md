@@ -59,7 +59,6 @@
   - [System & Utilities](features/native-tools/system-and-utilities.md)
 - [Notifications & Activity](features/notifications-and-activity.md)
 - [Wallet](features/wallet.md)
-- [tiny.place Agent Economy](features/tinyplace.md)
 - [Billing, Cost & Usage](features/billing-and-usage.md)
 - [Rewards & Referrals](features/rewards-and-referrals.md)
 - [iOS Companion](features/ios-companion.md)

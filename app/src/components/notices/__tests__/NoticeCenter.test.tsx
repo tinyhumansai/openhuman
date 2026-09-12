@@ -27,6 +27,8 @@ vi.mock('../../../hooks/useEmbeddingBudgetState', () => ({
   useEmbeddingBudgetState: () => budgetState,
 }));
 vi.mock('../../../hooks/useUsageState', () => ({ useUsageState: () => usageState }));
+// openhuman#5820: the quarantine poll needs CoreStateProvider; not under test here.
+vi.mock('../useMemoryQuarantinePoll', () => ({ useMemoryQuarantinePoll: () => undefined }));
 vi.mock('../../../lib/nativeNotifications/tauriBridge', () => ({ showNativeNotification }));
 vi.mock('../../../utils/openUrl', () => ({ openUrl: vi.fn() }));
 vi.mock('../../../services/api/openrouterFreeModels', () => ({ applyOpenRouterFreeModels }));

@@ -12,8 +12,7 @@ The desktop host for OpenHuman: Tauri v2 + WebView, IPC commands, window managem
 1. **Web UI**. Load the Vite build from `app/dist` (or dev server on port 1420).
 2. **IPC**. Expose an explicit set of Tauri commands (see [Commands](#tauri-ipc-commands-app-src-tauri)).
 3. **Core lifecycle**. Run the core JSON-RPC server as an in-process tokio task (`core_process.rs`) and hand the renderer its URL/bearer via `core_rpc_url` / `core_rpc_token`.
-4. **Provider webviews**. Host embedded CEF child webviews for channel providers (`webview_accounts/`, per-provider scanners) and their CDP plumbing (`cdp/`).
-5. **Window + tray**. Desktop window behavior (main, mascot, notch, overlay windows) and system tray (see `lib.rs`).
+4. **Window + tray**. Desktop window behavior (main, mascot, notch, overlay windows) and system tray (see `lib.rs`).
 
 ## Core process model
 
@@ -21,11 +20,11 @@ The desktop host for OpenHuman: Tauri v2 + WebView, IPC commands, window managem
 
 ## Stuck process recovery
 
-Normal app quit runs teardown from `RunEvent::ExitRequested`: child webviews are closed before CEF shutdown, the embedded core's cancellation token is triggered, and the final process sweep sends `SIGTERM` to direct children before escalating holdouts with `SIGKILL` after a short grace period. Sweep summaries are logged as `[app] sweep: term=N kill=M total=K`; any nonzero `kill` count is a warning and means a child ignored graceful shutdown.
+Normal app quit runs teardown from `RunEvent::ExitRequested`: long-lived scanner tasks stop, the embedded core's cancellation token is triggered, and the final process sweep sends `SIGTERM` to direct children before escalating holdouts with `SIGKILL` after a short grace period. Sweep summaries are logged as `[app] sweep: term=N kill=M total=K`; any nonzero `kill` count is a warning and means a child ignored graceful shutdown.
 
-On macOS, hard exits (Force Quit, `SIGKILL`, renderer crash) can skip normal teardown. The next launch runs startup recovery before CEF cache preflight: it lists OpenHuman processes whose executable path belongs to the launching `.app/Contents`, skips the current process, sends `SIGTERM`, waits briefly, then `SIGKILL`s stragglers that still match the same pid+command. Logs use the `[startup-recovery]` prefix.
+On macOS, hard exits (Force Quit, `SIGKILL`, renderer crash) can skip normal teardown. The next launch runs startup recovery before the app runtime starts: it lists OpenHuman processes whose executable path belongs to the launching `.app/Contents`, skips the current process, sends `SIGTERM`, waits briefly, then `SIGKILL`s stragglers that still match the same pid+command. Logs use the `[startup-recovery]` prefix.
 
-Startup recovery skips when `OPENHUMAN_CORE_REUSE_EXISTING=1` is set (so manual CLI-core reuse still works) and when the CEF `SingletonLock` is held by a live process (so the normal second-instance path can fail without killing the already-running app). The Tauri command `process_diagnostics_list_owned` returns the currently owned process list; the macOS implementation is bundle-scoped, Linux/Windows currently return empty.
+Startup recovery skips when `OPENHUMAN_CORE_REUSE_EXISTING=1` is set so manual CLI-core reuse still works. The Tauri command `process_diagnostics_list_owned` returns the currently owned process list; the macOS implementation is bundle-scoped, Linux/Windows currently return empty.
 
 ## Tauri shell architecture (`app/src-tauri/`)
 
@@ -49,18 +48,11 @@ app/src-tauri/src/
 │                           # core at a URL, or one this app provisions in a container /
 │                           # over SSH / both (tinybox). types · store · ops · registry ·
 │                           # commands
-├── cdp/                    # Chrome DevTools Protocol plumbing for child webviews
-├── cef_preflight.rs / cef_profile.rs / cef_singleton_wait.rs / cef_stale_reap.rs   # CEF cache/profile management
-├── webview_accounts/       # Embedded provider account webviews (open/close/bounds/notifications)
-├── webview_apis/           # WS bridge for webview-side APIs
-├── discord_scanner/ … whatsapp_scanner/ …   # Per-provider scanners (slack, telegram, wechat,
-│                                            # gmessages, imessage, meet, …) driving CDP
-├── meet_audio/ meet_call/ meet_video/       # Google Meet call window + media integration
-├── fake_camera/            # Virtual camera support
+├── imessage_scanner/       # macOS-only: reads ~/Library/Messages/chat.db directly (never used CDP)
 ├── mascot_native_window.rs / notch_window.rs / window_state.rs
-├── dictation_hotkeys.rs / ptt_hotkeys.rs / ptt_overlay.rs / companion_commands.rs
-├── native_notifications/ notification_settings/
-├── artifact_commands.rs    # Artifact export (save dialog / Downloads)
+├── dictation_hotkeys.rs / ptt_hotkeys.rs / ptt_overlay.rs
+├── native_notifications/
+├── artifact_commands.rs    # Artifact export (copy into Downloads)
 ├── workspace_paths.rs      # Safe workspace-relative file open/reveal/preview
 ├── app_update.rs           # Updater support (commands live in lib.rs)
 ├── loopback_oauth.rs       # Localhost OAuth redirect listener
@@ -71,6 +63,13 @@ app/src-tauri/src/
 ├── deep_link_ipc.rs / deep_link_ipc_windows.rs / deep_link_registration_check.rs
 └── stderr_panic_hook.rs / reset_reboot_schedule.rs
 ```
+
+This listing was rewritten against the real tree after #5478 / #5456. Gone with
+the move off Chromium: `cdp/`, the `cef_*` preflight modules, `webview_accounts/`,
+every `*_scanner/` but `imessage_scanner/`, the `meet_*` call window,
+`fake_camera/` and `companion_commands.rs`. `webview_apis/` went later — it was
+the WS bridge those scanners called, and once they were gone its router
+dispatched nothing while still binding a loopback listener at boot.
 
 There is **no** `src-tauri/src/services/session_service.rs` in this tree; session semantics are handled in the web layer + backend + core as applicable.
 
@@ -95,7 +94,7 @@ The renderer talks to the local core **directly over HTTP** — `app/src/service
 
 ### Bundled resources
 
-`tauri.conf.json` bundles **`../../src/openhuman/agent/prompts`** and **`recipes/**/\*`\*\* so prompt markdown and provider recipes ship with the app.
+`tauri.conf.json` bundles **`../../src/openhuman/agent/prompts`** so the core prompt markdown ships with the app.
 
 ### Related
 
@@ -174,7 +173,6 @@ Frontend: **`app/src/services/gatewayService.ts`**, surfaced in Settings → Cor
 | `reset_local_data`                                | Wipe local app data (`local_data_reset.rs`)   |
 | `app_quit` / `restart_app`                        | Quit or relaunch the app                      |
 | `get_active_user_id`                              | Read the active user id                       |
-| `schedule_cef_profile_purge`                      | Schedule a CEF profile purge for a user       |
 
 ### Updates
 
@@ -188,13 +186,9 @@ Frontend: **`app/src/services/gatewayService.ts`**, surfaced in Settings → Cor
 | `register_ptt_hotkey` / `unregister_ptt_hotkey` / `show_ptt_overlay`               | Push-to-talk — see the [PTT section](#push-to-talk-ptt-hotkey--overlay) below |
 | `register_companion_hotkey` / `unregister_companion_hotkey` / `companion_activate` | Companion window hotkey + activation (`companion_commands.rs`)                |
 
-### Provider webviews (`webview_accounts::*`)
-
-Lifecycle and layout of embedded CEF account webviews: `webview_account_open` / `_prewarm` / `_close` / `_purge` / `_bounds` / `_reveal` / `_hide` / `_show`, `webview_set_focused_account`, `webview_recipe_event`, plus webview-notification controls (`webview_notification_permission_state` / `_permission_request` / `_set_dnd` / `_mute_account` / `_get_bypass_prefs`).
-
 ### Notifications
 
-`notification_settings_get` / `notification_settings_set` (persisted settings) and `native_notifications::notification_permission_state` / `notification_permission_request` / `show_native_notification` (OS-level).
+`notification_permission_state` / `notification_permission_request` / `show_native_notification` provide the OS-level notification surface. They are implemented in `native_notifications`.
 
 ### Window management
 
@@ -203,7 +197,6 @@ Lifecycle and layout of embedded CEF account webviews: `webview_account_open` / 
 | `activate_main_window`                             | Show + focus the main window                   |
 | `mascot_window_show` / `mascot_window_hide`        | Toggle the mascot native window                |
 | `notch_window_show` / `notch_window_hide`          | Toggle the notch window                        |
-| `meet_call_open_window` / `meet_call_close_window` | Open/close the Meet call window (`meet_call/`) |
 
 Hide-to-tray / reopen behavior is **not** an IPC command — it lives in the `RunEvent` handlers in `lib.rs` (see [Window and tray behavior](#window-and-tray-behavior)).
 

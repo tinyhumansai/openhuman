@@ -2,7 +2,7 @@
 //!
 //! A first-class, repeatable multi-agent orchestration model: a declarative
 //! [`WorkflowDefinition`] (phase graph) coordinates many child agents, and each
-//! run's durable state lives in `tinyagents::session::run_ledger` (the `workflow_runs`
+//! run's durable state lives in `tinyagents_session::run_ledger` (the `workflow_runs`
 //! table) rather than the main chat context, so runs can be listed, inspected,
 //! and — once the engine lands — stopped and resumed.
 //!

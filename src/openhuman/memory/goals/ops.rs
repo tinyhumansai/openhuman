@@ -1,15 +1,64 @@
-//! Business logic for the goals domain — thin handlers over [`super::store`]
-//! plus the on-demand reflection entry point. Every function returns an
-//! [`RpcOutcome`] so the RPC layer (and CLI) get a uniform shape with logs.
-
-use std::path::Path;
+//! Business logic for the goals domain — thin handlers over the driver's
+//! goals family, plus the on-demand reflection entry point. Every function
+//! returns an [`RpcOutcome`] so the RPC layer (and CLI) get a uniform shape
+//! with logs.
+//!
+//! # These take the driver's goals family, not a workspace path (#5560)
+//!
+//! They used to take `&Path` and call `tinycortex::memory::goals::store`,
+//! reaching `MEMORY_GOALS.md` in-process. The engine lives behind the loaded
+//! module now, so each handler takes `&dyn MemoryGoals` — the guarded family
+//! off the bound driver — and the file is opened on the far side.
+//!
+//! **Same file, and that is checkable rather than hopeful.** The module's
+//! `MemoryGoals::goals` is literally
+//! `tinycortex::memory::goals::store::load(&self.config.workspace_dir)`, and
+//! `set_goals` the matching `save` — the same two functions these handlers
+//! called, over the same path. It is the same path even for a profile with
+//! dedicated memory: `OpenStore` re-roots the *store* (the SQLite tree), while
+//! the provider it serves is built from the unchanged `EngineRuntimeConfig`,
+//! so `workspace_dir` is the workspace root on every object the module serves.
+//! Goals were workspace-wide before this change and are workspace-wide after
+//! it.
+//!
+//! ## What moved to this side, and what deliberately did not
+//!
+//! The contract splits the work at "who owns the safety policy":
+//!
+//! - **Host**: parse, validate, mutate. [`super::doc`] holds the trio and the
+//!   secret/PII predicates they call, because `set_goals`' own contract says
+//!   per-item mutation must not sit behind a trait a third-party driver
+//!   implements, where it could be skipped.
+//! - **Driver**: persistence, the symlink-escape check, and the item-count and
+//!   byte-size caps. A cap is the driver's judgement about its own store, and
+//!   restating it here would be a second ceiling to keep in step.
+//!
+//! Because the caps are the driver's, a mutation cannot know its own result:
+//! `set_goals` answers with unit, and the document on disk may have had its
+//! oldest items trimmed away. So every mutation reads back with `goals()`
+//! afterwards, which is exactly the trimmed document the engine's `add` used to
+//! return by mutating its argument in place. One extra call, and the same
+//! answer — where re-deriving the trim locally would be the same answer only
+//! until the driver retuned a cap.
+//!
+//! ## The mutation lock is held across both calls
+//!
+//! `goals()` → mutate → `set_goals()` is a read-modify-write over a *whole
+//! document*, so two interleaved sequences do not merge — the later
+//! `set_goals` replaces the document the earlier one wrote, and a goal
+//! disappears. The engine serialised this behind a process-wide mutex;
+//! [`super::doc::mutation_lock`] is the same lock on this side of the module
+//! boundary, and it is acquired here rather than in `doc` because this is where
+//! the sequence lives.
 
 use serde::Serialize;
 
 use crate::openhuman::config::Config;
+use crate::openhuman::memory::api::goals::GoalsDoc;
+use crate::openhuman::memory::api::provider::MemoryGoals;
 use crate::rpc::RpcOutcome;
-use tinycortex::memory::goals::store;
-use tinycortex_api::goals::GoalsDoc;
+
+use super::doc;
 
 /// Result of an add operation: the new id plus the full updated list.
 #[derive(Debug, Serialize)]
@@ -29,17 +78,38 @@ pub struct ReflectResult {
     pub goals: GoalsDoc,
 }
 
+/// Read the goals document through the family.
+///
+/// A driver with no goals yet answers an empty [`GoalsDoc`] rather than
+/// `NotFound` — "no goals" is a valid state — so this is the whole of `load`'s
+/// behaviour, including its missing-file case.
+async fn read(goals: &dyn MemoryGoals, op: &str) -> Result<GoalsDoc, String> {
+    goals.goals().await.map_err(|e| format!("{op}: {e}"))
+}
+
 /// List the current goals.
-pub async fn list(workspace_dir: &Path) -> Result<RpcOutcome<GoalsDoc>, String> {
+pub async fn list(goals: &dyn MemoryGoals) -> Result<RpcOutcome<GoalsDoc>, String> {
     log::debug!("[memory_goals] rpc=list");
-    let doc = store::load(workspace_dir).map_err(|e| e.to_string())?;
+    let doc = read(goals, "list").await?;
     Ok(RpcOutcome::new(doc, vec![]))
 }
 
 /// Add a goal and return the new id + updated list.
-pub async fn add(workspace_dir: &Path, text: &str) -> Result<RpcOutcome<AddResult>, String> {
+///
+/// The id survives cap trimming by construction: the caps drop the *oldest*
+/// items and the new goal is the newest, so the read-back always contains it
+/// unless that one goal alone exceeds the whole-file byte cap — which is the
+/// same edge the engine's `add` had.
+pub async fn add(goals: &dyn MemoryGoals, text: &str) -> Result<RpcOutcome<AddResult>, String> {
     log::debug!("[memory_goals] rpc=add");
-    let (id, goals) = store::add(workspace_dir, text).map_err(|e| e.to_string())?;
+    let _guard = doc::mutation_lock().lock().await;
+    let mut document = read(goals, "add").await?;
+    let id = doc::add_item(&mut document, text).map_err(|e| e.to_string())?;
+    goals
+        .set_goals(document)
+        .await
+        .map_err(|e| format!("add: {e}"))?;
+    let goals = read(goals, "add").await?;
     Ok(RpcOutcome::single_log(
         AddResult {
             id: id.clone(),
@@ -51,28 +121,52 @@ pub async fn add(workspace_dir: &Path, text: &str) -> Result<RpcOutcome<AddResul
 
 /// Edit a goal's text and return the updated list.
 pub async fn edit(
-    workspace_dir: &Path,
+    goals: &dyn MemoryGoals,
     id: &str,
     text: &str,
 ) -> Result<RpcOutcome<GoalsDoc>, String> {
     log::debug!("[memory_goals] rpc=edit id={id}");
-    let goals = store::edit(workspace_dir, id, text).map_err(|e| e.to_string())?;
-    Ok(RpcOutcome::single_log(goals, format!("edited goal {id}")))
+    let _guard = doc::mutation_lock().lock().await;
+    let mut document = read(goals, "edit").await?;
+    doc::edit_item(&mut document, id, text).map_err(|e| e.to_string())?;
+    goals
+        .set_goals(document)
+        .await
+        .map_err(|e| format!("edit: {e}"))?;
+    let updated = read(goals, "edit").await?;
+    Ok(RpcOutcome::single_log(updated, format!("edited goal {id}")))
 }
 
 /// Delete a goal and return the updated list.
-pub async fn delete(workspace_dir: &Path, id: &str) -> Result<RpcOutcome<GoalsDoc>, String> {
+pub async fn delete(goals: &dyn MemoryGoals, id: &str) -> Result<RpcOutcome<GoalsDoc>, String> {
     log::debug!("[memory_goals] rpc=delete id={id}");
-    let goals = store::delete(workspace_dir, id).map_err(|e| e.to_string())?;
-    Ok(RpcOutcome::single_log(goals, format!("deleted goal {id}")))
+    let _guard = doc::mutation_lock().lock().await;
+    let mut document = read(goals, "delete").await?;
+    doc::delete_item(&mut document, id).map_err(|e| e.to_string())?;
+    goals
+        .set_goals(document)
+        .await
+        .map_err(|e| format!("delete: {e}"))?;
+    let updated = read(goals, "delete").await?;
+    Ok(RpcOutcome::single_log(
+        updated,
+        format!("deleted goal {id}"),
+    ))
 }
 
 /// On-demand enrichment: run the turn-based goals agent now, then return the
 /// resulting list. Unlike the automatic summarization trigger (which fires
 /// best-effort in the background), this awaits the agent so the caller sees
 /// the updated list in the response.
+///
+/// Takes both a [`Config`] and the family: the config is what builds the agent
+/// and names the workspace its definition registry loads from, while the family
+/// is what reads the list back afterwards. The agent itself mutates the list
+/// through the `goals_*` tools, which resolve their own family — this handler
+/// never writes.
 pub async fn reflect_now(
     config: &Config,
+    goals: &dyn MemoryGoals,
     context: Option<String>,
 ) -> Result<RpcOutcome<ReflectResult>, String> {
     log::info!("[memory_goals] rpc=reflect — running goals agent on demand");
@@ -89,7 +183,11 @@ pub async fn reflect_now(
         Ok(s) => s,
         Err(e) => {
             log::warn!("[memory_goals] reflect failed: {e}");
-            let goals = store::load(&workspace_dir).unwrap_or_default();
+            // `unwrap_or_default` for the same reason it was there before: the
+            // caller is already being told the run failed, and a second failure
+            // reading the list back should not replace that report with a
+            // different one.
+            let goals = goals.goals().await.unwrap_or_default();
             return Ok(RpcOutcome::single_log(
                 ReflectResult {
                     ran: false,
@@ -101,7 +199,7 @@ pub async fn reflect_now(
         }
     };
 
-    let goals = store::load(&workspace_dir).unwrap_or_default();
+    let goals = goals.goals().await.unwrap_or_default();
     Ok(RpcOutcome::single_log(
         ReflectResult {
             ran: true,
@@ -113,35 +211,5 @@ pub async fn reflect_now(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn list_add_edit_delete_flow() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path();
-
-        // Starts empty.
-        let listed = list(dir).await.unwrap();
-        assert!(listed.value.is_empty());
-
-        // Add returns an id and the updated list.
-        let added = add(dir, "ship the desktop app").await.unwrap();
-        let id = added.value.id.clone();
-        assert_eq!(added.value.goals.items.len(), 1);
-
-        // Edit by id.
-        let edited = edit(dir, &id, "ship the app to all platforms")
-            .await
-            .unwrap();
-        assert_eq!(edited.value.items[0].text, "ship the app to all platforms");
-
-        // Delete by id leaves the list empty.
-        let deleted = delete(dir, &id).await.unwrap();
-        assert!(deleted.value.is_empty());
-
-        // Unknown id is an error.
-        assert!(edit(dir, "nope", "x").await.is_err());
-        assert!(delete(dir, "nope").await.is_err());
-    }
-}
+#[path = "ops_tests.rs"]
+mod tests;

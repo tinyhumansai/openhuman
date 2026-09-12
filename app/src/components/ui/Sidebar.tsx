@@ -87,6 +87,54 @@ function clampWidth(width: number, min: number, max: number): number {
   return Math.min(Math.max(width, min), max);
 }
 
+/**
+ * The widest the sidebar may render at, for a given viewport (#5907).
+ *
+ * Half the window, floored — so the column can never own more than half a
+ * narrow one. Inert on any real desktop: it only bites below `2 * maxWidth`,
+ * i.e. an 840px window at the default 420px cap.
+ *
+ * `min` wins over this on purpose. A window narrower than `2 * min` is past the
+ * point where a fraction is meaningful, and returning something below `min`
+ * would fight `clampWidth`'s floor and make the two disagree.
+ */
+function viewportCap(viewportWidth: number, min: number): number {
+  return Math.max(min, Math.floor(viewportWidth / 2));
+}
+
+/**
+ * The current window width, tracked across resizes.
+ *
+ * A listener rather than a CSS `max-width`, and the distinction is the whole
+ * point (#5941, Codex). A CSS-only clamp renders the right number while every
+ * consumer of the stored one — the rail's drag arithmetic, the arrow-key step,
+ * `aria-valuenow` — keeps reading the larger value. With a persisted 420 in a
+ * 414px viewport that renders a 207px column the rail cannot narrow at all:
+ * dragging fully left proposes ~213, `max-width` still pins 207, and the
+ * separator announces 420 for a 207px column. Clamping the value instead means
+ * there is one width and everything agrees with it.
+ *
+ * `Infinity` before mount so the cap is inert until a real measurement exists —
+ * a 0 here would collapse the sidebar to `min` for one frame.
+ */
+function useViewportWidth(): number {
+  const [viewportWidth, setViewportWidth] = useState(() =>
+    typeof window === 'undefined' ? Number.POSITIVE_INFINITY : window.innerWidth
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onResize = () => setViewportWidth(window.innerWidth);
+    // Sync once on mount: the lazy initial state above runs before any resize
+    // that happened between module evaluation and this effect.
+    onResize();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  return viewportWidth;
+}
+
 export interface SidebarProviderProps extends HTMLAttributes<HTMLDivElement> {
   /** Controlled open state. Omit for uncontrolled. */
   open?: boolean;
@@ -133,7 +181,14 @@ export const SidebarProvider = forwardRef<HTMLDivElement, SidebarProviderProps>(
     const [uncontrolledWidth, setUncontrolledWidth] = useState(() =>
       clampWidth(defaultWidth, minWidth, maxWidth)
     );
-    const width = clampWidth(widthProp ?? uncontrolledWidth, minWidth, maxWidth);
+    // One effective width, viewport included, handed to everything through
+    // context: the rendered column, the rail's drag origin, its arrow-key step
+    // and its `aria-valuenow`. The STORED value keeps the user's preference
+    // untouched — widening the window restores it — but nothing reads the
+    // stored value directly, so no consumer can disagree with what is on screen.
+    const viewportWidth = useViewportWidth();
+    const effectiveMax = Math.min(maxWidth, viewportCap(viewportWidth, minWidth));
+    const width = clampWidth(widthProp ?? uncontrolledWidth, minWidth, effectiveMax);
 
     const setOpen = useCallback(
       (next: boolean) => {
@@ -147,11 +202,15 @@ export const SidebarProvider = forwardRef<HTMLDivElement, SidebarProviderProps>(
 
     const setWidth = useCallback(
       (next: number) => {
-        const clamped = clampWidth(Math.round(next), minWidth, maxWidth);
+        // `effectiveMax`, not `maxWidth`: a drag in a narrow window must not be
+        // able to STORE a width the column can never render. Clamping here
+        // against the raw maximum would put the stored value and the rendered
+        // one back into disagreement — the same defect one layer up.
+        const clamped = clampWidth(Math.round(next), minWidth, effectiveMax);
         if (widthProp === undefined) setUncontrolledWidth(clamped);
         onWidthChange?.(clamped);
       },
-      [widthProp, onWidthChange, minWidth, maxWidth]
+      [widthProp, onWidthChange, minWidth, effectiveMax]
     );
 
     useEffect(() => {
@@ -175,9 +234,13 @@ export const SidebarProvider = forwardRef<HTMLDivElement, SidebarProviderProps>(
         width,
         setWidth,
         minWidth,
-        maxWidth,
+        // The ACTIVE maximum, so every consumer agrees on the ceiling as well
+        // as on the current value. `SidebarRail` publishes this as
+        // `aria-valuemax`; exposing the raw 420 here announced a ceiling the
+        // column could not reach in a narrow window.
+        maxWidth: effectiveMax,
       }),
-      [open, setOpen, toggleSidebar, width, setWidth, minWidth, maxWidth]
+      [open, setOpen, toggleSidebar, width, setWidth, minWidth, effectiveMax]
     );
 
     return (
@@ -280,7 +343,7 @@ export const SidebarRail = forwardRef<HTMLDivElement, SidebarRailProps>(
           window.removeEventListener('pointermove', handleMove);
           window.removeEventListener('pointerup', detach);
           window.removeEventListener('pointercancel', detach);
-          window.removeEventListener('blur-sm', detach);
+          window.removeEventListener('blur', detach);
           detachRef.current = null;
         };
 
@@ -327,7 +390,17 @@ export const SidebarRail = forwardRef<HTMLDivElement, SidebarRailProps>(
           // wider than its other three by exactly that much. The seam is drawn
           // by the absolutely-positioned indicator below instead, which costs
           // no width — and it only paints on hover/focus anyway.
-          'group relative w-0 flex-none cursor-col-resize select-none self-stretch',
+          //
+          // `z-20` is load-bearing, not decoration. `SidebarInset` — the content
+          // card, rendered AFTER this element by `RootShellLayout` — carries
+          // `relative z-10`, and the hit area below carried `z-10` too. Equal
+          // z-index means DOM order decides, so the card painted over the half
+          // of the hit area that overhangs it and pointer events never reached
+          // the rail there: `elementFromPoint` at the rail's own centre returned
+          // the content viewport, not this element (#5906). Raising the rail
+          // itself rather than the child lifts BOTH the hit area and the 1px
+          // seam, which share the cause.
+          'group relative z-20 w-0 flex-none cursor-col-resize select-none self-stretch',
           'bg-transparent focus:outline-hidden',
           className
         )}

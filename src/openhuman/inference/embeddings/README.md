@@ -2,7 +2,7 @@
 
 Host policy and RPC surface for vector embeddings. Concrete OpenAI-compatible,
 Cohere, Voyage, Ollama, cloud-transport, retry, and rate-limit implementations
-live in `tinyagents::harness::embeddings`; this domain selects and adapts those
+live in `tinyinference::embeddings`; this domain selects and adapts those
 models for OpenHuman.
 
 ## Host-owned responsibilities

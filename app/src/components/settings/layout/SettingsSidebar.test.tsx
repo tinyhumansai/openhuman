@@ -10,18 +10,6 @@ vi.mock('../hooks/useSettingsNavigation', () => ({
   useSettingsNavigation: () => ({ currentRoute: 'privacy', navigateToSettings }),
 }));
 
-vi.mock('../search/useSettingsSearch', () => ({ useSettingsSearch: () => [] }));
-
-vi.mock('../search/SettingsSearchBar', () => ({
-  default: ({ value, onValueChange }: { value: string; onValueChange: (next: string) => void }) => (
-    <input
-      data-testid="settings-search-input"
-      value={value}
-      onChange={e => onValueChange(e.target.value)}
-    />
-  ),
-}));
-
 vi.mock('../settingsRouteRegistry', () => ({
   NAV_GROUP_LABEL_KEY: { general: 'nav.group.general' },
   entryRoute: (entry: { id: string }) => entry.id,

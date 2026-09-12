@@ -33,8 +33,8 @@ const _: () = assert!(
 );
 
 mod app_update;
-// Artifact export commands (#2779, #3162) — both cross-platform
-// (macOS/Windows/Linux): native Save-As dialog (rfd) + Downloads copy.
+// Artifact export command (#2779) — cross-platform Downloads copy. The `rfd`
+// Save-As dialog that used to sit in front of it was removed with the crate.
 mod artifact_commands;
 mod claude_code;
 mod core_process;
@@ -48,6 +48,7 @@ mod deep_link_ipc_windows;
 // developer host covers them.
 mod deep_link_registration_check;
 mod dictation_hotkeys;
+mod directory_picker;
 mod file_logging;
 // Routing the frontend to a core that is not the one in this process. Leaf
 // gated: with `gateways` off the commands are simply absent, which is what the
@@ -65,7 +66,6 @@ mod mcp_commands;
 mod native_notifications;
 #[cfg(target_os = "macos")]
 mod notch_window;
-mod notification_settings;
 mod process_kill;
 mod process_recovery;
 mod ptt_hotkeys;
@@ -73,8 +73,6 @@ mod ptt_overlay;
 #[cfg(target_os = "windows")]
 mod reset_reboot_schedule;
 mod stderr_panic_hook;
-mod webview_apis;
-mod whatsapp_data;
 mod window_state;
 mod workspace_paths;
 
@@ -99,7 +97,9 @@ use objc2::runtime::{AnyClass, AnyObject};
 #[cfg(target_os = "macos")]
 use objc2::ClassType;
 #[cfg(target_os = "macos")]
-use objc2_app_kit::{NSPanel, NSWindowCollectionBehavior, NSWindowStyleMask};
+use objc2_app_kit::{
+    NSPanel, NSWindow, NSWindowCollectionBehavior, NSWindowStyleMask, NSWindowTitleVisibility,
+};
 
 // Use Tauri's upstream native WebView runtime on every desktop platform.
 pub(crate) type AppRuntime = tauri::Wry;
@@ -1215,6 +1215,70 @@ fn path_has_executable(name: &str) -> bool {
     std::env::split_paths(&path_var).any(|dir| dir.join(name).is_file())
 }
 
+/// Tauri command: swap the main window's title bar to match the sidebar state.
+///
+/// Expanded, the sidebar's own header stands in for a title bar: it is the
+/// drag region, and its icon row is aligned with the traffic lights (see
+/// `trafficLightPosition` in `tauri.conf.json` and the arithmetic in
+/// `SidebarHeader.tsx`). Collapsed, that row is gone — the rail is 56px of
+/// icons — so the window is left with controls floating on bare content and no
+/// title anywhere. This hands the job back to macOS for the duration.
+///
+/// Two calls, because `TitleBarStyle` alone is not enough:
+///
+/// - `set_title_bar_style` toggles the *bar*. Note it does NOT move the content:
+///   `tauri-runtime-wry` keeps `fullsize_content_view(true)` for both `Visible`
+///   and `Overlay`, so the webview still spans the full window and nothing
+///   reflows on collapse. Only `titlebar_transparent` differs.
+/// - `setTitleVisibility` toggles the *text*, which the style does not touch.
+///   `hiddenTitle: true` in `tauri.conf.json` is a builder-time flag (tao's
+///   `with_title_hidden`) with no runtime setter anywhere in tao or tauri, so
+///   the NSWindow is driven directly. Without this half the bar comes back
+///   empty and the whole feature looks broken.
+///
+/// macOS-only: `titleBarStyle` is a no-op elsewhere, where the OS draws its own
+/// decorated title bar regardless of what the sidebar is doing.
+#[tauri::command]
+fn set_titlebar_for_sidebar(app: AppHandle<AppRuntime>, collapsed: bool) -> Result<(), String> {
+    log::debug!("[window] set_titlebar_for_sidebar collapsed={collapsed}");
+
+    #[cfg(target_os = "macos")]
+    {
+        let window = app
+            .get_webview_window("main")
+            .ok_or_else(|| "main window not found".to_string())?;
+
+        let style = if collapsed {
+            tauri::TitleBarStyle::Visible
+        } else {
+            tauri::TitleBarStyle::Overlay
+        };
+        window
+            .set_title_bar_style(style)
+            .map_err(|e| format!("set_title_bar_style failed: {e}"))?;
+
+        match window.ns_window() {
+            Ok(ns_window_raw) => unsafe {
+                let ns_window: &NSWindow = &*(ns_window_raw as *const NSWindow);
+                ns_window.setTitleVisibility(if collapsed {
+                    NSWindowTitleVisibility::Visible
+                } else {
+                    NSWindowTitleVisibility::Hidden
+                });
+            },
+            Err(e) => return Err(format!("ns_window unavailable: {e}")),
+        }
+
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, collapsed);
+        Ok(())
+    }
+}
+
 /// Tauri command: bring the main window to front from any webview (e.g. overlay orb click).
 #[tauri::command]
 fn activate_main_window(app: AppHandle<AppRuntime>) -> Result<(), String> {
@@ -1723,8 +1787,6 @@ fn perform_early_teardown_sync(app_handle: &AppHandle<AppRuntime>) {
     #[cfg(feature = "gateways")]
     tauri::async_runtime::block_on(gateway::registry::shutdown());
 
-    webview_apis::server::stop();
-
     if let Some(core) = app_handle.try_state::<core_process::CoreProcessHandle>() {
         let core = core.inner().clone();
         // Aborts the embedded server task. Synchronous and safe on
@@ -1761,8 +1823,6 @@ async fn perform_early_teardown_async(app_handle: &AppHandle<AppRuntime>) {
     // `block_on` inside an async fn runs a runtime inside a runtime.
     #[cfg(feature = "gateways")]
     gateway::registry::shutdown().await;
-
-    webview_apis::server::stop();
 
     if let Some(core) = app_handle.try_state::<core_process::CoreProcessHandle>() {
         let core = core.inner().clone();
@@ -2061,10 +2121,8 @@ fn append_platform_cef_gpu_workarounds(
     //
     // The original workaround disabled the GPU path with `--disable-gpu`, but
     // that shuts the GPU process down entirely — and with it every WebGL
-    // surface. That regressed Tiny Place (#4193): the world renderer needs a
-    // WebGL2 context, so on every packaged Linux build it failed to initialise
-    // and the world page showed a black screen with "Could not start the world
-    // renderer" (the Rive mascot on the Human tab is collateral damage too).
+    // surface. That regressed WebGL rendering (#4193), including the Rive
+    // mascot on the Human tab.
     //
     // Instead of killing the GPU process, pin it to ANGLE's SwiftShader
     // software backend. SwiftShader is a pure-software rasteriser that needs no
@@ -2084,7 +2142,7 @@ fn append_platform_cef_gpu_workarounds(
         } else {
             push_swiftshader_software_gl(args);
             log::info!(
-                "[cef-startup] Linux detected: forcing ANGLE/SwiftShader software GL so WebGL surfaces (Tiny Place world renderer, Rive mascot) render without the crash-prone hardware GPU process (issues #1697/#4193); set OPENHUMAN_FORCE_GPU=1 for hardware acceleration"
+                "[cef-startup] Linux detected: forcing ANGLE/SwiftShader software GL so WebGL surfaces render without the crash-prone hardware GPU process (issues #1697/#4193); set OPENHUMAN_FORCE_GPU=1 for hardware acceleration"
             );
         }
     }
@@ -2942,17 +3000,10 @@ pub fn run() {
             std::sync::Mutex::new(Vec::new()),
         ))
         .manage(ptt_hotkeys::PttHotkeyState::new())
-        .manage(notification_settings::NotificationSettingsState::new())
         .manage(PendingAppUpdateState::default());
     let builder = builder.manage(std::sync::Arc::new(imessage_scanner::ScannerRegistry::new()));
     builder
         .setup(move |app| {
-            // Structured WhatsApp Web data store lives shell-side. Register the
-            // in-process native handlers so the core agent tools (list/search)
-            // and the scanner ingest path can reach the SQLite store over the
-            // native request bus. No handler = graceful degradation core-side.
-            whatsapp_data::register_native_handlers();
-
             #[cfg(windows)]
             {
                 // `register_all` writes HKCU\Software\Classes\openhuman so the
@@ -3034,32 +3085,6 @@ pub fn run() {
                 // before setup() ran (issue #2359). Also installs the live
                 // handler so URLs arriving after setup() are emitted directly.
                 deep_link_ipc::drain_pending_urls(app.app_handle());
-            }
-
-            // Start the webview_apis WebSocket bridge BEFORE spawning core —
-            // core reads OPENHUMAN_WEBVIEW_APIS_PORT on first connect, and
-            // connects lazily, so the env var must be set before the spawn.
-            //
-            // If the bridge fails to bind we clear any inherited port env so
-            // the core child can't accidentally connect to whichever loopback
-            // process already owns that port, then abort setup — the bridge
-            // is load-bearing for every webview_apis RPC method.
-            let bridge_ok = tauri::async_runtime::block_on(async {
-                match webview_apis::start().await {
-                    Ok(port) => {
-                        std::env::set_var(webview_apis::server::PORT_ENV, port.to_string());
-                        log::info!("[webview_apis] bridge ready on port {port}");
-                        true
-                    }
-                    Err(err) => {
-                        log::error!("[webview_apis] failed to start bridge: {err}");
-                        std::env::remove_var(webview_apis::server::PORT_ENV);
-                        false
-                    }
-                }
-            });
-            if !bridge_ok {
-                return Err("webview_apis bridge failed to start — aborting setup".into());
             }
 
             // Purge stray LaunchAgent left over from a prior worktree's
@@ -3365,16 +3390,16 @@ pub fn run() {
             core_rpc::relay_http_rpc,
             overlay_parent_rpc_url,
             process_diagnostics_list_owned,
-            // Artifact export commands — both cross-platform (#3162). The
-            // Downloads command was previously macOS/Linux-gated, but the
-            // `directories` + `tokio::fs::copy` flow compiles on Windows too,
-            // and the Save-As fallback needs it there (CodeRabbit on #4127).
-            artifact_commands::save_artifact_via_dialog,
+            // Artifact export — cross-platform. Previously macOS/Linux-gated,
+            // but the `directories` + `tokio::fs::copy` flow compiles on Windows
+            // too (CodeRabbit on #4127). The Save-As dialog that used to sit in
+            // front of this went with the shell's `rfd` dependency.
             artifact_commands::download_artifact_to_downloads,
-            // Structured WhatsApp data (store lives shell-side).
-            whatsapp_data::whatsapp_data_list_chats,
-            whatsapp_data::whatsapp_data_list_messages,
-            whatsapp_data::whatsapp_data_search_messages,
+            // Native directory chooser for the folder memory-source (#5831).
+            // Unlike the Save-As dialog above it, this one has no renderer-side
+            // substitute: a `webkitdirectory` input cannot report where the
+            // directory it returned actually lives.
+            directory_picker::pick_directory_via_dialog,
             check_core_update,
             apply_core_update,
             check_app_update,
@@ -3394,11 +3419,10 @@ pub fn run() {
             register_ptt_hotkey,
             unregister_ptt_hotkey,
             ptt_overlay::show_ptt_overlay,
-            notification_settings::notification_settings_get,
-            notification_settings::notification_settings_set,
             native_notifications::notification_permission_state,
             native_notifications::notification_permission_request,
             activate_main_window,
+            set_titlebar_for_sidebar,
             native_notifications::show_native_notification,
             mascot_window_show,
             mascot_window_hide,
@@ -3533,23 +3557,9 @@ pub fn run() {
                 if let Some(window) = app_handle.get_webview_window("main") {
                     window_state::save_main(&window);
                 }
-                // Run our cleanup BEFORE CEF's own Exit handler does
-                // `close_all_windows() → cef::shutdown()`. Doing this in
-                // RunEvent::Exit instead races CEF's teardown and the
-                // `browser_count == 0` CHECK in `cef::shutdown` panics on
-                // macOS Cmd+Q (issue #920). The order matters:
-                //   1. close our child webviews so CEF processes the
-                //      close requests during the Exit-phase message pump
-                //      (gives them time to settle before cef::shutdown).
-                //   2. abort our long-lived tokio tasks so they're not
-                //      driving CDP traffic against CEF as it tears down.
-                //   3. stop the webview_apis WS listener so its accept
-                //      loop releases the loopback port.
-                //   4. SIGTERM the core sidecar (non-blocking). Tauri
-                //      spawned the child so we own its lifecycle, but we
-                //      do not wait — that would block the main thread
-                //      and starve CEF's UI loop. The kernel reaps the
-                //      child after Tauri exits.
+                // Run cleanup during ExitRequested so the embedded core and
+                // long-lived scanner tasks stop before the runtime exits.
+                // Teardown stays non-blocking on the main thread.
                 perform_early_teardown_sync_once(app_handle, "exit_requested");
             }
             RunEvent::Exit => {

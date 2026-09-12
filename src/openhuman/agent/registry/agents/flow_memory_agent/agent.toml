@@ -22,7 +22,6 @@ agent_tier = "worker"
 omit_identity = true
 omit_memory_context = true
 omit_safety_preamble = true
-omit_skills_catalog = true
 # Keep PROFILE.md (onboarding enrichment — the user's stated goals) and
 # MEMORY.md (archivist-curated long-term memory) IN the prompt: this agent's
 # whole job is retrieving who the user is and what they want, so it must be

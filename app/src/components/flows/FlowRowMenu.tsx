@@ -3,7 +3,7 @@
  * secondary/rare actions (Export, Duplicate, Delete) so the row's primary
  * actions (View runs, Run) stay uncluttered, and keeps the destructive Delete
  * out of the flat button row. Closes on Escape, outside click, or item select
- * — all handled by Radix `DropdownMenu` (`../ui/DropdownMenu`), which also
+ * — all handled by Radix `DropdownMenu` (`../ui`), which also
  * portals the content so it escapes the list card's `overflow-hidden`
  * clipping and flips placement when there isn't room in the viewport.
  *
@@ -11,13 +11,13 @@
  * `FlowListRow`, which routes to `FlowsPage`'s handlers.
  */
 import { useT } from '../../lib/i18n/I18nContext';
-import Button from '../ui/Button';
 import {
+  Button,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuRoot,
   DropdownMenuTrigger,
-} from '../ui/DropdownMenu';
+} from '../ui';
 
 interface FlowRowMenuItem {
   key: string;

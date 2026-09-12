@@ -104,7 +104,10 @@ pub struct DumpedPrompt {
     pub tool_specs: Vec<serde_json::Value>,
 }
 
-fn tool_specs_of<T: std::ops::Deref<Target = dyn crate::openhuman::tools::Tool>>(
+// The `+ 'a` is load-bearing: a bare `dyn Tool` here means `dyn Tool +
+// 'static`, which `Box<dyn Tool>` satisfies but a borrowed `&'a dyn Tool` (what
+// `Agent::all_tool_refs` yields) does not.
+fn tool_specs_of<'a, T: std::ops::Deref<Target = dyn crate::openhuman::tools::Tool + 'a>>(
     tools: &[T],
 ) -> Vec<serde_json::Value> {
     tools
@@ -227,16 +230,19 @@ async fn load_dump_config(
     }
 
     // The `agent` CLI dispatches straight to this dumper and never runs the
-    // runtime bootstrap, so nothing else wires the `tinymemory-core` host
-    // seams. Building a session agent constructs a memory store, and the
-    // embedding seam fails loudly when unwired ("no EmbeddingHost installed")
-    // rather than degrading — so without this, every `agent dump-prompt` /
-    // `dump-all` invocation aborts before rendering a single prompt.
-    // Idempotent, so calling it per invocation is safe. Same rationale as
-    // `memory_cli` / `subconscious_cli`.
-    crate::openhuman::memory::host_impls::install_memory_host_seams(std::sync::Arc::new(
-        config.clone(),
-    ));
+    // runtime bootstrap, so nothing else wires the host's memory seams.
+    //
+    // The `tinymemory-core` seams this used to install are gone with the crate
+    // (#5560). The reason they were needed — building a session agent
+    // constructed an in-process memory store whose embedding seam failed loudly
+    // when unwired — no longer holds: `session::builder::factory` stopped
+    // booting one, so `dump-prompt` reaches no engine to call back into.
+    //
+    // The contract event sink still installs, idempotently, for the same reason
+    // as in `runtime::context`: it is a `tinymemory-api` seam with a live
+    // production publisher, and it drops silently rather than loudly when
+    // unwired. Same rationale as `memory_cli` / `subconscious_cli`.
+    crate::openhuman::memory::host::install_memory_event_sink();
 
     Ok(config)
 }
@@ -254,18 +260,17 @@ async fn render_via_session(config: &Config, agent_id: &str) -> Result<DumpedPro
     agent.fetch_connected_integrations().await;
     // Mirror turn-1: synthesise `delegate_*` tools for connected
     // Composio toolkits now that we know what's actually authorised.
-    // The shared-Arc failure path is unreachable here (this is the
-    // debug dumper running against a freshly-built agent — no
-    // sub-agent has cloned the tool list), so ignore the bool return.
-    let _ = agent.refresh_delegation_tools();
+    agent.refresh_delegation_tools();
 
     let text = agent
         .build_system_prompt(LearnedContextData::default())
         .with_context(|| format!("rendering system prompt for `{agent_id}`"))?;
 
-    let tools = agent.tools();
+    // The whole callable surface, so the dump shows the `delegate_*` tools
+    // the refresh above just synthesised alongside the durable registry.
+    let tools = agent.all_tool_refs();
     let tool_names: Vec<String> = tools.iter().map(|t| t.name().to_string()).collect();
-    let tool_specs = tool_specs_of(tools);
+    let tool_specs = tool_specs_of(&tools);
     let skill_tool_count = tools
         .iter()
         .filter(|t| t.category() == ToolCategory::Workflow)
@@ -335,6 +340,7 @@ async fn render_integrations_agent(config: &Config, toolkit: &str) -> Result<Dum
     match &client_kind {
         ComposioClientKind::Backend(composio_client) => {
             match crate::openhuman::integrations::composio::fetch_toolkit_actions(
+                config,
                 composio_client,
                 &integration.toolkit,
                 None,

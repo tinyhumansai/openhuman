@@ -6,15 +6,12 @@
 //! call boundary: any error is captured into [`FetchOutcome::error`] so
 //! the scheduler loop never unwinds.
 
-use std::sync::Arc;
-
 use chrono::Utc;
 use std::collections::HashSet;
 
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::sync::composio::providers::{get_provider, ProviderContext};
 
 use super::types::{FetchOutcome, FetchReason, TaskSource};
 use super::{enrich, filter, route, store};
@@ -87,30 +84,52 @@ pub async fn run_source_once(
     outcome
 }
 
+/// `ComposioProvider::fetch_tasks` — the per-toolkit "read a filtered set of
+/// work items as structured `NormalizedTask`s" call this pipeline used to
+/// make through the engine's provider registry (`get_provider(toolkit)`) —
+/// was deleted outright by tinymemory v1.13.4 along with the rest of the
+/// in-process Composio pipeline (72 files, ~18.3k lines), with no
+/// replacement upstream.
+///
+/// Unlike the record-sync path (`ConnectorRecordBatch` via the
+/// `tinyconnectors` module's `Sync` member, which this domain's sibling
+/// `memory::sync::composio` now uses through `run_sync_pass`), tinyconnectors
+/// exposes no structured task-fetch surface — only `Execute` (run one named
+/// action) and `Sync` (memory records shaped for ingestion, not board
+/// items). Reimplementing `fetch_tasks` faithfully means re-deriving each
+/// toolkit's action selection and response-shape parsing (Notion's
+/// `NOTION_QUERY_DATABASE` vs `NOTION_FETCH_DATA`, GitHub's issue listing,
+/// Linear's/ClickUp's task queries, …) against `Execute` from scratch, which
+/// is real per-provider work rather than a seam migration.
+///
+/// Rather than half-porting some toolkits' response parsing (unverifiable
+/// without the toolkits' actual API responses to test against) and silently
+/// dropping the rest, this refuses cleanly for every toolkit — the same
+/// shape of decision `refuse_composio_dispatch` makes in the engine for the
+/// composio-connection sync path it could not carry forward either. Every
+/// other stage of this pipeline (dedup, enrichment, routing, storage,
+/// reconciliation) is untouched and would work the moment this returns real
+/// tasks.
+fn fetch_tasks_unavailable(
+    source: &TaskSource,
+    _filter: &tinymemory_api::composio::TaskFetchFilter,
+) -> Result<Vec<tinymemory_api::composio::NormalizedTask>, String> {
+    Err(format!(
+        "task_sources fetch for toolkit '{}' is unavailable: tinymemory v1.13.4 deleted \
+         ComposioProvider::fetch_tasks with no replacement, and the tinyconnectors module \
+         exposes no structured task-fetch surface to reimplement it against",
+        source.provider.as_str()
+    ))
+}
+
 async fn run_inner(
     config: &Config,
     source: &TaskSource,
     _reason: FetchReason,
     outcome: &mut FetchOutcome,
 ) -> Result<(), String> {
-    let provider = get_provider(source.provider.as_str()).ok_or_else(|| {
-        format!(
-            "no native provider registered for '{}'",
-            source.provider.as_str()
-        )
-    })?;
-
-    let ctx = ProviderContext {
-        config: Arc::new(config.clone()),
-        toolkit: source.provider.as_str().to_string(),
-        connection_id: source.connection_id.clone(),
-        usage: Default::default(),
-        max_items: None,
-        sync_depth_days: None,
-    };
-
     let fetch_filter = filter::to_fetch_filter(&source.filter, source.max_tasks_per_fetch);
-    let tasks = provider.fetch_tasks(&ctx, &fetch_filter).await?;
+    let tasks = fetch_tasks_unavailable(source, &fetch_filter)?;
     outcome.fetched = tasks.len();
     let current_external_ids: HashSet<String> =
         tasks.iter().map(|task| task.external_id.clone()).collect();

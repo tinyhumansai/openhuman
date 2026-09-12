@@ -1,0 +1,13 @@
+diff --git a/dist/plugins/SyncPlugin.js b/dist/plugins/SyncPlugin.js
+index 579658dba..ee276a8e9 100644
+--- a/dist/plugins/SyncPlugin.js
++++ b/dist/plugins/SyncPlugin.js
+@@ -371,7 +371,7 @@ function SyncPlugin({ formatter: propFormatter } = {}) {
+ 			if (isSyncingFromLexicalRef.current) return;
+ 			const runtimeText = composerRuntime.getState().text;
+ 			if (runtimeText === lastSyncedTextRef.current) return;
+-			applyRuntimeText(runtimeText, void 0);
++			applyRuntimeText(runtimeText, lastAppliedParserRef.current);
+ 		});
+ 	}, [
+ 		editor,

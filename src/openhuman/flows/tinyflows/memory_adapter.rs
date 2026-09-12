@@ -63,7 +63,7 @@ const LOG_PREFIX: &str = "[memory-node-host]";
 /// (`RecallOpts.namespace: None` falls back to this same constant inside the
 /// store). Named here explicitly (rather than passing `None`) purely so it
 /// shows up in the debug log.
-const USER_NAMESPACE: &str = tinycortex::memory::GLOBAL_NAMESPACE;
+const USER_NAMESPACE: &str = tinymemory_api::types::GLOBAL_NAMESPACE;
 
 /// Host-injected memory access for `memory` nodes. See the module doc for the
 /// security contract; see [`super::caps::OpenHumanAgentRunner`] for the
@@ -347,7 +347,7 @@ impl MemoryProvider for OpenHumanMemory {
         tracing::debug!(target: "flows", flavour = slug, "{LOG_PREFIX} flavour: entry");
         self.tier_gate_read("flavour")?;
 
-        match lookup_flavour(&self.config, slug) {
+        match lookup_flavour(&self.config, slug).await {
             Err(hard) => {
                 tracing::debug!(target: "flows", flavour = slug, "{LOG_PREFIX} flavour: rejected (bad slug)");
                 Err(EngineError::Capability(format!("memory node: {hard}")))
@@ -451,7 +451,7 @@ impl MemoryProvider for OpenHumanMemory {
         // up front rather than spend that approval round-trip on a write
         // that was always going to be rejected (review fix — see #5227).
         let content = value_to_content(&value);
-        if tinymemory_core::store::safety::has_likely_secret(&content) {
+        if crate::openhuman::memory::safety::has_likely_secret(&content) {
             tracing::warn!(
                 target: "flows",
                 key_chars = key.chars().count(),

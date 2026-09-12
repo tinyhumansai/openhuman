@@ -446,15 +446,11 @@ fn default_build_leaves_the_generic_namespace_path_unchanged() {
     for ns in ["memory", "memory_tree", "memory_goals"] {
         assert!(grouped.contains_key(ns), "`{ns}` must still be listed");
     }
-    #[cfg(feature = "memory-git")]
-    assert!(
-        grouped.contains_key("memory_diff"),
-        "`memory_diff` must be listed when the memory-git feature is enabled"
-    );
-    #[cfg(not(feature = "memory-git"))]
+    // `memory_diff` was removed with the `memory-git` gate; it must not come
+    // back as a listed namespace.
     assert!(
         !grouped.contains_key("memory_diff"),
-        "`memory_diff` must be absent when the memory-git feature is disabled"
+        "`memory_diff` was removed and must not be listed"
     );
 }
 

@@ -180,7 +180,9 @@ const FlowApprovalCard = ({ notification: n }: Props) => {
             </p>
           )}
 
-          {error && <p className="mt-2 text-xs text-coral">{`⚠ ${error}`}</p>}
+          {error && (
+            <p className="mt-2 text-xs text-coral-600 dark:text-coral-400">{`⚠ ${error}`}</p>
+          )}
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <Button

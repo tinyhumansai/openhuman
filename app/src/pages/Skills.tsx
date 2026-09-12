@@ -25,7 +25,11 @@ import UsagePanel from '../components/settings/panels/UsagePanel';
 import VoiceConnectionsPanel from '../components/settings/panels/VoiceConnectionsPanel';
 import WalletPanel from '../components/settings/panels/WalletPanel';
 import UnifiedSkillCard from '../components/skills/SkillCard';
-import { SKILL_CATEGORY_ORDER, type SkillCategory } from '../components/skills/skillCategories';
+import {
+  SKILL_CATEGORY_LABEL_KEYS,
+  SKILL_CATEGORY_ORDER,
+  type SkillCategory,
+} from '../components/skills/skillCategories';
 import SkillCategoryFilter from '../components/skills/SkillCategoryFilter';
 import {
   getChannelIcons,
@@ -867,7 +871,7 @@ export default function Skills() {
                 className={skillCategoryHeadingClassName(category)}
               />
             </span>
-            {category}
+            {t(SKILL_CATEGORY_LABEL_KEYS[category])}
           </h2>
         </div>
         <div className="space-y-2">

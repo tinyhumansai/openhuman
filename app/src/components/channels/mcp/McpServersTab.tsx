@@ -597,7 +597,7 @@ const McpServersTab = () => {
           all). This avoids the duplicate-"All" confusion. */}
       <div className="flex flex-wrap items-center gap-2">
         <ChipTabs<FilterChip>
-          className="flex flex-wrap items-center gap-2"
+          className="flex flex-wrap items-center gap-1.5"
           value={activeChip}
           onChange={setActiveChip}
           items={[

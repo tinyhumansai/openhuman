@@ -82,7 +82,10 @@ fn the_job_id_identifies_the_trigger_without_quoting_it() {
 fn every_dispatch_site_scopes_an_origin() {
     const KNOWN_SITES: &[(&str, &str)] = &[
         // Remote payloads — park and audit.
-        ("src/openhuman/memory/sync/composio/bus.rs", "remote"),
+        (
+            "src/openhuman/memory/sync/composio/bus_part_01.rs",
+            "remote",
+        ),
         ("src/openhuman/integrations/task_sources/route.rs", "remote"),
         ("src/openhuman/skills/webhooks/ops.rs", "remote"),
         ("src/openhuman/skills/webhooks/bus.rs", "remote"),

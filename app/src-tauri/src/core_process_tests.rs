@@ -1,8 +1,11 @@
 use super::{
     current_rpc_token, default_core_port, generate_rpc_token, is_expected_port_clash,
-    is_openhuman_root_body, parse_lsof_pid, parse_netstat_pid, parse_ps_comm, parse_tasklist_name,
+    is_openhuman_root_body, parse_netstat_pid, parse_ps_comm, parse_tasklist_name,
     validate_kill_target, CoreProcessHandle, PortOwner, RecoveryOutcome,
 };
+// lsof is a unix tool, so its parser is only compiled there.
+#[cfg(unix)]
+use super::parse_lsof_pid;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 fn env_lock() -> MutexGuard<'static, ()> {
@@ -307,6 +310,7 @@ fn expected_port_clash_classifier_rejects_unknown_probe_shapes() {
     ));
 }
 
+#[cfg(unix)]
 #[test]
 fn parse_lsof_pid_picks_first_pid() {
     assert_eq!(parse_lsof_pid("12345\n"), Some(12345));

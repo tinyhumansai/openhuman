@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LuX } from 'react-icons/lu';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 
+import { errorMessage } from '../../../lib/errorMessage';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { selectAgentProfiles, upsertAgentProfile } from '../../../store/agentProfileSlice';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
@@ -129,18 +130,25 @@ const ProfileEditorPage = () => {
   };
 
   // Resolved profile id: explicit id on create (falling back to a slug of the
-  // name), or the existing id on edit. Must be non-empty to submit — a
-  // punctuation-only name slugs to '' and must not reach the RPC layer.
+  // name), or the existing id on edit.
   const resolvedId = (isCreate ? profileId.trim() || slugify(name) : profileId).trim();
 
-  const canSubmit = !submitting && (isCreate ? resolvedId.length > 0 : true);
+  // `slugify` keeps ASCII only, so a name written in Japanese, Chinese, Greek,
+  // Cyrillic or Arabic resolves to no id at all. The core derives one from the
+  // name in that case, so a nameable profile must still be submittable —
+  // otherwise there is no name in those scripts a user can save. A
+  // punctuation-only name still has nothing to name a profile with, and stays
+  // blocked as before.
+  const nameCanCarryAnId = /[\p{L}\p{N}]/u.test(name);
+
+  const canSubmit = !submitting && (isCreate ? resolvedId.length > 0 || nameCanCarryAnId : true);
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
     setSubmitting(true);
     setError(null);
     const id = resolvedId;
-    if (!id) {
+    if (!id && !nameCanCarryAnId) {
       setError(t('settings.profiles.editor.idRequired'));
       setSubmitting(false);
       return;
@@ -168,7 +176,12 @@ const ProfileEditorPage = () => {
       await dispatch(upsertAgentProfile(profile)).unwrap();
       if (mountedRef.current) backToList();
     } catch (err) {
-      if (mountedRef.current) setError(err instanceof Error ? err.message : String(err));
+      // `.unwrap()` rejects with Redux Toolkit's SerializedError — a plain
+      // object, not an `Error` — so an `instanceof` guard here rendered
+      // "[object Object]" and hid the backend's reason (#5900).
+      if (mountedRef.current) {
+        setError(errorMessage(err, 'Failed to save profile'));
+      }
     } finally {
       if (mountedRef.current) setSubmitting(false);
     }

@@ -23,6 +23,7 @@ const mockPipelineStatus = vi.fn();
 const mockSetEnabled = vi.fn();
 const mockSyncStatusList = vi.fn();
 const mockRetryFailed = vi.fn();
+const mockNamespaceSummaries = vi.fn();
 // #5324: the panel now navigates (budget CTA) and dispatches (escalating the
 // blocking cause to the shell-mounted UserErrorCenter). Stub both so the
 // suite keeps rendering the panel bare, without a Router or a Redux store.
@@ -50,6 +51,7 @@ vi.mock('../../utils/tauriCommands', async importOriginal => {
     memoryTreeSetEnabled: (...args: unknown[]) => mockSetEnabled(...args),
     memorySyncStatusList: (...args: unknown[]) => mockSyncStatusList(...args),
     memoryTreeRetryFailed: (...args: unknown[]) => mockRetryFailed(...args),
+    memoryNamespaceSummaries: (...args: unknown[]) => mockNamespaceSummaries(...args),
   };
 });
 
@@ -83,8 +85,12 @@ describe('<MemoryTreeStatusPanel />', () => {
     mockSetEnabled.mockReset();
     mockSyncStatusList.mockReset();
     mockRetryFailed.mockReset();
+    mockNamespaceSummaries.mockReset();
     mockTrackAnalyticsEvent.mockReset();
     mockSyncStatusList.mockResolvedValue([]); // default: empty, harmless to existing tests
+    // Same default the inline stub used to hard-code, now re-programmable
+    // per test so the failure branch can be driven.
+    mockNamespaceSummaries.mockResolvedValue({ namespaces: [], total_documents: 0 });
   });
 
   afterEach(() => {
@@ -679,6 +685,42 @@ describe('<MemoryTreeStatusPanel />', () => {
     });
     // The button must stay usable so a transient failure is not a dead end.
     expect(screen.getByTestId('memory-tree-retry-failed')).not.toBeDisabled();
+  });
+
+  // -- stored-items tile ----------------------------------------------------
+  // The stored-document total rides the same poll as the pipeline status but
+  // comes from a different store, and it is fetched on a detached promise so a
+  // failure there must NOT wipe the panel. These pin both halves of that.
+
+  it('renders the stored-items total from the namespace summaries', async () => {
+    mockPipelineStatus.mockResolvedValue(payload());
+    mockNamespaceSummaries.mockResolvedValue({
+      namespaces: [{ namespace: 'slack', count: 1500, last_updated: null }],
+      total_documents: 1500,
+    });
+
+    render(<MemoryTreeStatusPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('memory-stored-items')).toHaveTextContent('1,500');
+    });
+  });
+
+  it('keeps the panel alive and shows the placeholder when the summaries call fails', async () => {
+    // Detached-promise failure path: `storedItems` falls back to null, which
+    // renders the skeleton rather than a number. The pipeline status still
+    // resolved, so nothing else on the panel may degrade — in particular the
+    // panel-wide error must stay clear, because only a pipeline failure owns it.
+    mockPipelineStatus.mockResolvedValue(payload());
+    mockNamespaceSummaries.mockRejectedValue(new Error('namespace summaries down'));
+
+    render(<MemoryTreeStatusPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('memory-tree-total-chunks')).toHaveTextContent('1,234');
+    });
+    expect(screen.queryByTestId('memory-stored-items')).not.toBeInTheDocument();
+    expect(screen.getByTestId('memory-tree-status-label')).toHaveTextContent(/running/i);
   });
 });
 

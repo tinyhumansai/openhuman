@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
-use tinyagents::harness::store::{AppendStore, FileStore, JsonlAppendStore, Store};
+use tinyagents_harness::store::{AppendStore, FileStore, JsonlAppendStore, Store};
 
 use super::convert::sanitize_store_name;
 use super::ops::{run_import, store_root};

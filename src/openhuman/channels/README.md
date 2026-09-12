@@ -1,6 +1,6 @@
 # Channels
 
-Multi-platform messaging integration. Owns the `Channel` trait, per-provider connectors (Slack, Discord, Telegram, WhatsApp, IRC, Matrix, Signal, iMessage, Email, Lark, Mattermost, DingTalk, QQ, Linq, Web, CLI), the runtime supervisor that brings channels online, inbound dispatch into the agent loop, and proactive outbound delivery. Does NOT own the channel system prompt copy (lives in `context/channels_prompt.rs`) or per-channel credential storage (delegated to `credentials/`).
+Multi-platform messaging integration. Owns the `Channel` trait, per-provider connectors (Slack, Discord, Telegram, WhatsApp, IRC, Matrix, Signal, iMessage, Email, Lark, Mattermost, DingTalk, QQ, Linq, Web, CLI), the runtime supervisor that brings channels online, inbound dispatch into the agent loop, and proactive outbound delivery. Does NOT own the channel system prompt copy (lives in `context/channels_prompt.rs`; `system_prompt.rs` here owns only when it is re-rendered) or per-channel credential storage (delegated to `credentials/`).
 
 ## Public surface
 
@@ -9,6 +9,7 @@ Multi-platform messaging integration. Owns the `Channel` trait, per-provider con
 - `pub fn start_channels` — `runtime/startup.rs` (re-exported `mod.rs:65`) — boot all enabled channels under the supervisor.
 - `pub fn doctor_channels` — `commands.rs` — diagnose connectivity for the doctor CLI.
 - `pub fn build_system_prompt` — re-exported from `crate::openhuman::agent::context::channels_prompt`.
+- `pub(crate) enum ChannelSystemPrompt` — `system_prompt.rs` — the prompt a turn is seeded with: `fixed` (tests) or `refreshing` (production), which renders `build_system_prompt_with_identity` for the active agent profile — with the `## Project Context` identity block placed *after* the tool schemas and access context, and the profile's `system_prompt_suffix` as the trailing `## Agent profile` block — and re-renders only when an identity fingerprint (`agent_profiles.json`, root `SOUL/IDENTITY/PROFILE/MEMORY.md`, the profile's `SOUL/MEMORY.md`) changes — #6027 / #6028.
 - Per-provider channel structs: `pub struct CliChannel`, `DingTalkChannel`, `DiscordChannel`, `EmailChannel`, `IMessageChannel`, `IrcChannel`, `LarkChannel`, `LinqChannel`, `MattermostChannel`, `QQChannel`, `SignalChannel`, `SlackChannel`, `TelegramChannel`, `WhatsAppChannel` — `providers/<name>.rs`. Cargo-feature-gated: `WhatsAppWebChannel` (`whatsapp-web`).
 - Stable `pub use providers::<name>` paths for every provider — `mod.rs:18-36`.
 - RPC `channels.{list, describe, connect, disconnect, status, test, telegram_login_start, telegram_login_check, discord_link_start, discord_link_check, discord_list_guilds, discord_list_channels, discord_check_permissions, send_message, send_reaction, create_thread, update_thread, list_threads}` — `controllers/schemas.rs`.

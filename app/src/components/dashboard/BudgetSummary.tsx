@@ -53,7 +53,7 @@ const BudgetSummary = ({
       {/* Hero tile: 7-day total + status badge + progress bar */}
       <div
         data-testid="metric-total-spend"
-        className="md:col-span-2 rounded-2xl border border-line bg-linear-to-br from-primary-50 to-white dark:from-neutral-900 dark:to-neutral-950 p-5 flex flex-col gap-3 shadow-soft">
+        className="md:col-span-2 rounded-2xl border border-line bg-linear-to-br from-primary-50 to-surface dark:from-neutral-900 dark:to-neutral-950 p-5 flex flex-col gap-3 shadow-soft">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-content-muted">
             <WalletIcon className="h-4 w-4" />
@@ -61,7 +61,7 @@ const BudgetSummary = ({
           </div>
           <span
             data-testid="budget-status-badge"
-            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-medium text-white ${STATUS_BG[status]}`}>
+            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-medium text-content-inverted ${STATUS_BG[status]}`}>
             <span
               aria-hidden
               className="inline-block h-1.5 w-1.5 rounded-full bg-surface/80 animate-pulse"

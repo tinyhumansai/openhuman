@@ -17,7 +17,7 @@ OpenHuman has a built-in **MCP registry** that browses the open MCP ecosystem an
 
 - **Two upstream registries, merged.** Discovery fans out in parallel to [Smithery.ai](https://smithery.ai) and the official [`registry.modelcontextprotocol.io`](https://registry.modelcontextprotocol.io), then merges the results: thousands of servers across both.
 - **Search → install → connect.** Search the catalog, view a server's details, and install it. A local install spawns the server as a stdio subprocess; deployed servers connect over HTTP.
-- **Supervised connections.** Installed servers are persisted in a local SQLite store (`mcp_clients/mcp_clients.db`) with their command, args, and transport. A supervisor loop keeps enabled servers connected, probing every ~60s with per-server exponential backoff.
+- **Supervised connections.** Installed servers are persisted in a local SQLite store (`mcp_clients/mcp_clients.db`) with their command, args, and transport. A supervisor loop keeps enabled servers connected, probing every ~60s with per-server exponential backoff. Each non-nominal probe outcome (a slow answer, a dropped transport, a reconnect that succeeded or failed) shows up in **Settings → Developer → Event Log** under the `mcp` badge — an answered probe does not, so a healthy server stays silent — and a server that stays down, comes back after failing, or cannot start because its launcher runtime is missing raises a notification.
 
 Once connected, an MCP server's tools are available to the agent exactly like native tools.
 

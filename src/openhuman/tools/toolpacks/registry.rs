@@ -61,17 +61,17 @@ pub const PACKS: &[ToolPack] = &[
     },
     ToolPack {
         id: "crypto",
-        summary: "Crypto wallet and market actions: balances, transfers, swaps, bridges, contract calls and x402 paid requests.",
+        summary: "Crypto wallet and market actions: transfer quotes, swaps, bridges, contract calls and x402 paid requests.",
+        // `wallet_balances`, `wallet_network_defaults`, `wallet_supported_assets`,
+        // `wallet_encode_erc20_transfer` and `wallet_execute_prepared` are NOT
+        // listed: they exist as `wallet.*` RPC methods but have no agent Tool
+        // wrapper, and `render_pack_filtered` skips an unresolvable name
+        // silently — so listing them only made the rendered menu quietly short.
         tools: &[
             "do_crypto",
             "wallet_status",
-            "wallet_balances",
-            "wallet_network_defaults",
-            "wallet_supported_assets",
             "wallet_chain_status",
-            "wallet_encode_erc20_transfer",
             "wallet_prepare_transfer",
-            "wallet_execute_prepared",
             "wallet_tx_status",
             "wallet_tx_receipt",
             "wallet_lookup_tx",
@@ -135,6 +135,8 @@ pub const PACKS: &[ToolPack] = &[
             "install_workflow_from_url",
             "uninstall_workflow",
             "read_workflow_resource",
+            // The delegate into `skill_creator`, which owns this pack.
+            "create_skill",
         ],
         owners: &[
             "skill_setup",
@@ -145,8 +147,16 @@ pub const PACKS: &[ToolPack] = &[
     },
     ToolPack {
         id: "documents",
-        summary: "Generate a .docx document or a .pptx presentation as a workspace artifact.",
-        tools: &["generate_document", "generate_presentation"],
+        summary: "Build a slide deck or a .docx/.pptx document as a workspace artifact.",
+        tools: &[
+            "generate_document",
+            "generate_presentation",
+            // The delegate, not just the leaf tools: an orchestrator that can
+            // see `make_presentation` pays its schema on every turn to route a
+            // request that arrives in a small minority of them, and the pack
+            // it would route into is already withheld.
+            "make_presentation",
+        ],
         owners: &["presentation_agent"],
     },
     ToolPack {
@@ -189,14 +199,129 @@ pub const PACKS: &[ToolPack] = &[
             "daemon_host_prefs_get",
             "daemon_host_prefs_set",
             "proxy_config",
+            // The delegate into this same family. `settings_agent` owns the
+            // pack, so it keeps seeing the whole belt including this.
+            "manage_settings",
         ],
         owners: &["settings_agent"],
     },
     ToolPack {
+        id: "files",
+        summary: "Direct file and repository access: read, write, search by content, match by glob, list a directory, and read git state.",
+        // `shell` covers every one of these for an agent that has it, so on a
+        // belt that also carries `shell` the family is duplicate surface
+        // charged on every turn. It stays one `use_skill` away, and the
+        // specialists below keep it advertised because inspecting files IS
+        // their loop rather than an occasional step inside it.
+        //
+        // `apply_patch` is deliberately NOT here. Editing an existing file
+        // through a shell heredoc is the failure mode the patch tool exists to
+        // prevent, so it is not duplicate surface in the way a `cat` is.
+        tools: &[
+            "file_read",
+            "file_write",
+            "grep",
+            "glob",
+            "list",
+            "git_operations",
+        ],
+        owners: &[
+            "code_executor",
+            "critic",
+            "planner",
+            "skill_creator",
+            "skill_executor",
+            "tool_maker",
+            "image_agent",
+            "video_agent",
+            "vision_agent",
+            "integrations_agent",
+        ],
+    },
+    ToolPack {
+        id: "storage",
+        summary: "Workspace file storage: upload a file, download one, list what is stored, and mint a shareable link.",
+        tools: &[
+            "storage_upload_file",
+            "storage_download_file",
+            "storage_list_files",
+            "storage_get_link",
+        ],
+        // Not ownerless: `code_executor` and `integrations_agent` both declare
+        // the family on their own belts, and an agent that uploads its own
+        // artifacts should not pay a `use_skill` round trip to hand one back.
+        owners: &["code_executor", "integrations_agent"],
+    },
+    ToolPack {
+        id: "scheduling",
+        summary: "Reminders and scheduled jobs: create, list, update, remove, run and inspect one-shot and recurring jobs.",
+        tools: &[
+            "schedule_task",
+            "cron_add",
+            "cron_list",
+            "cron_remove",
+            "cron_update",
+            "cron_run",
+            "cron_runs",
+        ],
+        owners: &["scheduler_agent"],
+    },
+    ToolPack {
+        id: "profile",
+        summary: "What OpenHuman durably knows about the user: record a preference (tone, defaults, working style), and edit the profile, persona or people-graph behind it.",
+        // The delegate and the two raw tools belong together because they are
+        // one question from the model's side — "remember this about the user" —
+        // split only by how much editing it needs.
+        tools: &[
+            "save_preference",
+            "remember_preference",
+            "manage_profile_memory",
+        ],
+        owners: &["profile_memory_agent"],
+    },
+    ToolPack {
+        id: "media",
+        summary: "Anything centred on a picture or a clip: generate one, or read one (describe, OCR, charts, UI elements).",
+        tools: &[
+            "create_image",
+            "create_video",
+            // Reading an image, not making one, but it is the same belt from
+            // the model's point of view: the request that reaches for it names
+            // a picture either way.
+            "analyze_image",
+            "media_generate_image",
+            "media_generate_video",
+            "media_list_models",
+        ],
+        owners: &["image_agent", "video_agent", "vision_agent"],
+    },
+    ToolPack {
+        id: "tasks",
+        summary: "The agent task board: create, edit, approve, clear and summarize agent tasks, task sources and their artifacts.",
+        tools: &["manage_tasks"],
+        owners: &["task_manager_agent"],
+    },
+    ToolPack {
         id: "goals",
-        summary: "Read, set and complete the user's long-term goals.",
-        tools: &["goal_set", "goal_get", "goal_complete"],
-        owners: &[],
+        // Everything about goals EXCEPT closing one.
+        //
+        // Two different surfaces live here, and the pack is the seam that lets
+        // the model find either: `goals` is the user's durable long-term
+        // objectives held in memory, `goal_get` / `goal_set` are the
+        // completion contract for one conversation thread. Both are things a
+        // user edits far more often than an agent does, and both stayed
+        // user-reachable — the `memory_goals.*` and `thread_goals.*` RPC the
+        // UI drives is untouched by the withholding.
+        //
+        // `goal_complete` is deliberately NOT a member. Closing a goal is the
+        // one goal operation an agent reaches for reactively, at the end of
+        // work it has just finished, and a `use_skill` round trip at that
+        // moment buys nothing: the alternative to a visible `goal_complete` is
+        // an objective that silently stays open and keeps driving autonomous
+        // continuation. Same reasoning as `DELIBERATELY_UNPACKED_FLEET_TOOLS`.
+        summary: "Read, add and edit goals: the user's durable long-term objectives, and the objective THIS thread is working toward. Closing one is the separate, always-available `goal_complete`.",
+        tools: &["goals", "goal_get", "goal_set"],
+        owners: &["goals_agent"],
     },
     ToolPack {
         id: "app_update",
@@ -256,12 +381,38 @@ pub fn packed_tool_names_for_agent(agent_id: &str) -> Vec<&'static str> {
         .collect()
 }
 
-/// The always-on index: one line per pack, rendered into `load_skill`'s own
+/// The always-on index: one line per pack, rendered into `use_skill`'s own
 /// description so the model can pick a pack without a round trip.
 pub fn pack_index_markdown() -> String {
+    pack_index_markdown_filtered(&|_| true)
+}
+
+/// The pack index, limited to packs this session can call at least one tool in.
+///
+/// A pack with nothing callable is not an answer to "which skills can I load",
+/// and advertising it costs a round trip: the model loads it, learns it cannot
+/// use it, and comes back. The capability does not disappear — a pack's owners
+/// reach the model through their own `delegate_*` tools, whose `when_to_use`
+/// descriptions are already on the wire and are what the model should call
+/// anyway. Keeping the pack listed here would duplicate that routing on every
+/// single turn.
+pub fn pack_index_markdown_filtered(is_callable: &dyn Fn(&str) -> bool) -> String {
     let mut out = String::new();
     for p in PACKS {
+        if !p.tools.iter().any(|t| is_callable(t)) {
+            continue;
+        }
         out.push_str(&format!("- `{}` — {}\n", p.id, p.summary));
     }
     out
+}
+
+/// Pack ids with at least one tool this session can call — the `skill` enum
+/// `load_skill` should actually offer.
+pub fn callable_pack_ids(is_callable: &dyn Fn(&str) -> bool) -> Vec<&'static str> {
+    PACKS
+        .iter()
+        .filter(|p| p.tools.iter().any(|t| is_callable(t)))
+        .map(|p| p.id)
+        .collect()
 }

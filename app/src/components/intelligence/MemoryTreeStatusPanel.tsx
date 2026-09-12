@@ -23,11 +23,12 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { useT } from '../../lib/i18n/I18nContext';
-import { reportMemoryPipelineFailure } from '../../lib/userErrors/report';
+import { reportMemoryPipelineFailure, reportMemoryQuarantine } from '../../lib/userErrors/report';
 import { useAppDispatch } from '../../store/hooks';
 import type { ToastNotification } from '../../types/intelligence';
 import { memoryTreeRetryFailed, memoryTreeSetEnabled } from '../../utils/tauriCommands';
 import { trackAnalyticsEvent } from '../analytics';
+import { Card } from '../ui';
 import Button from '../ui/Button';
 import Switch from '../ui/Switch';
 import {
@@ -56,7 +57,7 @@ export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
   const { t } = useT();
   const navigate = useNavigate();
   const dispatch = useAppDispatch();
-  const { status, integrations, loading, error, refresh } = useMemoryTreeStatus();
+  const { status, storedItems, integrations, loading, error, refresh } = useMemoryTreeStatus();
   const [toggleBusy, setToggleBusy] = useState(false);
   const [retryBusy, setRetryBusy] = useState(false);
 
@@ -79,6 +80,16 @@ export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
   useEffect(() => {
     reportMemoryPipelineFailure(dispatch, blockingCauseCode);
   }, [dispatch, blockingCauseCode]);
+  // openhuman#5820: this panel polls faster than the shell, so a re-sync
+  // retires the quarantine notice as soon as the first chunk lands.
+  const quarantine = status?.quarantine ?? null;
+  const quarantineKey = quarantine
+    ? `${quarantine.quarantined_at_ms}:${quarantine.resynced}`
+    : null;
+  useEffect(() => {
+    reportMemoryQuarantine(dispatch, quarantine);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the fields that matter
+  }, [dispatch, quarantineKey]);
 
   const handleToggle = useCallback(async () => {
     if (!status || toggleBusy) return;
@@ -182,8 +193,6 @@ export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
 
   const checked = !(status?.is_paused ?? false);
 
-  const tileClass =
-    'rounded-xl border border-line bg-surface-muted p-3 transition-colors hover:bg-surface-hover';
   const labelClass = 'text-[11px] uppercase tracking-wide text-content-muted mb-1';
   const valueClass = 'text-xl font-semibold text-content';
   const skeletonClass = 'h-7 w-16 rounded bg-surface-strong animate-pulse';
@@ -262,7 +271,9 @@ export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3" data-testid="memory-tree-status-tiles">
         {/* Status tile ── color-coded pill */}
-        <div className={tileClass}>
+        <Card
+          divided={false}
+          className="bg-surface-muted p-3 transition-colors hover:bg-surface-hover">
           <div className={labelClass}>{t('memoryTree.status.statusTile')}</div>
           {loading || !status ? (
             <div className={skeletonClass} />
@@ -299,10 +310,12 @@ export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
               ) : null}
             </>
           )}
-        </div>
+        </Card>
 
         {/* Last-sync tile */}
-        <div className={tileClass}>
+        <Card
+          divided={false}
+          className="bg-surface-muted p-3 transition-colors hover:bg-surface-hover">
           <div className={labelClass}>{t('memoryTree.status.lastSyncTile')}</div>
           {loading || !status ? (
             <div className={skeletonClass} />
@@ -311,10 +324,28 @@ export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
               {formatRelativeMs(status.last_sync_ms, t, t('memoryTree.status.never'))}
             </div>
           )}
-        </div>
+        </Card>
+
+        {/* Stored items tile — the document/search-index store, the number a
+            user checks after a sync. Distinct from the summary-tree leaves
+            tile beside it, which counts a different, much smaller store. */}
+        <Card
+          divided={false}
+          className="bg-surface-muted p-3 transition-colors hover:bg-surface-hover">
+          <div className={labelClass}>{t('memoryTree.status.storedItemsTile')}</div>
+          {storedItems === null ? (
+            <div className={skeletonClass} />
+          ) : (
+            <div className={valueClass} data-testid="memory-stored-items">
+              {new Intl.NumberFormat().format(storedItems)}
+            </div>
+          )}
+        </Card>
 
         {/* Total chunks tile */}
-        <div className={tileClass}>
+        <Card
+          divided={false}
+          className="bg-surface-muted p-3 transition-colors hover:bg-surface-hover">
           <div className={labelClass}>{t('memoryTree.status.totalChunksTile')}</div>
           {loading || !status ? (
             <div className={skeletonClass} />
@@ -323,10 +354,12 @@ export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
               {new Intl.NumberFormat().format(status.total_chunks)}
             </div>
           )}
-        </div>
+        </Card>
 
         {/* Wiki size tile */}
-        <div className={tileClass}>
+        <Card
+          divided={false}
+          className="bg-surface-muted p-3 transition-colors hover:bg-surface-hover">
           <div className={labelClass}>{t('memoryTree.status.wikiSizeTile')}</div>
           {loading || !status ? (
             <div className={skeletonClass} />
@@ -335,7 +368,7 @@ export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
               {formatBytes(status.wiki_size_bytes)}
             </div>
           )}
-        </div>
+        </Card>
       </div>
 
       {/* #002 (FR-010 / US5): extraction coverage. Only meaningful once chunks

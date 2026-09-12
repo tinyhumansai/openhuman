@@ -22,9 +22,9 @@ use serde_json::json;
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
-use tinyagents::harness::message::Message;
-use tinyagents::harness::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
-use tinyagents::harness::usage::Usage;
+use tinyinference::message::Message;
+use tinyinference::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
+use tinyinference::usage::Usage;
 
 struct EnvGuard {
     key: &'static str,
@@ -95,7 +95,7 @@ impl ChatModel<()> for ScriptedModel {
         &self,
         _state: &(),
         request: ModelRequest,
-    ) -> tinyagents::Result<ModelResponse> {
+    ) -> tinyinference::Result<ModelResponse> {
         self.requests.lock().push(CapturedRequest {
             messages: request.messages,
             tool_names: request.tools.iter().map(|tool| tool.name.clone()).collect(),
@@ -330,7 +330,6 @@ fn prompt_renderers_cover_user_memory_identity_tools_and_subagent_variants() -> 
         SubagentRenderOptions {
             include_safety_preamble: true,
             include_identity: true,
-            include_skills_catalog: false,
             include_profile: true,
             include_memory_md: true,
         },

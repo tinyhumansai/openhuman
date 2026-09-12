@@ -69,7 +69,7 @@ fn compact_sender_history_keeps_recent_truncated_messages() {
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(super::common::NoopMemory),
         tools_registry: Arc::new(vec![]),
-        system_prompt: Arc::new("system".to_string()),
+        system_prompt: crate::openhuman::channels::ChannelSystemPrompt::fixed("system"),
         model: Arc::new("test-model".to_string()),
         temperature: 0.0,
         auto_save_memory: false,

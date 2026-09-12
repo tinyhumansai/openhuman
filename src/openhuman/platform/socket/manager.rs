@@ -62,6 +62,53 @@ pub(super) struct SharedState {
     /// (e.g. "backend redirected ws→wss; update BACKEND_URL"). Cleared on every
     /// successful handshake and on disconnect.
     pub(super) error: RwLock<Option<String>>,
+    /// `(url, token)` the background loop is currently authenticating with, and
+    /// the reason it lives here rather than on the handle: `ws_loop` re-reads the
+    /// token provider before **every** attempt, so a refresh mid-session would
+    /// leave a manager-side copy naming a credential this socket no longer uses.
+    /// Seeded by `spawn_loop` and rewritten by the loop on each attempt; cleared
+    /// on disconnect. Read by [`SocketManager::is_live_for`].
+    pub(super) connection_identity: RwLock<Option<(String, String)>>,
+}
+
+/// The connection's readiness flag, guarded by a lock so a reader can hold the
+/// flag `true` across the send it authorises.
+///
+/// A bare `AtomicBool` cannot express that: `emit` would load `true`, and the
+/// background loop's teardown could then clear the flag *and* drain the emit
+/// queue in the gap before `emit`'s `tx.send` runs, so the message lands in the
+/// just-drained channel and rides the *next* reconnect's socket (a fresh sid
+/// whose roster the backend has already cleared). Both critical sections —
+/// `emit`'s "is-ready? then send" and teardown's "clear then drain" — take this
+/// lock, so they are mutually exclusive and that interleaving cannot happen. The
+/// guard is a leaf: it is only ever held for a synchronous flag read/write plus
+/// a non-blocking channel `send`/`try_recv`, never across an `.await` and never
+/// while another socket lock is held, so it introduces no lock-ordering hazard
+/// with `emit_tx` or the `status` `RwLock`.
+pub(super) type EmitReady = Arc<Mutex<bool>>;
+
+/// The outbound emit channel bundled with the readiness flag of the **same**
+/// connection that owns it.
+///
+/// Readiness travels with the channel so `emit` can decide "is this message
+/// deliverable?" atomically with picking the channel it would send on: both are
+/// read under the single `emit_tx` lock. `spawn_loop` installs a fresh
+/// `EmitChannel` (fresh sender + fresh `ready = false` flag) for every
+/// connection, and the background loop flips *this connection's* `ready` to
+/// `true` only after the Socket.IO CONNECT ACK and back to `false` on teardown.
+/// A reconnect therefore swaps the sender and its flag together — an `emit`
+/// holding the lock can never pair a live-looking status with a stale
+/// pre-handshake channel (the reverse of the TOCTOU the status-only gate had).
+///
+/// `ready` is additionally the serialization point between `emit` and teardown:
+/// see [`EmitReady`] for why the flag is a `Mutex<bool>` rather than an atomic.
+pub(super) struct EmitChannel {
+    /// Sender into the background loop's outbound queue.
+    pub(super) tx: mpsc::UnboundedSender<String>,
+    /// `true` only between this connection's CONNECT ACK and its teardown, and
+    /// the lock that makes `emit`'s check+send exclusive with teardown's
+    /// clear+drain (see [`EmitReady`]).
+    pub(super) ready: EmitReady,
 }
 
 pub(super) struct AckRegistry {
@@ -116,8 +163,13 @@ impl AckRegistry {
 pub struct SocketManager {
     /// Shared state accessible from both the manager and the background loop.
     pub(super) shared: Arc<SharedState>,
-    /// Channel for sending outgoing messages to the background loop.
-    emit_tx: tokio::sync::Mutex<Option<mpsc::UnboundedSender<String>>>,
+    /// Channel for sending outgoing messages to the background loop, bundled
+    /// with the readiness flag of the connection that owns it. `emit` selects the
+    /// channel under this lock, then gates its check+send on the channel's own
+    /// `ready` lock, so a reconnect can never swap the channel out mid-emit nor
+    /// let teardown drain between the readiness check and the send
+    /// (see [`EmitChannel`] and [`EmitReady`]).
+    emit_tx: tokio::sync::Mutex<Option<EmitChannel>>,
     /// Channel for signaling the background loop to shut down.
     shutdown_tx: tokio::sync::Mutex<Option<watch::Sender<bool>>>,
     /// Join handle for the background connection loop.
@@ -138,6 +190,7 @@ impl SocketManager {
                 status: RwLock::new(ConnectionStatus::Disconnected),
                 socket_id: RwLock::new(None),
                 error: RwLock::new(None),
+                connection_identity: RwLock::new(None),
             }),
             emit_tx: tokio::sync::Mutex::new(None),
             shutdown_tx: tokio::sync::Mutex::new(None),
@@ -172,9 +225,35 @@ impl SocketManager {
     }
 
     /// Check if the socket is currently connected.
-    #[allow(dead_code)]
     pub fn is_connected(&self) -> bool {
         *self.shared.status.read() == ConnectionStatus::Connected
+    }
+
+    /// True when a **live** connection is already serving exactly this `url`
+    /// under exactly this session token.
+    ///
+    /// Startup has two independent connect paths — the core's bootstrap
+    /// auto-connect and the renderer's `socket_connect_with_session` RPC — and
+    /// each unconditionally tore the other's socket down and redid the whole
+    /// Engine.IO/Socket.IO handshake, so a cold start opened two EIO sessions a
+    /// couple of seconds apart (#6181). Callers consult this before starting an
+    /// identity rebind so the second path becomes a no-op.
+    ///
+    /// Deliberately conservative: a different URL, a different token, or any
+    /// status other than `Connected` all report `false`, so an account switch
+    /// (same URL, new token) still forces a real reconnect and an unhealthy
+    /// socket is still replaced. The token compared against is the one
+    /// `ws_loop` used for its most recent attempt, not the one this manager was
+    /// handed at spawn — a provider that refreshes the session mid-loop keeps
+    /// matching instead of forcing a pointless reconnect.
+    pub fn is_live_for(&self, url: &str, token: &str) -> bool {
+        self.is_connected()
+            && self
+                .shared
+                .connection_identity
+                .read()
+                .as_ref()
+                .is_some_and(|(u, t)| u == url && t == token)
     }
 
     // -----------------------------------------------------------------------
@@ -202,7 +281,7 @@ impl SocketManager {
         // live-session refresh, callers should use `connect_with_session` which
         // builds a provider via `token_provider_from_config`.
         let provider = static_token_provider(token.to_string());
-        self.spawn_loop(url, provider).await
+        self.spawn_loop(url, provider, token.to_string()).await
     }
 
     /// Connect using a **live-refresh token provider**.
@@ -224,8 +303,8 @@ impl SocketManager {
         // Validate that a token is available right now before spawning. This
         // mirrors the empty-token guard in `connect()` and ensures callers
         // see an immediate error if the session store is empty.
-        match token_provider() {
-            Ok(t) if !t.trim().is_empty() => {}
+        let token = match token_provider() {
+            Ok(t) if !t.trim().is_empty() => t,
             Ok(_) => {
                 log::error!(
                     "[socket] connect_with_provider: refusing to start — provider returned empty token"
@@ -238,22 +317,38 @@ impl SocketManager {
                 );
                 return Err(e);
             }
-        }
-        self.spawn_loop(url, token_provider).await
+        };
+        self.spawn_loop(url, token_provider, token).await
     }
 
     /// Shared spawn path used by both [`connect`] and [`connect_with_provider`].
     ///
     /// Installs the rustls crypto provider, tears down any existing connection,
-    /// constructs the channel pair, and spawns the background `ws_loop` task.
-    /// Entry-point-specific validation (empty-token guard, provider pre-check)
-    /// is done by the callers before this is called.
-    async fn spawn_loop(&self, url: &str, provider: TokenProvider) -> Result<(), String> {
+    /// records the connection's identity, constructs the channel pair, and
+    /// spawns the background `ws_loop` task. Entry-point-specific validation
+    /// (empty-token guard, provider pre-check) is done by the callers before this
+    /// is called, and `token` is the value they validated — it is recorded, not
+    /// sent, so `is_live_for` compares against the credential this connection was
+    /// actually started with.
+    async fn spawn_loop(
+        &self,
+        url: &str,
+        provider: TokenProvider,
+        token: String,
+    ) -> Result<(), String> {
         // Ensure the rustls crypto provider is installed (needed for wss:// TLS).
         // This is a no-op if already installed.
         let _ = rustls::crypto::ring::default_provider().install_default();
 
         self.disconnect().await?;
+
+        // Seed the identity this loop will serve so a redundant connect for the
+        // same url+token can be skipped (see `is_live_for`). This is the token
+        // the caller already validated, not a fresh provider call: the two must
+        // agree, or the guard could match on a credential this connection never
+        // used. `ws_loop` rewrites it before every attempt, so a token refreshed
+        // mid-session replaces this seed rather than going stale behind it.
+        *self.shared.connection_identity.write() = Some((url.to_string(), token));
 
         log::info!("[socket] Connecting to {}", url);
 
@@ -265,14 +360,35 @@ impl SocketManager {
         let internal_tx = emit_tx.clone();
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-        *self.emit_tx.lock().await = Some(emit_tx);
+        // Per-connection readiness flag: starts `false` (pre-handshake) and is
+        // flipped by `ws_loop` at CONNECT ACK. Bundled with the sender so `emit`
+        // reads the flag belonging to exactly this channel, not a flag a later
+        // reconnect may have swapped underneath it. It is a `Mutex<bool>` rather
+        // than an atomic so `emit`'s check+send and the loop's clear+drain can be
+        // made mutually exclusive (see [`EmitReady`]).
+        let emit_ready: EmitReady = Arc::new(Mutex::new(false));
+        let loop_ready = Arc::clone(&emit_ready);
+
+        *self.emit_tx.lock().await = Some(EmitChannel {
+            tx: emit_tx,
+            ready: emit_ready,
+        });
         *self.shutdown_tx.lock().await = Some(shutdown_tx);
 
         let url = url.to_string();
         let shared = Arc::clone(&self.shared);
 
         let handle = tokio::spawn(async move {
-            ws_loop(url, provider, shared, emit_rx, shutdown_rx, internal_tx).await;
+            ws_loop(
+                url,
+                provider,
+                shared,
+                emit_rx,
+                shutdown_rx,
+                internal_tx,
+                loop_ready,
+            )
+            .await;
         });
 
         *self.loop_handle.lock().await = Some(handle);
@@ -293,22 +409,72 @@ impl SocketManager {
         *self.shared.status.write() = ConnectionStatus::Disconnected;
         *self.shared.socket_id.write() = None;
         *self.shared.error.write() = None;
+        *self.shared.connection_identity.write() = None;
         emit_state_change(&self.shared);
         log::debug!("[socket] Disconnected");
         Ok(())
     }
 
     /// Emit a Socket.IO event to the server.
+    ///
+    /// Gated on the **owning connection's** readiness flag, not on the emit
+    /// channel merely existing nor on the presentation-layer `status`. Two races
+    /// motivate this:
+    ///
+    /// - `spawn_loop` installs `emit_tx` while the handshake is still in flight,
+    ///   so a channel-only guard would report success for a message that
+    ///   `ws_loop`'s `drain_pending_emits` silently discards if the handshake
+    ///   then fails (#4355 / #6084 pre-handshake false success).
+    /// - Reading `status` and then acquiring the `emit_tx` lock are two separate
+    ///   steps; a reconnect in between could flip `status` and swap in a fresh
+    ///   pre-handshake channel, so a `status`-only gate could enqueue onto the
+    ///   *new* channel and return `Ok` for a message that channel then drops.
+    ///
+    /// The flag is created with, owned by, and flipped for a single connection,
+    /// and it is read here under the same lock that hands us the channel — so
+    /// status and channel can never be swapped mid-emit. Because readiness is
+    /// cleared only on that connection's teardown (not on a presentation-layer
+    /// `error` event that leaves the socket live), a still-connected socket
+    /// keeps accepting emits. A pre-handshake or disconnected emit returns the
+    /// same `"Not connected"` error as an emit before `connect` was ever called.
+    ///
+    /// The readiness check and the `tx.send` it authorises are performed under
+    /// the `ready` lock (see [`EmitReady`]), so the background loop's teardown
+    /// cannot clear the flag and drain the queue in the gap between them — which
+    /// would otherwise let this method return `Ok(())` for a message that lands
+    /// in the just-drained channel and rides the *next* reconnect's socket.
     pub async fn emit(&self, event: &str, data: serde_json::Value) -> Result<(), String> {
-        if let Some(ref tx) = *self.emit_tx.lock().await {
-            let msg = encode_sio_event(event, data, None)?;
-            tx.send(msg).map_err(|_| "Socket not connected".to_string())
-        } else {
-            Err("Not connected".to_string())
+        // Encode outside the readiness lock: it is fallible and touches neither
+        // the flag nor the channel, so there is no reason to widen the critical
+        // section around it.
+        let msg = encode_sio_event(event, data, None)?;
+        let guard = self.emit_tx.lock().await;
+        let Some(channel) = guard.as_ref() else {
+            return Err("Not connected".to_string());
+        };
+        // Hold `ready` across the check *and* the send so teardown's clear+drain
+        // (which takes the same lock) cannot interleave between them. `send` on an
+        // unbounded channel does not block, so this leaf lock is never held over
+        // an `.await`.
+        let ready = channel.ready.lock();
+        if !*ready {
+            return Err("Not connected".to_string());
         }
+        channel
+            .tx
+            .send(msg)
+            .map_err(|_| "Socket not connected".to_string())
     }
 
     /// Emit a Socket.IO event and wait for the backend ACK callback.
+    ///
+    /// Unlike [`emit`](Self::emit), this deliberately does **not** gate on
+    /// `Connected`: a message queued while `Connecting` is flushed once the
+    /// handshake completes, and if the handshake fails instead the ack simply
+    /// never arrives and this returns a timeout `Err`. Because delivery is
+    /// confirmed by the ack (or its absence), a pre-handshake `emit_with_ack`
+    /// cannot report a false success the way a bare `emit` could (#6084), so it
+    /// keeps the queue-then-confirm behaviour rather than rejecting early.
     pub async fn emit_with_ack(
         &self,
         event: &str,
@@ -319,7 +485,8 @@ impl SocketManager {
             .emit_tx
             .lock()
             .await
-            .clone()
+            .as_ref()
+            .map(|c| c.tx.clone())
             .ok_or_else(|| "Not connected".to_string())?;
         let (ack_id, ack_rx) = self.shared.ack_registry.register();
         let msg = encode_sio_event(event, data, Some(ack_id))?;
@@ -395,234 +562,5 @@ pub(super) fn emit_server_event(_shared: &SharedState, event_name: &str, _data: 
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn new_manager_is_disconnected_with_no_sid() {
-        let mgr = SocketManager::new();
-        let state = mgr.get_state();
-        assert_eq!(state.status, ConnectionStatus::Disconnected);
-        assert!(state.socket_id.is_none());
-        assert!(state.error.is_none());
-        assert!(!mgr.is_connected());
-    }
-
-    #[test]
-    fn default_impl_matches_new() {
-        let a = SocketManager::new();
-        let b = SocketManager::default();
-        assert_eq!(a.get_state().status, b.get_state().status);
-    }
-
-    #[test]
-    fn is_connected_tracks_status_transitions() {
-        let mgr = SocketManager::new();
-        assert!(!mgr.is_connected());
-        *mgr.shared.status.write() = ConnectionStatus::Connected;
-        assert!(mgr.is_connected());
-        *mgr.shared.status.write() = ConnectionStatus::Error;
-        assert!(!mgr.is_connected());
-    }
-
-    #[test]
-    fn get_state_reflects_stored_sid_and_status() {
-        let mgr = SocketManager::new();
-        *mgr.shared.status.write() = ConnectionStatus::Connected;
-        *mgr.shared.socket_id.write() = Some("sid-abc".to_string());
-        let state = mgr.get_state();
-        assert_eq!(state.status, ConnectionStatus::Connected);
-        assert_eq!(state.socket_id.as_deref(), Some("sid-abc"));
-    }
-
-    #[test]
-    fn get_state_surfaces_stored_error_to_callers() {
-        let mgr = SocketManager::new();
-        *mgr.shared.error.write() =
-            Some("backend redirected ws→wss; update BACKEND_URL".to_string());
-        let state = mgr.get_state();
-        assert_eq!(
-            state.error.as_deref(),
-            Some("backend redirected ws→wss; update BACKEND_URL")
-        );
-    }
-
-    #[tokio::test]
-    async fn emit_without_connection_errors_without_panic() {
-        let mgr = SocketManager::new();
-        let err = mgr.emit("test.event", json!({"k":"v"})).await.unwrap_err();
-        assert_eq!(err, "Not connected");
-    }
-
-    #[tokio::test]
-    async fn emit_with_ack_without_connection_errors_without_waiting() {
-        let mgr = SocketManager::new();
-        let err = mgr
-            .emit_with_ack("test.event", json!({"k":"v"}), Duration::from_secs(30))
-            .await
-            .unwrap_err();
-        assert_eq!(err, "Not connected");
-    }
-
-    #[tokio::test]
-    async fn emit_with_ack_uses_emit_queue_while_connecting() {
-        let mgr = SocketManager::new();
-        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
-        *mgr.emit_tx.lock().await = Some(tx);
-        *mgr.shared.status.write() = ConnectionStatus::Connecting;
-
-        let result = mgr
-            .emit_with_ack("test.event", json!({"k": "v"}), Duration::from_millis(10))
-            .await;
-
-        let queued = rx
-            .try_recv()
-            .unwrap_or_else(|_| panic!("expected queued ACK emit, got result={result:?}"));
-        assert_eq!(queued, r#"421["test.event",{"k":"v"}]"#);
-        let err = result.unwrap_err();
-        assert!(
-            err.starts_with("Socket ack timeout for event test.event ack_id=1"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn disconnect_on_fresh_manager_is_idempotent() {
-        let mgr = SocketManager::new();
-        assert!(mgr.disconnect().await.is_ok());
-        // Calling again must still succeed.
-        assert!(mgr.disconnect().await.is_ok());
-        assert_eq!(mgr.get_state().status, ConnectionStatus::Disconnected);
-    }
-
-    #[tokio::test]
-    async fn a_timed_out_socket_loop_is_aborted_and_joined() {
-        use std::sync::atomic::{AtomicBool, Ordering};
-
-        struct MarksDrop(Arc<AtomicBool>);
-        impl Drop for MarksDrop {
-            fn drop(&mut self) {
-                self.0.store(true, Ordering::SeqCst);
-            }
-        }
-
-        let dropped = Arc::new(AtomicBool::new(false));
-        let dropped_in_task = Arc::clone(&dropped);
-        let handle = tokio::spawn(async move {
-            let _guard = MarksDrop(dropped_in_task);
-            std::future::pending::<()>().await;
-        });
-        tokio::task::yield_now().await;
-
-        terminate_loop(handle, Duration::from_millis(1)).await;
-
-        assert!(
-            dropped.load(Ordering::SeqCst),
-            "terminate_loop must join the aborted task before returning"
-        );
-    }
-
-    #[tokio::test]
-    async fn identity_rebind_transactions_are_serialized() {
-        let manager = Arc::new(SocketManager::new());
-        let first = manager.lock_identity_rebind().await;
-
-        let waiting_manager = Arc::clone(&manager);
-        let mut waiter = tokio::spawn(async move {
-            let _second = waiting_manager.lock_identity_rebind().await;
-        });
-        assert!(
-            tokio::time::timeout(Duration::from_millis(10), &mut waiter)
-                .await
-                .is_err(),
-            "a second account rebind must not interleave with the first"
-        );
-
-        drop(first);
-        tokio::time::timeout(Duration::from_secs(1), waiter)
-            .await
-            .expect("the next rebind should proceed after the first commits")
-            .unwrap();
-    }
-
-    #[test]
-    fn emit_state_change_is_safe_to_call_on_empty_shared() {
-        let shared = SharedState {
-            webhook_router: RwLock::new(None),
-            ack_registry: AckRegistry::default(),
-            status: RwLock::new(ConnectionStatus::Connecting),
-            socket_id: RwLock::new(None),
-            error: RwLock::new(None),
-        };
-        // Must not panic even with all default state.
-        emit_state_change(&shared);
-    }
-
-    #[test]
-    fn emit_server_event_is_safe_without_subscribers() {
-        let shared = SharedState {
-            webhook_router: RwLock::new(None),
-            ack_registry: AckRegistry::default(),
-            status: RwLock::new(ConnectionStatus::Connected),
-            socket_id: RwLock::new(Some("x".into())),
-            error: RwLock::new(None),
-        };
-        // Pure logging — must not touch state or panic.
-        emit_server_event(&shared, "any.event", json!({}));
-        assert_eq!(*shared.status.read(), ConnectionStatus::Connected);
-    }
-
-    #[test]
-    fn set_webhook_router_populates_the_shared_slot() {
-        let mgr = SocketManager::new();
-        assert!(mgr.shared.webhook_router.read().is_none());
-        let router = Arc::new(WebhookRouter::new(None));
-        mgr.set_webhook_router(router);
-        assert!(mgr.shared.webhook_router.read().is_some());
-    }
-
-    #[test]
-    fn set_webhook_router_overwrites_previous_router() {
-        // Replacing the router is allowed so callers can hot-swap during
-        // reconfiguration — this test nails that observable behaviour down.
-        let mgr = SocketManager::new();
-        mgr.set_webhook_router(Arc::new(WebhookRouter::new(None)));
-        let second = Arc::new(WebhookRouter::new(None));
-        let second_ptr = Arc::as_ptr(&second);
-        mgr.set_webhook_router(Arc::clone(&second));
-        let stored = mgr.shared.webhook_router.read().clone().unwrap();
-        assert!(std::ptr::eq(Arc::as_ptr(&stored), second_ptr));
-    }
-
-    #[tokio::test]
-    async fn emit_after_disconnect_errors_not_connected() {
-        // Even without ever calling connect(), the disconnect() call path
-        // leaves the emit channel torn down — and emit() must reject.
-        let mgr = SocketManager::new();
-        mgr.disconnect().await.unwrap();
-        let err = mgr.emit("x", json!({})).await.unwrap_err();
-        assert_eq!(err, "Not connected");
-    }
-
-    /// Empty-token guard at the `SocketManager::connect` boundary:
-    /// the RPC caller must receive an `Err` immediately — not
-    /// `{"status":"Connecting"}` — so the UI can surface an actionable error.
-    #[tokio::test]
-    async fn connect_rejects_empty_token_and_returns_err() {
-        let mgr = SocketManager::new();
-
-        // Bare empty string.
-        let err = mgr.connect("http://localhost:1", "").await.unwrap_err();
-        assert!(
-            err.contains("empty session token"),
-            "expected 'empty session token' in error, got: {err}"
-        );
-        assert_eq!(mgr.get_state().status, ConnectionStatus::Disconnected);
-
-        // Whitespace-only string (trim check).
-        let err = mgr.connect("http://localhost:1", "   ").await.unwrap_err();
-        assert!(err.contains("empty session token"), "{err}");
-        assert_eq!(mgr.get_state().status, ConnectionStatus::Disconnected);
-    }
-}
+#[path = "manager_tests.rs"]
+mod tests;

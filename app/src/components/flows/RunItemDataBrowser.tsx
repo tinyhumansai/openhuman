@@ -30,9 +30,17 @@ import {
   hasObjectRows,
 } from '../../lib/flows/runItems';
 import { useT } from '../../lib/i18n/I18nContext';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/Table';
-import Toggle from '../ui/Toggle';
-import { ToggleGroupItem, ToggleGroupRoot } from '../ui/ToggleGroup';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  Toggle,
+  ToggleGroupItem,
+  ToggleGroupRoot,
+} from '../ui';
 
 const log = debug('flows:run-item-data-browser');
 

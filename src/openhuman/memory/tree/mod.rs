@@ -1,11 +1,31 @@
-//! Host layer over [`tinymemory_core::tree`].
+//! Host layer over what used to be an embedded memory tree.
 //!
-//! The domain itself lives in the extracted crate; what stays here is its
-//! JSON-RPC surface — handlers and controller schemas name OpenHuman's
+//! The domain itself lives in the extracted engine crates; what stays here is
+//! its JSON-RPC surface — handlers and controller schemas name OpenHuman's
 //! `RpcOutcome` and `ControllerSchema`, which the engine crate cannot see.
-//! The glob re-export keeps every historical `memory::tree::…` path resolving.
-
-pub use tinymemory_core::tree::*;
+//!
+//! # The `pub use tinymemory_core::tree::*` shim is gone (#5560)
+//!
+//! This file carried a glob re-export so that every historical
+//! `memory::tree::…` path kept resolving. Measured by deleting the line and
+//! reading the compiler, its production surface was **empty**: `score` is
+//! `MemoryChunks::chunk_score` and the contract's own `DEFAULT_DROP_THRESHOLD`,
+//! `summarise` is `MemoryTree::summarise` with the contract's owned DTOs, the
+//! seven `Tree{LabelStrategy, LeafPayload, ReadHit, ReadRequest, ReadResult,
+//! WriteOutcome, WriteRequest}` I/O types went unnamed in `src/`, and `nlp` and
+//! `graph` had no caller under this path at all. What the glob still served
+//! was tests — this crate's `*_tests.rs`, the recap's `#[cfg(test)]` arm and
+//! `tests/raw_coverage/` reaching `score`, `summarise` and `ingest`.
+//!
+//! A production `pub use` that exists only to serve a test is exactly what
+//! keeps a crate in `[dependencies]`, which is the thing #5560 is removing. So
+//! those tests name the engine crates directly now —
+//! `tinymemory_core::tree::{score, summarise, ingest}` and
+//! `tinycortex::memory::tree::Tree*`, served by the `[dev-dependencies]`
+//! `tinymemory-core` entry the way the earlier-repointed `tests/` targets
+//! already were — and the glob is deleted. What resolves under
+//! `memory::tree::…` is the host's own surface: the four `pub mod`s and the
+//! controller registries below.
 
 pub mod health;
 pub mod retrieval;

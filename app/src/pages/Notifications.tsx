@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
+import ChipTabs from '../components/layout/ChipTabs';
 import PageSectionHeader from '../components/layout/PageSectionHeader';
 import PageWelcome from '../components/layout/PageWelcome';
 import { usePageWelcomeView } from '../components/layout/usePageWelcomeView';
@@ -193,37 +194,27 @@ const Notifications = () => {
           data-testid="system-events-section"
           className="max-w-3xl mx-auto bg-surface rounded-2xl shadow-soft border border-line overflow-hidden">
           {presentCategories.length > 0 && (
-            <div
-              data-testid="notification-category-filter"
-              className="flex flex-wrap items-center gap-2 border-b border-line-subtle px-4 py-2">
-              <button
-                type="button"
-                data-testid="notif-filter-chip-all"
-                aria-pressed={activeCategory === 'all'}
-                onClick={() => setSelectedCategory('all')}
-                className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-                  activeCategory === 'all'
-                    ? 'bg-primary-500 text-content-inverted'
-                    : 'bg-surface-subtle text-content-secondary hover:bg-surface-strong dark:hover:bg-neutral-700'
-                }`}>
-                {t('notifications.filterAll')}
-              </button>
-              {presentCategories.map(category => (
-                <button
-                  key={category}
-                  type="button"
-                  data-testid={`notif-filter-chip-${category}`}
-                  aria-pressed={activeCategory === category}
-                  onClick={() => setSelectedCategory(category)}
-                  className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-                    activeCategory === category
-                      ? 'bg-primary-500 text-content-inverted'
-                      : 'bg-surface-subtle text-content-secondary hover:bg-surface-strong dark:hover:bg-neutral-700'
-                  }`}>
-                  {categoryLabel(category)}
-                </button>
-              ))}
-            </div>
+            // The app's one chip-row grammar. `testIdPrefix` keeps the existing
+            // `notif-filter-chip-*` hooks; the row's ARIA moves from a set of
+            // `aria-pressed` toggles to a real `role="tablist"` with
+            // `aria-selected` and Radix roving focus, which is what this row
+            // always meant — one of N views, never a multi-select.
+            <ChipTabs<CategoryFilter>
+              as="tab"
+              ariaLabel={t('notifications.filterAll')}
+              testId="notification-category-filter"
+              testIdPrefix="notif-filter-chip"
+              className="flex flex-wrap items-center gap-1.5 border-b border-line-subtle px-4 py-2"
+              items={[
+                { id: 'all', label: t('notifications.filterAll') },
+                ...presentCategories.map(category => ({
+                  id: category,
+                  label: categoryLabel(category),
+                })),
+              ]}
+              value={activeCategory}
+              onChange={setSelectedCategory}
+            />
           )}
 
           {filteredItems.length === 0 ? (
@@ -231,7 +222,7 @@ const Notifications = () => {
               {activeCategory === 'all' ? t('alerts.empty') : t('notifications.filterEmpty')}
             </div>
           ) : (
-            <ul className="divide-y divide-line-subtle dark:divide-neutral-800">
+            <ul className="divide-y divide-line-subtle">
               {filteredItems.map(item => (
                 <li key={item.id} data-testid="notification-item">
                   {/* `role="button"` instead of a real `<button>` — the row body

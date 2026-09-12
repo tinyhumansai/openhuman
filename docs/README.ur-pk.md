@@ -87,7 +87,6 @@ OpenHuman تین چیزیں ہے جو زیادہ تر اسسٹنٹس نہیں ہ
 - **[ورک فلوز](https://tinyhumans.gitbook.io/openhuman/features/workflows)**: ایجنٹ آٹومیشن تجویز کرتا ہے؛ آپ اسے کینوس پر جائزہ لے کر محفوظ کرتے ہیں۔ اوپن سورس [tinyflows](https://github.com/tinyhumansai/tinyflows) پر پائیدار، ٹرگر سے چلنے والے، منظوری سے محفوظ رنز۔
 - **[ایک ہارنس جو کام مکمل کرتا ہے](https://tinyhumans.gitbook.io/openhuman/developing/architecture/agent-harness)**: اوپن سورس [tinyagents](https://github.com/tinyhumansai/tinyagents) پر چیک پوائنٹ شدہ گراف رنز۔ اٹکے ہوئے ایجنٹس کو راہ دکھائی جاتی ہے، رکے ہوئے بنیادی وجہ واپس دیتے ہیں، ہر رن حقیقی فی کال لاگت کے ساتھ دوبارہ چلایا جا سکتا ہے۔
 - **[ایک split brain، ہمیشہ فعال](https://tinyhumans.gitbook.io/openhuman/features/orchestration)**: ایک تیز reflex ایجنٹ آنے والی ٹریفک کو چھانٹتا ہے جبکہ ایک گہرا reasoning کور ورکر فلیٹس کو کام سونپتا ہے، لاشعور کی رہنمائی میں۔
-- **[ایک ایجنٹ معیشت](https://tinyhumans.gitbook.io/openhuman/features/tinyplace)**: [tiny.place](https://tiny.place) پر ایک `@handle`، Signal-انکرپٹڈ ایجنٹ سے ایجنٹ آرکسٹریشن، x402 USDC انعامی کام اور تجارت۔ چابیاں کبھی ڈسک کو نہیں چھوتیں۔
 
 ### 🔬 گہرا محقق اور کام کرنے والا
 
@@ -199,11 +198,11 @@ n8n اور Zapier سے گہرے متاثر، [ورک فلوز](https://tinyhuman
 
 ## سورس سے تعاون
 
-نیا تعاون کنندہ؟ fork/PR ورک فلو اور مقامی تصدیقی کمانڈز کے لیے [`CONTRIBUTING.md`](../CONTRIBUTING.md) سے شروع کریں، یا [`CONTRIBUTING-BEGINNERS.md`](../CONTRIBUTING-BEGINNERS.md#optional--let-an-ai-coding-agent-guide-you) میں موجود کاپی پیسٹ AI-ایجنٹ پرامپٹ استعمال کریں۔ مختصر راستہ:
+نیا تعاون کنندہ؟ fork/PR ورک فلو اور مقامی تصدیقی کمانڈز کے لیے [`CONTRIBUTING.md`](../CONTRIBUTING.md) سے شروع کریں، یا [`CONTRIBUTING-BEGINNERS.md`](CONTRIBUTING-BEGINNERS.md#optional--let-an-ai-coding-agent-guide-you) میں موجود کاپی پیسٹ AI-ایجنٹ پرامپٹ استعمال کریں۔ مختصر راستہ:
 
-1. Git، Node.js 24+، pnpm 10.10.0، Rust 1.93.0 (`rustfmt` + `clippy`)، CMake، Ninja، ripgrep، اور پلیٹ فارم ڈیسک ٹاپ بلڈ کی ضروریات انسٹال کریں۔
+1. Git، Node.js 24+، pnpm 10.10.0، Rust 1.96.1 (`rustfmt` + `clippy`)، CMake، Ninja، ripgrep، اور پلیٹ فارم ڈیسک ٹاپ بلڈ کی ضروریات انسٹال کریں۔
 2. ریپو کو fork اور کلون کریں، پھر `pnpm install` سے پہلے `git submodule update --init --recursive` چلائیں تاکہ وینڈرڈ Tauri/CEF سورس موجود ہوں۔
-3. ویب صرف UI کام کے لیے `pnpm dev`، ڈیسک ٹاپ شیل کے لیے `pnpm --filter openhuman-app dev:app`، اور PR کھولنے سے پہلے فوکسڈ چیکس جیسے `pnpm typecheck`، `pnpm format:check`، اور `cargo check -p openhuman --lib` استعمال کریں۔
+3. ویب صرف UI کام کے لیے `pnpm dev`، ڈیسک ٹاپ شیل کے لیے `pnpm --filter openhuman-app dev:app` (macOS) یا `pnpm dev:app:win` (Windows)، اور PR کھولنے سے پہلے فوکسڈ چیکس جیسے `pnpm typecheck`، `pnpm format:check`، اور `cargo check -p openhuman --lib` استعمال کریں۔
 
 مزید دستاویزات: [آرکیٹیکچر](https://tinyhumans.gitbook.io/openhuman/developing/architecture) · [سیٹ اپ](https://tinyhumans.gitbook.io/openhuman/developing/getting-set-up) · [کلاؤڈ ڈیپلائے](../gitbooks/features/cloud-deploy.md)۔
 

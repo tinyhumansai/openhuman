@@ -1,6 +1,6 @@
 [package]
 name = "OpenHuman"
-version = "0.63.17"
+version = "0.63.25"
 description = "OpenHuman - AI-powered Super Assistant"
 authors = ["OpenHuman"]
 edition = "2021"
@@ -57,27 +57,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
 directories = "5"
-# Native Save-As file dialog for artifact export (#3162). default-features
-# off + xdg-portal keeps Linux off GTK (the Downloads-copy fallback covers
-# headless CI where no portal is available); tokio drives the async backend.
-rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
-# Used by gmail/cdp_fetch for decoding binary IO.read chunks. Base64 is
-# only emitted by CDP IO.read when the stream contains non-UTF-8 bytes,
-# but we opt into the feature to stay robust against unexpected responses.
-base64 = "0.22"
 tokio = { version = "1", features = ["rt-multi-thread", "process", "sync", "time", "net"] }
 tokio-util = { version = "0.7", features = ["rt"] }
-# WebSocket client + server for two uses:
-# - Client: Chrome DevTools Protocol connections to the embedded CEF
-#   instance over `--remote-debugging-port=9222` (IndexedDB reads,
-#   `Runtime.evaluate` for the WhatsApp recipe, DOMSnapshot / Network
-#   calls for the Gmail connector).
-# - Server: the `webview_apis` bridge at 127.0.0.1 that accepts
-#   JSON-RPC frames from the core sidecar so core-side handlers can
-#   reach the live-webview connectors via CDP.
-tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "handshake"] }
 url = "2"
-futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rand = "0.9"
@@ -98,6 +80,47 @@ hex = "0.4"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 log = "0.4"
 
+# Native directory chooser for the folder memory-source (#5831). A directory
+# picked in the renderer carries no filesystem path — `File.path` is an
+# Electron extension that neither Wry's WKWebView/WebView2/WebKitGTK nor
+# plain Chromium implements — so the only way to learn where a chosen folder
+# lives is to ask the OS from the host process.
+#
+# `default-features = false` is what makes this a different proposition from
+# the `rfd` that `artifact_commands` shed in #5541. That removal counted 13
+# packages: `ashpd`, `zbus`, and the `async-io`/`polling` executor stack.
+# Every one of those arrives through `rfd`'s **default** `xdg-portal` feature
+# (`xdg-portal = ["ashpd", "urlencoding", "pollster"]`), which is not enabled
+# here. `gtk3` binds the GTK that Wry already links on Linux instead —
+# `gtk-sys` is in that graph via `tray-icon` -> `tauri` whether or not this
+# entry exists — and on macOS/Windows `rfd` compiles against `objc2-app-kit`
+# / `windows-sys`, both already present. The marginal cost is `rfd` itself.
+#
+# `Cargo.lock` will nonetheless gain `ashpd` and a wayland cluster, and that
+# is expected: the lockfile records the **maximal** resolution graph,
+# including optional and target-gated edges nothing enables. Read the real
+# graph, not the lock —
+#
+#     cargo tree --target x86_64-unknown-linux-gnu -e normal -i ashpd
+#     # -> warning: nothing to print.
+#
+# Prefer this over `tauri-plugin-dialog`: that plugin depends on the same
+# `rfd` AND drags `tauri-plugin-fs` in behind it, for one command that needs
+# no filesystem permission surface at all.
+#
+# The feature list is `tauri-plugin-dialog`'s own, verbatim — that plugin is
+# the reference integration of `rfd` into a Tauri app, and each of the three
+# matters here. `gtk3` is the right Linux backend precisely *because* the host
+# is GTK-based (rfd steers non-GTK apps to the portal instead), `tokio` drives
+# the async dialog on the runtime a `#[tauri::command]` already runs on, and
+# `common-controls-v6` mirrors the feature `tauri` itself enables above, so
+# the Windows dialog matches the rest of the app's chrome.
+rfd = { version = "0.15", default-features = false, features = [
+    "gtk3",
+    "tokio",
+    "common-controls-v6",
+] }
+
 # Sentry for the Tauri shell (desktop host) process — separate Sentry project
 # from the React frontend and the Rust core sidecar. DSN is baked at compile
 # time via `option_env!("OPENHUMAN_TAURI_SENTRY_DSN")` in `lib.rs::run()` and
@@ -107,17 +130,14 @@ sentry = { version = "0.47.0", default-features = false, features = ["backtrace"
 
 # Used by the imessage_scanner module.
 anyhow = "1.0"
-# SQLite for the shell-side whatsapp_data store (relocated from the core). All
-# platforms — the store persists on Windows/Linux/macOS. Pinned to match the
-# core crate so a single bundled SQLite is linked. (The macOS-only iMessage
-# scanner also uses rusqlite; this general dep covers it too.)
+# SQLite for the macOS iMessage scanner, which reads ~/Library/Messages/chat.db
+# read-only. Declared in the general table rather than under the macOS target so
+# `cargo check` on Linux/Windows resolves the same graph. Pinned to match the
+# core crate so a single bundled SQLite is linked.
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
 parking_lot = "0.12"
 chrono = "0.4"
 async-trait = "0.1"
-# Desktop companion: native mic capture + POINT-tag parsing + session ids.
-cpal = "0.15"
-uuid = { version = "1", features = ["v4"] }
 # NOTE (#5541): `resvg` + `tiny-skia` were removed here. They existed only for
 # the mascot fake-camera pipeline, which rasterized the mascot SVG to a Y4M
 # frame for CEF's `--use-file-for-fake-video-capture` flag. That whole path
@@ -185,10 +205,6 @@ openhuman_core = { path = "../..", package = "openhuman", default-features = fal
     "file-logging",
     "contacts",
     "runtime-node",
-    # Without this the memory_diff RPC namespace is unknown-method in the
-    # shipped app, the memory_diff agent tool is absent, and the embedded
-    # driver stops advertising Capability::Diff — the product keeps all three.
-    "memory-git",
     # Declared "Default-OFF, product-ON" by its own gate comment in the root
     # Cargo.toml, but it reached neither the product set nor this list, so the
     # family was compiled in no configuration at all. Registration stays
@@ -278,7 +294,7 @@ sandbox-bubblewrap = []
 # e2e-test-support`. See app/scripts/e2e-build.sh.
 e2e-test-support = ["openhuman_core/e2e-test-support"]
 
-# The tinycortex vendored above takes `tinymemory-api` by git (it re-exports
+# The root world's tinycortex takes `tinymemory-api` by git (it re-exports
 # the TinyMemory contract instead of duplicating it, tinymemory#18 §A1).
 # Without this entry cargo resolves that git copy *and* the path copy under
 # vendor/tinymemory as two distinct crates, and `tinymemory_api::MemoryCategory`
@@ -288,6 +304,11 @@ e2e-test-support = ["openhuman_core/e2e-test-support"]
 [patch."https://github.com/tinyhumansai/tinymemory"]
 tinymemory-api = { path = "../../vendor/tinymemory/crates/tinymemory-api" }
 
+[patch."https://github.com/tinyhumansai/tinyinference"]
+# Crates in this world name tinyinference by git rev; without this the shell
+# world resolves TWO copies of the same types. Mirrors the root Cargo.toml.
+tinyinference = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference" }
+
 [patch.crates-io]
 # Keep reqwest defaults disabled in this independent Cargo world too. Without
 # this patch, the registry release reintroduces native-tls/OpenSSL on Linux.
@@ -295,19 +316,23 @@ motosan-ai-oauth = { path = "../../vendor/motosan-ai-oauth" }
 # TinyAgents vendored submodule (repo-root vendor/tinyagents, pinned at the
 # released tag) — same patch as the root Cargo world so both resolve the
 # in-tree SDK source. `git submodule update --init vendor/tinyagents` first.
-tinyagents = { path = "../../vendor/tinyagents" }
-# TinyFlows, TinyCortex, TinyChannels, and TinyPlace are vendored beside
-# TinyAgents so integration work can test crate changes against OpenHuman before
-# publishing.
-tinyflows = { path = "../../vendor/tinyflows" }
-tinycortex = { path = "../../vendor/tinycortex" }
-# `tinymemory-core` (pulled in transitively through `openhuman_core`) names
-# `tinycortex-api` by version requirement, same as the root Cargo world —
-# patch it onto the same checkout here too, or this independent Cargo world
-# tries to resolve it from crates.io and fails (it was never published).
-tinycortex-api = { path = "../../vendor/tinycortex/api" }
+# tinyagents is a workspace now — no patch entry (mirrors root Cargo.toml)
+# TinyTools rides in through tinyagents' own vendored checkout. The path must
+# match the one the core crate names, or cargo resolves two distinct packages
+# and the shell's `dyn Tool` stops being the core's. See the core manifest.
+tinytools = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinytools" }
+# tinymemory-core declares `tinyinference = "0.2"` (crates-io-shaped, unpublished),
+# so this world must patch it exactly as the root manifest does.
+tinyinference = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference" }
+# TinyFlows and TinyChannels are vendored beside TinyAgents so integration
+# work can test crate changes against OpenHuman before publishing.
+tinyflows = { path = "../../vendor/tinyflows/crates/tinyflows" }
+# No `tinycortex` / `tinycortex-api` patch here. Since openhuman#5560 the
+# engine is a [dev-dependencies] and `rss-bench`-only concern of the core
+# crate, and neither reaches this world — `Cargo.lock` carried both entries
+# under `[[patch.unused]]`. The shipped app reaches memory through the prebuilt
+# `tinymemory` module over `tinymemory-api`.
 tinychannels = { path = "../../vendor/tinychannels" }
-tinyplace = { path = "../../vendor/tinyplace/sdk/rust" }
 
 
 [dev-dependencies]

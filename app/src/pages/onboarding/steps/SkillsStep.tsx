@@ -31,7 +31,7 @@ function statusDotClass(connection: ComposioConnection | undefined): string {
     case 'error':
       return 'bg-coral-500';
     default:
-      return 'bg-stone-300';
+      return 'bg-content-faint';
   }
 }
 

@@ -27,6 +27,10 @@ pub mod documents;
 pub mod envelope;
 pub mod files;
 pub mod guard;
+#[cfg(test)]
+mod test_support;
+#[cfg(test)]
+pub(crate) use test_support::shared_memory_test_workspace;
 pub mod helpers;
 pub mod kv_graph;
 pub mod learn;
@@ -42,9 +46,10 @@ pub mod tool_memory;
 pub use documents::{
     clear_namespace, context_query, context_recall, doc_delete, doc_ingest, doc_list, doc_put,
     memory_delete_document, memory_init, memory_list_documents, memory_list_namespaces,
-    memory_query_namespace, memory_recall_context, memory_recall_memories, namespace_list,
-    ClearNamespaceParams, ClearNamespaceResult, DeleteDocParams, IngestDocParams,
-    NamespaceOnlyParams, PutDocParams, PutDocResult, QueryNamespaceParams, RecallNamespaceParams,
+    memory_namespace_summaries, memory_query_namespace, memory_recall_context,
+    memory_recall_memories, namespace_list, ClearNamespaceParams, ClearNamespaceResult,
+    DeleteDocParams, IngestDocParams, NamespaceOnlyParams, NamespaceSummariesResponse,
+    PutDocParams, PutDocResult, QueryNamespaceParams, RecallNamespaceParams,
 };
 pub use files::{ai_list_memory_files, ai_read_memory_file, ai_write_memory_file};
 pub use kv_graph::{
@@ -54,8 +59,9 @@ pub use kv_graph::{
 pub use learn::{memory_learn_all, LearnAllParams, LearnAllResult, NamespaceLearnResult};
 pub use provider::{memory_provider_status, memory_subsystem_status};
 pub use sync::{
-    memory_ingestion_status, memory_sync_all, memory_sync_channel, IngestionStatusResult,
-    SyncAllResult, SyncChannelParams, SyncChannelResult,
+    memory_ingestion_status, memory_scheduler_override, memory_sync_all, memory_sync_channel,
+    IngestionStatusResult, SchedulerOverrideResult, SyncAllResult, SyncChannelParams,
+    SyncChannelResult,
 };
 pub use tool_memory::{
     tool_rule_delete, tool_rule_get, tool_rule_list, tool_rule_put, tool_rules_for_prompt,
@@ -74,8 +80,8 @@ pub(crate) use envelope::{error_envelope, memory_counts, memory_request_id};
 pub(crate) use helpers::{
     build_retrieval_context, chunk_metadata, default_category, default_priority,
     default_source_type, extract_entity_type, filter_hits_by_document_ids,
-    format_llm_context_message, maybe_retrieval_context, memory_kind_label, relation_identity,
-    relation_metadata, timestamp_to_rfc3339, validate_memory_relative_path,
+    format_llm_context_message, maybe_retrieval_context, relation_identity, relation_metadata,
+    timestamp_to_rfc3339, validate_memory_relative_path,
 };
 
 /// Serializes the tests that drive the process-global memory client
@@ -86,14 +92,7 @@ pub(crate) use helpers::{
 #[cfg(test)]
 pub(crate) static GLOBAL_MEMORY_TEST_LOCK: tokio::sync::Mutex<()> =
     tokio::sync::Mutex::const_new(());
-
-#[cfg(test)]
-mod test_support;
-#[cfg(test)]
-pub(crate) use test_support::ensure_shared_memory_client;
 #[cfg(all(test, feature = "modules"))]
-pub(crate) use test_support::shared_memory_test_workspace;
-
 #[cfg(test)]
 #[path = "../ops_tests.rs"]
 mod tests;

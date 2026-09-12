@@ -144,8 +144,147 @@ fn tool_call_completion(name: &str, arguments: Value) -> Value {
     }]})
 }
 
+/// A completion carrying several tool calls in ONE assistant message.
+///
+/// Fan-out is now several `spawn_async_subagent` calls "issued together"
+/// (orchestrator `prompt.md`), which on the wire is one message with several
+/// entries in `toolCalls` — not several messages. [`tool_call_completion`]
+/// cannot express that, and scripting them as separate completions would test
+/// the serial shape the fan-out guidance exists to prevent.
+fn tool_calls_completion(calls: &[(&str, Value)]) -> Value {
+    json!({ "content": "", "toolCalls": calls.iter().map(|(name, arguments)| json!({
+        "id": format!("call_{name}_{}", arguments.to_string().len()),
+        "name": name,
+        "arguments": arguments.to_string(),
+    })).collect::<Vec<_>>() })
+}
+
 fn error_completion(status: u16, message: &str) -> Value {
     json!({ "status": status, "error": message })
+}
+
+// ─── Fan-out overlap barrier ────────────────────────────────────────────────
+//
+// Only `parallel_subagent_fanout` arms this; every other test leaves it empty
+// and the handler's fast path is a single `is_empty()` check.
+//
+// The problem it solves: "both workers eventually issued a request" is
+// satisfied by strictly serial execution, so a deadline-based assertion cannot
+// tell a fan-out from a fast sequence. This barrier makes overlap the only way
+// through — each armed worker's response is withheld until a *second* armed
+// worker has also arrived. Serial execution parks on the first one until the
+// wait expires and never sets [`CANARY_OVERLAP`].
+
+/// Canary substrings whose worker requests must overlap. Empty = disarmed.
+/// Milliseconds every scripted upstream reply is held before it is served, or
+/// `0` for "answer immediately". Armed by the per-model-call ceiling test
+/// (#5766/#5767): the ceiling can only be observed against a call that is still
+/// in flight when the ceiling elapses, and it must apply to *every* attempt —
+/// a queue entry would stall only the first, and the retry would be answered
+/// instantly by the default completion, hiding the timeout.
+static SCRIPTED_STALL_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Arms the stall and disarms it on drop.
+///
+/// The guard exists because the atomic is process-global and the env lock is
+/// deliberately recovered from poisoning: if a test panicked between arming and
+/// a bare `disarm`, every later test sharing this scripted handler would inherit
+/// a 25s delay on every completion, turning one failure into a cascade of
+/// unrelated timeouts.
+struct ScriptedStallGuard;
+
+impl Drop for ScriptedStallGuard {
+    fn drop(&mut self) {
+        SCRIPTED_STALL_MS.store(0, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+#[must_use = "the stall is disarmed when the guard drops; binding it to `_` disarms it immediately"]
+fn arm_scripted_stall(ms: u64) -> ScriptedStallGuard {
+    SCRIPTED_STALL_MS.store(ms, std::sync::atomic::Ordering::SeqCst);
+    ScriptedStallGuard
+}
+
+static CANARY_BARRIER: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+/// Worker requests currently parked at the barrier.
+static CANARY_IN_FLIGHT: OnceLock<Mutex<std::collections::HashSet<String>>> = OnceLock::new();
+/// Set once two armed workers were parked simultaneously.
+static CANARY_OVERLAP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// How long a parked worker waits for a peer before giving up. Generous — it is
+/// only ever reached when the property under test is already violated, so it
+/// costs nothing on a passing run and bounds a failing one.
+const CANARY_BARRIER_WAIT: Duration = Duration::from_secs(20);
+
+fn canary_barrier() -> &'static Mutex<Vec<String>> {
+    CANARY_BARRIER.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn canary_in_flight() -> &'static Mutex<std::collections::HashSet<String>> {
+    CANARY_IN_FLIGHT.get_or_init(|| Mutex::new(std::collections::HashSet::new()))
+}
+
+fn lock_or_recover<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    match m.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    }
+}
+
+/// Arms the barrier for `canaries` and clears any previous state.
+fn arm_canary_barrier(canaries: &[&str]) {
+    *lock_or_recover(canary_barrier()) = canaries.iter().map(|c| (*c).to_string()).collect();
+    lock_or_recover(canary_in_flight()).clear();
+    CANARY_OVERLAP.store(false, std::sync::atomic::Ordering::SeqCst);
+}
+
+fn disarm_canary_barrier() {
+    lock_or_recover(canary_barrier()).clear();
+    lock_or_recover(canary_in_flight()).clear();
+}
+
+fn canary_overlap_observed() -> bool {
+    CANARY_OVERLAP.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Which armed canary this request is a **worker's own** request for, if any.
+///
+/// Structural, not a substring search over the serialized body, and that
+/// distinction is the whole point. Every captured request carries its full
+/// conversation history, so after the orchestrator's spawn turn its *own*
+/// follow-up request also contains both canary strings — inside the prior
+/// assistant message's `tool_calls`. Matching anywhere in the body would let
+/// that follow-up stand in for a worker that never ran.
+///
+/// A worker's own request ends with the `user` message carrying its prompt.
+/// The orchestrator's follow-up ends with a `tool` result. So: last message,
+/// `role == "user"`, content contains the canary.
+fn canary_worker_request(body: &Value) -> Option<String> {
+    let last = body.get("messages").and_then(Value::as_array)?.last()?;
+    if last.get("role").and_then(Value::as_str)? != "user" {
+        return None;
+    }
+    let content = last.get("content").and_then(Value::as_str)?;
+    lock_or_recover(canary_barrier())
+        .iter()
+        .find(|canary| content.contains(canary.as_str()))
+        .cloned()
+}
+
+/// Parks an armed worker until a second one joins it, or the wait expires.
+async fn hold_for_canary_peer(canary: String) {
+    {
+        let mut in_flight = lock_or_recover(canary_in_flight());
+        in_flight.insert(canary.clone());
+        if in_flight.len() >= 2 {
+            CANARY_OVERLAP.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    let deadline = std::time::Instant::now() + CANARY_BARRIER_WAIT;
+    while !canary_overlap_observed() && std::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    lock_or_recover(canary_in_flight()).remove(&canary);
 }
 
 async fn scripted_chat_completions(
@@ -164,6 +303,22 @@ async fn scripted_chat_completions(
             "body": body.clone(),
         }))
     });
+
+    // Hold every reply while the stall is armed, so a model call is still
+    // in flight when a per-call ceiling elapses (#5766/#5767).
+    let stall_ms = SCRIPTED_STALL_MS.load(std::sync::atomic::Ordering::SeqCst);
+    if stall_ms > 0 {
+        tokio::time::sleep(Duration::from_millis(stall_ms)).await;
+    }
+
+    // Park an armed fan-out worker before it is answered, so a peer has a
+    // chance to arrive. Before the queue pop, not after: holding the popped
+    // entry would serialize the FIFO itself and deadlock the peer.
+    if !lock_or_recover(canary_barrier()).is_empty() {
+        if let Some(canary) = canary_worker_request(&body) {
+            hold_for_canary_peer(canary).await;
+        }
+    }
 
     let next = with_scripted(|q| q.pop_front());
     let Some(entry) = next else {
@@ -515,9 +670,6 @@ async fn boot_stack() -> Stack {
     // The transport-only router does not create a Core runtime context. Install
     // the explicit tinymemory host seams before handlers service memory-backed
     // agent turns, matching normal startup wiring.
-    openhuman_core::openhuman::memory::host_impls::install_memory_host_seams(std::sync::Arc::new(
-        openhuman_core::openhuman::config::Config::default(),
-    ));
 
     let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
     let rpc_base = format!("http://{rpc_addr}");
@@ -1920,11 +2072,34 @@ async fn provider_error_retry_inner() {
 //     request[2] = researcher (inner loop continuation) → DEPTH2_CANARY text
 //     request[3] = orchestrator synthesis
 
-/// spawn_parallel_agents with 2 researcher tasks: both children consume from
-/// the global scripted FIFO; both canaries appear in the final synthesis.
-/// Orchestrator allowlist (agent.toml) includes "researcher" so both tasks pass
-/// the allowlist check in spawn_parallel_agents.rs:223.
-/// ≥4 upstream requests and no "Unknown tool:" confirm the full fan-out path ran.
+/// Two `spawn_async_subagent` calls issued together really do put two workers
+/// in flight: both are dispatched and both run, concurrently.
+///
+/// This is the surviving half of what `spawn_parallel_agents` used to prove.
+/// #5757 (`02d81f6cf`) retired that tool on the grounds that "several spawns
+/// are already several workers in flight" (`orchestrator/agent.toml`), and
+/// `prompt.md` now teaches exactly that: "N independent subtasks means N
+/// spawns, issued together. They run concurrently." That claim is the thing
+/// worth pinning — it is the whole justification for dropping the dedicated
+/// fan-out tool, and #4754 measured what happens when fan-out silently
+/// serializes (145-200s gaps between workers).
+///
+/// The *other* half — both results reaching the user — is deliberately not
+/// asserted here, and not because it stopped mattering. `spawn_async_subagent`
+/// returns a task id immediately and results come back through
+/// `orchestration::background_delivery`, which is documented "idle-gated —
+/// never mid-turn" and debounced, i.e. on a LATER system turn. That subsystem
+/// is registered from `bootstrap_core_runtime`, which `boot_stack` does not
+/// call (see the note on `ensure_approval_gate`), so no delivery turn can fire
+/// in this harness at all. Asserting it here would need new harness plumbing;
+/// it is covered instead at the layer that can see it, in
+/// `orchestration::tools::tools_e2e_tests`, where `background_completions` is
+/// reachable.
+///
+/// Assertions are on the captured upstream *requests* rather than on the final
+/// synthesis, because detached children race the orchestrator's own reply for
+/// the global FIFO and any assertion keyed on script order would be a coin
+/// flip. What each worker was asked is deterministic; when it asked is not.
 #[test]
 fn parallel_subagent_fanout() {
     run_on_agent_stack("parallel_subagent_fanout", parallel_subagent_fanout_inner);
@@ -1932,24 +2107,30 @@ fn parallel_subagent_fanout() {
 
 async fn parallel_subagent_fanout_inner() {
     let _lock = env_lock();
+    // Arm the overlap barrier before the stack boots: each worker's response is
+    // withheld until a second worker has also arrived, so a serial
+    // implementation parks and never reaches `canary_overlap_observed`.
+    arm_canary_barrier(&["PARALLEL_ALPHA_CANARY", "PARALLEL_BETA_CANARY"]);
+    // ONE assistant message carrying TWO spawns — the "issued together" shape.
+    // Both children are single-turn (text only, no inner tool loop), so the
+    // remaining entries are: the orchestrator's own reply plus one completion
+    // per child. Their order is NOT fixed: the children are detached and race
+    // the orchestrator's reply for the queue, which is why nothing below keys
+    // on a script index.
     reset_script(vec![
-        // request[0]: Orchestrator issues spawn_parallel_agents with 2 researcher tasks.
-        tool_call_completion(
-            "spawn_parallel_agents",
-            json!({ "tasks": [
-                { "agent_id": "researcher", "prompt": "Find alpha canary" },
-                { "agent_id": "researcher", "prompt": "Find beta canary" }
-            ]}),
-        ),
-        // request[1] + request[2]: The two researcher children consume from the
-        // FIFO queue concurrently via join_all. Order between children is
-        // non-deterministic; both carry distinct canaries so the synthesis test
-        // is order-agnostic. Both children are single-turn (text only → no inner
-        // tool loop → one LLM call each).
-        text_completion("PARALLEL_ALPHA_CANARY"),
-        text_completion("PARALLEL_BETA_CANARY"),
-        // request[3]: Orchestrator receives both results and synthesizes.
-        text_completion("Both done: PARALLEL_ALPHA_CANARY and PARALLEL_BETA_CANARY"),
+        tool_calls_completion(&[
+            (
+                "spawn_async_subagent",
+                json!({ "agent_id": "researcher", "prompt": "Find PARALLEL_ALPHA_CANARY" }),
+            ),
+            (
+                "spawn_async_subagent",
+                json!({ "agent_id": "researcher", "prompt": "Find PARALLEL_BETA_CANARY" }),
+            ),
+        ]),
+        text_completion("Spawned two workers; results will arrive as they land."),
+        text_completion("alpha worker done"),
+        text_completion("beta worker done"),
     ]);
     let stack = boot_stack().await;
 
@@ -1972,66 +2153,70 @@ async fn parallel_subagent_fanout_inner() {
         Some("chat_done"),
         "expected chat_done for parallel fanout: {done}"
     );
-    let full_response = done
-        .get("full_response")
-        .and_then(Value::as_str)
-        .unwrap_or_else(|| panic!("chat_done missing full_response: {done}"));
-    assert!(
-        full_response.contains("PARALLEL_ALPHA_CANARY")
-            && full_response.contains("PARALLEL_BETA_CANARY"),
-        "synthesis must contain both canaries; full_response: {full_response}"
-    );
 
-    // ≥4 upstream requests: orchestrator + 2 researcher children + orchestrator synthesis.
+    // The children are detached, so the turn can end before they have issued
+    // their upstream calls. Poll rather than assert immediately — a bare
+    // assertion here would be a race, and a sleep would be a guess.
+    let worker_canaries = |reqs: &[Value]| -> std::collections::HashSet<String> {
+        reqs.iter()
+            .filter_map(|r| canary_worker_request(r.get("body")?))
+            .collect()
+    };
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        if with_captured(|c| worker_canaries(c).len()) >= 2 {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "both workers must issue their own request; captured: {}",
+            serde_json::to_string_pretty(&with_captured(|c| c.clone())).unwrap_or_default()
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
     let requests = with_captured(|c| c.clone());
+    let found = worker_canaries(&requests);
+    disarm_canary_barrier();
+
+    // Each worker issued its OWN request — identified by request shape, not by
+    // a substring hit anywhere in the serialized body. Every captured request
+    // carries its full history, so after the spawn turn the orchestrator's own
+    // follow-up also contains both canary strings inside the prior assistant
+    // message's `tool_calls`; matching on those would let this pass with one
+    // worker dropped on the floor.
+    for canary in ["PARALLEL_ALPHA_CANARY", "PARALLEL_BETA_CANARY"] {
+        assert!(
+            found.contains(canary),
+            "worker `{canary}` never issued its own request (found: {found:?}); \
+             requests: {}",
+            serde_json::to_string_pretty(&requests).unwrap_or_default()
+        );
+    }
+
+    // ...and they were in flight at the same time. This is the assertion that
+    // makes the test about concurrency rather than eventual dispatch: the
+    // barrier only releases when a second worker joins the first, so strictly
+    // serial execution cannot reach here — it parks, times out, and leaves the
+    // flag clear. It is the claim that justified retiring `spawn_parallel_agents`.
     assert!(
-        requests.len() >= 4,
-        "expected ≥4 upstream requests (orchestrator + 2 researchers + synthesis), got {};\
-        \nrequests: {}",
-        requests.len(),
+        canary_overlap_observed(),
+        "the two workers never overlapped — fan-out ran serially, which is the \
+         regression #4754 measured (145-200s gaps); requests: {}",
         serde_json::to_string_pretty(&requests).unwrap_or_default()
     );
 
-    // No "Unknown tool:" — spawn_parallel_agents was synthesised and ran successfully.
-    let all_serialized = serde_json::to_string(&requests).unwrap_or_default();
+    // The spawn tool must actually be in scope. If the orchestrator's tool list
+    // drifts again, this is the assertion that says so in one line instead of
+    // leaving a canary mismatch to be decoded.
+    let all = serde_json::to_string(&requests).unwrap_or_default();
     assert!(
-        !all_serialized.contains("Unknown tool:"),
-        "found 'Unknown tool:' — spawn_parallel_agents was not available; requests: {}",
+        !all.contains("Unknown tool:"),
+        "no tool call may be rejected as unknown; requests: {}",
         serde_json::to_string_pretty(&requests).unwrap_or_default()
     );
-
-    // ── Last upstream request (orchestrator synthesis) must carry BOTH child
-    // canaries in its messages ── proves both children's results were forwarded
-    // into the orchestrator's synthesis context, not merely that the scripted
-    // synthesis text echoed them.
-    let last_messages = requests
-        .last()
-        .unwrap()
-        .pointer("/body/messages")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_else(|| {
-            panic!(
-                "last upstream request missing /body/messages; request: {}",
-                serde_json::to_string_pretty(requests.last().unwrap()).unwrap_or_default()
-            )
-        });
-    let serialized = serde_json::to_string(&last_messages).unwrap();
-    assert!(
-        serialized.contains("PARALLEL_ALPHA_CANARY"),
-        "synthesis request missing child result PARALLEL_ALPHA_CANARY; messages: {serialized}"
-    );
-    assert!(
-        serialized.contains("PARALLEL_BETA_CANARY"),
-        "synthesis request missing child result PARALLEL_BETA_CANARY; messages: {serialized}"
-    );
-
-    stack.shutdown();
 }
 
-/// Delegation two levels deep (orchestrator → researcher → tool loop continues):
-/// orchestrator delegates to researcher via `research`; researcher scripted to
-/// call ask_user_clarification (blocked — not in researcher named tools →
 /// SubagentToolSource returns error); researcher loops and returns DEPTH2_CANARY;
 /// dispatch_subagent forwards the result; orchestrator synthesizes.
 ///
@@ -2178,7 +2363,7 @@ mod streaming_support {
     use async_trait::async_trait;
     use openhuman_core::openhuman::agent::dispatcher::NativeToolDispatcher;
     use openhuman_core::openhuman::agent::Agent;
-    use openhuman_core::openhuman::config::{AgentConfig, ContextConfig, MemoryConfig};
+    use openhuman_core::openhuman::config::{AgentConfig, ContextConfig};
     use openhuman_core::openhuman::memory::Memory;
     use openhuman_core::openhuman::tools::traits::ToolCallOptions;
     use openhuman_core::openhuman::tools::{
@@ -2190,13 +2375,12 @@ mod streaming_support {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
-    use tinyagents::harness::message::{AssistantMessage, ContentBlock};
-    use tinyagents::harness::model::{
+    use tinyinference::message::{AssistantMessage, ContentBlock};
+    use tinyinference::model::{
         ChatModel, ModelProfile, ModelRequest, ModelResponse, ModelStream, ModelStreamItem,
     };
-    use tinyagents::harness::tool::ToolCall;
-    use tinyagents::harness::usage::Usage;
-    use tinymemory_core::store as memory_store;
+    use tinyinference::tool::ToolCall;
+    use tinyinference::usage::Usage;
 
     // ── ScriptedProvider ────────────────────────────────────────────────────
     // Copied (minimal) from tests/agent_session_turn_raw_coverage_e2e.rs:76-152.
@@ -2208,13 +2392,13 @@ mod streaming_support {
     }
 
     impl ScriptedProvider {
-        fn pop_response(&self) -> tinyagents::Result<ModelResponse> {
+        fn pop_response(&self) -> tinyinference::Result<ModelResponse> {
             self.responses
                 .lock()
                 .unwrap()
                 .pop_front()
                 .unwrap_or_else(|| Ok(text_response_s("default scripted final")))
-                .map_err(|error| tinyagents::TinyAgentsError::Model(error.to_string()))
+                .map_err(|error| tinyinference::Error::Model(error.to_string()))
         }
     }
 
@@ -2228,7 +2412,7 @@ mod streaming_support {
             &self,
             _state: &(),
             _request: ModelRequest,
-        ) -> tinyagents::Result<ModelResponse> {
+        ) -> tinyinference::Result<ModelResponse> {
             self.pop_response()
         }
 
@@ -2236,7 +2420,7 @@ mod streaming_support {
             &self,
             _state: &(),
             _request: ModelRequest,
-        ) -> tinyagents::Result<ModelStream> {
+        ) -> tinyinference::Result<ModelStream> {
             let response = self.pop_response()?;
             let mut items = vec![ModelStreamItem::Started];
             items.extend(self.stream_events.iter().cloned());
@@ -2292,12 +2476,76 @@ mod streaming_support {
         (temp, path)
     }
 
-    fn memory_for_workspace_s(path: &Path) -> Arc<dyn Memory> {
-        let cfg = MemoryConfig {
-            backend: "none".to_string(),
-            ..MemoryConfig::default()
-        };
-        Arc::from(memory_store::create_memory(&cfg, path).unwrap())
+    /// A memory that stores nothing, which is what this helper always built.
+    ///
+    /// It used to ask the engine's factory for `backend: "none"` — an engine
+    /// call whose whole purpose was to get back something that does not store.
+    /// The agent under test needs *a* memory to be constructed with; it never
+    /// reads one back. So the no-op is not a downgrade from what was here, it
+    /// is the same behaviour without linking 133k lines to obtain it.
+    #[derive(Debug)]
+    struct NoMemory;
+
+    #[async_trait::async_trait]
+    impl Memory for NoMemory {
+        fn name(&self) -> &str {
+            "none"
+        }
+        async fn store(
+            &self,
+            _namespace: &str,
+            _key: &str,
+            _content: &str,
+            _category: openhuman_core::openhuman::memory::api::types::MemoryCategory,
+            _session_id: Option<&str>,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn recall(
+            &self,
+            _query: &str,
+            _limit: usize,
+            _opts: openhuman_core::openhuman::memory::api::recall::RecallOpts<'_>,
+        ) -> anyhow::Result<Vec<openhuman_core::openhuman::memory::api::types::MemoryEntry>>
+        {
+            Ok(Vec::new())
+        }
+        async fn get(
+            &self,
+            _namespace: &str,
+            _key: &str,
+        ) -> anyhow::Result<Option<openhuman_core::openhuman::memory::api::types::MemoryEntry>>
+        {
+            Ok(None)
+        }
+        async fn list(
+            &self,
+            _namespace: Option<&str>,
+            _category: Option<&openhuman_core::openhuman::memory::api::types::MemoryCategory>,
+            _session_id: Option<&str>,
+        ) -> anyhow::Result<Vec<openhuman_core::openhuman::memory::api::types::MemoryEntry>>
+        {
+            Ok(Vec::new())
+        }
+        async fn forget(&self, _namespace: &str, _key: &str) -> anyhow::Result<bool> {
+            Ok(false)
+        }
+        async fn namespace_summaries(
+            &self,
+        ) -> anyhow::Result<Vec<openhuman_core::openhuman::memory::api::types::NamespaceSummary>>
+        {
+            Ok(Vec::new())
+        }
+        async fn count(&self) -> anyhow::Result<usize> {
+            Ok(0)
+        }
+        async fn health_check(&self) -> bool {
+            true
+        }
+    }
+
+    fn memory_for_workspace_s(_path: &Path) -> Arc<dyn Memory> {
+        Arc::new(NoMemory)
     }
 
     pub fn agent_with_s(
@@ -2436,8 +2684,8 @@ async fn streaming_tool_call_accumulation() {
         agent_with_s, native_tool_response_s, text_response_s, workspace_s, EchoTool,
         ScriptedProvider,
     };
-    use tinyagents::harness::model::{ModelProfile, ModelStreamItem};
-    use tinyagents::harness::tool::ToolDelta;
+    use tinyinference::model::{ModelProfile, ModelStreamItem};
+    use tinyinference::tool::ToolDelta;
 
     let _lock = env_lock();
     let (_temp, workspace_path) = workspace_s("stream-accum");
@@ -2779,10 +3027,10 @@ fn sse_tool_args_router() -> Router {
 /// accumulation in its SSE transport is what assembles the final tool call.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn provider_sse_tool_args_accumulation() {
-    use tinyagents::harness::message::Message;
-    use tinyagents::harness::model::{ChatModel, ModelRequest, ModelStreamItem};
-    use tinyagents::harness::providers::openai::{AuthStyle, OpenAiModel};
-    use tinyagents::harness::tool::ToolSchema;
+    use tinyinference::message::Message;
+    use tinyinference::model::{ChatModel, ModelRequest, ModelStreamItem};
+    use tinyinference::providers::openai::{AuthStyle, OpenAiModel};
+    use tinyinference::tool::ToolSchema;
 
     let _lock = env_lock();
 
@@ -2888,4 +3136,340 @@ async fn provider_sse_tool_args_accumulation() {
     );
 
     server.abort();
+}
+
+// ─── Per-model-call wall-clock ceiling (#5766 / PR #5767) ────────────────────
+//
+// Before #5767 a model call was bounded only by the *turn's remaining* wall
+// clock, so hang detection rode the turn deadline: a turn that had legitimately
+// spent most of its budget across many successful calls handed the next call
+// whatever was left and died. #5767 demoted the turn deadline to a runaway
+// guard (600s → 3600s) and introduced a per-call ceiling
+// (`RunLimits::max_model_call_ms`, default 900s,
+// `OPENHUMAN_MODEL_CALL_TIMEOUT_SECS`, `0` disables) that is recomputed afresh
+// for every call and every retry attempt.
+//
+// The harness names which bound fired in the timeout message
+// (`tinyagents-harness/src/agent_loop/model_call.rs:11,17` —
+// "per-model-call ceiling" vs "remaining wall-clock budget") precisely so field
+// triage can tell "this one call wedged" from "the run is out of time". That
+// label is what this test asserts on: it is the only externally visible signal
+// that distinguishes the two ceilings, so asserting merely "the turn failed"
+// would pass with the fix reverted.
+
+/// A wedged model call is cut off by the PER-CALL ceiling, not by the turn
+/// deadline: with a 2s per-call ceiling under a 600s turn deadline, an upstream
+/// that never answers in time must terminate the turn in seconds, and the
+/// terminal event must name the per-call bound.
+#[test]
+fn model_call_ceiling_bounds_a_wedged_call_below_the_turn_deadline() {
+    run_on_agent_stack(
+        "model_call_ceiling",
+        model_call_ceiling_bounds_a_wedged_call_below_the_turn_deadline_inner,
+    );
+}
+
+async fn model_call_ceiling_bounds_a_wedged_call_below_the_turn_deadline_inner() {
+    let _lock = env_lock();
+
+    // Per-call ceiling far tighter than the turn deadline, so whichever bound
+    // fires is unambiguous. Both are read per turn by `run_policy_for`.
+    let _per_call = EnvVarGuard::set("OPENHUMAN_MODEL_CALL_TIMEOUT_SECS", "2");
+    let _turn = EnvVarGuard::set("OPENHUMAN_AGENT_TURN_TIMEOUT_SECS", "600");
+    // There is a THIRD wall clock, and pinning only the two above leaves this
+    // test's conclusion resting on the ambient environment. `web_turn_deadline()`
+    // (`web_chat/ops_part_01.rs:79`) applies its own backstop from
+    // `OPENHUMAN_WEB_TURN_TIMEOUT_SECS`, and the web layer maps every harness
+    // `Timeout` onto the same generic `turn_timeout` copy — so an inherited
+    // value below the 8s bound asserted here would fire first, produce an
+    // identical terminal, and let the whole test pass with the per-call ceiling
+    // unwired. Cleared, not set, so it falls back to its 900s default and can
+    // play no part in the outcome.
+    let _web_backstop = EnvVarGuard::unset("OPENHUMAN_WEB_TURN_TIMEOUT_SECS");
+
+    // Every upstream reply is held for 25s — comfortably past the 2s per-call
+    // ceiling and comfortably short of the 600s turn deadline. Armed globally
+    // so retry attempts stall too.
+    let _stall = arm_scripted_stall(25_000);
+    reset_script(vec![text_completion(
+        "this reply is never delivered in time",
+    )]);
+    let stack = boot_stack().await;
+
+    let mut events = spawn_sse_collector(format!(
+        "{}/events?client_id=harness-call-ceiling",
+        stack.rpc_base
+    ));
+    let started = std::time::Instant::now();
+    send_web_chat(
+        &stack.rpc_base,
+        910,
+        "harness-call-ceiling",
+        "thread-call-ceiling",
+        "stall please",
+    )
+    .await;
+
+    // 120s is a generous outer bound: the point is that the turn ends long
+    // before its own 600s deadline, and this wait would itself expire if the
+    // per-call ceiling were not in force.
+    // 120s is a generous outer bound: the point is that the turn ends long
+    // before its own 600s deadline, and this wait would itself expire if the
+    // per-call ceiling were not in force.
+    let terminal = wait_for_terminal(&mut events, Duration::from_secs(120)).await;
+    let elapsed = started.elapsed();
+
+    // The turn is stopped rather than completing.
+    assert_eq!(
+        terminal.get("event").and_then(Value::as_str),
+        Some("chat_error"),
+        "a wedged model call must terminate the turn; got: {terminal}"
+    );
+    assert_eq!(
+        terminal.get("error_type").and_then(Value::as_str),
+        Some("turn_timeout"),
+        "the stop must be a timeout, not some other failure; got: {terminal}"
+    );
+
+    // THE assertion, and the one that distinguishes the two ceilings. The
+    // upstream holds every reply for 25s. Bounded only by the turn's remainder
+    // — the pre-#5767 behaviour — that stall completes well inside the 600s
+    // budget and the turn SUCCEEDS. Only a per-call ceiling can stop it at ~2s.
+    // Measured: 2.4s with the ceiling wired, 25.5s with it reverted.
+    // 8s, not a looser bound: the ceiling under test is 2s, so anything up to
+    // ~4x it still fails while leaving room for boot and SSE delivery. A 15s
+    // bound would also admit an implementation that ignored
+    // `OPENHUMAN_MODEL_CALL_TIMEOUT_SECS` and used a fixed 10s ceiling.
+    assert!(
+        elapsed < Duration::from_secs(8),
+        "the turn must be cut off by the 2s per-call ceiling, not by the 25s \
+         upstream stall completing under the 600s turn deadline; took {elapsed:?}"
+    );
+
+    // Deliberately NOT asserted: that the event names *which* ceiling fired.
+    // The harness distinguishes them internally ("per-model-call ceiling" vs
+    // "remaining wall-clock budget", `model_call.rs:11,17`) precisely so field
+    // triage can tell "this one call wedged" from "the run is out of time", but
+    // the host collapses both into `turn_timeout` with a message that says the
+    // turn "ran past its time budget" and blames a stalled tool or sub-agent.
+    // Here the turn had 598 of its 600 seconds left and no tool ran at all.
+    // Pinning that text would pin a misattribution — see W5-test-findings.md.
+
+    stack.shutdown();
+}
+
+// ── #5821: the tool-policy boundary is APPENDED, not prepended ──────────────
+//
+// Lives here rather than in `tests/raw_coverage/`: `raw_coverage_all` declares
+// `required-features = ["voice", "inference"]` (`Cargo.toml:117`), so a test
+// placed there is silently SKIPPED by any default-feature run — including the
+// one a contributor does locally. This target has no required features, so the
+// assertion actually executes.
+//
+// Self-contained rather than built on `streaming_support::agent_with_s`: that
+// helper resolves a real memory store, which needs an `EmbeddingHost` seam a
+// `tests/` binary cannot install (`host_impls::install_for_tests` is
+// `#[cfg(test)]`, visible only to the crate's own unit tests). The prompt path
+// under test never touches memory, so a stub is both sufficient and steadier.
+mod tool_policy_boundary_placement {
+    use anyhow::Result;
+    use async_trait::async_trait;
+    use openhuman_core::openhuman::agent::context::prompt::LearnedContextData;
+    use openhuman_core::openhuman::agent::dispatcher::NativeToolDispatcher;
+    use openhuman_core::openhuman::agent::Agent;
+    use openhuman_core::openhuman::config::AgentConfig;
+    use openhuman_core::openhuman::memory::{
+        Memory, MemoryCategory, MemoryEntry, NamespaceSummary as MemoryNamespaceSummary, RecallOpts,
+    };
+    use openhuman_core::openhuman::tools::{PermissionLevel, Tool, ToolResult};
+    use std::collections::VecDeque;
+    use std::sync::{Arc, Mutex};
+
+    use super::streaming_support::ScriptedProvider;
+    use tinyinference::model::{ChatModel, ModelProfile};
+
+    struct StubMemory;
+
+    #[async_trait]
+    impl Memory for StubMemory {
+        async fn store(
+            &self,
+            _namespace: &str,
+            _key: &str,
+            _content: &str,
+            _category: MemoryCategory,
+            _session_id: Option<&str>,
+        ) -> Result<()> {
+            Ok(())
+        }
+        async fn recall(
+            &self,
+            _query: &str,
+            _limit: usize,
+            _opts: RecallOpts<'_>,
+        ) -> Result<Vec<MemoryEntry>> {
+            Ok(Vec::new())
+        }
+        async fn get(&self, _namespace: &str, _key: &str) -> Result<Option<MemoryEntry>> {
+            Ok(None)
+        }
+        async fn list(
+            &self,
+            _namespace: Option<&str>,
+            _category: Option<&MemoryCategory>,
+            _session_id: Option<&str>,
+        ) -> Result<Vec<MemoryEntry>> {
+            Ok(Vec::new())
+        }
+        async fn forget(&self, _namespace: &str, _key: &str) -> Result<bool> {
+            Ok(false)
+        }
+        async fn namespace_summaries(&self) -> Result<Vec<MemoryNamespaceSummary>> {
+            Ok(Vec::new())
+        }
+        async fn count(&self) -> Result<usize> {
+            Ok(0)
+        }
+        async fn health_check(&self) -> bool {
+            true
+        }
+        fn name(&self) -> &str {
+            "boundary-placement-memory"
+        }
+    }
+
+    /// Two tools at different permission levels. A `read_only` channel
+    /// permission blocks the write one, and that restriction is what makes the
+    /// boundary render at all — `render_tool_policy_boundary` returns `None`
+    /// unless `session.has_restrictions()` (`tools/agent_policy/prompt.rs:12`).
+    struct ScopedTool {
+        name: &'static str,
+        level: PermissionLevel,
+    }
+
+    #[async_trait]
+    impl Tool for ScopedTool {
+        fn name(&self) -> &str {
+            self.name
+        }
+        fn description(&self) -> &str {
+            "tool-policy placement fixture"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({ "type": "object", "properties": {} })
+        }
+        fn permission_level(&self) -> PermissionLevel {
+            self.level
+        }
+        async fn execute(&self, _args: serde_json::Value) -> Result<ToolResult> {
+            Ok(ToolResult::success("ok"))
+        }
+    }
+
+    fn restricted_prompt() -> String {
+        let workspace = tempfile::TempDir::new().expect("temp workspace");
+        let provider: Arc<dyn ChatModel<()>> = Arc::new(ScriptedProvider {
+            responses: Mutex::new(VecDeque::new()),
+            stream_events: Vec::new(),
+            profile: ModelProfile::default(),
+        });
+        let mut config = AgentConfig::default();
+        config
+            .channel_permissions
+            .insert("boundary-channel".to_string(), "read_only".to_string());
+
+        let agent = Agent::builder()
+            .chat_model(provider)
+            .tools(vec![
+                Box::new(ScopedTool {
+                    name: "boundary_read",
+                    level: PermissionLevel::ReadOnly,
+                }),
+                Box::new(ScopedTool {
+                    name: "boundary_write",
+                    level: PermissionLevel::Write,
+                }),
+            ])
+            .memory(Arc::new(StubMemory))
+            .tool_dispatcher(Box::new(NativeToolDispatcher))
+            .workspace_dir(workspace.path().to_path_buf())
+            .event_context("boundary-session", "boundary-channel")
+            .config(config)
+            .build()
+            .expect("complete builder should succeed");
+
+        agent
+            .build_system_prompt(LearnedContextData::default())
+            .expect("system prompt builds")
+    }
+
+    /// #5821 (closes #5704). Every line of the boundary block is session-scoped
+    /// — agent id, channel, entry point, risk level, allowed tools — so putting
+    /// it first moves the prompt's first diverging byte to offset 0 and costs
+    /// the inference backend's automatic prefix cache everything behind it. It
+    /// also replaced each agent's opening persona line with a constant heading.
+    ///
+    /// This drives the real `Agent::build_system_prompt`. The four tests #5821
+    /// shipped exercise the extracted pure helper `append_tool_policy_boundary`
+    /// and would all still pass if `build_system_prompt` stopped calling it; the
+    /// one existing test that goes through the builder,
+    /// `turn_tests_part_01_tests::system_prompt_includes_tool_policy_boundary`,
+    /// asserts the block is PRESENT and says nothing about where.
+    #[test]
+    fn system_prompt_appends_the_tool_policy_boundary_after_the_body() {
+        let prompt = restricted_prompt();
+
+        let boundary_at = prompt
+            .find("## Tool Policy Boundary")
+            .expect("a restricted channel must render the boundary block");
+
+        assert!(
+            boundary_at > 0,
+            "the boundary must not open the prompt — prepending it moves the \
+             first diverging byte to offset 0 and defeats the backend's prefix \
+             cache (#5704). Prompt begins: {:?}",
+            prompt.chars().take(160).collect::<String>()
+        );
+        assert!(
+            !prompt.starts_with("## Tool Policy Boundary"),
+            "prepending replaced every agent's opening line with a constant heading"
+        );
+        assert!(
+            !prompt[..boundary_at].trim().is_empty(),
+            "there must be prompt body BEFORE the boundary"
+        );
+    }
+
+    /// The placement's payoff, stated exactly: the block is the LAST thing in
+    /// the prompt, so every stable byte precedes it. That is the property a
+    /// prefix cache keys on, and the one a revert to prepending destroys.
+    ///
+    /// `render_tool_policy_boundary` emits `- Restricted tools: N omitted by
+    /// policy` last whenever anything is restricted, so asserting the prompt
+    /// ENDS with that line pins the whole block to the tail rather than merely
+    /// somewhere after offset 0.
+    #[test]
+    fn the_tool_policy_boundary_is_the_last_block_in_the_prompt() {
+        let prompt = restricted_prompt();
+        let trimmed = prompt.trim_end();
+        let tail: String = trimmed
+            .chars()
+            .rev()
+            .take(220)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+
+        assert!(
+            trimmed.contains("- Restricted tools:"),
+            "the fixture must actually restrict a tool, or this asserts nothing; tail: {tail}"
+        );
+        assert!(
+            trimmed.ends_with("omitted by policy"),
+            "the boundary block must be the prompt's FINAL block — prepending \
+             puts it first and leaves the stable body trailing it (#5704). \
+             Prompt ends: {tail}"
+        );
+    }
 }

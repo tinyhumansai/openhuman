@@ -1,4 +1,4 @@
-//! Controller schemas and JSON-RPC dispatchers for the session database.
+//! Controller schemas and JSON-RPC dispatchers for the durable run ledger.
 
 use serde_json::{Map, Value};
 
@@ -7,17 +7,10 @@ use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::config::rpc as config_rpc;
 use crate::rpc::RpcOutcome;
 
-use tinyagents::session::run_ledger::{AgentRunListRequest, RunEventListRequest};
-use tinyagents::session::types::SessionSearchParams;
+use tinyagents_session::run_ledger::{AgentRunListRequest, RunEventListRequest};
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
-        schema_for("session_db_list"),
-        schema_for("session_db_get"),
-        schema_for("session_db_search"),
-        schema_for("session_db_get_messages"),
-        schema_for("session_db_get_tool_calls"),
-        schema_for("session_db_get_children"),
         schema_for("run_ledger_list"),
         schema_for("run_ledger_get"),
         schema_for("run_ledger_events"),
@@ -26,30 +19,6 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
 
 pub fn all_registered_controllers() -> Vec<RegisteredController> {
     vec![
-        RegisteredController {
-            schema: schema_for("session_db_list"),
-            handler: handle_session_db_list,
-        },
-        RegisteredController {
-            schema: schema_for("session_db_get"),
-            handler: handle_session_db_get,
-        },
-        RegisteredController {
-            schema: schema_for("session_db_search"),
-            handler: handle_session_db_search,
-        },
-        RegisteredController {
-            schema: schema_for("session_db_get_messages"),
-            handler: handle_session_db_get_messages,
-        },
-        RegisteredController {
-            schema: schema_for("session_db_get_tool_calls"),
-            handler: handle_session_db_get_tool_calls,
-        },
-        RegisteredController {
-            schema: schema_for("session_db_get_children"),
-            handler: handle_session_db_get_children,
-        },
         RegisteredController {
             schema: schema_for("run_ledger_list"),
             handler: handle_run_ledger_list,
@@ -67,86 +36,6 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
 
 fn schema_for(function: &str) -> ControllerSchema {
     match function {
-        "session_db_list" => ControllerSchema {
-            namespace: "session_db",
-            function: "list",
-            description: "List agent sessions with optional filters (status, parent) \
-                          and pagination.",
-            inputs: vec![
-                optional_u64("limit", "Max sessions to return (default 50, max 500)."),
-                optional_u64("offset", "Pagination offset."),
-                optional_str(
-                    "status",
-                    "Filter by status (running, completed, failed, interrupted).",
-                ),
-                optional_str("parentSessionId", "Filter by parent session ID."),
-            ],
-            outputs: vec![json_output(
-                "result",
-                "SessionSearchResult with sessions array and total count.",
-            )],
-        },
-        "session_db_get" => ControllerSchema {
-            namespace: "session_db",
-            function: "get",
-            description: "Get a single session by ID.",
-            inputs: vec![required_str("id", "Session ID.")],
-            outputs: vec![json_output("session", "Full SessionRecord.")],
-        },
-        "session_db_search" => ControllerSchema {
-            namespace: "session_db",
-            function: "search",
-            description: "Search sessions by full-text query, agent ID, tool name, \
-                          source channel, thread ID, parent, and/or status.",
-            inputs: vec![
-                optional_str("query", "Full-text search query."),
-                optional_str("agentId", "Filter by agent definition ID."),
-                optional_str("toolName", "Filter to sessions that used this tool."),
-                optional_str("sourceChannel", "Filter by source channel."),
-                optional_str("threadId", "Filter by thread ID."),
-                optional_str("parentSessionId", "Filter by parent session ID."),
-                optional_str("status", "Filter by status."),
-                optional_u64("limit", "Max results (default 50, max 500)."),
-                optional_u64("offset", "Pagination offset."),
-            ],
-            outputs: vec![json_output(
-                "result",
-                "SessionSearchResult with sessions array and total count.",
-            )],
-        },
-        "session_db_get_messages" => ControllerSchema {
-            namespace: "session_db",
-            function: "get_messages",
-            description: "Get messages for a session.",
-            inputs: vec![
-                required_str("sessionId", "Session ID."),
-                optional_u64("limit", "Max messages (default 200, max 1000)."),
-            ],
-            outputs: vec![json_output("messages", "Array of SessionMessage objects.")],
-        },
-        "session_db_get_tool_calls" => ControllerSchema {
-            namespace: "session_db",
-            function: "get_tool_calls",
-            description: "Get tool calls for a session.",
-            inputs: vec![
-                required_str("sessionId", "Session ID."),
-                optional_u64("limit", "Max tool calls (default 200, max 1000)."),
-            ],
-            outputs: vec![json_output(
-                "toolCalls",
-                "Array of SessionToolCall objects.",
-            )],
-        },
-        "session_db_get_children" => ControllerSchema {
-            namespace: "session_db",
-            function: "get_children",
-            description: "Get child (sub-agent) sessions for a parent session.",
-            inputs: vec![required_str("sessionId", "Parent session ID.")],
-            outputs: vec![json_output(
-                "children",
-                "Array of child SessionRecord objects.",
-            )],
-        },
         "run_ledger_list" => ControllerSchema {
             namespace: "run_ledger",
             function: "list",
@@ -187,9 +76,9 @@ fn schema_for(function: &str) -> ControllerSchema {
             )],
         },
         _ => ControllerSchema {
-            namespace: "session_db",
+            namespace: "run_ledger",
             function: "unknown",
-            description: "Unknown session_db controller.",
+            description: "Unknown run_ledger controller.",
             inputs: vec![],
             outputs: vec![FieldSchema {
                 name: "error",
@@ -203,192 +92,6 @@ fn schema_for(function: &str) -> ControllerSchema {
 
 fn new_correlation_id() -> String {
     uuid::Uuid::new_v4().simple().to_string()[..8].to_string()
-}
-
-fn handle_session_db_list(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let cid = new_correlation_id();
-        log::debug!(target: "session_db_rpc", "[session_db_rpc][{cid}] list.entry");
-        let config = config_rpc::load_config_with_timeout().await.inspect_err(|err| {
-            log::warn!(target: "session_db_rpc", "[session_db_rpc][{cid}] list.config_failed err={err}");
-        })?;
-
-        let limit = params
-            .get("limit")
-            .and_then(|v| v.as_u64())
-            .map(|v| v as u32);
-        let offset = params
-            .get("offset")
-            .and_then(|v| v.as_u64())
-            .map(|v| v as u32);
-        let status = params
-            .get("status")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-        let parent_id = params
-            .get("parentSessionId")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-
-        let result = tinyagents::session::list_sessions(
-            &config.workspace_dir,
-            limit,
-            offset,
-            status.as_deref(),
-            parent_id.as_deref(),
-        )
-        .map_err(|e| {
-            let s = e.to_string();
-            log::warn!(target: "session_db_rpc", "[session_db_rpc][{cid}] list.error err={s}");
-            s
-        })?;
-
-        let json = to_json(result);
-        log::debug!(target: "session_db_rpc", "[session_db_rpc][{cid}] list.exit ok={}", json.is_ok());
-        json
-    })
-}
-
-fn handle_session_db_get(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let cid = new_correlation_id();
-        log::debug!(target: "session_db_rpc", "[session_db_rpc][{cid}] get.entry");
-        let config = config_rpc::load_config_with_timeout().await.inspect_err(|err| {
-            log::warn!(target: "session_db_rpc", "[session_db_rpc][{cid}] get.config_failed err={err}");
-        })?;
-
-        let id = params
-            .get("id")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing required param: id".to_string())?;
-
-        let session = tinyagents::session::get_session(&config.workspace_dir, id).map_err(|e| {
-            let s = e.to_string();
-            log::warn!(target: "session_db_rpc", "[session_db_rpc][{cid}] get.error id={id} err={s}");
-            s
-        })?;
-
-        let json = to_json(session);
-        log::debug!(target: "session_db_rpc", "[session_db_rpc][{cid}] get.exit ok={}", json.is_ok());
-        json
-    })
-}
-
-fn handle_session_db_search(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let cid = new_correlation_id();
-        log::debug!(target: "session_db_rpc", "[session_db_rpc][{cid}] search.entry");
-        let config = config_rpc::load_config_with_timeout().await.inspect_err(|err| {
-            log::warn!(target: "session_db_rpc", "[session_db_rpc][{cid}] search.config_failed err={err}");
-        })?;
-
-        let search_params: SessionSearchParams = if params.is_empty() {
-            SessionSearchParams::default()
-        } else {
-            serde_json::from_value(Value::Object(params)).map_err(|e| {
-                let s = format!("invalid search params: {e}");
-                log::warn!(target: "session_db_rpc", "[session_db_rpc][{cid}] search.bad_params err={s}");
-                s
-            })?
-        };
-
-        let result = tinyagents::session::search_sessions(
-            &config.workspace_dir,
-            &search_params,
-        )
-        .map_err(|e| {
-            let s = e.to_string();
-            log::warn!(target: "session_db_rpc", "[session_db_rpc][{cid}] search.error err={s}");
-            s
-        })?;
-
-        let json = to_json(result);
-        log::debug!(target: "session_db_rpc", "[session_db_rpc][{cid}] search.exit ok={}", json.is_ok());
-        json
-    })
-}
-
-fn handle_session_db_get_messages(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let cid = new_correlation_id();
-        log::debug!(target: "session_db_rpc", "[session_db_rpc][{cid}] get_messages.entry");
-        let config = config_rpc::load_config_with_timeout().await.inspect_err(|err| {
-            log::warn!(target: "session_db_rpc", "[session_db_rpc][{cid}] get_messages.config_failed err={err}");
-        })?;
-
-        let session_id = params
-            .get("sessionId")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing required param: sessionId".to_string())?;
-        let limit = params
-            .get("limit")
-            .and_then(|v| v.as_u64())
-            .map(|v| v as u32);
-
-        let messages = tinyagents::session::list_messages(&config.workspace_dir, session_id, limit).map_err(|e| {
-            let s = e.to_string();
-            log::warn!(target: "session_db_rpc", "[session_db_rpc][{cid}] get_messages.error err={s}");
-            s
-        })?;
-
-        let json = to_json(messages);
-        log::debug!(target: "session_db_rpc", "[session_db_rpc][{cid}] get_messages.exit ok={}", json.is_ok());
-        json
-    })
-}
-
-fn handle_session_db_get_tool_calls(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let cid = new_correlation_id();
-        log::debug!(target: "session_db_rpc", "[session_db_rpc][{cid}] get_tool_calls.entry");
-        let config = config_rpc::load_config_with_timeout().await.inspect_err(|err| {
-            log::warn!(target: "session_db_rpc", "[session_db_rpc][{cid}] get_tool_calls.config_failed err={err}");
-        })?;
-
-        let session_id = params
-            .get("sessionId")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing required param: sessionId".to_string())?;
-        let limit = params
-            .get("limit")
-            .and_then(|v| v.as_u64())
-            .map(|v| v as u32);
-
-        let tool_calls = tinyagents::session::list_tool_calls(&config.workspace_dir, session_id, limit).map_err(|e| {
-            let s = e.to_string();
-            log::warn!(target: "session_db_rpc", "[session_db_rpc][{cid}] get_tool_calls.error err={s}");
-            s
-        })?;
-
-        let json = to_json(tool_calls);
-        log::debug!(target: "session_db_rpc", "[session_db_rpc][{cid}] get_tool_calls.exit ok={}", json.is_ok());
-        json
-    })
-}
-
-fn handle_session_db_get_children(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let cid = new_correlation_id();
-        log::debug!(target: "session_db_rpc", "[session_db_rpc][{cid}] get_children.entry");
-        let config = config_rpc::load_config_with_timeout().await.inspect_err(|err| {
-            log::warn!(target: "session_db_rpc", "[session_db_rpc][{cid}] get_children.config_failed err={err}");
-        })?;
-
-        let session_id = params
-            .get("sessionId")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing required param: sessionId".to_string())?;
-
-        let children = tinyagents::session::list_children(&config.workspace_dir, session_id).map_err(|e| {
-            let s = e.to_string();
-            log::warn!(target: "session_db_rpc", "[session_db_rpc][{cid}] get_children.error err={s}");
-            s
-        })?;
-
-        let json = to_json(children);
-        log::debug!(target: "session_db_rpc", "[session_db_rpc][{cid}] get_children.exit ok={}", json.is_ok());
-        json
-    })
 }
 
 fn handle_run_ledger_list(params: Map<String, Value>) -> ControllerFuture {
@@ -407,7 +110,7 @@ fn handle_run_ledger_list(params: Map<String, Value>) -> ControllerFuture {
                 s
             })?
         };
-        let response = tinyagents::session::run_ledger::list_agent_runs(
+        let response = tinyagents_session::run_ledger::list_agent_runs(
             &config.workspace_dir,
             &request,
         )
@@ -431,7 +134,7 @@ fn handle_run_ledger_get(params: Map<String, Value>) -> ControllerFuture {
             .get("id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing required param: id".to_string())?;
-        let run = tinyagents::session::run_ledger::get_agent_run(&config.workspace_dir, id).map_err(|e| {
+        let run = tinyagents_session::run_ledger::get_agent_run(&config.workspace_dir, id).map_err(|e| {
             let s = e.to_string();
             log::warn!(target: "run_ledger_rpc", "[run_ledger_rpc][{cid}] get.error id={id} err={s}");
             s
@@ -453,7 +156,7 @@ fn handle_run_ledger_events(params: Map<String, Value>) -> ControllerFuture {
                 log::warn!(target: "run_ledger_rpc", "[run_ledger_rpc][{cid}] events.bad_params err={s}");
                 s
             })?;
-        let response = tinyagents::session::run_ledger::list_recent_run_events(
+        let response = tinyagents_session::run_ledger::list_recent_run_events(
             &config.workspace_dir,
             &request,
         )
@@ -507,86 +210,5 @@ fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn all_controller_schemas_lists_registered_functions() {
-        let schemas = all_controller_schemas();
-        assert_eq!(schemas.len(), 9);
-        assert!(schemas
-            .iter()
-            .any(|schema| schema.namespace == "session_db"));
-        assert!(schemas
-            .iter()
-            .any(|schema| schema.namespace == "run_ledger"));
-    }
-
-    #[test]
-    fn all_registered_controllers_match_schemas() {
-        let registered = all_registered_controllers();
-        let schemas = all_controller_schemas();
-        assert_eq!(registered.len(), schemas.len());
-
-        let schema_fns: Vec<&str> = schemas.iter().map(|s| s.function).collect();
-        for rc in &registered {
-            assert!(
-                schema_fns.contains(&rc.schema.function),
-                "registered controller '{}' not in schema list",
-                rc.schema.function
-            );
-        }
-    }
-
-    #[test]
-    fn schema_for_list_has_optional_inputs() {
-        let s = schema_for("session_db_list");
-        assert_eq!(s.function, "list");
-        assert!(s.inputs.iter().all(|i| !i.required));
-    }
-
-    #[test]
-    fn schema_for_get_requires_id() {
-        let s = schema_for("session_db_get");
-        assert_eq!(s.function, "get");
-        assert_eq!(s.inputs.len(), 1);
-        assert!(s.inputs[0].required);
-        assert_eq!(s.inputs[0].name, "id");
-    }
-
-    #[test]
-    fn schema_for_search_has_query_and_filters() {
-        let s = schema_for("session_db_search");
-        assert_eq!(s.function, "search");
-        let names: Vec<&str> = s.inputs.iter().map(|i| i.name).collect();
-        assert!(names.contains(&"query"));
-        assert!(names.contains(&"agentId"));
-        assert!(names.contains(&"toolName"));
-        assert!(names.contains(&"sourceChannel"));
-        assert!(names.contains(&"threadId"));
-    }
-
-    #[test]
-    fn schema_for_unknown_returns_error_shape() {
-        let s = schema_for("session_db_nonexistent");
-        assert_eq!(s.function, "unknown");
-    }
-
-    #[test]
-    fn schema_for_run_ledger_events_requires_run_id() {
-        let s = schema_for("run_ledger_events");
-        assert_eq!(s.namespace, "run_ledger");
-        assert_eq!(s.function, "events");
-        assert!(s
-            .inputs
-            .iter()
-            .any(|input| input.name == "runId" && input.required));
-    }
-
-    #[test]
-    fn new_correlation_id_is_eight_hex_chars() {
-        let cid = new_correlation_id();
-        assert_eq!(cid.len(), 8);
-        assert!(cid.chars().all(|c| c.is_ascii_hexdigit()));
-    }
-}
+#[path = "schemas_tests.rs"]
+mod tests;

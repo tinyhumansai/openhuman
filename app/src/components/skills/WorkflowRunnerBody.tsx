@@ -942,7 +942,7 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
     onChange: (next: InputValue) => void
   ) => {
     const id = `skills-runner-input-${inp.name}`;
-    const requiredMark = inp.required ? <span className="text-red-500"> *</span> : null;
+    const requiredMark = inp.required ? <span className="text-coral-500"> *</span> : null;
     const commonLabel = (
       <label
         htmlFor={id}
@@ -1083,7 +1083,7 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
           </>
         )}
         {skillsError && (
-          <p className="text-xs text-red-600 dark:text-red-400 mt-1">
+          <p className="text-xs text-coral-600 dark:text-coral-400 mt-1">
             {t('settings.skillsRunner.error.listWorkflows')} {skillsError}
           </p>
         )}
@@ -1098,7 +1098,7 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
             </div>
           )}
           {descError && (
-            <div className="text-sm text-red-600 dark:text-red-400">
+            <div className="text-sm text-coral-600 dark:text-coral-400">
               {t('settings.skillsRunner.error.describe')} {descError}
             </div>
           )}
@@ -1195,11 +1195,11 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
                   </div>
 
                   {run.status === 'started' && run.result && (
-                    <div className="rounded border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950 p-3 text-sm">
-                      <p className="text-emerald-800 dark:text-emerald-200">
+                    <div className="rounded border border-sage-300 dark:border-sage-700 bg-sage-50 dark:bg-sage-950 p-3 text-sm">
+                      <p className="text-sage-800 dark:text-sage-200">
                         {t('settings.skillsRunner.started')} {run.result.run_id}
                       </p>
-                      <p className="text-xs text-emerald-700 dark:text-emerald-300 mt-1 break-all">
+                      <p className="text-xs text-sage-700 dark:text-sage-300 mt-1 break-all">
                         {t('settings.skillsRunner.logPath')} <code>{run.result.log}</code>
                       </p>
                     </div>
@@ -1218,7 +1218,7 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
                       return (
                         <div
                           data-testid="skill-run-error"
-                          className="rounded border border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950 p-3 text-sm">
+                          className="rounded border border-coral-300 dark:border-coral-700 bg-coral-50 dark:bg-coral-950 p-3 text-sm">
                           {isGateFailure && (
                             <div
                               data-testid="preflight-gate-pill"
@@ -1231,7 +1231,7 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
                               ) : null}
                             </div>
                           )}
-                          <p className="text-red-800 dark:text-red-200">
+                          <p className="text-coral-800 dark:text-coral-200">
                             {isGateFailure
                               ? parsed.body
                               : `${t('settings.skillsRunner.error.run')} ${run.message ?? ''}`}
@@ -1277,12 +1277,12 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
                   </div>
 
                   {scheduleSaved && (
-                    <p className="mt-2 inline-flex items-center rounded-full border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/40 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                    <p className="mt-2 inline-flex items-center rounded-full border border-sage-300 dark:border-sage-700 bg-sage-50 dark:bg-sage-900/40 px-2.5 py-1 text-xs font-medium text-sage-700 dark:text-sage-300">
                       {t('settings.skillsRunner.schedule.saved')}
                     </p>
                   )}
                   {scheduleError && (
-                    <p className="mt-2 inline-flex items-center rounded-full border border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/40 px-2.5 py-1 text-xs font-medium text-red-700 dark:text-red-300">
+                    <p className="mt-2 inline-flex items-center rounded-full border border-coral-300 dark:border-coral-700 bg-coral-50 dark:bg-coral-900/40 px-2.5 py-1 text-xs font-medium text-coral-700 dark:text-coral-300">
                       {t('settings.skillsRunner.schedule.error')} {scheduleError}
                     </p>
                   )}
@@ -1546,7 +1546,7 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
                       {/* Live indicator while tailing */}
                       {!v?.complete && (
                         <div className="px-3 py-1.5 text-[10px] text-content-muted border-b border-line-subtle flex items-center gap-2">
-                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-blue-500 animate-pulse" />
+                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary-500 animate-pulse" />
                           <span>
                             {t('settings.skillsRunner.viewer.tailing')}
                             {v?.loading ? ` · ${t('settings.skillsRunner.viewer.fetching')}` : ''}
@@ -1557,7 +1557,7 @@ const WorkflowRunnerBody = ({ headerText, className }: SkillsRunnerBodyProps) =>
                         </div>
                       )}
                       {v?.error && (
-                        <div className="px-3 py-2 text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-950 border-b border-red-100 dark:border-red-900">
+                        <div className="px-3 py-2 text-coral-700 dark:text-coral-300 bg-coral-50 dark:bg-coral-950 border-b border-coral-100 dark:border-coral-900">
                           {t('settings.skillsRunner.viewer.error')} {v.error}
                         </div>
                       )}

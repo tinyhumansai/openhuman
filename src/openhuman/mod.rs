@@ -68,7 +68,6 @@ pub mod skills;
 #[cfg(feature = "e2e-test-support")]
 pub mod test_support;
 pub mod threads;
-pub mod tinyplace;
 pub mod tools;
 pub mod util;
 pub mod voice;

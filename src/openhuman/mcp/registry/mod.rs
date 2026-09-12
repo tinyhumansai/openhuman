@@ -14,6 +14,9 @@
 //!   [`super::host`] holds and publishing this application's own events.
 //! - [`setup_ops`] — the `mcp_setup` handlers, likewise.
 //! - `schemas` — the controller schemas and dispatch.
+//! - [`supervisor_events`] — what the reconnect supervisor observed each
+//!   tick, as this domain's events; the Event Log and the notification bridge
+//!   read those (#5931).
 //! - [`tools`] — the agent-facing tools.
 //!
 //! # The naming note still applies
@@ -39,6 +42,8 @@ pub mod ops;
 mod schemas;
 #[cfg(feature = "mcp")]
 pub mod setup_ops;
+#[cfg(feature = "mcp")]
+pub mod supervisor_events;
 #[cfg(feature = "mcp")]
 pub mod tools;
 
@@ -89,6 +94,26 @@ pub mod connections {
         }
     }
 
+    /// Every connected server's identity and advertised tools in `config`'s
+    /// workspace.
+    ///
+    /// The counterpart to [`connected_overview`] for a caller that holds a
+    /// `Config`, for the same reason [`all_connected_tools_for_config`] and
+    /// [`disconnect_for_config`] exist: the ambient form resolves through the
+    /// process default, which stops answering once a second workspace is open.
+    pub async fn connected_overview_for_config(config: &Config) -> Vec<ConnectedServerOverview> {
+        match host::for_config(config) {
+            Ok(service) => service.dynamic().connected_overview().await,
+            Err(error) => {
+                tracing::debug!(
+                    ?error,
+                    "[mcp] no host for workspace; reporting no connections"
+                );
+                Vec::new()
+            }
+        }
+    }
+
     /// Every tool on every connected server in `config`'s workspace.
     ///
     /// The counterpart to [`all_connected_tools`] for a caller that holds a
@@ -136,6 +161,29 @@ pub mod connections {
             .await
     }
 
+    /// The tools one connected server advertises in `config`'s workspace.
+    ///
+    /// Named `server_tools_*` rather than `tools_for_config` so it cannot be
+    /// misread as [`all_connected_tools_for_config`], which is the every-server
+    /// form sitting a few lines above.
+    ///
+    /// `None` means "not connected". A workspace with no host at all logs and
+    /// also yields `None`, because a server cannot be connected in a workspace
+    /// that has no host — but the log is there so the two are distinguishable
+    /// when this is the answer a caller did not expect.
+    pub async fn server_tools_for_config(
+        config: &Config,
+        server_id: &str,
+    ) -> Option<Vec<tinymcp_bus::McpTool>> {
+        match host::for_config(config) {
+            Ok(service) => service.dynamic().connections().tools_for(server_id).await,
+            Err(error) => {
+                tracing::debug!(?error, server_id, "[mcp] no host for workspace; no tools");
+                None
+            }
+        }
+    }
+
     /// Whether a server has a live entry.
     pub async fn is_connected(server_id: &str) -> bool {
         match host::try_service() {
@@ -150,6 +198,27 @@ pub mod connections {
         }
     }
 
+    /// Whether a server has a live entry in `config`'s workspace.
+    pub async fn is_connected_for_config(config: &Config, server_id: &str) -> bool {
+        match host::for_config(config) {
+            Ok(service) => {
+                service
+                    .dynamic()
+                    .connections()
+                    .is_connected(server_id)
+                    .await
+            }
+            Err(error) => {
+                tracing::debug!(
+                    ?error,
+                    server_id,
+                    "[mcp] no host for workspace; reporting not connected"
+                );
+                false
+            }
+        }
+    }
+
     /// Why a server's most recent attempt hit a 401, as a stable code.
     pub async fn auth_hint_for(server_id: &str) -> Option<&'static str> {
         Some(
@@ -160,6 +229,28 @@ pub mod connections {
                 .await?
                 .as_code(),
         )
+    }
+
+    /// Why a server's most recent attempt in `config`'s workspace hit a 401.
+    pub async fn auth_hint_for_config(config: &Config, server_id: &str) -> Option<&'static str> {
+        match host::for_config(config) {
+            Ok(service) => Some(
+                service
+                    .dynamic()
+                    .connections()
+                    .auth_hint(server_id)
+                    .await?
+                    .as_code(),
+            ),
+            Err(error) => {
+                tracing::debug!(
+                    ?error,
+                    server_id,
+                    "[mcp] no host for workspace; no auth hint"
+                );
+                None
+            }
+        }
     }
 
     /// Connects one server and returns the tools it advertised.
@@ -226,6 +317,21 @@ pub mod connections {
             .connections()
             .last_error(server_id)
             .await
+    }
+
+    /// The most recent failure message for a server in `config`'s workspace.
+    pub async fn last_error_for_config(config: &Config, server_id: &str) -> Option<String> {
+        match host::for_config(config) {
+            Ok(service) => service.dynamic().connections().last_error(server_id).await,
+            Err(error) => {
+                tracing::debug!(
+                    ?error,
+                    server_id,
+                    "[mcp] no host for workspace; no last error"
+                );
+                None
+            }
+        }
     }
 }
 
@@ -316,6 +422,20 @@ pub mod supervisor {
 
         let start = tokio::time::Instant::now() + config.tick_interval;
         let mut interval = tokio::time::interval_at(start, config.tick_interval);
+        // A tick walks every open workspace's installs in sequence and each
+        // probe can take the whole probe window, so a tick can outlast its
+        // own interval. The default behaviour would then fire the missed
+        // ticks back to back, re-probing servers that were just probed.
+        //
+        // `Delay` stops that burst but does not on its own leave a gap: it
+        // schedules the next deadline one interval after the overdue tick
+        // *returns*, which is when the cycle starts, not when it ends. A
+        // cycle that consistently outlasts its interval would therefore find
+        // the next tick already due and run back to back anyway. The
+        // `interval.reset()` at the end of the loop body is what actually
+        // paces from when the cycle finished — which is what
+        // `tinymcp::Supervisor::run` does, and this loop stands in for it.
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         tracing::info!(
             tick_seconds = config.tick_interval.as_secs(),
@@ -332,10 +452,10 @@ pub mod supervisor {
             // proxy it was opened with.
             for (workspace, service, identity, proxy) in host::all_hosts() {
                 let supervisor = supervisors
-                    .entry(workspace)
+                    .entry(workspace.clone())
                     .or_insert_with(|| tinymcp::Supervisor::new(config.clone(), identity, proxy));
 
-                supervisor
+                let report = supervisor
                     .tick(
                         service.dynamic().store(),
                         service.dynamic().connections(),
@@ -343,7 +463,19 @@ pub mod supervisor {
                         now,
                     )
                     .await;
+                // What the tick observed becomes this domain's events, so a
+                // probe outcome reaches the Event Log and a server that stays
+                // down reaches the user (#5931). The workspace goes with them:
+                // this loop covers every host the process has opened, and a
+                // subscriber that persists or announces one must not take a
+                // switched-away workspace's outage for its own.
+                super::supervisor_events::publish(&workspace, &report);
             }
+
+            // Pace from the end of the cycle, not its start: a cycle slower
+            // than the interval leaves the next tick already due, and without
+            // this the supervisor would probe continuously.
+            interval.reset();
         }
     }
 }

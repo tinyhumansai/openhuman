@@ -8,13 +8,13 @@ use crate::openhuman::threads::todos::ops::BoardLocation;
 /// are invisible to the web channel's own in-flight registry — which is why the
 /// chat **Cancel** button (which calls `channel_web_cancel`) couldn't stop them.
 /// Registering the run's [`AbortHandle`](tokio::task::AbortHandle) in the
-/// crate's [`ActiveRunRegistry`](tinyagents::graph::todos::dispatch::ActiveRunRegistry)
+/// crate's [`ActiveRunRegistry`](tinyagents_graph::todos::dispatch::ActiveRunRegistry)
 /// lets [`cancel_session`](super::registry::cancel_session) abort it from that
 /// same cancel path.
 ///
 /// The `context` the crate carries for us is the run's [`BoardLocation`], which
 /// the canceller needs to write the card back to a terminal state.
-pub(super) type ActiveRun = tinyagents::graph::todos::dispatch::ActiveRun<BoardLocation>;
+pub(super) type ActiveRun = tinyagents_graph::todos::dispatch::ActiveRun<BoardLocation>;
 
 /// A resolved executor: which built-in agent definition to build, an optional
 /// system-prompt suffix carrying a personality identity or skill guidelines,

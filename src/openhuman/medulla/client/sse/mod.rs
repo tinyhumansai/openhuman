@@ -11,7 +11,7 @@
 //! ```
 //!
 //! `id:` sets the replay cursor (persisted events only; deltas omit it),
-//! `data:` carries the JSON [`EventEnvelope`], comment lines (`: ping`) are
+//! `data:` carries the JSON [`WireEventEnvelope`], comment lines (`: ping`) are
 //! ignored, and a blank line terminates the current frame.
 
 use std::collections::VecDeque;
@@ -19,7 +19,7 @@ use std::collections::VecDeque;
 use futures::stream::{Stream, StreamExt};
 
 use crate::openhuman::medulla::client::error::{ClientError, Result};
-use crate::openhuman::medulla::client::types::EventEnvelope;
+use crate::openhuman::medulla::client::types::WireEventEnvelope;
 
 impl SseParser {
     /// Create an empty parser.
@@ -151,7 +151,7 @@ impl StreamState {
         if trimmed.is_empty() {
             return;
         }
-        match serde_json::from_str::<EventEnvelope>(trimmed) {
+        match serde_json::from_str::<WireEventEnvelope>(trimmed) {
             Ok(env) => self.pending.push_back(Ok(env)),
             Err(e) => self
                 .pending
@@ -162,7 +162,7 @@ impl StreamState {
     /// Produce the next stream item, reconnecting as needed. Returns `None`
     /// only when the stream is permanently exhausted (never, in practice —
     /// it reconnects on end-of-body).
-    async fn next(&mut self) -> Option<Result<EventEnvelope>> {
+    async fn next(&mut self) -> Option<Result<WireEventEnvelope>> {
         loop {
             if let Some(item) = self.pending.pop_front() {
                 return Some(item);
@@ -196,7 +196,7 @@ impl StreamState {
     }
 }
 
-/// Build a reconnecting SSE stream of [`EventEnvelope`]s.
+/// Build a reconnecting SSE stream of [`WireEventEnvelope`]s.
 ///
 /// `url` must already include auth (`?token=<jwt>`). The stream reconnects with
 /// the `Last-Event-ID` header and de-duplicates replayed frames by seq. Drop
@@ -205,7 +205,7 @@ pub fn event_stream(
     http: reqwest::Client,
     url: String,
     last_event_id: Option<u64>,
-) -> impl Stream<Item = Result<EventEnvelope>> {
+) -> impl Stream<Item = Result<WireEventEnvelope>> {
     let state = StreamState {
         http,
         url,

@@ -952,7 +952,7 @@
       ]
     },
     {
-      "description": "Run a cron job immediately and record run metadata.",
+      "description": "Enqueue a cron job for immediate background execution and return once it is queued. The terminal outcome (ok/error, duration, output) is recorded in the run history — read it with `cron_runs`.",
       "function": "run",
       "inputs": [
         {
@@ -966,35 +966,23 @@
       "namespace": "cron",
       "outputs": [
         {
-          "comment": "Immediate execution result payload.",
+          "comment": "Enqueue acknowledgement payload.",
           "name": "result",
           "required": true,
           "ty": {
             "Object": {
               "fields": [
                 {
-                  "comment": "Executed cron job identifier.",
+                  "comment": "Enqueued cron job identifier.",
                   "name": "job_id",
                   "required": true,
                   "ty": "String"
                 },
                 {
-                  "comment": "Execution status.",
+                  "comment": "Always \"queued\" — the job runs in the background; poll `cron_runs` for the terminal status.",
                   "name": "status",
                   "required": true,
-                  "ty": { "Enum": { "variants": ["ok", "error"] } }
-                },
-                {
-                  "comment": "Execution duration in milliseconds.",
-                  "name": "duration_ms",
-                  "required": true,
-                  "ty": "I64"
-                },
-                {
-                  "comment": "Captured command output (possibly truncated).",
-                  "name": "output",
-                  "required": true,
-                  "ty": "String"
+                  "ty": { "Enum": { "variants": ["queued"] } }
                 }
               ]
             }

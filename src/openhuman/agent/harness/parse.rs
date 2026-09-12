@@ -1,5 +1,5 @@
 //! Tool-call parsing — OpenHuman's adapter over
-//! [`tinyagents::harness::tool_calling`].
+//! [`tinyagents_harness::tool_calling`].
 //!
 //! The parsers themselves moved to the crate: `<tool_call>` tags in their
 //! several spellings, fenced blocks, bare JSON, Anthropic-style `<invoke>` XML,
@@ -12,7 +12,7 @@
 //! fixtures its own tests assert against, and they never compiled into a
 //! production build even before the move.
 
-pub(crate) use tinyagents::harness::tool_calling::{
+pub(crate) use tinyagents_harness::tool_calling::{
     extract_json_values, parse_tool_calls, parse_tool_calls_with_pformat,
 };
 
@@ -21,7 +21,7 @@ pub(crate) use tinyagents::harness::tool_calling::{
 // site — gated so a non-test build doesn't warn (and fail `-D warnings`) on
 // them.
 #[cfg(test)]
-pub(crate) use tinyagents::harness::tool_calling::{
+pub(crate) use tinyagents_harness::tool_calling::{
     parse_arguments_value, parse_glm_style_tool_calls, parse_tool_call_value,
     parse_tool_calls_from_json_value,
 };
@@ -31,7 +31,7 @@ use crate::openhuman::inference::provider::ToolCall;
 #[cfg(test)]
 use crate::openhuman::tools::Tool;
 #[cfg(test)]
-use tinyagents::harness::tool_calling::ParsedToolCall;
+use tinyagents_harness::tool_calling::ParsedToolCall;
 
 #[cfg(test)]
 pub(crate) fn parse_structured_tool_calls(tool_calls: &[ToolCall]) -> Vec<ParsedToolCall> {

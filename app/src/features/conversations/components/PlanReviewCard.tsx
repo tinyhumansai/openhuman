@@ -93,7 +93,9 @@ export const PlanReviewCard: React.FC<Props> = ({ threadId, review }) => {
             </ol>
           )}
 
-          {errorMsg && <p className="mt-2 text-xs text-coral">⚠ {errorMsg}</p>}
+          {errorMsg && (
+            <p className="mt-2 text-xs text-coral-600 dark:text-coral-400">⚠ {errorMsg}</p>
+          )}
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <Button
@@ -138,7 +140,7 @@ export const PlanReviewCard: React.FC<Props> = ({ threadId, review }) => {
               rows={2}
               disabled={deciding !== null}
               placeholder={t('conversations.planReview.feedbackPlaceholder')}
-              className="w-full resize-y rounded-lg border border-primary-200 bg-surface px-2.5 py-1.5 text-sm text-ink shadow-inner outline-hidden focus:border-primary-400 disabled:opacity-50 dark:border-primary-800 dark:bg-surface-canvas dark:text-content"
+              className="w-full resize-y rounded-lg border border-primary-200 bg-surface px-2.5 py-1.5 text-sm text-content shadow-inner outline-hidden focus:border-primary-400 disabled:opacity-50 dark:border-primary-800 dark:bg-surface-canvas"
             />
             <div className="mt-1.5 flex justify-end">
               <Button

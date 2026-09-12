@@ -2,7 +2,7 @@
 //!
 //! The pipeline itself — marker parsing, `data:` URI decoding, MIME detection,
 //! size and count limits, the rendered payload — lives in
-//! [`tinyagents::harness::multimodal`]. What is left here is everything that
+//! [`tinyagents_harness::multimodal`]. What is left here is everything that
 //! depends on *this* host rather than on any host:
 //!
 //! | Kept here | Why it cannot be generic |
@@ -40,7 +40,7 @@ use crate::openhuman::config::{
     build_runtime_proxy_client_with_timeouts, MultimodalConfig, MultimodalFileConfig,
 };
 
-use tinyagents::harness::multimodal::{
+use tinyagents_harness::multimodal::{
     self as mm,
     config::{FileLimits, ImageLimits},
     markers, mime as mm_mime,
@@ -48,7 +48,7 @@ use tinyagents::harness::multimodal::{
     resolve::{resolve_file, resolve_image, TextExtractor},
 };
 
-pub use tinyagents::harness::multimodal::{FilePayload, MultimodalError};
+pub use tinyagents_harness::multimodal::{FilePayload, MultimodalError};
 
 /// Hard upper bound on how long the `tinydocs` module may spend extracting a
 /// PDF's text layer before the attempt is abandoned and the file degrades to a

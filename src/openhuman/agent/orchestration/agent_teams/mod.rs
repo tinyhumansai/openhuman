@@ -3,7 +3,7 @@
 //! A first-class, restart-survivable model for a lead agent coordinating a team
 //! of worker agents: teams, members, dependency-aware tasks with race-safe
 //! atomic claiming, and teammate messaging. All durable state lives in
-//! `tinyagents::session::run_ledger` (the `agent_teams` / `agent_team_members` /
+//! `tinyagents_session::run_ledger` (the `agent_teams` / `agent_team_members` /
 //! `agent_team_tasks` tables, plus the shared run-event log for messages),
 //! never in the main chat context — so a coordination session can be listed,
 //! inspected, and resumed.

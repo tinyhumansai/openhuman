@@ -20,10 +20,6 @@ for d in reasoning_agent frontend_agent master_agent master_reporter; do
   [ -d "src/openhuman/hosted/orchestration/$d" ] && note "orchestration/$d agent package present"
 done
 
-# 2. The retired tiny.place subconscious steering profile.
-[ -f src/openhuman/subconscious/profiles/tinyplace.rs ] &&
-  note "tinyplace subconscious profile present"
-
 # 3. Any orchestration prompt.md asset (the proprietary prompt IP).
 if find src/openhuman/hosted/orchestration -name 'prompt.md' -print -quit 2>/dev/null | grep -q .; then
   note "orchestration prompt.md asset present"

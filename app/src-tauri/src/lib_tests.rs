@@ -309,7 +309,7 @@ fn platform_cef_gpu_workarounds_force_swiftshader_on_linux() {
     append_platform_cef_gpu_workarounds(&mut args, "linux", "x86_64", None, None);
 
     // #4193: the GPU process must NOT be killed outright — `--disable-gpu`
-    // takes every WebGL surface (the Tiny Place world renderer) down with it.
+    // takes every WebGL surface down with it.
     assert!(
         !args.contains(&("--disable-gpu", None)),
         "--disable-gpu kills WebGL and must not be set, got: {args:?}"

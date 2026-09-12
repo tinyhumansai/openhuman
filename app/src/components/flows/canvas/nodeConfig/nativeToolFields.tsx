@@ -14,8 +14,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { cn } from '../../../../lib/cn';
 import { useT } from '../../../../lib/i18n/I18nContext';
 import { listRuntimeTools, type RuntimeTool } from '../../../../services/api/runtimeToolsApi';
-import UiInput from '../../../ui/Input';
-import NativeSelect from '../../../ui/NativeSelect';
+import { NativeSelect, Input as UiInput } from '../../../ui';
 import { Field, MONO_CLASS } from './nodeConfigFields';
 
 /** The `oh:` prefix that marks a native-tool slug (mirrors the Rust constant). */

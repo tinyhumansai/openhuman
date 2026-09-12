@@ -239,7 +239,7 @@ const PermissionsPanel = () => {
                   </Button>
                 ))}
                 {level === 'full' && (
-                  <p className="rounded border border-coral/40 bg-coral/5 dark:bg-coral/10 p-2 text-xs text-coral-600 dark:text-coral-300">
+                  <p className="rounded border border-coral-500/40 bg-coral-500/5 dark:bg-coral-500/10 p-2 text-xs text-coral-600 dark:text-coral-300">
                     {t('settings.agentAccess.fullWarning')}
                   </p>
                 )}
