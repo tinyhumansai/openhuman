@@ -468,7 +468,28 @@ fn contains_routing_override(text: &str) -> bool {
         || lowered.contains("follow")
         || lowered.contains("comply")
         || lowered.contains("listen");
-    dismisses_policy && names_routing_policy && directs_compliance
+    if dismisses_policy && names_routing_policy && directs_compliance {
+        return true;
+    }
+
+    // A server can express the same override without naming the policy it is
+    // replacing. Universal selection and exclusivity directives still try to
+    // control routing for unrelated requests, so keep them out of the higher-
+    // privilege orchestrator prompt as well.
+    let universal_scope = lowered.contains("for every request")
+        || lowered.contains("for every user request")
+        || lowered.contains("for all requests")
+        || lowered.contains("for any request")
+        || lowered.contains("every user request");
+    let selects_this_server = lowered.contains("always select this server")
+        || lowered.contains("always use this server")
+        || lowered.contains("always choose this server")
+        || lowered.contains("only use this server")
+        || lowered.contains("use this server exclusively")
+        || lowered.contains("never use another server")
+        || lowered.contains("never use a different server");
+
+    universal_scope && selects_this_server
 }
 
 /// Render the delegator-voice `## Connected Integrations` block. Only
