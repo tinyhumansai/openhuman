@@ -1,6 +1,7 @@
 import debug from 'debug';
 import { useCallback, useEffect, useState } from 'react';
 
+import { trackAnalyticsEvent } from '../../analytics';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { useCoreState } from '../../../providers/CoreStateProvider';
 import { learningApi } from '../../../services/api/learningApi';
@@ -19,7 +20,6 @@ import {
 } from '../controls';
 import SettingsPanel from '../layout/SettingsPanel';
 import PrivacyModeSection from './PrivacyModeSection';
-import { trackAnalyticsEvent } from '../../analytics';
 
 const log = debug('privacy-panel');
 
