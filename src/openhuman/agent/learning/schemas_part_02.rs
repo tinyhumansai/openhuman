@@ -202,17 +202,6 @@ fn handle_pin_facet(params: Map<String, Value>) -> ControllerFuture {
             .map_err(|e| format!("re-read failed: {e:#}"))?
             .ok_or_else(|| "facet disappeared after update".to_string())?;
 
-        // Pinning makes a provisional facet part of the learned profile
-        // immediately; otherwise the UI reports it as pinned while the
-        // prompt/cache path (which reads Active facets) still omits it.
-        if facet.state == FacetState::Provisional {
-            facet.state = FacetState::Active;
-            cache
-                .upsert(&facet)
-                .await
-                .map_err(|e| format!("activate pinned facet failed: {e:#}"))?;
-        }
-
         let log = vec![format!("learning.pin_facet: key={fk} user_state=pinned")];
         let payload = serde_json::json!({ "facet": facet_to_json(&facet) });
         RpcOutcome::new(payload, log).into_cli_compatible_json()

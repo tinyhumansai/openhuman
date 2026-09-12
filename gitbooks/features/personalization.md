@@ -117,7 +117,7 @@ During onboarding you can let OpenHuman bootstrap your identity from LinkedIn. T
 
 Everything learned is inspectable and reversible:
 
-- **Edit `PROFILE.md` directly.** It's your file. Correct, add, or delete anything; the next rebuild respects your edits.
+- **Edit `PROFILE.md` directly.** It's your file. Correct, add, or delete anything outside the managed facet blocks; the next rebuild preserves those edits while regenerating managed blocks from the facet cache.
 - **The Brain page** (raised center button in the bottom bar, `/brain`) is the home for memory and intelligence. Open the **Profile** tab to list learned facets, pin / unpin / forget them, rebuild the cache, and toggle self-learning. The same master switch also lives under **Settings → Privacy**.
 - **Pin** a fact to lock it Active and shield it from decay, or **forget** a fact to drop it and block it from coming back. Under the hood these are the `learning_pin_facet`, `learning_unpin_facet`, and `learning_forget_facet` operations over the `openhuman.learning_*` RPC surface, alongside `learning_list_facets`, `learning_rebuild_cache`, `learning_get_settings`, and `learning_update_settings`.
 - Standing preferences in the prompt come from **Lane A** (`user_pref_general`) plus **Active facets** (`user_profile_facets`). The retired `user_profile` KV namespace is not an authority for that inject path.

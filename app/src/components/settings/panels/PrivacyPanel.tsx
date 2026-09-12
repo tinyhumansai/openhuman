@@ -144,16 +144,22 @@ const PrivacyPanel = () => {
             label={t('privacy.selfLearningLabel')}
             description={t('privacy.selfLearningDesc')}
             control={
-              <SettingsSwitch
-                id="switch-learning"
-                checked={learningEnabled}
-                disabled={learningLoadState !== 'ready' || learningSaving}
-                onCheckedChange={() => {
-                  void handleToggleLearning();
-                }}
-                aria-label={t('privacy.selfLearningLabel')}
-                data-testid="privacy-learning-toggle"
-              />
+              learningLoadState === 'error' ? (
+                <span className="text-xs text-content-muted" data-testid="privacy-learning-error">
+                  {t('privacy.loadError')}
+                </span>
+              ) : (
+                <SettingsSwitch
+                  id="switch-learning"
+                  checked={learningEnabled}
+                  disabled={learningLoadState !== 'ready' || learningSaving}
+                  onCheckedChange={() => {
+                    void handleToggleLearning();
+                  }}
+                  aria-label={t('privacy.selfLearningLabel')}
+                  data-testid="privacy-learning-toggle"
+                />
+              )
             }
           />
         </SettingsSection>

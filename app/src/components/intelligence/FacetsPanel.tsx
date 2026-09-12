@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LuPin, LuPinOff, LuRefreshCw, LuTrash2 } from 'react-icons/lu';
 
 import { useT } from '../../lib/i18n/I18nContext';
+import { trackAnalyticsEvent } from '../analytics';
 import { learningApi, type LearningFacet } from '../../services/api/learningApi';
 import Button from '../ui/Button';
 
@@ -116,6 +117,7 @@ export default function FacetsPanel() {
     setRebuilding(true);
     try {
       await learningApi.rebuildCache();
+      trackAnalyticsEvent('learning_facet_rebuilt');
       const list = await learningApi.listFacets();
       if (mountedRef.current) {
         setFacets(list);
@@ -259,11 +261,15 @@ export default function FacetsPanel() {
                         disabled={busy}
                         aria-label={pinned ? t('brain.profile.unpin') : t('brain.profile.pin')}
                         onClick={() =>
-                          void runAction(facet.key, () =>
-                            pinned
-                              ? learningApi.unpinFacet(facet.key)
-                              : learningApi.pinFacet(facet.key)
-                          )
+                          void runAction(facet.key, async () => {
+                            if (pinned) {
+                              await learningApi.unpinFacet(facet.key);
+                              trackAnalyticsEvent('learning_facet_unpinned');
+                            } else {
+                              await learningApi.pinFacet(facet.key);
+                              trackAnalyticsEvent('learning_facet_pinned');
+                            }
+                          })
                         }
                         data-testid={`facet-pin-${facet.key}`}>
                         {pinned ? (
@@ -279,7 +285,10 @@ export default function FacetsPanel() {
                         disabled={busy}
                         aria-label={t('brain.profile.forget')}
                         onClick={() =>
-                          void runAction(facet.key, () => learningApi.forgetFacet(facet.key))
+                          void runAction(facet.key, async () => {
+                            await learningApi.forgetFacet(facet.key);
+                            trackAnalyticsEvent('learning_facet_forgotten');
+                          })
                         }
                         data-testid={`facet-forget-${facet.key}`}>
                         <LuTrash2 className="h-3.5 w-3.5" />
