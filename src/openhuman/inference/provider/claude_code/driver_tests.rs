@@ -1,4 +1,5 @@
 use super::*;
+use super::super::session_store::is_uuid_v4;
 
 #[test]
 fn write_mcp_http_config_emits_http_url_with_bearer_header() {
