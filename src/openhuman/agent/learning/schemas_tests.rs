@@ -1,13 +1,13 @@
 use super::*;
 
 #[test]
-fn all_schemas_returns_eleven() {
-    assert_eq!(all_learning_controller_schemas().len(), 11);
+fn all_schemas_returns_thirteen() {
+    assert_eq!(all_learning_controller_schemas().len(), 13);
 }
 
 #[test]
-fn all_controllers_returns_eleven() {
-    assert_eq!(all_learning_registered_controllers().len(), 11);
+fn all_controllers_returns_thirteen() {
+    assert_eq!(all_learning_registered_controllers().len(), 13);
 }
 
 #[test]
