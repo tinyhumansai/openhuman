@@ -85,7 +85,10 @@ jobs:
           ref: ${{ inputs.ref }}
           fetch-depth: 1
       # The RPC-catalog drift-guard test (rpcMethods.test.ts) reads
-      # vendor/tinychannels/src/controllers/schemas.rs at test time. This lane
+      # vendor/tinychannels/crates/tinychannels-bus/src/controllers/schemas.rs
+      # at test time (controller metadata is contract, so it lives in the bus
+      # crate). Still one submodule — the bus crate is a workspace member of
+      # vendor/tinychannels, not a submodule of its own. This lane
       # otherwise checks out without submodules, so init just that one — not
       # `submodules: recursive`, which would also pull the large tauri-cef fork
       # this job never builds.
