@@ -168,6 +168,7 @@ fn for_subagent_builder_injects_user_files_even_when_identity_omitted() {
         "You are a specialist agent.".into(),
         true, // omit_identity  — drops SOUL/IDENTITY preamble
         true, // omit_safety_preamble
+        false,
     );
     let rendered = builder.build(&ctx).unwrap();
 

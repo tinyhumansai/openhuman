@@ -77,7 +77,7 @@ fn agents_md_section_registered_in_dynamic_builder() {
 #[test]
 fn agents_md_section_registered_in_subagent_builder() {
     let ctx = agents_md_ctx(None, Some("SUBAGENT_BUILDER_MARKER".into()));
-    let builder = SystemPromptBuilder::for_subagent("role body".into(), true, true);
+    let builder = SystemPromptBuilder::for_subagent("role body".into(), true, true, false);
     let rendered = builder.build(&ctx).unwrap();
     assert!(
         rendered.contains("## Project instructions (AGENTS.md)"),

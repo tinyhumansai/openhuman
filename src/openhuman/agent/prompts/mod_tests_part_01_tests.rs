@@ -69,7 +69,7 @@ fn grounding_contract_appended_to_every_build_path() {
     assert!(defaults.contains(marker));
 
     // 2. Sub-agent static chain.
-    let sub = SystemPromptBuilder::for_subagent("role".into(), true, true)
+    let sub = SystemPromptBuilder::for_subagent("role".into(), true, true, false)
         .build(&ctx)
         .unwrap();
     assert!(sub.contains(marker));
