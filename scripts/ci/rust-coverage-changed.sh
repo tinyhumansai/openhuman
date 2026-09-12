@@ -242,8 +242,11 @@ compile_raw_coverage_target() {
 run_full() {
   log "running FULL instrumented suite (reason: $1)"
   llvm_cov clean --workspace
-  llvm_cov --no-report --no-fail-fast -p openhuman --lib
-  llvm_cov --no-report --no-fail-fast -p openhuman --bins
+  # The full library and binary suites contain tests that share process-global
+  # registries, configuration, and runtime state. Keep them serialized so
+  # coverage failures reflect assertions rather than test-order races.
+  llvm_cov --no-report --no-fail-fast -p openhuman --lib -- --test-threads=1
+  llvm_cov --no-report --no-fail-fast -p openhuman --bins -- --test-threads=1
   while IFS= read -r target; do
     [ -n "${target}" ] || continue
     log "running full-suite integration target: ${target}"
