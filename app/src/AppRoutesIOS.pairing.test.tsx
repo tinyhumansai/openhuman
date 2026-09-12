@@ -172,7 +172,7 @@ describe('AppRoutesIOS — deep links a paired phone must honour', () => {
     // The bare /chat form is covered by AppRoutesIOS.test.tsx; the optional
     // `:threadId` segment is what a notification deep link actually carries,
     // and a mismatch there lands the user on the catch-all instead.
-    listProfiles.mockReturnValue(SAVED_PROFILE);
+    listProfiles.mockReturnValue([TUNNEL_PROFILE]);
     const transport = { kind: 'tunnel', isHealthy: vi.fn().mockResolvedValue(true) };
     mockGetTransport.mockResolvedValue(transport);
 
