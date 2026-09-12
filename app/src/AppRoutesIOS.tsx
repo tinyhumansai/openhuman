@@ -22,8 +22,8 @@ import Accounts from './pages/Accounts';
 import { PairScreen } from './pages/ios/PairScreen';
 import Settings from './pages/Settings';
 import { setActiveCoreTransport } from './services/coreRpcClient';
-import { createTransportManager } from './services/transport/TransportManager';
 import { listProfiles } from './services/transport/profileStore';
+import { createTransportManager } from './services/transport/TransportManager';
 import { BACKEND_URL } from './utils/config';
 
 const log = debug('mobile:routes');
@@ -94,36 +94,36 @@ const AppRoutesIOS: FC = () => {
   return (
     <MobileTransportBootstrap>
       <Routes>
-      {/* Unpaired entry — QR scan handshake. */}
-      <Route path="/pair" element={<PairScreen />} />
+        {/* Unpaired entry — QR scan handshake. */}
+        <Route path="/pair" element={<PairScreen />} />
 
-      {/* Surfaced pages on iOS: Human, Chat, Settings. */}
-      <Route
-        path="/human"
-        element={
-          <RequirePairing>
-            <HumanPage />
-          </RequirePairing>
-        }
-      />
-      <Route
-        path="/chat/:threadId?"
-        element={
-          <RequirePairing>
-            <Accounts />
-          </RequirePairing>
-        }
-      />
-      <Route
-        path="/settings/*"
-        element={
-          <RequirePairing>
-            <Settings />
-          </RequirePairing>
-        }
-      />
+        {/* Surfaced pages on iOS: Human, Chat, Settings. */}
+        <Route
+          path="/human"
+          element={
+            <RequirePairing>
+              <HumanPage />
+            </RequirePairing>
+          }
+        />
+        <Route
+          path="/chat/:threadId?"
+          element={
+            <RequirePairing>
+              <Accounts />
+            </RequirePairing>
+          }
+        />
+        <Route
+          path="/settings/*"
+          element={
+            <RequirePairing>
+              <Settings />
+            </RequirePairing>
+          }
+        />
 
-      <Route path="*" element={<IOSDefaultRedirect />} />
+        <Route path="*" element={<IOSDefaultRedirect />} />
       </Routes>
     </MobileTransportBootstrap>
   );

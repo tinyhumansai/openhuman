@@ -21,9 +21,9 @@ import { useNavigate } from 'react-router-dom';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { base64urlEncode, generateKeypair } from '../../lib/tunnel/crypto';
+import { setActiveCoreTransport } from '../../services/coreRpcClient';
 import { type ConnectionProfile, saveProfile } from '../../services/transport/profileStore';
 import { createTransportManager } from '../../services/transport/TransportManager';
-import { setActiveCoreTransport } from '../../services/coreRpcClient';
 import { BACKEND_URL } from '../../utils/config';
 
 const log = debug('ios:pair-screen');
