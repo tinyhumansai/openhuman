@@ -200,7 +200,7 @@ describe('<FacetsPanel />', () => {
   });
 
   it('reports a rebuild refresh failure', async () => {
-    render(<FacetsPanel />);
+    renderWithProviders(<FacetsPanel />);
     await screen.findByTestId('facets-panel');
     listFacets.mockRejectedValueOnce(new Error('rebuild refresh failed'));
     fireEvent.click(screen.getByTestId('facets-rebuild'));
