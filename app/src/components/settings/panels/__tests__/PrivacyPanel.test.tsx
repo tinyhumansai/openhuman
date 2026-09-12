@@ -20,13 +20,8 @@ const setMeetAutoOrchestratorHandoffMock = vi.fn();
 const setAnalyticsEnabledMock = vi.fn();
 vi.mock('../../../../providers/CoreStateProvider', () => ({
   useCoreState: () => ({
-    snapshot: {
-      analyticsEnabled: false,
-      meetAutoOrchestratorHandoff: false,
-      auth: { userId: 'test-user' },
-    },
+    snapshot: { analyticsEnabled: false, auth: { userId: 'test-user' } },
     setAnalyticsEnabled: (v: boolean) => setAnalyticsEnabledMock(v),
-    setMeetAutoOrchestratorHandoff: (v: boolean) => setMeetAutoOrchestratorHandoffMock(v),
   }),
 }));
 
@@ -147,22 +142,8 @@ describe('PrivacyPanel', () => {
       expect(screen.getByTestId('privacy-load-error')).toBeTruthy();
     });
     expect(screen.queryByTestId('privacy-capability-list')).toBeNull();
-    // Learning + analytics + meet-handoff toggles still rendered
-    expect(screen.getAllByRole('switch').length).toBeGreaterThanOrEqual(3);
-  });
-
-  it('flips the meet auto-handoff toggle from OFF to ON when clicked (#1299)', async () => {
-    vi.mocked(listCapabilities).mockResolvedValue([]);
-    renderWithProviders(<PrivacyPanel />);
-
-    const toggle = await screen.findByTestId('privacy-meet-handoff-toggle');
-    expect(toggle.getAttribute('aria-checked')).toBe('false');
-
-    fireEvent.click(toggle);
-
-    await waitFor(() => {
-      expect(setMeetAutoOrchestratorHandoffMock).toHaveBeenCalledWith(true);
-    });
+    // Learning + analytics toggles still rendered
+    expect(screen.getAllByRole('switch').length).toBeGreaterThanOrEqual(2);
   });
 
   it('disables the learning control when settings cannot be loaded', async () => {

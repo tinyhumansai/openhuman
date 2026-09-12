@@ -35,7 +35,7 @@ vi.mock('../../lib/i18n/I18nContext', () => ({
   useT: () => ({
     t: (key: string, fallback?: string) =>
       key === 'brain.profile.meta'
-        ? '{{state}} · stability {{stability}}'
+        ? '{state} · stability {stability}'
         : (fallback ?? key),
   }),
 }));
