@@ -388,6 +388,7 @@ function markTabLoading(
     if (!collectionState) {
       continue;
     }
+    collectionState.restartGeneration = generation;
     collectionState.observation = { kind: 'loading', generation };
   }
 
@@ -402,17 +403,12 @@ function markCollectionLoading(
   collection: RegistryCollectionKey,
   generation: number
 ): void {
-  const tabState = state.tabs[tab];
-  if (generation < tabState.generation) {
-    return;
-  }
-
   const collectionState = getCollectionState(state, tab, collection);
   if (!collectionState) {
     return;
   }
 
-  tabState.generation = generation;
+  collectionState.restartGeneration = generation;
   collectionState.observation = { kind: 'loading', generation };
 }
 
@@ -487,7 +483,7 @@ export function registryInspectionReducer(
 
     case 'cursor_collection_request_succeeded': {
       const tabState = next.tabs[action.tab];
-      if (action.generation !== tabState.generation) {
+      if (collectionStateGeneration(next, action.tab, action.collection) !== action.generation) {
         return state;
       }
 
