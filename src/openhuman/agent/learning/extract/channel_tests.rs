@@ -36,7 +36,13 @@ fn emit_primary_channel_pushes_structural_candidate() {
 #[test]
 fn emit_primary_channel_skips_automation_contexts() {
     let _ = candidate::global().drain();
-    for channel in ["cron", "task", "skill", "goal_continuation", "goals_enrichment"] {
+    for channel in [
+        "cron",
+        "task",
+        "skill",
+        "goal_continuation",
+        "goals_enrichment",
+    ] {
         assert!(!emit_primary_channel(channel));
     }
     assert!(candidate::global().drain().is_empty());
