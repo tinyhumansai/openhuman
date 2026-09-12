@@ -535,6 +535,7 @@ impl Agent {
                     text.clone(),
                     def.omit_identity,
                     def.omit_safety_preamble,
+                    !def.omit_skills_catalog,
                 ),
                 PromptSource::File { path } => {
                     let prompt_root = config.workspace_dir.join("agent").join("prompts");
@@ -571,6 +572,7 @@ impl Agent {
                         body_text,
                         def.omit_identity,
                         def.omit_safety_preamble,
+                        !def.omit_skills_catalog,
                     )
                 }
             },

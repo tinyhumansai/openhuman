@@ -539,6 +539,9 @@ pub fn render_subagent_system_prompt_with_format_and_workflows(
         let catalog = super::sections::render_skills_catalog(workflows);
         if let Some(position) = rendered.find("## Workspace") {
             rendered.insert_str(position, &catalog);
+        } else {
+            rendered.push_str("\n\n");
+            rendered.push_str(&catalog);
         }
     }
     rendered
