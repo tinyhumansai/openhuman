@@ -23,6 +23,7 @@ agent_tier = "chat"
 omit_identity = false
 omit_memory_context = true
 omit_safety_preamble = true
+omit_skills_catalog = false
 # The orchestrator is the user-facing front-line agent — it routes,
 # synthesises, and speaks to the user in their voice. PROFILE.md
 # (onboarding enrichment output) anchors that voice.
