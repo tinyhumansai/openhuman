@@ -43,11 +43,13 @@ fn well_known_candidates_cover_the_native_installer_and_homebrew() {
 fn well_known_candidates_without_a_home_still_probe_system_prefixes() {
     let candidates = super::well_known_candidates(None);
 
-    assert_eq!(
-        candidates,
-        vec![
-            PathBuf::from("/opt/homebrew/bin/claude"),
-            PathBuf::from("/usr/local/bin/claude"),
-        ]
-    );
+    assert!(candidates.contains(&PathBuf::from("/opt/homebrew/bin/claude")));
+    assert!(candidates.contains(&PathBuf::from("/usr/local/bin/claude")));
+
+    #[cfg(windows)]
+    {
+        let native = PathBuf::from("/opt/homebrew/bin/claude.cmd");
+        let shim = PathBuf::from("/opt/homebrew/bin/claude");
+        assert!(candidates.iter().position(|p| p == &native) < candidates.iter().position(|p| p == &shim));
+    }
 }

@@ -95,11 +95,11 @@ fn is_executable(path: &Path) -> bool {
 }
 
 fn push_candidate_variants(candidates: &mut Vec<PathBuf>, candidate: PathBuf) {
-    candidates.push(candidate.clone());
     #[cfg(windows)]
     for suffix in [".exe", ".cmd", ".bat"] {
         candidates.push(PathBuf::from(format!("{}{}", candidate.display(), suffix)));
     }
+    candidates.push(candidate);
 }
 
 /// Ask the user's login shell where `claude` lives.
