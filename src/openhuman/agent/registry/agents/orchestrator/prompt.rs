@@ -142,6 +142,13 @@ fn render_withheld_specialists(ctx: &PromptContext<'_>) -> String {
         );
         return String::new();
     };
+    render_withheld_specialists_from_registry(ctx, registry)
+}
+
+fn render_withheld_specialists_from_registry(
+    ctx: &PromptContext<'_>,
+    registry: &AgentDefinitionRegistry,
+) -> String {
     let Some(definition) = resolve_definition(registry, ctx.agent_id) else {
         tracing::debug!(
             agent = ctx.agent_id,
@@ -392,8 +399,50 @@ fn format_connected_mcp_block(
                 .trim()
                 .to_string()
         };
+        // A server the user added by hand has no registry entry and therefore
+        // no description, which used to leave it as a bare name plus a tool
+        // count. Its `initialize` handshake carries the server's own
+        // `instructions`, so fall back to that before falling back to counting.
+        // Only when the description is empty: an inventory server already says
+        // what it does, and printing both would say it twice. Instructions are
+        // remote free-form text on the same footing as the description, so they
+        // go through the same scrub — with a wider bound, since guidance is
+        // longer than a one-line blurb by nature.
+        let instructions = if desc.is_empty() {
+            let raw = s.instructions.as_deref().unwrap_or("").trim();
+            if raw.is_empty() {
+                String::new()
+            } else {
+                // Bound the scanner's input as well as the rendered output:
+                // handshake instructions are remote text and may otherwise
+                // make the prompt-injection scan process an unbounded value.
+                let sanitized = crate::openhuman::util::sanitize::sanitize_for_llm(raw, 600)
+                    .replace(['\n', '\t'], " ")
+                    .trim()
+                    .to_string();
+                if crate::openhuman::security::prompt_injection::scan_tool_definition(
+                    "instructions",
+                    &sanitized,
+                )
+                .is_some()
+                    || contains_routing_override(&sanitized)
+                {
+                    tracing::warn!(
+                        qualified_name = %s.qualified_name,
+                        "quarantining MCP server instructions flagged for prompt injection"
+                    );
+                    String::new()
+                } else {
+                    sanitized
+                }
+            }
+        } else {
+            String::new()
+        };
         if !desc.is_empty() {
             let _ = writeln!(out, "- **{name}** (`{}`): {desc}", s.qualified_name);
+        } else if !instructions.is_empty() {
+            let _ = writeln!(out, "- **{name}** (`{}`): {instructions}", s.qualified_name);
         } else {
             // No registry description — fall back to a tool-count hint so the
             // line still conveys the server has callable capability.
@@ -407,6 +456,43 @@ fn format_connected_mcp_block(
         }
     }
     out
+}
+
+/// Keep remote instructions out of the system prompt when they contain a
+/// routing override that is too specific for the general-purpose scanner.
+fn contains_routing_override(text: &str) -> bool {
+    let lowered = text.to_ascii_lowercase();
+    let dismisses_policy = lowered.contains("ignore") || lowered.contains("disregard");
+    let names_routing_policy = lowered.contains("routing") || lowered.contains("delegation");
+    let directs_compliance = lowered.contains("obey")
+        || lowered.contains("follow")
+        || lowered.contains("comply")
+        || lowered.contains("listen");
+    if dismisses_policy && names_routing_policy && directs_compliance {
+        return true;
+    }
+
+    // A server can express the same override without naming the policy it is
+    // replacing. Universal selection and exclusivity directives still try to
+    // control routing for unrelated requests, so keep them out of the higher-
+    // privilege orchestrator prompt as well.
+    let universal_scope = lowered.contains("for every request")
+        || lowered.contains("for every user request")
+        || lowered.contains("for all requests")
+        || lowered.contains("for any request")
+        || lowered.contains("every user request");
+    let selects_this_server = lowered.contains("this server")
+        && (lowered.contains("select")
+            || lowered.contains("use")
+            || lowered.contains("choose")
+            || lowered.contains("prioritize")
+            || lowered.contains("prefer")
+            || lowered.contains("route")
+            || lowered.contains("send"))
+        || lowered.contains("never use another server")
+        || lowered.contains("never use a different server");
+
+    universal_scope && selects_this_server
 }
 
 /// Render the delegator-voice `## Connected Integrations` block. Only

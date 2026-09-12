@@ -27,8 +27,8 @@
     {
       "id": "tinymcp",
       "submodule": "vendor/tinymcp",
-      "expect": "v0.3.2-2-g8b0627d",
-      "reason": "The host compiles the MCP contract against tinyhumansai/tinymcp#13 (Supervisor::tick returns a TickReport; needed by openhuman#5931), merged to tinymcp main but not yet in a tagged release, while the registry keeps the published v0.3.2 artifact. The drift is compile-only: the tinymcp module is registry-entered but not wired (AGENTS.md, 'step two of the extraction'), so no build downloads or loads that artifact. Delete this entry when tinymcp cuts its next release and the registry pin moves onto it."
+      "expect": "v0.3.2-3-gd3e4561",
+      "reason": "The host compiles the MCP contract against tinyhumansai/tinymcp#14 (instructions field on ConnectedServerOverview; needed by openhuman#5321), merged to tinymcp main but not yet in a tagged release, while the registry keeps the published v0.3.2 artifact. The drift is compile-only: the tinymcp module is registry-entered but not wired (AGENTS.md, 'step two of the extraction'), so no build downloads or loads that artifact. Delete this entry when tinymcp cuts its next release and the registry pin moves onto it."
     }
   ]
 }

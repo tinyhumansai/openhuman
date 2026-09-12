@@ -11,22 +11,20 @@ use super::*;
 fn a_thread_renamed_session_still_resolves_to_its_registry_entry() {
     // The process-global registry is not initialised in unit tests, and
     // initialising it here would leak into every other test in the binary.
-    crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins()
-        .expect("builtin agent definitions must load");
-    let registry = crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::global()
-        .expect("init_global_builtins publishes the registry");
+    let registry =
+        crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::builtins_only();
 
-    let exact = resolve_definition(registry, "orchestrator").expect("exact id must resolve");
+    let exact = resolve_definition(&registry, "orchestrator").expect("exact id must resolve");
     assert_eq!(exact.id, "orchestrator");
 
-    let renamed = resolve_definition(registry, "orchestrator_thread-captu")
+    let renamed = resolve_definition(&registry, "orchestrator_thread-captu")
         .expect("a thread-renamed session must resolve to its registry entry");
     assert_eq!(renamed.id, "orchestrator");
 
     // Not a rename, just a different agent: must not be swallowed by a
     // shorter id that happens to be a prefix.
     assert!(
-        resolve_definition(registry, "orchestratorish").is_none(),
+        resolve_definition(&registry, "orchestratorish").is_none(),
         "a name that merely starts with an id is not that agent"
     );
 }
@@ -39,8 +37,8 @@ fn a_thread_renamed_session_still_resolves_to_its_registry_entry() {
 /// naming a real route.
 #[test]
 fn the_withheld_block_renders_for_a_renamed_session_with_a_filter() {
-    crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins()
-        .expect("builtin agent definitions must load");
+    let registry =
+        crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::builtins_only();
 
     // A visible set shaped like the live one: the advertised delegates are in,
     // the packed ones are not.
@@ -52,14 +50,14 @@ fn the_withheld_block_renders_for_a_renamed_session_with_a_filter() {
     ctx.agent_id = "orchestrator_thread-captu";
     ctx.visible_tool_names = &visible;
 
-    let block = render_withheld_specialists(&ctx);
+    let block = render_withheld_specialists_from_registry(&ctx, &registry);
     assert!(
         block.starts_with("## Capabilities not in your tool list"),
         "expected the generated heading, got: {:?}",
         block.chars().take(120).collect::<String>()
     );
     assert!(
-        block.contains("skill `documents`, tool `make_presentation`"),
+        block.contains("skill `tasks`, tool `manage_tasks`"),
         "a packed delegate must render with its route:\n{block}"
     );
 }
@@ -93,13 +91,13 @@ fn a_row_is_not_cut_at_an_abbreviation() {
 /// The generated intro must not carry the source's line-continuation padding.
 #[test]
 fn the_generated_block_has_no_stray_whitespace_runs() {
-    crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins()
-        .expect("builtin agent definitions must load");
     let visible: HashSet<String> = ["research".to_string()].into_iter().collect();
     let mut ctx = ctx_with(&[]);
     ctx.agent_id = "orchestrator";
     ctx.visible_tool_names = &visible;
-    let block = render_withheld_specialists(&ctx);
+    let registry =
+        crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::builtins_only();
+    let block = render_withheld_specialists_from_registry(&ctx, &registry);
     assert!(!block.is_empty(), "expected a rendered block");
     assert!(
         !block.contains("  "),
