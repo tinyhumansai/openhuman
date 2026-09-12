@@ -55,6 +55,7 @@ vi.mock('./services/transport/profileStore', () => ({ listProfiles: () => listPr
 
 const mockSetActiveCoreTransport = vi.fn();
 vi.mock('./services/coreRpcClient', () => ({
+  getActiveCoreTransport: () => null,
   setActiveCoreTransport: (transport: unknown) => mockSetActiveCoreTransport(transport),
 }));
 

@@ -106,6 +106,11 @@ export function setActiveCoreTransport(transport: CoreTransport | null): void {
   coreRpcLog('[transport] active transport set kind=%s', transport?.kind ?? 'null');
 }
 
+/** Return the currently selected remote transport, if one is active. */
+export function getActiveCoreTransport(): CoreTransport | null {
+  return _activeTransport;
+}
+
 /**
  * Stable classification of an RPC failure. Callers (hooks, providers, Sentry
  * filters) should branch on `kind` — never on raw message regexes. The shape

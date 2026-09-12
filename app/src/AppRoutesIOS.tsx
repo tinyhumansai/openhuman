@@ -22,7 +22,7 @@ import { useT } from './lib/i18n/I18nContext';
 import Accounts from './pages/Accounts';
 import { PairScreen } from './pages/ios/PairScreen';
 import Settings from './pages/Settings';
-import { setActiveCoreTransport } from './services/coreRpcClient';
+import { getActiveCoreTransport, setActiveCoreTransport } from './services/coreRpcClient';
 import { listProfiles } from './services/transport/profileStore';
 import { createTransportManager } from './services/transport/TransportManager';
 import { BACKEND_URL } from './utils/config';
@@ -82,6 +82,11 @@ const MobileTransportBootstrap: FC<{ children: React.ReactNode }> = ({ children 
     // current store on each navigation so returning to a paired route binds
     // the profile created by the latest pairing attempt.
     const profile = listProfiles().at(-1) ?? null;
+    if (getActiveCoreTransport()) {
+      setBindingFailed(false);
+      setReady(true);
+      return;
+    }
     if (!profile?.kind) {
       setActiveCoreTransport(null);
       setBindingFailed(false);
@@ -110,13 +115,15 @@ const MobileTransportBootstrap: FC<{ children: React.ReactNode }> = ({ children 
           setBindingFailed(true);
           setReady(false);
         }
-        log('[mobile] persisted transport binding failed: %o', error);
+        log(
+          '[mobile] persisted transport binding failed: %s',
+          error instanceof Error ? error.message : 'unknown transport error'
+        );
       });
 
     return () => {
       disposed = true;
       void manager.close();
-      setActiveCoreTransport(null);
     };
   }, [location.pathname]);
 
