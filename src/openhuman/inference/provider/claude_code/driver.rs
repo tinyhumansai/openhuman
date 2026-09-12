@@ -18,13 +18,6 @@ use tokio::sync::mpsc;
 /// infinite loop, MCP deadlock) we kill the child and surface a timeout.
 const DEFAULT_TURN_TIMEOUT_SECS: u64 = 900;
 
-/// Hard timeout per turn, overridable with
-/// `OPENHUMAN_CLAUDE_CODE_TURN_TIMEOUT_SECS`.
-///
-/// The default matches the harness's own 900s wall-clock backstop. It used to
-/// be 300s, which is shorter than a turn the CLI is *expected* to take once
-/// full access lets it run its own tools: the child was killed mid-work and the
-/// turn surfaced as a provider timeout rather than a slow answer.
 fn turn_timeout() -> Duration {
     let secs = std::env::var("OPENHUMAN_CLAUDE_CODE_TURN_TIMEOUT_SECS")
         .ok()
@@ -34,11 +27,6 @@ fn turn_timeout() -> Duration {
     Duration::from_secs(secs)
 }
 
-/// Classify the shape of an unparsable stream line without quoting it.
-///
-/// This says whether Claude spoke JSON at all - the one thing that tells a
-/// crashed CLI apart from a protocol change - and nothing about what the line
-/// said.
 fn parse_error_line_shape(line: &str) -> &'static str {
     match line.trim_start().chars().next() {
         Some('{') => "json object",
@@ -49,18 +37,6 @@ fn parse_error_line_shape(line: &str) -> &'static str {
     }
 }
 
-/// Render the log line for a `ParseError` event, or `None` for anything else.
-///
-/// The parser keeps `ParseError` precisely so an unparsable line is reported
-/// instead of vanishing, but the event mapper turns it into no deltas - so the
-/// driver loop is the only place left that can say anything about it.
-///
-/// The line itself is never quoted. It is whatever Claude Code wrote to
-/// stdout (a malformed event, or a well-formed one of an unknown type), so it
-/// can carry the user's prompt, the model's reply, or a credential, and the
-/// desktop build routes `log` into rotating support logs and Sentry
-/// breadcrumbs. Shape, size, and the parser's own reason are enough to act on;
-/// content is not.
 fn parse_error_log_line(ev: &ClaudeCodeEvent) -> Option<String> {
     let ClaudeCodeEvent::ParseError { line, reason } = ev else {
         return None;
@@ -71,6 +47,28 @@ fn parse_error_log_line(ev: &ClaudeCodeEvent) -> Option<String> {
         line.len()
     ))
 }
+
+/// How much of the child's stderr we keep for diagnostics.
+const STDERR_DIAGNOSTIC_CAP: usize = 16_384;
+
+/// Append `chunk` to `acc`, keeping at most `max_bytes` and never splitting a
+/// character.
+///
+/// `String::truncate` takes a *byte* index and panics when it is not a character
+/// boundary, so bounding this accumulator with `acc.truncate(16_384)` aborted the
+/// task the moment a multi-byte character straddled the cap. The panic happened
+/// inside `tokio::spawn`, and the join is `unwrap_or_default()`, so it surfaced as
+/// an empty stderr string: the operator lost the whole error output for that turn
+/// and saw `exit Some(1) stderr=`.
+fn push_bounded(acc: &mut String, chunk: &str, max_bytes: usize) {
+    acc.push_str(chunk);
+    if acc.len() > max_bytes {
+        let keep = utf8_safe_prefix_at_byte_boundary(acc, max_bytes).len();
+        acc.truncate(keep);
+    }
+}
+
+use crate::openhuman::util::text::utf8_safe_prefix_at_byte_boundary;
 
 use super::event_mapper::EventMapper;
 use super::input_builder::build_stdin;
@@ -239,6 +237,38 @@ fn write_mcp_http_config(
         serde_json::to_string_pretty(&cfg).unwrap_or_default(),
     )?;
     Ok(path)
+}
+
+/// Build the child's `PATH` so `claude` — and any tool it shells out to (git,
+/// ripgrep, node, …) — resolves even when OpenHuman was launched from
+/// Finder/Dock and inherited only the stripped launchd `PATH`
+/// (`/usr/bin:/bin:/usr/sbin:/sbin`, no `~/.local/bin`). Prepends the resolved
+/// CLI's own directory plus the common user/Homebrew bin dirs to whatever
+/// `PATH` we inherited; the inherited system entries are kept after them.
+/// Prepend-only — duplicate `PATH` entries are harmless, so this stays safe if
+/// a dir is already present (e.g. a terminal launch).
+pub(crate) fn child_path_with_user_bins(claude_bin: &std::path::Path) -> std::ffi::OsString {
+    let mut prefix: Vec<PathBuf> = Vec::new();
+    if let Some(parent) = claude_bin.parent() {
+        if !parent.as_os_str().is_empty() {
+            prefix.push(parent.to_path_buf());
+        }
+    }
+    if let Some(home) = dirs::home_dir() {
+        prefix.push(home.join(".local/bin"));
+        prefix.push(home.join("bin"));
+    }
+    #[cfg(target_os = "macos")]
+    prefix.push(PathBuf::from("/opt/homebrew/bin"));
+    prefix.push(PathBuf::from("/usr/local/bin"));
+
+    let existing = std::env::var_os("PATH").unwrap_or_default();
+    std::env::join_paths(
+        prefix
+            .into_iter()
+            .chain(std::env::split_paths(&existing).filter(|path| !path.as_os_str().is_empty())),
+    )
+    .unwrap_or(existing)
 }
 
 /// Keep the potentially large harness prompt out of argv. Windows flattens
@@ -439,10 +469,9 @@ pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
     if let Some(key) = &ctx.anthropic_api_key {
         cmd.env("ANTHROPIC_API_KEY", key);
     }
-    cmd.env(
-        "PATH",
-        super::version_check::path_with_binary_dir(&ctx.bin_path),
-    );
+    // A Finder/Dock launch inherits a stripped launchd PATH; make sure the CLI
+    // and anything it invokes resolve by prepending the user's bin dirs.
+    cmd.env("PATH", child_path_with_user_bins(&ctx.bin_path));
 
     let mut child = cmd
         .spawn()
@@ -479,17 +508,19 @@ pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
             if n == 0 {
                 break;
             }
-            acc.push_str(&String::from_utf8_lossy(&tmp[..n]));
-            if acc.len() > 16_384 {
-                acc.truncate(16_384);
-            }
+            push_bounded(
+                &mut acc,
+                &String::from_utf8_lossy(&tmp[..n]),
+                STDERR_DIAGNOSTIC_CAP,
+            );
         }
         acc
     });
 
     // Wrap the streaming + wait in a timeout so a stuck CLI doesn't
     // block this task forever (PLAN §8).
-    let timed = tokio::time::timeout(turn_timeout(), async {
+    let timeout = turn_timeout();
+    let timed = tokio::time::timeout(timeout, async {
         loop {
             let n = stdout
                 .read(&mut buf)
@@ -531,17 +562,11 @@ pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
     let status = match timed {
         Ok(inner) => inner?,
         Err(_elapsed) => {
-            log::error!(
-                "[claude-code][driver] turn timeout ({:?}) exceeded; killing child",
-                turn_timeout()
-            );
+            log::error!("[claude-code][driver] turn timeout ({timeout:?}) exceeded; killing child");
             // kill_on_drop handles cleanup, but explicit kill gives us
             // a chance to collect stderr.
             let _ = child.kill().await;
-            anyhow::bail!(
-                "[claude-code][driver] turn timed out after {:?}",
-                turn_timeout()
-            );
+            anyhow::bail!("[claude-code][driver] turn timed out after {:?}", timeout);
         }
     };
 
