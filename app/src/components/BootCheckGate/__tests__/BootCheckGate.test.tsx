@@ -11,8 +11,9 @@ import { configureStore } from '@reduxjs/toolkit';
 import { isTauri } from '@tauri-apps/api/core';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { Provider } from 'react-redux';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { clearTestPlatform, setTestPlatform } from '../../../lib/platform';
 import coreModeReducer, { type CoreModeState } from '../../../store/coreModeSlice';
 import localeReducer from '../../../store/localeSlice';
 import BootCheckGate from '../BootCheckGate';
@@ -93,6 +94,21 @@ function renderGate(store = makeStore()) {
 // All describes below assume desktop unless they explicitly opt out.
 beforeEach(() => {
   mockedIsTauri.mockReturnValue(true);
+});
+
+afterEach(() => {
+  clearTestPlatform();
+});
+
+describe('BootCheckGate — mobile bypass', () => {
+  it('renders children without running a persisted boot check', () => {
+    setTestPlatform('android');
+
+    renderGate(makeStore({ kind: 'local' }));
+
+    expect(screen.getByTestId('app-content')).toBeInTheDocument();
+    expect(mockRunBootCheck).not.toHaveBeenCalled();
+  });
 });
 
 describe('BootCheckGate — picker (unset mode)', () => {
