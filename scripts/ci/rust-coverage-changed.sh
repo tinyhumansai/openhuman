@@ -248,8 +248,8 @@ run_full() {
   # run that test separately so its narrowed DomainSet cannot affect the rest
   # of the registry suite. It is still instrumented below and contributes to
   # the merged report.
-  llvm_cov --no-report --no-fail-fast -p openhuman --lib --skip a_build_only_runtime_is_swept_before_it_can_be_invoked -- --test-threads=1
-  llvm_cov --no-report --no-fail-fast -p openhuman --lib a_build_only_runtime_is_swept_before_it_can_be_invoked -- --test-threads=1
+  llvm_cov --no-report --no-fail-fast -p openhuman --lib -- --skip a_build_only_runtime_is_swept_before_it_can_be_invoked --test-threads=1
+  llvm_cov --no-report --no-fail-fast -p openhuman --lib -- a_build_only_runtime_is_swept_before_it_can_be_invoked --test-threads=1
   llvm_cov --no-report --no-fail-fast -p openhuman --bins
   while IFS= read -r target; do
     [ -n "${target}" ] || continue
