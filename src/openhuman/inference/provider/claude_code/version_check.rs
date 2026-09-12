@@ -115,10 +115,25 @@ fn account_login_shell() -> Option<PathBuf> {
     let user = std::env::var("USER")
         .ok()
         .filter(|u| !u.trim().is_empty())?;
-    let output = Command::new("/usr/bin/dscl")
+    let mut child = Command::new("/usr/bin/dscl")
         .args([".", "-read", &format!("/Users/{user}"), "UserShell"])
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
         .ok()?;
+    let status = match child.wait_timeout(Duration::from_secs(2)).ok()? {
+        Some(status) => status,
+        None => {
+            log::warn!("[claude-code][version] dscl timed out; killing child");
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+    };
+    if !status.success() {
+        return None;
+    }
+    let output = child.wait_with_output().ok()?;
     let shell = String::from_utf8_lossy(&output.stdout)
         .lines()
         .find_map(|line| line.strip_prefix("UserShell:").map(str::trim))?;
