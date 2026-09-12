@@ -11,12 +11,12 @@ use openhuman_core::openhuman::tools::{PermissionLevel, Tool, ToolContent, ToolR
 use serde_json::json;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, OnceLock};
-use tinyagents::harness::message::{AssistantMessage, ContentBlock, Message, MessageDelta};
-use tinyagents::harness::model::{
+use tinyinference::message::{AssistantMessage, ContentBlock, Message, MessageDelta};
+use tinyinference::model::{
     ChatModel, ModelProfile, ModelRequest, ModelResponse, ModelStream, ModelStreamItem,
 };
-use tinyagents::harness::tool::ToolCall;
-use tinyagents::harness::usage::Usage;
+use tinyinference::tool::ToolCall;
+use tinyinference::usage::Usage;
 
 #[derive(Clone, Debug)]
 struct CapturedRequest {
@@ -61,12 +61,12 @@ impl ChatModel<()> for ScriptedModel {
         &self,
         _state: &(),
         request: ModelRequest,
-    ) -> tinyagents::Result<ModelResponse> {
+    ) -> tinyinference::Result<ModelResponse> {
         self.capture(&request, false);
         self.pop_response()
     }
 
-    async fn stream(&self, _state: &(), request: ModelRequest) -> tinyagents::Result<ModelStream> {
+    async fn stream(&self, _state: &(), request: ModelRequest) -> tinyinference::Result<ModelStream> {
         self.capture(&request, true);
         let response = self.pop_response()?;
         let mut items = vec![ModelStreamItem::Started];
@@ -85,13 +85,13 @@ impl ScriptedModel {
         });
     }
 
-    fn pop_response(&self) -> tinyagents::Result<ModelResponse> {
+    fn pop_response(&self) -> tinyinference::Result<ModelResponse> {
         self.responses
             .lock()
             .unwrap()
             .pop_front()
             .unwrap_or_else(|| Ok(text_response("script exhausted fallback")))
-            .map_err(|error| tinyagents::TinyAgentsError::Model(error.to_string()))
+            .map_err(|error| tinyinference::Error::Model(error.to_string()))
     }
 }
 

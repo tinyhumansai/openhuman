@@ -1,6 +1,6 @@
 [package]
 name = "openhuman"
-version = "0.63.17"
+version = "0.63.25"
 edition = "2021"
 description = "OpenHuman core business logic and RPC server"
 # The crate ships a verbatim GPLv3 `LICENSE` file but carried no `license` key,
@@ -16,23 +16,27 @@ autobins = false
 # collapsing them into one target removes ~75 full-crate link steps per test run.
 build = "build.rs"
 
-# `cargo machete` reports a dependency as unused when no `use` names it. These
-# two have no `use` and are still load-bearing, so they are suppressed here
-# rather than deleted — an unsuppressed false positive is how a real finding
-# gets ignored next time.
+# `cargo machete` reports a dependency as unused when no `use` names it, and
+# this list is empty because there is nothing left to excuse (#5560).
 #
-# `tinymemory` (the facade) and `tinymemory-tinycortex` (the TinyCortex
-# adapter) exist for DRIVER ADMISSION: the memory subsystem resolves its
-# engine through `tinymemory`'s driver registry, and the adapter is what makes
-# TinyCortex admissible as that engine. Both must stay linked so a second host
-# embedding the `flows` kernel profile can still bind a memory engine — see
-# the 2026-08-10 entry in `scripts/kernel-floor.limits`, which ratchets them in
-# deliberately. Dropping either would compile clean and fail at runtime.
+# It used to hold `tinymemory` (the facade) and `tinymemory-tinycortex` (the
+# TinyCortex adapter), on the reasoning that both were load-bearing for DRIVER
+# ADMISSION — the memory subsystem resolved its engine through `tinymemory`'s
+# driver registry, and the adapter made TinyCortex admissible as that engine —
+# so that dropping either would compile clean and fail at runtime.
 #
-# `tinymemory-api` and `tinymemory-core` are NOT listed: they are named
-# directly by `src/openhuman/memory/`, so machete is already satisfied.
+# **That reasoning expired rather than being wrong.** `memory::binding::admit`
+# is pure string matching against `MODULE_ID` and refuses
+# `DriverClass::Embedded` outright, so nothing here resolves an engine through
+# the facade's registry any more; the engine runs in the `tinymemory` TinyBus
+# module. The facade is deleted and the adapter moved to `[dev-dependencies]`,
+# where its only consumers (test fixtures) already lived.
+#
+# The principle it was written to protect still holds for whatever lands here
+# next: an unsuppressed false positive is how a real finding gets ignored the
+# time after.
 [package.metadata.cargo-machete]
-ignored = ["tinymemory", "tinymemory-tinycortex"]
+ignored = []
 
 [[bin]]
 name = "openhuman-core"
@@ -53,13 +57,27 @@ required-features = ["http-server", "bin-tools"]
 # Embedded-RSS benchmark harness (#5046). Gated behind the default-OFF
 # `rss-bench` feature so no benchmark code enters the shipped build. Build with
 # `cargo build --release --features rss-bench --bin rss-bench`.
+#
+# It survives the engine removal because it never measured the engine: it builds
+# an `Agent` roster over its own in-file `NoopMemory` and samples RSS, and its
+# own doc comment explains that it hand-rolls that store rather than asking the
+# factory, because `create_memory(backend = "none")` never returned a no-op
+# backend. What the feature used to name the engine crates for was two
+# `library-profile` *scenarios* — see that target's comment below; the binary
+# itself is still here.
 [[bin]]
 name = "rss-bench"
 path = "src/bin/rss_bench.rs"
 required-features = ["rss-bench"]
 
-# Stateful library profiling workloads (memory ingestion + real sub-agent
-# delegation under a hermetic mock provider). Local/dev only.
+# Stateful library profiling workloads (real sub-agent delegation, flows graphs
+# and skill runs under a hermetic mock provider). Local/dev only, and the
+# subject of every script in `scripts/profile/`.
+#
+# Two of its scenarios are gone with the in-process engine: `memory-ingest`
+# drained the memory queue and `cold-phases` checkpointed the engine bootstrap
+# through `tinymemory_core::store::MemoryClient`. The other six never named an
+# engine symbol, which is why this binary survives rather than going with them.
 [[bin]]
 name = "library-profile"
 path = "src/bin/library_profile/main.rs"
@@ -90,13 +108,6 @@ name = "observability_smoke"
 path = "tests/observability_smoke.rs"
 # The `is_*_event` Sentry filters are all `#[cfg(feature = "crash-reporting")]`.
 required-features = ["crash-reporting"]
-
-[[test]]
-name = "memory_artifacts_e2e"
-path = "tests/memory_artifacts_e2e.rs"
-# Opens the wiki ledger with `tinycortex::git2::Repository::open` and asserts on
-# `content::wiki_git` artifacts — both of which exist only behind this gate.
-required-features = ["memory-git"]
 
 [[test]]
 name = "x402_twit_sh_live"
@@ -134,10 +145,6 @@ crate-type = ["rlib"]
 # upstream in the SDK repo, not re-implemented in `src/api/`.
 # After cloning: `git submodule update --init vendor/tinyhumans-sdk`.
 tinyhumans-sdk = { path = "vendor/tinyhumans-sdk", default-features = false }
-# tiny.place A2A social network SDK — published on crates.io and patched below
-# to the vendored tiny.place submodule so OpenHuman can test SDK changes before
-# publishing.
-tinyplace = "2.0"
 # tinyflows — host-agnostic workflow engine (typed node graph → validate → compile →
 # run on tinyagents). Powers the "Workflows" feature via the seam in
 # `src/openhuman/tinyflows/` + the `flows::` domain. Pulls tinyagents 2.1 transitively
@@ -152,6 +159,24 @@ tinyplace = "2.0"
 # Optional: exclusive to the default-ON `flows` feature (#4797). A slim build
 # without `flows` drops this crate and its `jaq-*` JSON-query stack entirely.
 tinyflows = { version = "0.8", features = ["mock"], optional = true }
+# The saved-flow catalog and its SQLite backend, split out of this crate's
+# `flows::` domain so a second host storing workflows does not have to reinvent
+# them. `tinyflows-catalog` is the model (flows, revisions, runs, drafts,
+# suggestions, the n8n importer, the save/run safety predicates);
+# `tinyflows-sqlite` is one storage backend for it plus the engine checkpointer.
+#
+# Neither is published, so both are path dependencies into the same vendored
+# workspace `tinyflows` itself comes from — one checkout, one `tinyflows`
+# package, one `WorkflowGraph` type. Optional and exclusive to `flows` for the
+# same reason the engine is.
+tinyflows-catalog = { path = "vendor/tinyflows/crates/tinyflows-catalog", optional = true }
+tinyflows-sqlite = { path = "vendor/tinyflows/crates/tinyflows-sqlite", optional = true }
+# The authoring copilot's words: the `workflow_builder` / `flow_discovery`
+# standing archetypes and the turn brief that opens a builder turn. Harness-free
+# by construction — it names no tool trait and no model client — so this host
+# keeps only the wiring: the `Tool` impls, the agent registry entries, and the
+# prompt assembly that appends its own runtime sections.
+tinyflows-copilot = { path = "vendor/tinyflows/crates/tinyflows-copilot", optional = true }
 # TinyAgents — Rust LLM orchestration framework (LangGraph/LangChain-style):
 # durable state graphs, agent-loop harness, model/tool registries, REPL +
 # `.rag` workflow language. openhuman's agent engine + orchestration run on this
@@ -159,42 +184,64 @@ tinyflows = { version = "0.8", features = ["mock"], optional = true }
 # #4249): every turn drives through the harness; the workflow phase DAG, team
 # member runtime, parallel fan-out, and multi-stage delegation run on graphs.
 # We wire openhuman's own Provider/Tool, not the removed bundled openai client.
-# The `sqlite` feature is enabled now that openhuman's direct rusqlite pin is
-# aligned to 0.40, avoiding duplicate `links = "sqlite3"` native bindings.
-# Durable graph checkpoints still use `SqlRunLedgerCheckpointer` until the
-# migration re-points those rows to the crate checkpointer.
-# The `repl` feature (embedded Rhai `.ragsh` session runtime powering the
-# `rhai_workflows` language-workflow tool, `src/openhuman/rhai_workflows/`) is
-# NOT enabled here — the default-ON `flows` feature turns it on via
-# `tinyagents/repl` (#4797), so a slim build without `flows` sheds `rhai`.
-# The crate itself can never be dropped: 26+ domains consume tinyagents.
+#
+# tinyagents was split into a workspace of focused crates (tinyhumansai/tinyagents
+# commit 612ea5e "refactor: split tinyagents into focused crates" and follow-on
+# work): there is no longer a single `tinyagents` package. openhuman now depends
+# directly on the members it actually uses — `tinyagents-harness` (agent loop,
+# tools, middleware), `tinyagents-graph` (durable state graphs), `tinyagents-language`
+# (`.rag`), `tinyagents-registry` (capability/model registry), and
+# `tinyagents-session` (durable session history + run ledger, previously gated
+# behind this crate's own `sqlite` feature — it is its own always-on crate now).
+# The `sqlite` feature is enabled on the harness/graph crates now that openhuman's
+# direct rusqlite pin is aligned to 0.40, avoiding duplicate `links = "sqlite3"`
+# native bindings. Durable graph checkpoints still use `SqlRunLedgerCheckpointer`
+# until the migration re-points those rows to the crate checkpointer.
+# The `repl` feature/`rhai` scripting engine no longer exists in the split crates
+# (see the tinyagents-harness module list) — the comment that used to describe
+# `tinyagents/repl` gating `rhai` in for `flows` builds is stale; `rhai` is pulled
+# in by `flows`'s own dependency on the `rhai` crate directly, not through tinyagents.
+# None of these crates can be dropped: 26+ domains consume tinyagents.
 # `multimodal` is not optional here: `agent::multimodal` is kernel surface —
 # web chat and the agent harness both resolve attachment markers on every turn
 # — so the gate is on for every OpenHuman build. It costs the dependency graph
 # nothing: `base64`, `flate2` and `sha2` are all already resolved in the kernel
 # profile, so turning it on moves neither the package count nor the native
 # build count that `scripts/check-kernel-floor.sh` ratchets.
-tinyagents = { version = "2.1", features = ["sqlite", "multimodal"] }
-# TinyCortex — Rust core for the memory engine (store/chunks/tree/retrieval/
-# queue/ingest/score + long tail), vendored as a git submodule and patched
-# below to `vendor/tinycortex`. OpenHuman's memory subsystem migrates onto this
-# crate through the adapter seam in `src/openhuman/tinycortex/` (mirroring the
-# tinyagents seam): engine logic (including provider sync pipelines) in the
-# crate; RPC, agent tools, sync scheduling/credentials/events, security gating,
-# and the global singleton stay host-side. rusqlite is aligned to the host pin
-# (=0.40) so one bundled SQLite links. The submodule intentionally tracks
-# reviewed upstream main commits; keep this semver requirement compatible with
-# the vendored crate version.
-# `git-diff` and `wiki-git` are NOT here: they are pulled in by the
-# `memory-git` gate below, which is where the git2/libgit2-sys/libz-sys cohort
-# enters the graph. This crate holds no `git2` pin of its own to align — the
-# gate turns tinycortex's on, and tinycortex is the sole libgit2 link in the
-# graph. Everything else tinycortex needs is unconditional.
-tinycortex = { version = "0.1", features = [
-    "obsidian",
-    "persona",
-    "sync",
+#
+# A large share of the old crate's re-exported surface (Message, ModelRequest/
+# Response, ToolCall/ToolSchema, Usage, embeddings, hosted-provider plumbing)
+# moved further upstream still, into `tinyinference` (vendored as a submodule
+# of vendor/tinyagents at vendor/tinyagents/vendor/tinyinference) — declared
+# below as its own path dependency for the same "one checkout, one type
+# identity" reason `tinytools` is.
+tinyagents-harness = { path = "vendor/tinyagents/crates/tinyagents-harness", features = [
+    "sqlite",
+    "multimodal",
 ] }
+tinyagents-graph = { path = "vendor/tinyagents/crates/tinyagents-graph", features = [
+    "sqlite",
+] }
+tinyagents-language = { path = "vendor/tinyagents/crates/tinyagents-language" }
+tinyagents-registry = { path = "vendor/tinyagents/crates/tinyagents-registry" }
+tinyagents-session = { path = "vendor/tinyagents/crates/tinyagents-session" }
+tinyinference = { path = "vendor/tinyagents/vendor/tinyinference/crates/tinyinference" }
+# TinyTools — the tool vocabulary: the `Tool` trait, `ToolResult`, and the
+# permission / scope / timeout classifications this host enforces around a call.
+#
+# Reached through tinyagents' own vendored checkout **on purpose**, not through
+# a second `vendor/tinytools` submodule of our own. Two path dependencies on
+# the same repository are two distinct packages to cargo, and
+# `tinytools::ToolResult` from one would not be the same type as from the
+# other — every tool in this crate would stop satisfying the harness's trait,
+# with a type error that names the same path twice. tinyagents declares
+# `vendor/tinytools/crates/tinytools` relative to itself, so naming that exact
+# path here resolves to one package.
+#
+# No `[patch.crates-io]` entry: the crate is not published, so the path is the
+# whole address — the same arrangement as `tinyhumans-sdk` and the `-bus`
+# crates. After cloning: `git submodule update --init --recursive vendor/`.
+tinytools = { path = "vendor/tinyagents/vendor/tinytools/crates/tinytools" }
 # The memory *contract* — value types, the thirteen capability families, the
 # `MemoryProvider` driver trait, and the null reference driver. A direct path
 # dependency rather than a re-export, because `tinycortex::memory` aliases back
@@ -204,7 +251,10 @@ tinycortex = { version = "0.1", features = [
 # so a third-party driver can compile against the contract without pulling in
 # the embedded engine. No `[patch.crates-io]` entry is needed: cargo unifies
 # this with the `path = "api"` dependency the engine crate already declares.
-tinycortex-api = { path = "vendor/tinycortex/api" }
+# `tinycortex-api` is gone with it. It had become a deprecated re-export of
+# `tinymemory-bus`, so its one host use (`goals::GoalsDoc`) resolves to the
+# identical item through the contract. Its `[patch]` entry stays too, for the
+# reason given above.
 
 # tinymemory — the engine-neutral memory layer
 # (https://github.com/tinyhumansai/tinymemory). Owns the parts of the memory
@@ -238,26 +288,47 @@ tinycortex-api = { path = "vendor/tinycortex/api" }
 # After cloning: `git submodule update --init --recursive vendor/tinyruntime`.
 tinyruntime-bus = { path = "vendor/tinyruntime/crates/tinyruntime-bus" }
 
-tinymemory = { path = "vendor/tinymemory/crates/tinymemory" }
+# The `tinymemory` facade is gone: no file in `src/` ever named it. It was
+# kept for driver admission, but `memory::binding::admit` is pure string
+# matching against `MODULE_ID` and refuses `DriverClass::Embedded` outright,
+# so nothing here resolves an engine through the facade's registry.
 tinymemory-api = { path = "vendor/tinymemory/crates/tinymemory-api" }
-tinymemory-tinycortex = { path = "vendor/tinymemory/crates/tinymemory-tinycortex" }
-# `tinymemory-core` is the *substance* of the memory subsystem, extracted out of
-# `src/openhuman/memory/` — the SQLite/vector store, the markdown summary tree,
-# the provider sync pipelines, ingestion, recall/query/search, the ingest queue,
-# conversations, people, goals and the tool-memory rules.
+# tinyconnectors-bus — the OAuth connector wire contract
+# (https://github.com/tinyhumansai/tinyconnectors). Payload types and member
+# names for the connector surface, with no transport and no behaviour: this
+# crate makes calls into the loaded `tinyconnectors` module and compiles none
+# of it.
 #
-# What deliberately stayed behind in `src/openhuman/memory/` is the *host layer*
-# per the tinymemory README split: the RPC surface (`schemas/`, `read_rpc/`),
-# agent tools (`tools/`), the security/taint guard (`guard/`), the driver
-# binding (`driver/`), the memory agent, and the config mapping. Those reach
-# into this crate; this crate never names an OpenHuman type. Everything it needs
-# from the host arrives through the seam traits in `tinymemory_api::host`, whose
-# implementations live in `src/openhuman/memory/host.rs`.
+# These types previously came from `tinymemory-api::host::composio`, which held
+# them only because two crates needed to name them and there was nowhere else
+# both could. That is what this dependency fixes — one definition, owned by the
+# crate that produces the shapes.
+tinyconnectors-bus = { path = "vendor/tinyconnectors/crates/tinyconnectors-bus" }
+# tinymemory-bus is the wire contract (method names, ABI). Normally transitive
+# through tinymemory-api, but modules/memory.rs names the method constants
+# directly (EXTRACT_ENTITIES, EMBED_TEXT, EMBEDDER_SLUG) — prefer compile
+# errors on renaming over MemberNotFound at runtime.
+tinymemory-bus = { path = "vendor/tinymemory/crates/tinymemory-bus" }
+# `tinymemory-sources` is the source registry, its types and its readers, in a
+# crate of its own. Taken directly rather than through `tinymemory-core`
+# (OpenHuman#5560): `tinymemory_core::sources` is a thin layer over it —
+# `sources::types` is already a `pub use` of this crate, and `sources::registry`
+# is "the host's config path plus a write lock" around a `SourceRegistry` over
+# the host's own `sources.toml`. The host owns that file; it does not need the
+# engine to read it.
 #
-# The `schemars` feature is enabled because the memory config *section* structs
-# (`MemoryConfig`, `MemoryTreeConfig`, …) now live in `tinymemory_api::host` and
-# are still fields of OpenHuman's `Config`, which derives `JsonSchema`.
-tinymemory-core = { path = "vendor/tinymemory/crates/tinymemory-core" }
+# It costs this crate no new dependency: serde, schemars, serde_json, anyhow,
+# `tinymemory-api`, async-trait, walkdir, toml and uuid are all already here,
+# and `network` adds reqwest / futures / tracing / chrono / tokio, which are
+# too. No `rusqlite`, no `tinycortex`.
+#
+# `network` matches what `tinymemory-core` enables, so the GitHub / RSS /
+# web-page readers exist. Their dispatch is deliberately NOT `reader_for` —
+# see that module's docs and `memory::sources`'s.
+tinymemory-sources = { path = "vendor/tinymemory/crates/tinymemory-sources", features = [
+    "network",
+] }
+
 
 # tinymcp — the Model Context Protocol client, extracted out of this tree
 # (https://github.com/tinyhumansai/tinymcp). Owns both transports, the static
@@ -273,8 +344,8 @@ tinymemory-core = { path = "vendor/tinymemory/crates/tinymemory-core" }
 #
 # The path dependency on `tinymcp` itself is still the step-one arrangement. The
 # registry entry step two calls for now exists — `src/openhuman/modules/registry.rs`
-# pins the v0.3.1 release — but the host still calls the library directly, because
-# `tinymcp-bus` v0.3.1 does not yet publish everything this host reaches for:
+# pins the v0.3.2 release — but the host still calls the library directly, because
+# `tinymcp-bus` v0.3.2 does not yet publish everything this host reaches for:
 # `OAuthComplete`, a member returning the already-exported `ConnectedServerOverview`,
 # the boot-connect and reconnect-supervisor passes, the `ServerDetail` /
 # `AuthDetection` / `AuthKind` reply types, the registry curation helpers, an error
@@ -297,7 +368,20 @@ tinymcp = { path = "vendor/tinymcp/crates/tinymcp", default-features = false, fe
     "rustls-tls",
 ] }
 tinymcp-bus = { path = "vendor/tinymcp/crates/tinymcp-bus", features = ["schemars"] }
-tinychannels = { version = "0.1", features = ["relay-websocket"] }
+# The transport-free channel vocabulary: inbound envelopes, outbound intents,
+# the config schema, controller metadata, relay frames and the session-key
+# rules. UNCONDITIONAL, and deliberately so — `DomainEvent` embeds
+# `ChannelInboundEnvelope`, `config/schema/channels.rs` re-exports the config
+# types and `security/pairing.rs` re-exports the pairing helpers, so this
+# vocabulary is always-on kernel surface. It costs serde/schemars and nothing
+# this build did not already have.
+tinychannels-bus = { version = "0.1", path = "vendor/tinychannels/crates/tinychannels-bus" }
+# The provider stack that IMPLEMENTS that vocabulary — Telegram, Discord,
+# Slack, IMAP, WhatsApp, the relay transport loop. Optional: it owns the
+# `reqwest` / `rusqlite` / `rustls` / `tokio-tungstenite` cohort, which a
+# workflow-only build has no use for. Enabled by `channels`, and by `voice`
+# for `EmailChannel` alone.
+tinychannels = { version = "0.1", features = ["relay-websocket"], optional = true }
 # tinybus — the message bus. Owns what `src/core/event_bus/` used to: the typed
 # pub/sub surface (`EventBus`, `EventHandler`, `SubscriptionHandle`), the
 # in-process zero-serialization request registry (`NativeRegistry`), and peer
@@ -364,15 +448,14 @@ rand = "0.10"
 dirs = "5"
 sha2 = "0.10"
 # NO `git2` HERE, DELIBERATELY — do not add it back. Every use of libgit2 in
-# the memory stack lives in tinycortex: the diff ledger (`memory::diff`), the
-# wiki mirror (`memory::store::content::wiki_git`), and the persona git-history
-# reader. This crate holds the RPC surface, the agent tool and the gate around
-# them, and never touches a repository itself, so a direct dependency here was
-# a declaration with no `use` behind it. Re-declaring it costs nothing in
-# crates (the `memory-git` gate pulls tinycortex's copy either way) but invites
-# a second major pin, and `git2` sets `links = "git2"` — two majors in one
-# graph is a hard cargo error, not a warning. Test code that must inspect a
-# ledger goes through `tinycortex::git2`.
+# the memory stack lives in tinycortex: the diff ledger, the wiki mirror
+# (`memory::store::content::wiki_git`), and the persona git-history reader.
+# This crate never touches a repository itself, so a direct dependency here
+# would be a declaration with no `use` behind it. It also invites a second
+# major pin, and `git2` sets `links = "git2"` — two majors in one graph is a
+# hard cargo error, not a warning. Nothing here now enables tinycortex's
+# `git-diff` / `wiki-git` features either, so libgit2 is out of the graph
+# entirely; re-adding a gate for it means re-adding the cohort.
 hmac = "0.12"
 # Archive handling for the Piper voice installer and the document tools. The
 # Node.js and Python toolchain archives are no longer unpacked here — the
@@ -642,6 +725,12 @@ landlock = { version = "0.4", optional = true }
 rppal = { version = "0.22", optional = true }
 
 [dev-dependencies]
+# Turns on `tinyflows-sqlite`'s `test-fixtures` gate for test builds only: the
+# flows test suite stages a terminal run flipped back to `running` and a
+# `graph_json` column that does not deserialize, neither of which any production
+# write path can produce. Declared here rather than in `[dependencies]` so the
+# shipped binary never carries those two writers.
+tinyflows-sqlite = { path = "vendor/tinyflows/crates/tinyflows-sqlite", features = ["test-fixtures"] }
 # Test fixtures derive a known account from the BIP-39 vector phrase. Production
 # does not derive at all — see the note on the main `tinywallet` entry. Cargo
 # does not link dev-dependency features into the shipped binary, so enabling
@@ -649,12 +738,19 @@ rppal = { version = "0.22", optional = true }
 tinywallet = { path = "vendor/tinywallet", default-features = false, features = ["key", "btc", "evm", "solana", "tron"] }
 k256 = { version = "0.13", default-features = false, features = ["std", "ecdsa"] }
 coins-bip39 = { version = "0.8" }
-# The host's own tests drive `tinymemory-core`'s test helpers
-# (`chat::test_override`, `StaticChatProvider`, `tool_memory::test_helpers`).
-# They were `#[cfg(test)]` items in this crate before the memory extraction; a
-# downstream test harness cannot see those across a crate boundary, so the
-# extracted crate exposes them behind `test-support` instead.
-tinymemory-core = { path = "vendor/tinymemory/crates/tinymemory-core", features = ["test-support"] }
+# The fake memory driver the host's own tests bind, in place of an in-process
+# engine (openhuman#6161). It serves every optional family, so a handler that
+# asks for one by accessor gets `Some` rather than taking the `None` arm as
+# "unsupported" — which is the whole reason the fixture used to construct a real
+# `TinycortexProvider`.
+#
+# It costs this manifest nothing. The crate is `publish = false` and reached by
+# path like `tinymemory-api`, and its only dependencies are `tinymemory-api`,
+# `async-trait`, `serde_json` and `anyhow` — all already in the product graph.
+# By construction it cannot pull an engine back in: `tinymemory-conformance`
+# refuses to depend on `tinymemory-core`, and its CI asserts that, because a
+# conformance suite that reached an engine could not prove interchangeability.
+tinymemory-conformance = { path = "vendor/tinymemory/crates/tinymemory-conformance" }
 # Dual-declared on purpose (same shape as the `sentry`/`axum` entries): the
 # optional dependency above is bin-only behind `bin-tools`, but
 # `agent_orchestration::tools::tools_e2e_tests` (a #[cfg(test)] LIB module),
@@ -690,8 +786,8 @@ filetime = "0.2"
 # beat without real-time waits. Test-only — the runtime feature set in
 # `[dependencies]` (`full`) intentionally excludes it.
 tokio = { version = "1", features = ["test-util"] }
-# Property-based testing for the adversarial-input surfaces (command classifier,
-# encryption round-trip) — plan.md §6.3. Version already resolved in Cargo.lock.
+# Property-based testing for adversarial command-classifier and encryption
+# round-trip inputs. Version already resolved in Cargo.lock.
 proptest = "1"
 
 [features]
@@ -783,7 +879,6 @@ default = ["media", "skills", "flows", "mcp", "channels", "medulla", "http-serve
 # `None`; and the three `ops` entry points always-on code calls return a
 # build-fact error, so a post-sync snapshot or a subconscious diff is logged and
 # skipped rather than silently reported as "nothing changed".
-memory-git = ["tinycortex/git-diff", "tinycortex/wiki-git", "tinymemory-core/memory-git"]
 http-server = ["dep:axum", "dep:socketioxide"]
 # Local audio-device access: the `cpal` capture stack behind voice recording
 # and the accessibility microphone-permission probe. Default-ON. Slim /
@@ -881,7 +976,10 @@ voice = [
     "dep:enigo",
     "dep:rdev",
     # `audio_toolkit::ops` delivers generated podcasts through tinychannels'
-    # EmailChannel, so the provider has to exist even in a channels-less build.
+    # EmailChannel, so the provider — and therefore the implementation crate —
+    # has to exist even in a channels-less build. This is the ONE reason a
+    # channels-less build still links the provider stack.
+    "dep:tinychannels",
     "tinychannels/email",
 ]
 # Web3 family: openhuman::web3 + web3::wallet + web3::x402 — the
@@ -893,22 +991,14 @@ voice = [
 # off-curve ATA) + `ethers-core` / `ethers-signers` / `coins-bip39` (EVM/mnemonic
 # signing, used by the multi-chain wallet's EVM path) dependencies. Composes
 # with the runtime `DomainSet::Web3` flag (#4796): the feature narrows the
-# compile-time surface, `DomainSet` gates it at runtime. When off, tinyplace
-# payments degrade to graceful "wallet disabled" errors via the wallet/web3/x402
-# stub facades.
-#
-# `bs58` and `ed25519-dalek` deliberately stay always-on: `orchestration/ingest`
-# and `tinyplace/payment` use them for agent-network identity, which has nothing
-# to do with the wallet. Measured: excluding them costs 0, because tinyplace
-# pulls them in regardless.
+# compile-time surface, `DomainSet` gates it at runtime.
 # `k256` and `coins-bip39` are gone from this list: nothing in the shipped
 # binary derives a key or signs with secp256k1 any more — the wallet module
 # does both. Both crates remain under [dev-dependencies], where test fixtures
 # still derive a known account and check a signature against a fixed vector.
 #
 # `curve25519-dalek` stays: `associated_token_account` needs the off-curve check
-# to derive a Solana ATA, which is address arithmetic rather than signing, and
-# tinyplace pulls it in through `ed25519-dalek` regardless.
+# to derive a Solana ATA, which is address arithmetic rather than signing.
 web3 = [
     "dep:tinywallet-bus",
     "dep:curve25519-dalek",
@@ -969,10 +1059,25 @@ runtime-node = []
 #
 # That is the exact soft-failure shape as `voice` (#4901) and
 # `tokenjuice-treesitter` (#4918): a gate that is not forwarded does not fail
-# the build, it just quietly does nothing. Hence the forward below, and
-# `contacts_feature_reaches_the_engine_reader` in `memory/people/mod.rs`, which
-# fails if this is ever flattened back into local `dep:` entries.
-contacts = ["tinymemory-core/contacts"]
+# the build, it just quietly does nothing.
+#
+# The guard that used to catch it here, `contacts_feature_reaches_the_engine_
+# reader`, is gone with the engine (openhuman#6161) and could not have been
+# kept: it linked `tinycortex` from `#[cfg(test)]` to call the reader directly,
+# which proves nothing about this crate's forwarding once this crate does not
+# depend on the crate being forwarded to. The forward it guarded had already
+# moved into the module's own manifest, which is where the equivalent
+# assertion now belongs.
+# Nothing host-side is gated on `contacts` any more — its whole job was
+# forwarding into the engine so tinycortex's macOS CNContactStore reader
+# compiled. That reader now lives in the `tinymemory` module, whose own
+# manifest enables `tinycortex/contacts`, and `people.refresh_address_book`
+# reaches it through `MemoryPeople::seed_from_address_book` over the bus.
+#
+# The gate name is kept because `scripts/ci/product-features.txt` and the
+# shell's forwarded list are asserted equal by the Feature Forwarding Gate,
+# and removing it from one without the other fails that lane.
+contacts = []
 # Media-generation + image domains: the `media_generate_*` agent tools
 # (image/video via GMI through the backend) and the `openhuman::image` tool
 # contracts scaffold. Default-ON. Slim builds opt out via
@@ -995,7 +1100,7 @@ media = []
 # runtime `DomainSet::flows` flag (#4796): the feature narrows the compile-time
 # surface, `DomainSet` gates it at runtime.
 # NOTE: this gate does NOT drop `tinyagents` itself — 26+ domains consume it.
-flows = ["dep:tinyflows"]
+flows = ["dep:tinyflows", "dep:tinyflows-catalog", "dep:tinyflows-copilot", "dep:tinyflows-sqlite"]
 # Skills domains: `openhuman::skills` (metadata/discovery/install),
 # `openhuman::skill_runtime` (SKILL.md execution + the skill_executor agent),
 # and `openhuman::skill_registry` (remote catalogs + the skill_setup agent).
@@ -1107,21 +1212,32 @@ medulla = []
 # Channels domain: `openhuman::channels` (external-messaging providers — Telegram,
 # Discord, Slack, Signal, WhatsApp, iMessage, IRC, … — plus the channel runtime,
 # controllers, host, proactive messaging and inbound dispatch) together with the
-# `webview_accounts` / `webview_apis` / `webview_notifications` / `whatsapp_data`
-# webview-bridge domains. Default-ON — the desktop app always ships with
+# `webview_notifications` bridge domain. Default-ON — the desktop app always ships with
 # channels. Slim / headless builds opt out via `--no-default-features --features
 # "<explicit list without channels>"`. Composes with the runtime
 # `DomainSet::Channels` flag (#4796): this feature narrows the compile-time
 # surface, `DomainSet` gates it at runtime.
 #
-# INTENTIONALLY EMPTY — do NOT "fix" this by adding `dep:` entries. This gate
-# sheds ZERO dependencies: `tinychannels` stays load-bearing regardless
-# (`config/schema/channels.rs` re-exports its config types, `event_bus/events.rs`
-# `DomainEvent` embeds `tinychannels::ChannelInboundEnvelope`, and
-# `security/pairing.rs` re-exports its pairing helpers), so it is always
-# compiled. The gate's value is compile-time surface + binary size, not the dep
-# tree. (`whatsapp-web` refines this gate — see below — forwarding to the
-# `tinychannels/whatsapp-web` provider feature.)
+# This gate now owns the `tinychannels` CRATE, not just two of its providers.
+# The three always-on pins that used to make the crate unconditional
+# (`config/schema/channels.rs` re-exporting the config types, `DomainEvent`
+# embedding `ChannelInboundEnvelope`, `security/pairing.rs` re-exporting the
+# pairing helpers) now resolve through `tinychannels-bus`, the transport-free
+# contract crate, which stays unconditional. What is left behind this gate is
+# the provider stack and the relay transport loop.
+#
+# It sheds NO dependencies and is not meant to: measured, the kernel profile is
+# 288 packages / 270 names / 2 native both before and after, and the package-list
+# diff is one line (`tinychannels` out, `tinychannels-bus` in). Every heavy crate
+# tinychannels carried is shared with kernel surface. What the gate buys is
+# compile surface — ~31.7k lines a channels-less build no longer compiles — plus
+# the contract crate the eventual module extraction needs.
+#
+# ONE caveat, and it is the reason a channels-less product build still links
+# the crate: `voice` enables `dep:tinychannels` for `EmailChannel` alone
+# (`audio_toolkit::ops` mails generated podcasts). A build with neither
+# `channels` nor `voice` drops it entirely. (`whatsapp-web` refines this gate —
+# see below — forwarding to the `tinychannels/whatsapp-web` provider feature.)
 #
 # NOTE: the in-app web chat (`openhuman::web_chat`, RPC namespace `channel`) is
 # NOT gated by this feature even though its runtime tag is
@@ -1130,14 +1246,11 @@ medulla = []
 # carve-outs also stay ungated — `traits` is a 1-line tinychannels re-export and
 # `cli::CliChannel` is the dep-free local REPL used by the always-on agent
 # harness interactive loop. See AGENTS.md "channels gate" + `channels/mod.rs`.
-# Provider modules inside tinychannels are now feature-gated there, so this
-# gate finally sheds crates instead of being surface-only: `email` owns the
-# lettre/async-imap/mail-parser stack and `lark` owns axum + prost — 27 crates
-# that a workflow-only build has no use for. The crate itself still cannot be
-# dropped (DomainEvent embeds its inbound envelope, config re-exports its
-# provider types, security::pairing re-exports its helpers), which is why
-# gating the providers rather than the crate is the right seam.
-channels = ["tinychannels/email", "tinychannels/lark"]
+# The crate itself is now droppable, which it was not before: splitting
+# `tinychannels-bus` out moved every always-on pin into a contract crate. That
+# is a compile-surface and architecture win, NOT a dependency win — see the
+# measured note above before claiming otherwise.
+channels = ["dep:tinychannels", "tinychannels/email", "tinychannels/lark"]
 sandbox-landlock = ["dep:landlock"]
 sandbox-bubblewrap = []
 peripheral-rpi = ["dep:rppal"]
@@ -1152,6 +1265,23 @@ whatsapp-web = ["channels", "tinychannels/whatsapp-web"]
 # build (app/scripts/e2e-build.sh) flips it on. Shipped binaries never have
 # this feature so the wipe RPC isn't even registered, let alone reachable.
 e2e-test-support = []
+# Compiles the embedded-RSS benchmark bin (#5046). Default-OFF and absent from
+# `scripts/ci/product-features.txt`, so nothing shipped enables it, and — like
+# `tui` — it is in NEITHER the contributor nor the product set, which is why the
+# `Rust RSS Benchmark` lane names it explicitly.
+#
+# The list is EMPTY, and that is the whole point of this edit. It used to read
+# `["dep:tinycortex", "dep:tinymemory-core"]`, but not for the benchmark's sake:
+# a `[[bin]]` cannot use a dev-dependency, so this feature was what turned the
+# engine on for the two `library-profile` bins that shared the gate. Those
+# measured the in-process engine and went with it. The benchmark itself names no
+# engine symbol and never did.
+rss-bench = []
+# Adds dhat heap profiling on top of `rss-bench` for the `library-profile`
+# binary. Default-OFF, dev-only: installs dhat's global allocator, which
+# perturbs RSS/timing numbers, so it is a separate opt-in feature rather than
+# folded into `rss-bench`. Never forwarded to the shipped build.
+rss-bench-dhat = ["rss-bench", "dep:dhat"]
 # Compiles `memory::host_impls`, the host side of the seam traits the memory
 # ENGINE declares, for builds that embed that engine in-process.
 #
@@ -1194,12 +1324,6 @@ file-logging = ["dep:tracing-appender", "dep:tracing-log"]
 scheduler-gate = ["dep:starship-battery"]
 
 bin-tools = ["dep:clap", "dep:env_logger"]
-rss-bench = []
-# Adds dhat heap profiling on top of `rss-bench` for the `library-profile`
-# binary. Default-OFF, dev-only: installs dhat's global allocator, which
-# perturbs RSS/timing numbers, so it is a separate opt-in feature rather than
-# folded into `rss-bench`. Never forwarded to the shipped build.
-rss-bench-dhat = ["rss-bench", "dep:dhat"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
@@ -1217,7 +1341,7 @@ should_implement_trait = "allow"
 too_many_arguments = "allow"
 while_let_loop = "allow"
 
-# The tinycortex vendored above takes `tinymemory-api` by git (it re-exports
+# The tinycortex patched in below takes `tinymemory-api` by git (it re-exports
 # the TinyMemory contract instead of duplicating it, tinymemory#18 §A1).
 # Without this entry cargo resolves that git copy *and* the path copy under
 # vendor/tinymemory as two distinct crates, and `tinymemory_api::MemoryCategory`
@@ -1226,6 +1350,18 @@ while_let_loop = "allow"
 # workspace carries; the key has no `.git` suffix, matching the dep URL.
 [patch."https://github.com/tinyhumansai/tinymemory"]
 tinymemory-api = { path = "vendor/tinymemory/crates/tinymemory-api" }
+
+# `tinycortex` (patched in below) depends on `tinyinference` by git rev rather
+# than by path — `[patch.crates-io]` only rewrites crates.io-sourced deps, so
+# it does not touch this one. Without this entry cargo resolves a THIRD copy
+# of `tinyinference` (git) alongside the path copy openhuman/tinyagents use and
+# the crates.io copy tinymemory-core names (patched onto the same path below),
+# the identical "one checkout, one type identity" hazard the `tinyinference`
+# patch entry documents. Patched onto the same vendored checkout so all three
+# resolve to one package — verified with `cargo metadata` / `cargo tree -i
+# tinyinference`.
+[patch."https://github.com/tinyhumansai/tinyinference"]
+tinyinference = { path = "vendor/tinyagents/vendor/tinyinference/crates/tinyinference" }
 
 [patch.crates-io]
 # Upstream 0.2.1 enables reqwest's default native-tls backend even though it
@@ -1236,21 +1372,35 @@ tinymemory-api = { path = "vendor/tinymemory/crates/tinymemory-api" }
 motosan-ai-oauth = { path = "vendor/motosan-ai-oauth" }
 # TinyAgents is vendored as a git submodule (pinned at the released tag) so
 # migration work can change the SDK source in-tree, test it against OpenHuman
-# immediately, and PR the diff upstream from the submodule. Keep the submodule
-# version in lockstep with the `tinyagents` requirement above. After cloning:
-# `git submodule update --init vendor/tinyagents` (worktrees included).
-tinyagents = { path = "vendor/tinyagents" }
-# TinyFlows, TinyCortex, TinyChannels, and TinyPlace are vendored beside
-# TinyAgents so integration work can test crate changes against OpenHuman before
-# publishing.
-tinyflows = { path = "vendor/tinyflows" }
-tinycortex = { path = "vendor/tinycortex" }
-# `tinymemory-core` names `tinycortex-api` by version requirement (this crate
-# depends on it by path, above). Patch it onto the same checkout so both see one
-# copy of the contract types and the trait identities unify.
-tinycortex-api = { path = "vendor/tinycortex/api" }
+# immediately, and PR the diff upstream from the submodule. After cloning:
+# `git submodule update --init --recursive vendor/tinyagents` (worktrees
+# included) — tinyagents itself now vendors `tinyinference` and `tinytools` as
+# its own submodules, hence `--recursive`.
+#
+# tinyagents is a workspace of several crates now (see the dependency block
+# above), each depended on directly by path, so there is nothing to patch here
+# for tinyagents itself — a path dependency already points at this checkout.
+# `tinyinference` is a normal crates-io-shaped dependency, declared by path
+# above (vendor/tinyagents/vendor/tinyinference/crates/tinyinference) but not
+# by a plain `path = ...` requirement inside the tinyagents workspace's own
+# Cargo.toml — it is a git submodule under vendor/tinyagents. `tinymemory-core`
+# ALSO declares `tinyinference = "0.2"` (crates-io-shaped) in its own
+# Cargo.toml, and because tinymemory is consumed here as a path dependency, its
+# own `[patch]` table (which points at tinymemory's own vendored copy) does not
+# apply — only this crate's `[patch.crates-io]` governs the build. Without an
+# entry here, tinymemory-core would resolve `tinyinference` from crates.io
+# while this crate uses the vendored path: two separately compiled, nominally
+# distinct copies of the same types (`tinyinference::model::ChatModel` from one
+# would not satisfy a trait bound written against the other), exactly the
+# "one checkout, one type identity" hazard the `tinytools` note above
+# describes. Patched onto the SAME checkout openhuman already depends on by
+# path (tinyagents' crates are built against it too), so `cargo tree -i
+# tinyinference` resolves to exactly one package.
+tinyinference = { path = "vendor/tinyagents/vendor/tinyinference/crates/tinyinference" }
+# TinyFlows and TinyChannels are vendored beside TinyAgents so integration
+# work can test crate changes against OpenHuman before publishing.
+tinyflows = { path = "vendor/tinyflows/crates/tinyflows" }
 tinychannels = { path = "vendor/tinychannels" }
-tinyplace = { path = "vendor/tinyplace/sdk/rust" }
 
 # Emit just enough DWARF in release builds for Sentry to symbolicate Rust
 # panics + render surrounding source lines. `line-tables-only` keeps the

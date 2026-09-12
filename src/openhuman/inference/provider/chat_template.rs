@@ -5,4 +5,4 @@
 //! reusable recognition of LM Studio, llama.cpp, and Ollama template-engine
 //! failures belongs to the default inference driver.
 
-pub use tinyagents::harness::providers::openai::is_chat_template_rejection_message;
+pub use tinyinference::providers::openai::is_chat_template_rejection_message;

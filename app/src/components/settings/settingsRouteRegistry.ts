@@ -4,9 +4,11 @@ import debug from 'debug';
 // Settings Route Registry
 //
 // Single declarative source of truth for every navigable settings destination.
-// Consumers (SettingsHome, Settings.tsx section arrays, DeveloperOptionsPanel,
-// settingsSearchRegistry) derive their menus from here so that a route added
-// once automatically appears in navigation, breadcrumbs, and search.
+// Consumers (SettingsHome, Settings.tsx section arrays, DeveloperOptionsPanel)
+// derive their menus from here so that a route added once automatically appears
+// in navigation and breadcrumbs. `settingsSearchRegistry` was a consumer too,
+// until the settings sidebar's search field was removed and the whole
+// `components/settings/search/` directory went with it.
 //
 // Section values determine the canonical breadcrumb parent:
 //   'home'      → top-level home menu entry (Settings breadcrumb only)
@@ -239,6 +241,19 @@ export const SETTINGS_ROUTE_REGISTRY: SettingsRegistryEntry[] = [
     ],
     navGroup: 'general',
     navOrder: 97,
+  },
+  {
+    // Moved out of its own top-level `/feedback` route: it was reached only
+    // from a sidebar-header icon, and that icon became the command-palette
+    // trigger. A public board is a General-settings subject anyway, next to
+    // About.
+    id: 'feedback',
+    titleKey: 'nav.feedback',
+    descriptionKey: 'feedback.header.desc',
+    section: 'home',
+    searchKeywords: ['feedback', 'bug', 'feature', 'request', 'board', 'vote'],
+    navGroup: 'general',
+    navOrder: 98,
   },
   {
     id: 'about',

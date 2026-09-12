@@ -92,6 +92,7 @@ pub use schemas::{
 };
 
 #[cfg(test)]
+#[path = "agent_tests.rs"]
 mod tests;
 
 #[allow(unused_imports)]

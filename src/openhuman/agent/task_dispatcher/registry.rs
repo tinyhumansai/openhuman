@@ -5,14 +5,14 @@
 //! web-channel turns.
 //!
 //! The map itself is
-//! [`ActiveRunRegistry`](tinyagents::graph::todos::dispatch::ActiveRunRegistry),
+//! [`ActiveRunRegistry`](tinyagents_graph::todos::dispatch::ActiveRunRegistry),
 //! which owns the race-free removal that decides who writes a run's terminal
 //! card state. What stays here is the OpenHuman side of a cancel: the board
 //! write-back and the terminal chat event.
 
 use std::sync::OnceLock;
 
-use tinyagents::graph::todos::dispatch::ActiveRunRegistry;
+use tinyagents_graph::todos::dispatch::ActiveRunRegistry;
 
 use crate::openhuman::threads::todos::ops::BoardLocation;
 

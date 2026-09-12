@@ -120,7 +120,6 @@ impl SystemPromptBuilder {
         archetype_prompt_text: String,
         omit_identity: bool,
         omit_safety_preamble: bool,
-        _omit_skills_catalog: bool,
     ) -> Self {
         let mut sections: Vec<Box<dyn PromptSection>> =
             vec![Box::new(ArchetypePromptSection::new(archetype_prompt_text))];

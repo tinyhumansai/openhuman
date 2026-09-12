@@ -17,6 +17,10 @@ use crate::openhuman::util::utf8_safe_prefix_at_byte_boundary;
 const GITHUB_OWNER: &str = "tinyhumansai";
 const GITHUB_REPO: &str = "openhuman";
 
+/// Origin of the release-metadata API. Not configurable at runtime — see
+/// `check_available_with_base_url`.
+const GITHUB_API_BASE: &str = "https://api.github.com";
+
 /// Current binary version (set at compile time from Cargo.toml).
 pub fn current_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
@@ -87,13 +91,25 @@ fn is_newer(latest: &str, current: &str) -> bool {
 
 /// Check GitHub Releases for a newer version of openhuman-core.
 pub async fn check_available() -> Result<UpdateInfo, String> {
+    check_available_with_base_url(GITHUB_API_BASE).await
+}
+
+/// `check_available`, with the API origin injected.
+///
+/// Deliberately **private**, and deliberately not an env var. `ops::validate_download_url`
+/// pins asset downloads to the GitHub host allowlist on purpose; a runtime-overridable
+/// release endpoint would be a self-update redirection primitive on the highest-trust
+/// path in the product. The only caller besides `check_available` is the unit suite,
+/// which points it at a local mock — which is what the note in `scheduler_tests.rs`
+/// asked for.
+async fn check_available_with_base_url(base_url: &str) -> Result<UpdateInfo, String> {
     let current = current_version();
     log::info!(
         "[update] checking for updates — current version: {}",
         current
     );
 
-    let url = format!("https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest");
+    let url = format!("{base_url}/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest");
 
     let client = reqwest::Client::builder()
         .user_agent("openhuman-core-updater")
@@ -362,44 +378,5 @@ fn is_transport_network_failure(err: &reqwest::Error) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn is_newer_detects_update() {
-        assert!(is_newer("0.50.0", "0.49.17"));
-        assert!(is_newer("1.0.0", "0.99.99"));
-        assert!(is_newer("v0.50.0", "0.49.17"));
-        assert!(!is_newer("0.49.17", "0.49.17"));
-        assert!(!is_newer("0.49.16", "0.49.17"));
-        assert!(!is_newer("0.49.17", "0.50.0"));
-    }
-
-    #[test]
-    fn current_version_is_not_empty() {
-        assert!(!current_version().is_empty());
-    }
-
-    /// OPENHUMAN-TAURI-2F regression guard. A reqwest call to an unroutable
-    /// host (port 1 on TEST-NET-1, RFC 5737 documentation range — guaranteed
-    /// never to answer) must classify as a transport failure so the
-    /// `check_releases` / `download` call sites skip the Sentry report. If
-    /// reqwest ever changes its error taxonomy and connection failures stop
-    /// setting `is_connect` / `is_request` / `is_timeout`, this test breaks
-    /// and the call sites would silently start paging again — that's the
-    /// signal we want.
-    #[tokio::test]
-    async fn transport_failure_classifier_catches_unreachable_host() {
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_millis(250))
-            .no_proxy()
-            .build()
-            .expect("build reqwest client");
-        let result = client.get("http://192.0.2.1:1/").send().await;
-        let err = result.expect_err("connect to TEST-NET-1:1 must fail");
-        assert!(
-            is_transport_network_failure(&err),
-            "unreachable-host reqwest error must classify as transport: {err}"
-        );
-    }
-}
+#[path = "core_tests.rs"]
+mod tests;

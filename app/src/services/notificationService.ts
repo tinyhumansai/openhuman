@@ -1,6 +1,6 @@
 import debug from 'debug';
 
-import type { IntegrationNotification, NotificationStats } from '../types/notifications';
+import type { IntegrationNotification } from '../types/notifications';
 import { callCoreRpc } from './coreRpcClient';
 
 const log = debug('notifications');
@@ -47,66 +47,6 @@ export async function markNotificationRead(id: string): Promise<void> {
   }
 }
 
-type NotificationIngestResult = { id: string; skipped?: false } | { skipped: true; reason: string };
-
-/**
- * Ingest a new notification via the core RPC pipeline.
- * Calls `openhuman.notification_ingest`.
- *
- * Returns `{ id }` when the notification was persisted, or
- * `{ skipped: true, reason }` when the provider is disabled.
- */
-export async function ingestNotification(payload: {
-  provider: string;
-  account_id?: string;
-  title: string;
-  body: string;
-  raw_payload: Record<string, unknown>;
-}): Promise<NotificationIngestResult> {
-  log('ingestNotification provider=%s', payload.provider);
-  const result = await callCoreRpc<NotificationIngestResult>({
-    method: 'openhuman.notification_ingest',
-    params: payload,
-  });
-  if (result.skipped) {
-    log('ingestNotification skipped provider=%s reason=%s', payload.provider, result.reason);
-  } else {
-    log('ingestNotification created id=%s', result.id);
-  }
-  return result;
-}
-
-export async function getNotificationSettings(
-  provider: string
-): Promise<{
-  provider: string;
-  enabled: boolean;
-  importance_threshold: number;
-  route_to_orchestrator: boolean;
-}> {
-  const result = await callCoreRpc<{
-    settings: {
-      provider: string;
-      enabled: boolean;
-      importance_threshold: number;
-      route_to_orchestrator: boolean;
-    };
-  }>({ method: 'openhuman.notification_settings_get', params: { provider } });
-  return result.settings;
-}
-
-export async function setNotificationSettings(payload: {
-  provider: string;
-  enabled: boolean;
-  importance_threshold: number;
-  route_to_orchestrator: boolean;
-}): Promise<void> {
-  await callCoreRpc<{ ok: boolean }>({
-    method: 'openhuman.notification_settings_set',
-    params: payload,
-  });
-}
-
 export async function dismissNotification(id: string): Promise<void> {
   log('dismissNotification id=%s', id);
   try {
@@ -131,26 +71,6 @@ export async function markNotificationActed(id: string): Promise<void> {
     log('markNotificationActed ok id=%s', id);
   } catch (err) {
     errLog('markNotificationActed failed id=%s: %o', id, err);
-    throw err;
-  }
-}
-
-export async function fetchNotificationStats(): Promise<NotificationStats> {
-  log('fetchNotificationStats');
-  try {
-    const result = await callCoreRpc<NotificationStats>({
-      method: 'openhuman.notification_stats',
-      params: {},
-    });
-    log(
-      'fetchNotificationStats ok total=%d unread=%d unscored=%d',
-      result.total,
-      result.unread,
-      result.unscored
-    );
-    return result;
-  } catch (err) {
-    errLog('fetchNotificationStats failed: %o', err);
     throw err;
   }
 }

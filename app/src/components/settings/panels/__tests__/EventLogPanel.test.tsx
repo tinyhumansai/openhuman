@@ -15,7 +15,7 @@ vi.mock('../../hooks/useSettingsNavigation', () => ({
 
 vi.mock('../../../../lib/i18n/I18nContext', () => ({ useT: () => ({ t: (k: string) => k }) }));
 
-function mockFetchSSE(events: Array<{ domain: string; event: string }>) {
+function mockFetchSSE(events: Array<{ domain: string; event: string; detail?: string }>) {
   const lines = events.map(e => `data:${JSON.stringify({ ...e, timestamp: '12:00:00' })}\n`);
   const body = lines.join('');
   const encoder = new TextEncoder();
@@ -70,6 +70,47 @@ describe('EventLogPanel', () => {
     expect(screen.getByText('settings.developerMenu.eventLog.badge.agent')).toBeTruthy();
   });
 
+  it('renders the backend detail line for events that carry one', async () => {
+    // The envelope carries the variant name only, so an MCP transport drop
+    // reaches the log with its reason in `detail` (#5931).
+    mockFetchSSE([
+      {
+        domain: 'mcp_client',
+        event: 'McpServerTransportDropped',
+        detail: 'session ended: broken after 1961ms — connection reset',
+      },
+      { domain: 'tool', event: 'ToolExecuted' },
+    ]);
+    renderWithProviders(<EventLogPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByText('McpServerTransportDropped')).toBeTruthy();
+    });
+    expect(screen.getByText('session ended: broken after 1961ms — connection reset')).toBeTruthy();
+    // An event without a detail renders exactly as it did before.
+    expect(screen.getByText('ToolExecuted')).toBeTruthy();
+  });
+
+  it('matches the filter text against the detail line', async () => {
+    mockFetchSSE([
+      { domain: 'mcp_client', event: 'McpServerTransportDropped', detail: 'connection reset' },
+      { domain: 'tool', event: 'ToolExecuted' },
+    ]);
+    const { container } = renderWithProviders(<EventLogPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByText('ToolExecuted')).toBeTruthy();
+    });
+
+    const filter = container.querySelector('input')!;
+    fireEvent.change(filter, { target: { value: 'connection reset' } });
+
+    await waitFor(() => {
+      expect(screen.queryByText('ToolExecuted')).toBeNull();
+    });
+    expect(screen.getByText('McpServerTransportDropped')).toBeTruthy();
+  });
+
   it('shows disconnected state when fetch fails', async () => {
     global.fetch = vi.fn().mockRejectedValue(new Error('network'));
     renderWithProviders(<EventLogPanel />);
@@ -84,13 +125,18 @@ describe('EventLogPanel', () => {
       { domain: 'tool', event: 'ToolA' },
       { domain: 'agent', event: 'AgentB' },
     ]);
-    const { container } = renderWithProviders(<EventLogPanel />);
+    renderWithProviders(<EventLogPanel />);
 
     await waitFor(() => {
       expect(screen.getByText('ToolA')).toBeTruthy();
     });
 
-    const select = container.querySelector('select')!;
+    // By label, not by position: the toolbar has more than one select since
+    // the workspace-scope control landed (#5966), and `querySelector('select')`
+    // silently picks whichever comes first in the DOM.
+    const select = screen.getByLabelText(
+      'settings.developerMenu.eventLog.allTypes'
+    ) as HTMLSelectElement;
     fireEvent.change(select, { target: { value: 'tool' } });
 
     await waitFor(() => {
@@ -167,7 +213,10 @@ describe('EventLogPanel', () => {
       expect(screen.getByText('ScrollTest')).toBeTruthy();
     });
 
-    const scrollDiv = container.querySelector('.max-h-\\[60vh\\]')!;
+    // Was `container.querySelector('.max-h-[60vh]')` — the scroll region was
+    // addressed by a utility class, so restyling it broke the test without any
+    // behaviour changing. A testid is the stable handle.
+    const scrollDiv = container.querySelector('[data-testid="event-log-scroll"]')!;
     Object.defineProperty(scrollDiv, 'scrollTop', { value: 100, writable: true });
     fireEvent.scroll(scrollDiv);
 

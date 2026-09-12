@@ -4,7 +4,7 @@
 use crate::openhuman::memory::api::provider::chunks::ChunkQuery;
 use crate::openhuman::memory::api::provider::retrieval::{CoverWindowQuery, FastRetrieveQuery};
 use crate::openhuman::memory::api::provider::types::SourceScope;
-use crate::openhuman::memory::api::provider::{MemoryProvider, MemoryTree};
+use crate::openhuman::memory::api::provider::{MemoryMaintenance, MemoryProvider, MemoryTree};
 use crate::openhuman::memory::api::tree::IngestRequest;
 use crate::openhuman::memory::api::types::MemoryTaint;
 
@@ -505,4 +505,215 @@ async fn episodic_writes_are_not_redacted_for_an_embedded_driver() {
         .await
         .expect("insert_event");
     assert_eq!(driver.only_call().content.as_deref(), Some(secrety));
+}
+
+// ── The defaulted doors ─────────────────────────────────────────────────────
+//
+// Every method a family trait *defaults* is a method a decorator can silently
+// fail to forward: the impl compiles, and the default answers `Unsupported`
+// however capable the driver below is. `RecordingProvider` overrides the five
+// #5560 doors and `diagnose`, so a decorator that dropped one is the only way
+// these can come back unsupported.
+
+/// One summary context, so the fold tests read as the two things they differ
+/// in rather than as seven repeated budget fields.
+fn summary_context() -> crate::openhuman::memory::api::provider::content::SummaryContext {
+    crate::openhuman::memory::api::provider::content::SummaryContext {
+        tree_id: "segment-1".into(),
+        tree_kind: "source".into(),
+        target_level: 0,
+        token_budget: 2_000,
+        input_token_budget: 50_000,
+        overhead_reserve_tokens: 2_048,
+        ask: None,
+    }
+}
+
+fn summary_input(content: &str) -> crate::openhuman::memory::api::provider::content::SummaryInput {
+    let at = chrono::Utc::now();
+    crate::openhuman::memory::api::provider::content::SummaryInput {
+        id: "turn-1".into(),
+        content: content.into(),
+        token_count: 4,
+        entities: Vec::new(),
+        topics: Vec::new(),
+        time_range_start: at,
+        time_range_end: at,
+        score: 0.5,
+    }
+}
+
+#[tokio::test]
+async fn the_defaulted_doors_are_forwarded_rather_than_refused() {
+    let (driver, guard) = guarded(embedded_policy());
+
+    guard
+        .as_tree()
+        .expect("tree family")
+        .summarise(&[summary_input("hello")], &summary_context())
+        .await
+        .expect("summarise must reach the driver, not the trait default");
+    guard
+        .as_tree()
+        .expect("tree family")
+        .root_summaries_with_caps(8_000, 32_000)
+        .await
+        .expect("root_summaries_with_caps must reach the driver");
+    guard
+        .as_chunks()
+        .expect("chunks family")
+        .chunk_score("chunk-1")
+        .await
+        .expect("chunk_score must reach the driver");
+    guard
+        .as_chunks()
+        .expect("chunks family")
+        .source_ingest_status(&[])
+        .await
+        .expect("source_ingest_status must reach the driver");
+    guard
+        .as_maintenance()
+        .expect("maintenance family")
+        .degraded_state()
+        .await
+        .expect("degraded_state must reach the driver");
+    guard
+        .as_maintenance()
+        .expect("maintenance family")
+        .diagnose()
+        .await
+        .expect("diagnose must reach the driver");
+
+    // The seven the runtime-tree round added (contract 4.0). Six of them carry
+    // the `tree_summarizer_*` RPC surface and the `tree-summarizer` CLI; the
+    // seventh is what `memory_flavour` reads. A `GuardedTree` that forgot one
+    // would refuse a driver that serves it perfectly well — the shape of the
+    // `diagnose` bug this test was written for.
+    let tree = guard.as_tree().expect("tree family");
+    let at = chrono::Utc::now();
+    tree.runtime_buffer_write("team", "hello", at, None)
+        .await
+        .expect("runtime_buffer_write must reach the driver");
+    tree.runtime_read_node("team", "root")
+        .await
+        .expect("runtime_read_node must reach the driver");
+    tree.runtime_read_children("team", "root")
+        .await
+        .expect("runtime_read_children must reach the driver");
+    tree.runtime_tree_status("team")
+        .await
+        .expect("runtime_tree_status must reach the driver");
+    tree.runtime_summarize("team", at)
+        .await
+        .expect("runtime_summarize must reach the driver");
+    tree.runtime_rebuild("team")
+        .await
+        .expect("runtime_rebuild must reach the driver");
+    tree.flavour_profile("persona/communication")
+        .await
+        .expect("flavour_profile must reach the driver");
+
+    let methods: Vec<String> = driver.calls().into_iter().map(|call| call.method).collect();
+    assert_eq!(
+        methods,
+        vec![
+            "tree.summarise",
+            "tree.root_summaries_with_caps",
+            "chunks.chunk_score",
+            "chunks.source_ingest_status",
+            "maintenance.degraded_state",
+            "maintenance.diagnose",
+            "tree.runtime_buffer_write",
+            "tree.runtime_read_node",
+            "tree.runtime_read_children",
+            "tree.runtime_tree_status",
+            "tree.runtime_summarize",
+            "tree.runtime_rebuild",
+            "tree.flavour_profile",
+        ]
+    );
+}
+
+/// `summarise` is the only member of the tree family besides `append` that
+/// hands prose *out* of the host — to the driver's own chat provider — so it
+/// takes `append`'s outbound scrub.
+#[tokio::test]
+async fn summarise_inputs_are_redacted_for_a_foreign_driver() {
+    let secrety = "Authorization: Bearer abcdefghijklmnop";
+
+    let (driver, guard) = guarded(external_policy("trusted"));
+    guard
+        .as_tree()
+        .expect("tree family")
+        .summarise(&[summary_input(secrety)], &summary_context())
+        .await
+        .expect("summarise");
+    assert_ne!(
+        driver.only_call().content.as_deref(),
+        Some(secrety),
+        "the bearer token reached a foreign driver's summariser verbatim"
+    );
+}
+
+/// The other half: an embedded driver is the same address space, so scrubbing
+/// there would cost the fold fidelity for no privacy gain — and the borrowed
+/// slice must be forwarded untouched rather than re-owned.
+#[tokio::test]
+async fn summarise_inputs_are_not_redacted_for_an_embedded_driver() {
+    let secrety = "Authorization: Bearer abcdefghijklmnop";
+
+    let (driver, guard) = guarded(embedded_policy());
+    guard
+        .as_tree()
+        .expect("tree family")
+        .summarise(&[summary_input(secrety)], &summary_context())
+        .await
+        .expect("summarise");
+    assert_eq!(driver.only_call().content.as_deref(), Some(secrety));
+}
+
+/// openhuman#6012, review finding: a dry run is a read.
+///
+/// The member is tiered by what the call *does*, not by what it could do. A dry
+/// run counts what a pass would examine and writes nothing, so a `readonly`
+/// operator must be able to make it — that is the safe way to size an expensive
+/// job, and it is the default (`dry_run` omitted means `true`), so gating it
+/// behind the write tier would have refused the ordinary request outright.
+/// Executing re-files documents and stays refused at that tier.
+#[tokio::test]
+async fn guard_admits_a_backfill_dry_run_at_readonly_but_refuses_the_executing_pass() {
+    use crate::openhuman::memory::api::provider::types::BackfillTreesRequest;
+
+    let dir = std::env::temp_dir();
+    let _tier = live_policy::install_scoped(
+        std::sync::Arc::new(SecurityPolicy {
+            autonomy: AutonomyLevel::ReadOnly,
+            ..SecurityPolicy::default()
+        }),
+        dir.clone(),
+        dir,
+    );
+
+    let (_driver, guard) = guarded(embedded_policy());
+    let maintenance = guard.as_maintenance().expect("maintenance family");
+
+    maintenance
+        .backfill_connector_trees(BackfillTreesRequest {
+            limit: None,
+            dry_run: true,
+        })
+        .await
+        .expect("a dry run writes nothing, so a readonly tier must admit it");
+
+    let err = maintenance
+        .backfill_connector_trees(BackfillTreesRequest {
+            limit: None,
+            dry_run: false,
+        })
+        .await
+        .expect_err("a readonly tier must refuse the executing pass");
+    assert!(
+        err.to_string().contains("memory guard: "),
+        "the refusal must come from the guard, not the driver: {err}"
+    );
 }

@@ -10,7 +10,7 @@
 //! ## Where the implementation lives
 //!
 //! The git plumbing itself is **TinyAgents'**
-//! ([`tinyagents::harness::workspace::git`]): worktree create/list/status/diff/
+//! ([`tinyagents_harness::workspace::git`]): worktree create/list/status/diff/
 //! remove, repo-root validation, run-id sanitizing, and cross-worker overlap
 //! detection are host-agnostic and are re-exported here under their historical
 //! OpenHuman names so call sites and the RPC surface are unchanged.
@@ -39,8 +39,8 @@
 
 use std::path::{Path, PathBuf};
 
-use tinyagents::harness::tool::SandboxMode;
-use tinyagents::harness::workspace::{
+use tinyagents_harness::tool::SandboxMode;
+use tinyagents_harness::workspace::{
     GitWorktreeIsolation, WorkspaceDescriptor, WorkspaceIsolation,
 };
 
@@ -53,7 +53,7 @@ use crate::core::events::DomainEvent;
 // change. `WorktreeStatus` in particular is serialized straight to the desktop
 // UI; it is field- and `serde`-identical to the crate type, pinned by
 // `worktree_status_serializes_with_stable_camel_case_keys`.
-pub use tinyagents::harness::workspace::{
+pub use tinyagents_harness::workspace::{
     create_git_worktree as create, detect_worktree_overlaps as detect_overlaps,
     git_worktree_diff_summary as diff_summary, git_worktree_status as status,
     list_git_worktrees as list, remove_git_worktree as remove, GitWorktreeBaseRef as BaseRef,
@@ -115,7 +115,7 @@ impl WorkspaceIsolation for OpenHumanWorktreeIsolation {
         &self,
         run_id: &str,
         agent: Option<&str>,
-    ) -> tinyagents::Result<WorkspaceDescriptor> {
+    ) -> tinyagents_harness::Result<WorkspaceDescriptor> {
         tracing::debug!(
             run_id,
             agent = agent.unwrap_or(""),
@@ -147,7 +147,7 @@ impl WorkspaceIsolation for OpenHumanWorktreeIsolation {
         Ok(descriptor)
     }
 
-    async fn cleanup(&self, descriptor: &WorkspaceDescriptor) -> tinyagents::Result<()> {
+    async fn cleanup(&self, descriptor: &WorkspaceDescriptor) -> tinyagents_harness::Result<()> {
         tracing::debug!(
             root = %descriptor.root.display(),
             policy_id = %descriptor.policy_id,
@@ -206,7 +206,7 @@ impl WorkspaceIsolation for OpenHumanWorktreeIsolation {
 /// observability + fail-closed signal keyed on the descriptor the isolated run
 /// carries.
 ///
-/// [`EventSink`]: tinyagents::harness::events::EventSink
+/// [`EventSink`]: tinyagents_harness::events::EventSink
 pub fn enforce_workspace_path(
     descriptor: &WorkspaceDescriptor,
     path: &Path,

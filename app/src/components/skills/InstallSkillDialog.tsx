@@ -38,7 +38,7 @@ import {
   skillsApi,
   type WorkflowSummary,
 } from '../../services/api/skillsApi';
-import { ModalShell, TextField } from '../ui';
+import { ModalShell, Spinner, TextField } from '../ui';
 import Button from '../ui/Button';
 
 const log = debug('skills:install-dialog');
@@ -324,10 +324,7 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
                 role="status"
                 aria-live="polite"
                 className="flex items-center gap-3 rounded-xl border border-primary-200 bg-primary-50 p-3 text-xs text-primary-900">
-                <span
-                  aria-hidden="true"
-                  className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-primary-300 border-t-primary-600"
-                />
+                <Spinner aria-hidden="true" className="h-3 w-3 shrink-0" />
                 <span>
                   {t('skills.install.fetchingPrefix')} <code className="font-mono">SKILL.md</code>…{' '}
                   {t('skills.install.fetchingSuffix')}

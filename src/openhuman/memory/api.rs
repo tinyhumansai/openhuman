@@ -102,6 +102,6 @@ pub use tinymemory_api::{
 /// `tinymemory_api::host` is the in-process engine seam and must still be named
 /// on the crate.
 pub mod host {
-    pub use tinymemory_api::host::composio::{ComposioConnection, ComposioExecuteResponse};
+    pub use tinyconnectors_bus::{ComposioConnection, ComposioExecuteResponse};
     pub use tinymemory_api::host::{EvidenceRef, MemoryEvent, SpacyResponse};
 }

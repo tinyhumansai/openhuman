@@ -69,6 +69,15 @@ export const SETTINGS_NAV_ICONS: Record<string, ReactNode> = {
   ),
   'developer-options': icon(stroke('M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4')),
   about: icon(stroke('M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z')),
+  // Share feedback — a speech bubble, matching the stroke-only 24x24 idiom the
+  // rest of this map uses. The row rendered iconless until now: `SidebarNav`
+  // resolves `SETTINGS_NAV_ICONS[entry.id] ?? null`, so a registry entry with
+  // no entry here degrades quietly to a label with an empty icon slot beside it.
+  feedback: icon(
+    stroke(
+      'M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.86 9.86 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z'
+    )
+  ),
   usage: icon(
     stroke(
       'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z'

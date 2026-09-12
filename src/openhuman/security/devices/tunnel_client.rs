@@ -8,7 +8,6 @@
 //!
 //! Frame cap: 64 KB. Rate limit: callers are expected to stay ≤ 100 frames/s.
 
-use chrono::{SecondsFormat, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -25,42 +24,90 @@ pub struct TunnelRegisterPayload {
 }
 
 /// Response from the `tunnel:register` ACK callback.
+///
+/// The backend sends **camelCase**: backend PR #709 introduced
+/// `TunnelRegisterAck { channelId, pairingToken, pairingExpiresAt: number }`
+/// (`socketHandlers/tunnel/types.ts`) and `main` still emits exactly that. The
+/// `alias` entries are additive compatibility for a snake_case shape nothing
+/// currently sends — kept so a future rename needs no coordinated deploy, not
+/// because a rename has happened.
+///
+/// An earlier version of this comment had the history backwards, describing
+/// #709 as the move *to* snake_case. It is recorded here because the two real
+/// defects in this path — a numeric `pairingExpiresAt` decoded as a string, and
+/// a `{ ok: false }` refusal parsed as the success shape — were both missed
+/// while the field names were the suspect.
 #[derive(Debug, Clone, Deserialize)]
 pub struct TunnelRegisterResponse {
-    #[serde(rename = "channelId")]
+    #[serde(rename = "channelId", alias = "channel_id")]
     pub channel_id: String,
-    #[serde(rename = "pairingToken")]
+    #[serde(rename = "pairingToken", alias = "pairing_token")]
     pub pairing_token: String,
-    /// Backend has been observed sending this as either an ISO 8601 string
-    /// or an epoch-millisecond integer — normalize both to an ISO 8601
-    /// string so every downstream consumer (QR `exp` field, frontend TTL
-    /// checks) keeps seeing the contract's documented shape.
-    #[serde(rename = "pairingExpiresAt", deserialize_with = "deserialize_expires_at")]
+    /// Deserialized through [`expires_at_from_string_or_epoch_millis`]: the
+    /// backend sends this as a JSON **number** (`pairingExpiresAt:
+    /// r.pairingExpiresAt.getTime()` in `socketHandlers/tunnel/handler.ts`),
+    /// while the field — and `PairingSession::expires_at` downstream — is
+    /// documented and consumed as an ISO 8601 string.
+    #[serde(
+        rename = "pairingExpiresAt",
+        alias = "pairing_expires_at",
+        deserialize_with = "expires_at_from_string_or_epoch_millis"
+    )]
     pub pairing_expires_at: String,
 }
 
-fn deserialize_expires_at<'de, D>(deserializer: D) -> Result<String, D::Error>
+/// Floor for a plausible epoch-milliseconds `pairingExpiresAt`: 2020-01-01Z.
+///
+/// Anything below it is far likelier to be seconds than a real expiry, and
+/// seconds decode silently into 1970 rather than failing.
+const MIN_PLAUSIBLE_EPOCH_MILLIS: i64 = 1_577_836_800_000;
+
+/// Accept `pairingExpiresAt` as either an ISO 8601 string or epoch
+/// milliseconds, always yielding the ISO 8601 string the rest of the domain
+/// expects.
+///
+/// The backend's `TunnelRegisterAck` types this field as `number` and fills it
+/// with `Date.getTime()`, so a plain `String` field cannot deserialize a
+/// successful ACK at all — it fails with `invalid type: integer, expected a
+/// string`. Widening to `i64` instead would push the epoch value into
+/// `PairingSession::expires_at` and `CreatePairingResponse::expires_at`, both
+/// documented as "ISO 8601 timestamp" and handed to the paired device, so the
+/// conversion happens here where the wire shape is known.
+fn expires_at_from_string_or_epoch_millis<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
+    use serde::de::Error as _;
+
     #[derive(Deserialize)]
     #[serde(untagged)]
-    enum StringOrEpochMs {
-        Str(String),
-        EpochMs(i64),
+    enum Raw {
+        Text(String),
+        EpochMillis(i64),
     }
 
-    match StringOrEpochMs::deserialize(deserializer)? {
-        StringOrEpochMs::Str(s) => Ok(s),
-        StringOrEpochMs::EpochMs(ms) => Utc
-            .timestamp_millis_opt(ms)
-            .single()
-            .map(|dt| dt.to_rfc3339_opts(SecondsFormat::Millis, true))
-            .ok_or_else(|| {
-                serde::de::Error::custom(format!(
-                    "pairingExpiresAt: epoch-ms {ms} is out of range"
-                ))
-            }),
+    match Raw::deserialize(deserializer)? {
+        Raw::Text(text) => Ok(text),
+        Raw::EpochMillis(millis) => {
+            // Reject a value that is not plausibly milliseconds. `getTime()`
+            // returns millis, but a backend that ever switched to seconds would
+            // hand over ~1.79e9, and `from_timestamp_millis` accepts that
+            // happily as 1970-01-21 — a pairing that is already expired before
+            // the QR is drawn, reported to the user as "expired" with nothing
+            // in the log to say why. Failing loudly here keeps the silent
+            // version of this PR's own bug from being reintroduced by a unit
+            // change upstream.
+            if millis < MIN_PLAUSIBLE_EPOCH_MILLIS {
+                return Err(D::Error::custom(format!(
+                    "pairingExpiresAt={millis} is too small to be epoch milliseconds \
+                     (expected > {MIN_PLAUSIBLE_EPOCH_MILLIS}); a seconds-valued expiry \
+                     would silently decode as 1970"
+                )));
+            }
+            chrono::DateTime::from_timestamp_millis(millis)
+                .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+                .ok_or_else(|| D::Error::custom(format!("pairingExpiresAt out of range: {millis}")))
+        }
     }
 }
 
@@ -117,47 +164,80 @@ pub async fn emit_register() -> Result<TunnelRegisterResponse, String> {
         .await
         .map_err(|e| format!("[devices/tunnel] emit tunnel:register failed: {e}"))?;
 
-    // Logged at warn (not debug) so it shows up under the default RUST_LOG=info
-    // — this backend's ack shape has been observed changing between attempts
-    // (wrong-typed pairingExpiresAt, then a missing channelId entirely), so
-    // seeing the exact raw payload is the fastest way to tell "flaky backend"
-    // from "our struct is wrong."
-    log::warn!("[devices/tunnel] raw tunnel:register ack: {ack}");
-
-    // The backend acks a rejected registration with an error object shaped
-    // like `{"error": "<code>", "ok": false}` rather than an HTTP-level
-    // error — e.g. `tunnel_limit_reached` when too many pending/unreleased
-    // channels are already open for this account (there is no backend
-    // "release early" endpoint yet; pending channels only clear via their
-    // ~10 minute TTL, see devices/README.md). Detecting this shape first
-    // turns a confusing "missing field `channelId`" parse failure into the
-    // real reason.
-    if let Some(err) = register_ack_error(&ack) {
-        return Err(err);
-    }
-
-    serde_json::from_value::<TunnelRegisterResponse>(ack)
-        .map_err(|e| format!("[devices/tunnel] parse tunnel:register ack failed: {e}"))
+    parse_register_ack(ack)
 }
 
-/// Recognizes the backend's `{"error": "<code>", "ok": false}` rejection
-/// shape for `tunnel:register` and turns it into a clear message. Returns
-/// `None` for anything else (including a genuine success payload), leaving
-/// that to the normal `TunnelRegisterResponse` parse.
-fn register_ack_error(ack: &serde_json::Value) -> Option<String> {
-    if ack.get("ok").and_then(|v| v.as_bool()) != Some(false) {
+/// Turn a `tunnel:register` ACK into a response or an error message.
+///
+/// Split out of [`emit_register`] so the whole decision — failure envelope
+/// first, success shape second — is reachable without a live `SocketManager`.
+/// Testing only the [`backend_ack_error`] predicate would not have caught the
+/// envelope check being dropped from the call path, which is the regression
+/// that matters.
+pub(crate) fn parse_register_ack(ack: serde_json::Value) -> Result<TunnelRegisterResponse, String> {
+    // A failed register is answered with `{ ok: false, error: "..." }`
+    // (`safeAck<TunnelRegisterAck>(ack, { ok: false, error: publicError(err) })`
+    // in the backend handler), which carries no `channelId`. Parsing that as
+    // the success shape reports `missing field 'channelId'` and throws away the
+    // reason the backend gave — which is exactly what #5871 was: a register
+    // that failed server-side, surfaced to the user as a client parse error.
+    if let Some(error) = backend_ack_error(&ack) {
+        log::error!("[devices/tunnel] tunnel:register refused by backend: {error}");
+        return Err(format!("[devices/tunnel] tunnel:register failed: {error}"));
+    }
+
+    // Describe the shape before `from_value` consumes the value, so the success
+    // path pays no clone and the failure path can still say what arrived.
+    let shape = describe_ack_shape(&ack);
+    serde_json::from_value::<TunnelRegisterResponse>(ack).map_err(|e| {
+        log::error!("[devices/tunnel] parse tunnel:register ack failed: {e}; ack was a {shape}");
+        format!("[devices/tunnel] parse tunnel:register ack failed: {e}")
+    })
+}
+
+/// The backend's error message when an ACK carries the `{ ok: false, error }`
+/// failure envelope, or `None` for anything else.
+///
+/// `ok` is only ever present on the failure path — a successful
+/// `TunnelRegisterAck` has no such field — so an ACK carrying `ok: false` is
+/// unambiguously a refusal and its `error` is the only useful thing in it.
+pub(crate) fn backend_ack_error(ack: &serde_json::Value) -> Option<String> {
+    let object = ack.as_object()?;
+    // Absent `ok` is the success shape. Anything else is a refusal — including
+    // a present-but-not-`true` value such as the string `"false"` or `0`. An
+    // earlier version asked `as_bool()?`, which yields `None` for those and so
+    // fell through to `missing field 'channelId'`: the exact bug this function
+    // exists to prevent, reintroduced for a backend that answers sloppily.
+    if object.get("ok")?.as_bool() == Some(true) {
         return None;
     }
-    let code = ack.get("error").and_then(|v| v.as_str()).unwrap_or("unknown_error");
-    Some(match code {
-        "tunnel_limit_reached" => {
-            "[devices/tunnel] tunnel:register rejected: too many pending device pairings \
-             are already open for this account. Wait a few minutes for old ones to expire \
-             (~10 min TTL) and try again."
-                .to_string()
-        }
-        other => format!("[devices/tunnel] tunnel:register rejected: {other}"),
+    // A non-string `error` (say `{ code, message }`) is rendered rather than
+    // discarded — throwing away the backend's explanation is the failure mode
+    // being fixed, and it does not become acceptable because the shape
+    // surprised us.
+    Some(match object.get("error") {
+        None | Some(serde_json::Value::Null) => "unspecified error".to_string(),
+        Some(serde_json::Value::String(text)) => text.clone(),
+        Some(other) => other.to_string(),
     })
+}
+
+/// A short description of an ACK's shape, for the parse-failure log.
+///
+/// `as_object()` is `None` for an array, a string or `null` — precisely the
+/// cases where "what actually arrived?" is the open question, and precisely
+/// where an earlier version logged the unhelpful `ack fields = None`.
+fn describe_ack_shape(ack: &serde_json::Value) -> String {
+    match ack {
+        serde_json::Value::Object(map) => {
+            format!("object with fields {:?}", map.keys().collect::<Vec<_>>())
+        }
+        serde_json::Value::Array(items) => format!("array of {} element(s)", items.len()),
+        serde_json::Value::String(_) => "string".to_string(),
+        serde_json::Value::Number(_) => "number".to_string(),
+        serde_json::Value::Bool(_) => "bool".to_string(),
+        serde_json::Value::Null => "null".to_string(),
+    }
 }
 
 /// Emit `tunnel:connect` to start listening on a channel as `role:"core"`.
@@ -204,70 +284,5 @@ pub async fn emit_frame(channel_id: &str, payload_b64: &str) -> Result<(), Strin
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn tunnel_register_response_accepts_backend_ack_shape_without_session_token() {
-        let response: TunnelRegisterResponse = serde_json::from_value(json!({
-            "channelId": "ch_123",
-            "pairingToken": "pt_123",
-            "pairingExpiresAt": "2026-06-30T15:00:00Z"
-        }))
-        .expect("backend register ack shape should parse");
-
-        assert_eq!(response.channel_id, "ch_123");
-        assert_eq!(response.pairing_token, "pt_123");
-        assert_eq!(response.pairing_expires_at, "2026-06-30T15:00:00Z");
-    }
-
-    #[test]
-    fn register_ack_error_recognizes_tunnel_limit_reached() {
-        let ack = json!({"error": "tunnel_limit_reached", "ok": false});
-        let err = register_ack_error(&ack).expect("should recognize the error shape");
-        assert!(err.contains("too many pending device pairings"), "got: {err}");
-    }
-
-    #[test]
-    fn register_ack_error_passes_through_unknown_error_codes() {
-        let ack = json!({"error": "something_else", "ok": false});
-        let err = register_ack_error(&ack).expect("should recognize any ok:false shape");
-        assert!(err.contains("something_else"), "got: {err}");
-    }
-
-    #[test]
-    fn register_ack_error_ignores_success_shapes() {
-        let ack = json!({
-            "channelId": "ch_123",
-            "pairingToken": "pt_123",
-            "pairingExpiresAt": "2026-06-30T15:00:00Z"
-        });
-        assert_eq!(register_ack_error(&ack), None);
-    }
-
-    #[test]
-    fn tunnel_register_response_accepts_epoch_ms_pairing_expires_at() {
-        // Observed live from api.tinyhumans.ai: pairingExpiresAt sent as an
-        // integer epoch-ms timestamp rather than the documented ISO 8601
-        // string. Must normalize to a string, not fail to parse.
-        let response: TunnelRegisterResponse = serde_json::from_value(json!({
-            "channelId": "ch_123",
-            "pairingToken": "pt_123",
-            "pairingExpiresAt": 1787784497036i64
-        }))
-        .expect("epoch-ms pairingExpiresAt should parse");
-
-        assert_eq!(response.pairing_expires_at, "2026-08-26T22:48:17.036Z");
-    }
-
-    #[test]
-    fn build_core_connect_payload_omits_session_token_for_core_role() {
-        let payload = build_core_connect_payload("ch_123");
-
-        assert_eq!(payload["channelId"], "ch_123");
-        assert_eq!(payload["role"], "core");
-        assert!(payload.get("sessionToken").is_none());
-        assert!(payload.get("pairingToken").is_none());
-    }
-}
+#[path = "tunnel_client_tests.rs"]
+mod tests;

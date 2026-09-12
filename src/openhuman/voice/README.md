@@ -57,7 +57,7 @@ Namespace `voice` (registered in `all_voice_registered_controllers`):
 | `voice.set_providers` | Persist STT/TTS provider + model/voice into `config.local_ai.*`. |
 | `voice.update_provider_settings` | Persist the voice provider registry + routing strings (mirrors inference model settings). |
 | `voice.list_models` | List models/voices for a provider (static presets for built-in slugs). |
-| `voice.test_provider` | Test/validate a provider endpoint (silent-WAV STT, "Hello" TTS, or key-only validate). |
+| `voice.test_provider` | Test/validate a provider endpoint (silent-WAV STT, "Hello" TTS, or key-only validate). `validate_only` is a dry run for **both** workloads and accepts an `api_key` to check a candidate credential without storing it. |
 | `voice.server_start` / `voice.server_stop` / `voice.server_status` | Control the global dictation server. |
 | `voice.overlay_stt_notify` | Bridge chat-button STT state transitions into the dictation/transcription buses. |
 

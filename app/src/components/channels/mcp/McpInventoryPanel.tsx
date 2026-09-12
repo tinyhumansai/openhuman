@@ -18,8 +18,8 @@
 import { useId, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
+import ChipTabs from '../../layout/ChipTabs';
 import { ModalShell } from '../../ui/ModalShell';
-import { TabsContent, TabsList, TabsRoot, TabsTrigger } from '../../ui/Tabs';
 import McpInventoryExportTab from './McpInventoryExportTab';
 import McpInventoryImportTab from './McpInventoryImportTab';
 import type { InstalledServer } from './types';
@@ -54,38 +54,38 @@ const McpInventoryPanel = ({ servers, onInstallServer, onClose }: McpInventoryPa
       subtitle={t('mcp.inventory.subtitle')}
       maxWidthClassName="max-w-3xl"
       contentClassName="max-h-full overflow-y-auto p-5">
-      <TabsRoot value={tab} onValueChange={value => setTab(value as Tab)}>
-        <TabsList
-          aria-label={t('mcp.inventory.tablistAria')}
-          className="mb-4 justify-start gap-1 border-b border-line">
-          <TabsTrigger
-            value="export"
-            className="-mb-px rounded-none border-b-2 border-transparent px-3 py-1.5 data-[state=active]:border-primary-500 data-[state=active]:bg-transparent data-[state=active]:text-primary-600 dark:data-[state=active]:text-primary-300">
-            {t('mcp.inventory.tab.export')}
-          </TabsTrigger>
-          <TabsTrigger
-            value="import"
-            className="-mb-px rounded-none border-b-2 border-transparent px-3 py-1.5 data-[state=active]:border-primary-500 data-[state=active]:bg-transparent data-[state=active]:text-primary-600 dark:data-[state=active]:text-primary-300">
-            {t('mcp.inventory.tab.import')}
-          </TabsTrigger>
-        </TabsList>
+      {/* `ChipTabs` brings its own `TabsRoot` (as `display: contents`), so the
+          panels cannot be Radix `TabsContent` — that would nest a second Tabs
+          root and orphan them. A plain conditional is what the other ChipTabs
+          hosts in this area already do. The row keeps `role="tab"` /
+          `aria-selected` and Radix's roving focus; only the underline paint
+          becomes the app's chip grammar. */}
+      <ChipTabs<Tab>
+        as="tab"
+        ariaLabel={t('mcp.inventory.tablistAria')}
+        className="mb-4 flex flex-wrap gap-1.5"
+        items={[
+          { id: 'export', label: t('mcp.inventory.tab.export') },
+          { id: 'import', label: t('mcp.inventory.tab.import') },
+        ]}
+        value={tab}
+        onChange={setTab}
+      />
 
-        <TabsContent value="export">
-          <McpInventoryExportTab servers={servers} />
-        </TabsContent>
-        <TabsContent value="import">
-          <McpInventoryImportTab
-            installedServers={servers}
-            onInstallServer={(qualifiedName, prefillEnv) => {
-              // The parent's install flow lives outside this modal — close
-              // the inventory panel so the InstallDialog has room to render
-              // in the main right pane.
-              onInstallServer(qualifiedName, prefillEnv);
-              onClose();
-            }}
-          />
-        </TabsContent>
-      </TabsRoot>
+      {tab === 'export' ? (
+        <McpInventoryExportTab servers={servers} />
+      ) : (
+        <McpInventoryImportTab
+          installedServers={servers}
+          onInstallServer={(qualifiedName, prefillEnv) => {
+            // The parent's install flow lives outside this modal — close
+            // the inventory panel so the InstallDialog has room to render
+            // in the main right pane.
+            onInstallServer(qualifiedName, prefillEnv);
+            onClose();
+          }}
+        />
+      )}
     </ModalShell>
   );
 };

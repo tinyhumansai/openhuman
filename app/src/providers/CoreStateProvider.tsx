@@ -29,6 +29,7 @@ import {
 import { daemonHealthService } from '../services/daemonHealthService';
 import { socketService } from '../services/socketService';
 import { store } from '../store';
+import { loadAgentProfiles } from '../store/agentProfileSlice';
 import { resetUserScopedState } from '../store/resetActions';
 import { loadThreads, resetThreadCachesPreservingSelection } from '../store/threadSlice';
 import { getActiveUserId, setActiveUserId } from '../store/userScopedStorage';
@@ -241,6 +242,8 @@ function normalizeSnapshot(
       backendName: 'os',
     },
     runtime: { localAi: result.runtime?.localAi ?? null, service: result.runtime?.service ?? null },
+    currentUserStale: result.currentUserStale ?? false,
+    currentUserStaleSeconds: result.currentUserStaleSeconds ?? null,
   };
 }
 
@@ -252,6 +255,10 @@ function toSignedOutSnapshot(snapshot: CoreAppSnapshot): CoreAppSnapshot {
     currentUser: null,
     onboardingCompleted: false,
     chatOnboardingCompleted: false,
+    // Signed out there is no backend-backed user for the stored snapshot to be
+    // stale relative to.
+    currentUserStale: false,
+    currentUserStaleSeconds: null,
   };
 }
 
@@ -410,6 +417,37 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
             return;
           }
           log('post-identity thread reload failed: %O', sanitizeError(err));
+        });
+    }
+
+    // Seed the active agent profile at the earliest safe moment, so the window
+    // in which a chat request could carry the stale 'default' id is as short as
+    // the snapshot allows (#5872). It is a narrowing, NOT a guarantee: this
+    // dispatch is deliberately not awaited, so a send issued before it resolves
+    // still reads 'default' from the slice. Closing that window for good means
+    // omitting `profileId` while the slice is still loading — the core keeps
+    // its own authoritative `active_profile_id` and resolves an absent id
+    // against it — which belongs in the send path, not here. Intentionally not
+    // gated on !isFlip: on Tauri a flip triggers restartApp() so the provider
+    // remounts with undefined previousIdentity and profiles load on the boot
+    // poll; on web restartApp() is a no-op and by the next poll
+    // previousIdentity === nextIdentity, making shouldClearScopedCaches false
+    // — so we must dispatch here while it is still true.
+    if (
+      requestId === snapshotRequestIdRef.current &&
+      shouldClearScopedCaches &&
+      nextIdentity &&
+      !isLogout
+    ) {
+      const profileReloadRequestId = requestId;
+      void store
+        .dispatch(loadAgentProfiles())
+        .unwrap()
+        .catch(err => {
+          if (profileReloadRequestId !== snapshotRequestIdRef.current) {
+            return;
+          }
+          log('post-identity agent profiles load failed: %O', sanitizeError(err));
         });
     }
 
@@ -679,33 +717,55 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
     [refresh]
   );
 
+  // The core switches credentials before the refreshed app snapshot reaches
+  // React. Keep the token being installed visible to the expiry handler during
+  // that gap; otherwise a late 401 from the previous/cloud surface can clear a
+  // newly stored local session even though the core correctly ignores it.
+  const sessionTokenBeingStoredRef = useRef<string | null>(null);
+
   const storeSessionToken = useCallback(
     async (token: string, user?: object) => {
       logoutGuardUntilRef.current = 0;
-      await storeSession(token, user ?? {});
+      sessionTokenBeingStoredRef.current = token;
       try {
-        await syncMemoryClientToken(token);
-        memoryTokenRef.current = token;
-      } catch (error) {
-        console.warn('[core-state] memory client sync failed after session store:', error);
-      }
-      // refresh() drives refreshCore, which now owns identity-flip detection
-      // and dispatches handleIdentityFlip when both prev and next are
-      // authenticated and identities differ. The previous standalone
-      // restartApp call here was redundant and skipped the persist purge,
-      // letting redux-persist rehydrate the prior user's slices on launch
-      // (#900). Restart now happens inside handleIdentityFlip after purge.
-      // Swallow refresh failures here so a cold-boot `app_state_snapshot`
-      // timeout post-login doesn't surface as an unhandled rejection
-      // (OPENHUMAN-REACT-Z/Y) — the polling loop reconciles within
-      // `POLL_MS`.
-      await refresh().catch(err => {
-        log('refresh failed after session store: %O', sanitizeError(err));
-      });
-      if (!isLocalSessionToken(token)) {
-        await refreshTeams().catch(err => {
-          log('refreshTeams failed after session store: %O', sanitizeError(err));
+        await storeSession(token, user ?? {});
+        try {
+          await syncMemoryClientToken(token);
+          memoryTokenRef.current = token;
+        } catch (error) {
+          console.warn('[core-state] memory client sync failed after session store:', error);
+        }
+        // refresh() drives refreshCore, which now owns identity-flip detection
+        // and dispatches handleIdentityFlip when both prev and next are
+        // authenticated and identities differ. The previous standalone
+        // restartApp call here was redundant and skipped the persist purge,
+        // letting redux-persist rehydrate the prior user's slices on launch
+        // (#900). Restart now happens inside handleIdentityFlip after purge.
+        // Swallow refresh failures here so a cold-boot `app_state_snapshot`
+        // timeout post-login doesn't surface as an unhandled rejection
+        // (OPENHUMAN-REACT-Z/Y) — the polling loop reconciles within
+        // `POLL_MS`.
+        // `refresh()` dedupes onto any poll already in flight. A poll that
+        // began before `storeSession` resolved answers with the pre-store
+        // snapshot; awaiting that one here would commit stale cloud identity,
+        // then the `finally` below would drop the local-token marker on it and
+        // a late confirmed 401 could clear the session just stored. Wait the
+        // stale poll out, then require a refresh that began after the store.
+        if (refreshInFlightRef.current) {
+          await refreshInFlightRef.current.catch(() => undefined);
+        }
+        await refresh().catch(err => {
+          log('refresh failed after session store: %O', sanitizeError(err));
         });
+        if (!isLocalSessionToken(token)) {
+          await refreshTeams().catch(err => {
+            log('refreshTeams failed after session store: %O', sanitizeError(err));
+          });
+        }
+      } finally {
+        if (sessionTokenBeingStoredRef.current === token) {
+          sessionTokenBeingStoredRef.current = null;
+        }
       }
     },
     [refresh, refreshTeams]
@@ -719,6 +779,9 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
   const lastReauthReasonRef = useRef<AuthExpiredReason | null>(null);
   const reauthAttemptIdRef = useRef(0);
   const suppressReauthUntilRef = useRef(0);
+  // Set to true when a `confirmed` session-expiry event fires while isBootstrapping
+  // is still true. The bootstrap-completion effect below replays it.
+  const pendingConfirmedReauthRef = useRef(false);
 
   // Listen for deep-link auth suppression signals so that an in-flight
   // `auth_store_session` call (OAuth deep link) does not race with the
@@ -754,11 +817,44 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
     // here either — the signed-out UI doesn't render user-scoped slices,
     // and a same-user re-login should not pay a "rehydrate from disk"
     // cost (slices are still in memory). See [#900].
-    await tauriLogout();
+    // Wrap tauriLogout separately so a failure (e.g. the Rust-side
+    // SessionExpiredSubscriber already cleared the session first) does not
+    // prevent the subsequent refresh() — which is what actually flips the
+    // router to the login screen.
+    await tauriLogout().catch(err => {
+      log('tauriLogout failed in clearSession — proceeding with refresh: %O', sanitizeError(err));
+    });
     await refresh().catch(err => {
       log('refresh failed after clearSession: %O', sanitizeError(err));
     });
   }, [commitState, refresh]);
+
+  // When a confirmed session-expiry event arrives while the core is still
+  // bootstrapping, runReauth() sets pendingConfirmedReauthRef instead of
+  // dropping it. Once isBootstrapping flips to false (first successful
+  // snapshot) this effect replays it so the router reaches the login screen.
+  //
+  // We re-dispatch through openhuman:session-expired (rather than calling
+  // clearSession() directly) so the guarded runReauth() path applies: the
+  // isLocalSession check and suppressReauthUntilRef window are both
+  // re-evaluated against the now-current session state. Without this a
+  // session installed by an OAuth callback *during* bootstrap would be
+  // destructively logged out by the stale queued event.
+  useEffect(() => {
+    if (!state.isBootstrapping && pendingConfirmedReauthRef.current) {
+      pendingConfirmedReauthRef.current = false;
+      log('auth-expired: replaying confirmed reauth suppressed during bootstrap');
+      window.dispatchEvent(
+        // Explicit rather than relying on the default: what is being replayed
+        // was already established as a confirmed expiry before it was queued,
+        // and saying so here keeps the replay correct if the default above is
+        // ever made stricter.
+        new CustomEvent('openhuman:session-expired', {
+          detail: { source: 'bootstrap-replay', reason: 'confirmed' },
+        })
+      );
+    }
+  }, [state.isBootstrapping]);
 
   // Listen for two flavours of session expiry, both routed through the
   // same debounced `clearSession`:
@@ -782,12 +878,26 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
   // so re-registers are rare.
   useEffect(() => {
     const runReauth = async (method: string, source: string, reason: AuthExpiredReason) => {
-      if (isLocalSessionToken(getCoreStateSnapshot().snapshot.sessionToken)) {
+      const effectiveToken =
+        sessionTokenBeingStoredRef.current ?? getCoreStateSnapshot().snapshot.sessionToken;
+      if (isLocalSessionToken(effectiveToken)) {
         log('auth-expired ignored for local session (method=%s source=%s)', method, source);
         return;
       }
       if (getCoreStateSnapshot().isBootstrapping) {
-        log('auth-expired suppressed during bootstrap (method=%s source=%s)', method, source);
+        if (reason === 'confirmed') {
+          // Queue so the bootstrap-completion effect can replay it once the first
+          // snapshot lands. Without this the event is lost: signed_out=true prevents
+          // re-publication, leaving the user stuck in the chat shell forever.
+          pendingConfirmedReauthRef.current = true;
+          log(
+            'auth-expired queued for post-bootstrap replay (method=%s source=%s)',
+            method,
+            source
+          );
+        } else {
+          log('auth-expired suppressed during bootstrap (method=%s source=%s)', method, source);
+        }
         return;
       }
       const now = Date.now();
@@ -878,8 +988,22 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
         typeof (event.detail as { source?: unknown }).source === 'string'
           ? (event.detail as { source: string }).source
           : 'unknown';
-      // The socket `auth:session_expired` push is an explicit backend expiry → confirmed.
-      void runReauth('socket.session_expired', source, 'confirmed');
+      // The socket `auth:session_expired` push is an explicit backend expiry, and
+      // `socketService` sends no `reason` — so the default stays `confirmed`
+      // and that path is unchanged. A dispatcher that KNOWS its signal is
+      // merely suggestive says so, and is corroborated instead of trusted:
+      // `ChatRuntimeProvider`'s chat-error dispatch sends `unconfirmed`,
+      // because the core classifies local token-absent guards under the same
+      // `session_expired` error type as a real expiry.
+      const reason: AuthExpiredReason =
+        event instanceof CustomEvent &&
+        event.detail &&
+        typeof event.detail === 'object' &&
+        'reason' in event.detail &&
+        (event.detail as { reason?: unknown }).reason === 'unconfirmed'
+          ? 'unconfirmed'
+          : 'confirmed';
+      void runReauth('socket.session_expired', source, reason);
     };
 
     window.addEventListener('core-rpc-auth-expired', onRpcExpired as EventListener);

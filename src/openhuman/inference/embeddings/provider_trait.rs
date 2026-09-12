@@ -27,7 +27,7 @@
 //!
 //! The engine keeps its own copy for its own factory. That is not duplication of
 //! *state*: the adapter is a stateless newtype over a boxed trait object, both
-//! sides wrap the same `tinyagents::harness::embeddings::EmbeddingModel` (one
+//! sides wrap the same `tinyinference::embeddings::EmbeddingModel` (one
 //! crate — the root `[patch.crates-io]` points every consumer at
 //! `vendor/tinyagents`), and both produce the same
 //! `tinymemory_api::host::EmbeddingProvider`. Nothing reads the other's output,
@@ -39,7 +39,7 @@
 //! before this move and one written after land in the same embedding space.
 
 use async_trait::async_trait;
-use tinyagents::harness::embeddings::EmbeddingModel;
+use tinyinference::embeddings::EmbeddingModel;
 
 pub use tinymemory_api::host::{format_embedding_signature, EmbeddingProvider};
 

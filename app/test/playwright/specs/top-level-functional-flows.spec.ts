@@ -89,8 +89,10 @@ test.describe('Top-level functional flows', () => {
       .poll(() => page.evaluate(() => localStorage.getItem('pw:last-copied-invite')))
       .toBe(inviteCode);
 
-    await page.getByPlaceholder('Search').fill('welcome42');
-    await page.getByRole('button', { name: 'Referrals' }).click();
+    // Invites owns referral-code redemption now; the former Rewards search
+    // field and Referrals tab no longer exist on this route.
+    await page.getByRole('textbox', { name: 'Referral code' }).fill('welcome42');
+    await page.getByRole('button', { name: 'Redeem' }).click();
     await expect(page.getByText('Success')).toBeVisible({ timeout: 15_000 });
   });
 

@@ -14,12 +14,6 @@
 //!
 //! Consumers covered here (all outside `wallet`, so all must keep compiling):
 //! - `core/jsonrpc.rs` — `WALLET_NOT_CONFIGURED_MESSAGE`
-//! - `tinyplace/payment.rs` — `prepare_transfer`, `execute_prepared`, the
-//!   param/result types, `SolanaCluster`, `solana_cluster`,
-//!   `tinyplace_solana_rpc_endpoints`, `rpc::with_tinyplace_solana_endpoints`
-//! - `tinyplace/manifest.rs` — `solana_cluster`, `tinyplace_solana_rpc_endpoints`,
-//!   `redact_rpc_url`, `SolanaCluster::usdc_mint`
-//! - `tinyplace/signal_store.rs`, `tinyplace/state.rs` — `tinyplace_signer_seed`
 //! - `test_support/introspect.rs` — `prepared_quotes_for_test`,
 //!   `PreparedTransaction`
 //! - `core/all.rs` — `all_wallet_registered_controllers`
@@ -103,10 +97,8 @@ pub(crate) async fn secret_material(_chain: WalletChain) -> Result<WalletSecretM
 // PreparedTransaction, ExecutionResult, prepared_quotes_for_test}`)
 // ---------------------------------------------------------------------------
 
-/// Inputs to `prepare_transfer`. Mirrors the fields `tinyplace/payment.rs`
-/// sets. `evm_network` is `Option<()>` (the real `Option<EvmNetwork>` cannot be
-/// named with `defaults` compiled out); the only external constructor passes
-/// `None`, so the placeholder is behaviourally identical.
+/// Inputs to `prepare_transfer`. `evm_network` is `Option<()>` because the
+/// real `Option<EvmNetwork>` cannot be named with `defaults` compiled out.
 #[derive(Debug, Clone)]
 pub struct PrepareTransferParams {
     pub chain: WalletChain,
@@ -123,18 +115,16 @@ pub struct ExecutePreparedParams {
     pub confirmed: bool,
 }
 
-/// A prepared quote. Out-of-module callers read `quote_id` (`tinyplace`) and
-/// serialize the collection (`test_support`); `Serialize` + that field are the
-/// only requirements. The real type is far richer.
+/// A prepared quote. Test support serializes this collection; the real type is
+/// far richer.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreparedTransaction {
     pub quote_id: String,
 }
 
-/// Result of an execute. Out-of-module callers read `transaction_hash`
-/// (`tinyplace/payment.rs`); `execute_prepared` never returns `Ok`, so it is
-/// never actually produced.
+/// Result of an execute. `execute_prepared` never returns `Ok`, so it is
+/// never actually produced in the disabled build.
 #[derive(Debug, Clone)]
 pub struct ExecutionResult {
     pub transaction_hash: String,
@@ -165,22 +155,11 @@ pub fn prepared_quotes_for_test() -> Vec<PreparedTransaction> {
     Vec::new()
 }
 
-/// Disabled: the tiny.place signer seed derives from the Solana wallet key,
-/// which does not exist. Callers `?`-propagate → "unlock wallet" prompt.
-pub(crate) async fn tinyplace_signer_seed() -> Result<[u8; 32], String> {
-    log::debug!(
-        "[wallet-stub] tinyplace_signer_seed requested (web3 disabled) — returning disabled error"
-    );
-    Err(DISABLED_MSG.to_string())
-}
-
 // ---------------------------------------------------------------------------
-// Solana cluster metadata (mirrors `defaults::{SolanaCluster, solana_cluster,
-// tinyplace_solana_rpc_endpoints}`)
+// Solana cluster metadata (mirrors `defaults::{SolanaCluster, solana_cluster}`)
 // ---------------------------------------------------------------------------
 
-/// Public Solana clusters. Mirrors [`super::defaults::SolanaCluster`] including
-/// the `usdc_mint` accessor `tinyplace/{payment,manifest}.rs` call.
+/// Public Solana clusters. Mirrors [`super::defaults::SolanaCluster`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SolanaCluster {
     Mainnet,
@@ -203,41 +182,6 @@ impl SolanaCluster {
 pub fn solana_cluster() -> SolanaCluster {
     SolanaCluster::Mainnet
 }
-
-/// Always empty: the wallet is compiled out, so there are no settlement
-/// endpoints. `tinyplace/manifest.rs`'s balance loop therefore no-ops and the
-/// balance shows as unknown — the correct degraded state.
-pub fn tinyplace_solana_rpc_endpoints() -> Vec<String> {
-    Vec::new()
-}
-
-// ---------------------------------------------------------------------------
-// rpc submodule (mirrors `rpc::{redact_rpc_url, with_tinyplace_solana_endpoints}`)
-// ---------------------------------------------------------------------------
-
-pub(crate) mod rpc {
-    /// Redact an RPC URL for logging. With the wallet disabled we never build
-    /// real endpoints, but `tinyplace/manifest.rs` still calls this on any URL
-    /// it iterates; return a constant so no token can ever leak.
-    pub(crate) fn redact_rpc_url(_raw: &str) -> String {
-        "<rpc-redacted>".to_string()
-    }
-
-    /// Run `fut` unchanged — there is no tiny.place endpoint scope to install
-    /// when the wallet is compiled out. Matches the real generic signature so
-    /// `tinyplace/payment.rs` type-checks; the future itself resolves to a
-    /// disabled error from `prepare_transfer`.
-    pub(crate) async fn with_tinyplace_solana_endpoints<F, T>(_endpoints: Vec<String>, fut: F) -> T
-    where
-        F: std::future::Future<Output = T>,
-    {
-        fut.await
-    }
-}
-
-/// Re-export mirrors the real `pub(crate) use rpc::redact_rpc_url;` so
-/// `wallet::redact_rpc_url` resolves at the module root for `tinyplace`.
-pub(crate) use rpc::redact_rpc_url;
 
 // ---------------------------------------------------------------------------
 // Agent-tool facade (mirrors `pub mod tools`, re-exported via tools/mod.rs)
@@ -267,81 +211,7 @@ pub fn all_wallet_controller_schemas() -> Vec<ControllerSchema> {
 // This module is only compiled when the `web3` feature is OFF (see the
 // `#[cfg(not(feature = "web3"))] mod stub;` gate in `super`), so a plain
 // `#[cfg(test)]` here already runs only in the disabled build — it locks in the
-// degraded contract that always-on callers (tinyplace payments) depend on.
+// degraded contract that always-on callers depend on.
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn status_reports_no_accounts() {
-        let outcome = status().await.expect("stub status is always Ok");
-        assert!(
-            outcome.value.accounts.is_empty(),
-            "disabled wallet must expose no accounts"
-        );
-    }
-
-    #[tokio::test]
-    async fn secret_material_is_disabled_error() {
-        // `WalletSecretMaterial` intentionally omits `Debug` (mirrors the real
-        // type, which never logs a mnemonic), so match rather than `expect_err`.
-        match secret_material(WalletChain::Evm).await {
-            Ok(_) => panic!("secret material must be unavailable when the wallet is compiled out"),
-            Err(msg) => assert_eq!(msg, DISABLED_MSG),
-        }
-    }
-
-    #[tokio::test]
-    async fn prepare_transfer_is_disabled_error() {
-        let err = prepare_transfer(PrepareTransferParams {
-            chain: WalletChain::Solana,
-            to_address: "recipient".to_string(),
-            amount_raw: "1".to_string(),
-            asset_symbol: None,
-            evm_network: None,
-        })
-        .await
-        .expect_err("no transfer can be prepared when the wallet is compiled out");
-        assert_eq!(err, DISABLED_MSG);
-    }
-
-    #[tokio::test]
-    async fn execute_prepared_is_disabled_error() {
-        let err = execute_prepared(ExecutePreparedParams {
-            quote_id: "quote".to_string(),
-            confirmed: true,
-        })
-        .await
-        .expect_err("no prepared transfer can execute when the wallet is compiled out");
-        assert_eq!(err, DISABLED_MSG);
-    }
-
-    #[tokio::test]
-    async fn tinyplace_signer_seed_is_disabled_error() {
-        let err = tinyplace_signer_seed()
-            .await
-            .expect_err("no signer seed derives when the wallet is compiled out");
-        assert_eq!(err, DISABLED_MSG);
-    }
-
-    #[test]
-    fn prepared_quotes_and_rpc_endpoints_are_empty() {
-        assert!(prepared_quotes_for_test().is_empty());
-        assert!(tinyplace_solana_rpc_endpoints().is_empty());
-    }
-
-    #[test]
-    fn solana_cluster_defaults_to_mainnet_with_stable_usdc_mint() {
-        assert_eq!(solana_cluster(), SolanaCluster::Mainnet);
-        assert_eq!(
-            SolanaCluster::Mainnet.usdc_mint(),
-            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
-        );
-    }
-
-    #[test]
-    fn registration_entry_points_are_empty() {
-        assert!(all_wallet_registered_controllers().is_empty());
-        assert!(all_wallet_controller_schemas().is_empty());
-    }
-}
+#[path = "stub_tests.rs"]
+mod tests;

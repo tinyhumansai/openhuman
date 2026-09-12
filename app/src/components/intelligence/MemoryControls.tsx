@@ -62,12 +62,11 @@ export function MemoryControls({
       const resp = await memoryTreeWipeAll();
       onToast?.({
         type: 'success',
-        title: 'Memory wiped',
-        message:
-          `Removed ${resp.rows_deleted.toLocaleString()} row(s) and ` +
-          `${resp.dirs_removed.length} folder(s); cleared ` +
-          `${resp.sync_state_cleared.toLocaleString()} sync-state cursor(s). ` +
-          `Click Sync on a connected source to repopulate.`,
+        title: t('workspace.wipeSuccessTitle'),
+        message: t('workspace.wipeSuccessMessage')
+          .replace('{rows}', resp.rows_deleted.toLocaleString())
+          .replace('{dirs}', String(resp.dirs_removed.length))
+          .replace('{cursors}', resp.sync_state_cleared.toLocaleString()),
       });
       // Re-pull immediately so the canvas reflects the wipe.
       onRefresh();
@@ -75,7 +74,7 @@ export function MemoryControls({
       console.error('[ui-flow][memory-controls] wipe_all failed', err);
       onToast?.({
         type: 'error',
-        title: 'Reset failed',
+        title: t('workspace.wipeFailedTitle'),
         message: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -90,12 +89,11 @@ export function MemoryControls({
       const resp = await memoryTreeResetTree();
       onToast?.({
         type: 'success',
-        title: 'Memory tree rebuilding',
-        message:
-          `Cleared ${resp.tree_rows_deleted.toLocaleString()} tree row(s); ` +
-          `requeued ${resp.chunks_requeued.toLocaleString()} chunk(s) ` +
-          `(${resp.jobs_enqueued.toLocaleString()} extract jobs). ` +
-          `The graph will fill back in as the worker drains.`,
+        title: t('workspace.resetTreeSuccessTitle'),
+        message: t('workspace.resetTreeSuccessMessage')
+          .replace('{treeRows}', resp.tree_rows_deleted.toLocaleString())
+          .replace('{chunks}', resp.chunks_requeued.toLocaleString())
+          .replace('{jobs}', resp.jobs_enqueued.toLocaleString()),
       });
       // reset_tree restarts from extract jobs (slower than seal-only) — give the
       // worker a longer head start than build does before re-pulling.
@@ -104,7 +102,7 @@ export function MemoryControls({
       console.error('[ui-flow][memory-controls] reset_tree failed', err);
       onToast?.({
         type: 'error',
-        title: 'Could not reset memory tree',
+        title: t('workspace.resetTreeFailedTitle'),
         message: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -132,13 +130,13 @@ export function MemoryControls({
       console.error('[ui-flow][memory-controls] flush_now failed', err);
       onToast?.({
         type: 'error',
-        title: 'Could not build summary trees',
+        title: t('workspace.buildTreesFailedTitle'),
         message: err instanceof Error ? err.message : String(err),
       });
     } finally {
       setBuilding(false);
     }
-  }, [onToast, onRefresh]);
+  }, [onToast, onRefresh, t]);
 
   const handleRefresh = useCallback(async () => {
     if (refreshing) return;

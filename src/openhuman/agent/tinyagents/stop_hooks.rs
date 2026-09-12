@@ -25,10 +25,10 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use tinyagents::harness::context::RunContext;
-use tinyagents::harness::middleware::Middleware;
-use tinyagents::harness::model::ModelResponse;
-use tinyagents::harness::steering::{SteeringCommand, SteeringHandle};
+use tinyagents_harness::context::RunContext;
+use tinyagents_harness::middleware::Middleware;
+use tinyagents_harness::steering::{SteeringCommand, SteeringHandle};
+use tinyinference::model::ModelResponse;
 
 use crate::openhuman::agent::cost::TurnCost;
 use crate::openhuman::agent::stop_hooks::{StopDecision, StopHook, TurnState};
@@ -88,7 +88,7 @@ where
         _ctx: &mut RunContext<Ctx>,
         _state: &State,
         response: &mut ModelResponse,
-    ) -> tinyagents::Result<()> {
+    ) -> tinyagents_harness::Result<()> {
         // Already paused: nothing more to do (Pause is latched once).
         if self.stopped.load(Ordering::SeqCst) {
             return Ok(());

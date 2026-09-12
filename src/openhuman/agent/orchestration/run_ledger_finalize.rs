@@ -18,7 +18,7 @@
 //! `spawn_async_subagent` runs: they outlive the parent turn, so when they
 //! finish the progress sink is already dropped and `let _ = tx.send(...)` fails
 //! silently. The ledger row stays `running` forever, and every thread reopen
-//! re-renders it as a perpetual "Tinyplace Agent" timeline row.
+//! re-renders it as a perpetual agent timeline row.
 //!
 //! This subscriber closes that gap by settling the ledger from the **global
 //! bus**, which always fires from the detached task regardless of the parent
@@ -32,7 +32,7 @@ use async_trait::async_trait;
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
 use crate::openhuman::config::Config;
-use tinyagents::session::run_ledger::{transition_agent_run_status, AgentRunStatus};
+use tinyagents_session::run_ledger::{transition_agent_run_status, AgentRunStatus};
 use tinybus::EventHandler;
 
 const LOG_PREFIX: &str = "[run_ledger][finalize]";

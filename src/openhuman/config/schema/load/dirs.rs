@@ -190,6 +190,13 @@ pub(crate) async fn persist_active_workspace_config_dir(config_dir: &Path) -> Re
     let default_config_dir = default_config_dir()?;
     let state_path = active_workspace_state_path(&default_config_dir);
 
+    // Before the write, not after: this marker is one of the inputs the
+    // resolver reads, so from here until the next resolve the cached answer
+    // is no longer known to be current — including if the write below fails
+    // partway. Clearing early costs one resolve; clearing late leaves a
+    // window in which a stale workspace reads as active.
+    super::active_workspace::invalidate_active_workspace();
+
     if config_dir == default_config_dir {
         if state_path.exists() {
             fs::remove_file(&state_path).await.with_context(|| {
@@ -198,6 +205,9 @@ pub(crate) async fn persist_active_workspace_config_dir(config_dir: &Path) -> Re
                     state_path.display()
                 )
             })?;
+            // Again, now that the marker is actually gone — same race as the
+            // write branch below.
+            super::active_workspace::invalidate_active_workspace();
         }
         return Ok(());
     }
@@ -236,6 +246,12 @@ pub(crate) async fn persist_active_workspace_config_dir(config_dir: &Path) -> Re
         );
     }
 
+    // Again, now that the marker on disk actually says the new workspace. The
+    // pre-write clear alone leaves a window in which a racing resolver reads
+    // the *old* marker and refills the cache with the workspace being switched
+    // away from. Before the directory sync, not after: the rename is what
+    // changed the answer, and a sync failure must not skip this.
+    super::active_workspace::invalidate_active_workspace();
     super::sync_directory(&default_config_dir).await?;
     Ok(())
 }
@@ -249,18 +265,43 @@ pub(crate) fn resolve_config_dir_for_workspace(workspace_dir: &Path) -> (PathBuf
         );
     }
 
-    let legacy_config_dir = workspace_dir
-        .parent()
-        .map(|parent| parent.join(".openhuman"));
-    if let Some(legacy_dir) = legacy_config_dir {
-        if legacy_dir.join("config.toml").exists() {
-            return (legacy_dir, workspace_config_dir);
-        }
+    let has_workspace_basename = workspace_dir
+        .file_name()
+        .is_some_and(|name| name == std::ffi::OsStr::new("workspace"));
+    let parent = workspace_dir.parent();
 
-        if workspace_dir
-            .file_name()
-            .is_some_and(|name| name == std::ffi::OsStr::new("workspace"))
-        {
+    // Modern default layout: the workspace lives *inside* the `.openhuman`
+    // config dir (`~/.openhuman/workspace`), so the parent IS the config dir.
+    // `default_config_and_workspace_dirs` produces exactly this shape. This is
+    // a pure path-structure decision — no `.exists()` probe — so pointing
+    // `OPENHUMAN_WORKSPACE` at `~/.openhuman/workspace` resolves to
+    // `~/.openhuman` and loads the real `~/.openhuman/config.toml` instead of
+    // the doubled, non-existent `~/.openhuman/.openhuman` (#6079).
+    if has_workspace_basename {
+        if let Some(parent) = parent {
+            if parent
+                .file_name()
+                .is_some_and(|name| name == std::ffi::OsStr::new(default_root_dir_name()))
+            {
+                return (parent.to_path_buf(), workspace_config_dir);
+            }
+        }
+    }
+
+    let legacy_config_dir = parent.map(|parent| parent.join(".openhuman"));
+    if let Some(legacy_dir) = legacy_config_dir {
+        // Legacy sibling layout: `<proj>/workspace` with config living in a
+        // sibling `<proj>/.openhuman`. Return the sibling unconditionally,
+        // including on a fresh volume where `<proj>/.openhuman` does not exist
+        // yet — that is where `config::load` writes and reads config for this
+        // layout, so nesting the workspace inside itself (the fall-through
+        // below) would strand it.
+        //
+        // This arm can no longer reintroduce the #6079 doubling: the modern
+        // layout above already intercepts `~/.openhuman/workspace` (parent IS
+        // the config dir) before control reaches here, so a `workspace`
+        // basename whose parent is the config dir never falls into this arm.
+        if legacy_dir.join("config.toml").exists() || has_workspace_basename {
             return (legacy_dir, workspace_config_dir);
         }
     }
@@ -298,6 +339,67 @@ pub(crate) async fn resolve_runtime_config_dirs(
         .await
 }
 
+/// The workspace this process is serving *right now*.
+///
+/// Resolved through the same path [`Config::load_or_init`] takes — the
+/// `OPENHUMAN_WORKSPACE` override, then `active_user.toml`, then the
+/// workspace marker, then the pre-login directory — so a caller cannot
+/// disagree with the loader about which workspace is active.
+///
+/// The answer is never pinned at boot. One process serves more than one
+/// workspace over its life and the switch is a change to an on-disk marker,
+/// so anything a subscriber captured once goes stale exactly when it
+/// matters. The cost is one small marker read, which is why callers should
+/// reach for this per *decision*, not per event: `desktop::notifications`
+/// asks only for the handful of workspace-bound events a supervisor tick
+/// produces, and returns before calling it for everything else.
+///
+/// A caller that cannot afford even that — the Event Log stamps every domain
+/// event the process publishes, from a synchronous stream closure — reads
+/// [`active_workspace_dir_cached`](super::active_workspace::active_workspace_dir_cached)
+/// instead. Both arms below refill that cache, so the two cannot disagree
+/// about a workspace either of them has seen, and the embedder arm is
+/// included deliberately: an embedding host's chosen workspace is the
+/// authoritative answer for its process too.
+///
+/// The revision is the one the resolved workspace is current under, taken
+/// from the same lock acquisition that committed it. Anything sending the
+/// pair to a client — the connect-time seed, the notification stamp — must
+/// take it from here rather than resolving the workspace and reading the
+/// revision separately: a switch between those two reads pairs workspace A
+/// with B's revision, and a receiver comparing revisions then ranks the stale
+/// A above the B it should yield to.
+pub async fn active_workspace_snapshot() -> Result<(PathBuf, u64)> {
+    // An embedding host that supplied its own `Config` is authoritative, and
+    // `config::ops::load_config_with_timeout` already short-circuits on it for
+    // exactly this reason. Resolving from disk/env here instead would answer
+    // with the process-global workspace, which for an embedder is a directory
+    // it never chose — and the one caller of this function compares the answer
+    // against an event's `workspace_dir` to decide whether to announce. A
+    // mismatch there is not a wrong banner, it is *no* banner, permanently,
+    // with only a `debug!` line to say so. See AGENTS.md, "CoreBuilder::config
+    // alone configures boot and nothing else".
+    if let Some(config) = crate::core::runtime::context::CoreContext::current_embedder_config() {
+        let revision = super::active_workspace::publish_active_workspace(&config.workspace_dir);
+        return Ok((config.workspace_dir, revision));
+    }
+    let (default_openhuman_dir, default_workspace_dir) = default_config_and_workspace_dirs()?;
+    let (_, workspace_dir, source) =
+        resolve_runtime_config_dirs(&default_openhuman_dir, &default_workspace_dir).await?;
+    tracing::trace!(
+        source = source.as_str(),
+        "active workspace resolved for a workspace-bound decision"
+    );
+    let revision = super::active_workspace::publish_active_workspace(&workspace_dir);
+    Ok((workspace_dir, revision))
+}
+
+/// [`active_workspace_snapshot`] without the revision, for callers that only
+/// need to know which workspace is active.
+pub async fn active_workspace_dir() -> Result<PathBuf> {
+    active_workspace_snapshot().await.map(|(dir, _)| dir)
+}
+
 /// Env-injectable variant of [`resolve_runtime_config_dirs`]. Accepts any
 /// [`EnvLookup`] so unit tests can exercise the `OPENHUMAN_WORKSPACE`
 /// override path without mutating the process environment.
@@ -310,6 +412,27 @@ pub(crate) async fn resolve_runtime_config_dirs_with(
         if !custom_workspace.is_empty() {
             let (openhuman_dir, workspace_dir) =
                 resolve_config_dir_for_workspace(&PathBuf::from(custom_workspace));
+            // A misresolved config dir (e.g. `OPENHUMAN_WORKSPACE` pointing
+            // inside `.openhuman`, #6079) silently reverts every setting to
+            // schema defaults, and the resolved workspace_dir stays correct so
+            // the mistake is otherwise invisible. Name the chosen config dir and
+            // whether it holds a `config.toml`: warn when it does not (the
+            // fall-to-defaults case), debug on the happy path.
+            let config_found = openhuman_dir.join("config.toml").exists();
+            if config_found {
+                tracing::debug!(
+                    config_dir = %openhuman_dir.display(),
+                    workspace_dir = %workspace_dir.display(),
+                    "OPENHUMAN_WORKSPACE resolved config dir; config.toml present"
+                );
+            } else {
+                tracing::warn!(
+                    config_dir = %openhuman_dir.display(),
+                    workspace_dir = %workspace_dir.display(),
+                    "OPENHUMAN_WORKSPACE resolved to a config dir with no config.toml; \
+                     settings will fall back to schema defaults (see #6079)"
+                );
+            }
             return Ok((
                 openhuman_dir,
                 workspace_dir,

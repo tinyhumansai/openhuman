@@ -161,6 +161,14 @@ mod attestation_guard {
     }
 
     #[test]
+    fn the_attested_linux_release_library_is_accepted() {
+        assert!(digest_is_pinned(
+            record(),
+            "2bd70433707c44dbfe6b3cc3b4cc835299fe951fcb375b49c940d8d3fc1d4061"
+        ));
+    }
+
+    #[test]
     fn a_digest_this_build_did_not_pin_is_refused() {
         // The case that matters: an artifact the host attested but this build
         // never named. Without the check, "the host vouched for something"

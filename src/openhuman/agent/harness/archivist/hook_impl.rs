@@ -1,6 +1,7 @@
 //! `PostTurnHook` implementation for `ArchivistHook`.
 
 use super::helpers::extract_lesson_from_tools;
+use super::store::{record_turn, ArchivedTurn};
 use super::types::ArchivistHook;
 use crate::openhuman::agent::hooks::{PostTurnHook, TurnContext};
 use crate::openhuman::memory::api::provider::EpisodicTurn;
@@ -75,32 +76,32 @@ impl PostTurnHook for ArchivistHook {
 
         tracing::debug!("[archivist] episodic rows written: session={session_id}");
 
-        // Dual-write into the crate-owned archivist store (md-backed) so we can
-        // validate the FTS5 → md migration before flipping the read side.
+        // Dual-write into the md-backed archivist store so we can validate the
+        // FTS5 → md migration before flipping the read side.
         // Best-effort: a write failure here must not break the turn. The
         // user turn's assigned seq is captured into `current_seq` so the
         // segment ops can store it alongside the FTS5 episodic id.
         let mut current_seq: Option<u32> = None;
         if let Some(cfg) = self.config.as_ref() {
-            // The archivist store addresses `MemoryConfig::workspace` and
-            // nothing else: `tinycortex::memory::archivist::store` computes its
-            // own content root as `<workspace>/memory_tree/content` (a private
-            // `content_root(config)` in that module) and never reads
-            // `config.content_root` or `config.embedding`.
+            // The archivist store addresses the workspace root and nothing
+            // else: [`super::store`] derives its own content root as
+            // `<workspace>/memory_tree/content` and deliberately does not
+            // consult `Config::memory_tree_content_root`, whose
+            // `memory_tree.content_root` override would relocate an archive
+            // that is already on disk.
             //
-            // This used to build the config through
-            // `tinymemory_core::tinycortex::memory_config_from`, which is the
-            // engine crate's `Config` → `MemoryConfig` mapping. That mapping
-            // sets two further fields — the content-root override and the
-            // embedding signature — and neither reaches `record_turn` or
-            // `session_entries`, so constructing the workspace-rooted config
-            // directly is the same value where it is read. Naming it here also
-            // drops the last `tinymemory_core::` reference in this file (#5560);
-            // `tinycortex` stays a direct dependency of this crate and is where
-            // the archivist store itself lives, two lines below.
-            let engine_config = tinycortex::memory::MemoryConfig::new(cfg.workspace_dir.clone());
+            // The store used to be `tinycortex::memory::archivist::store`, and
+            // the call built a whole `MemoryConfig` for the sole purpose of
+            // carrying this one path — that type's other fields (the
+            // content-root override, the embedding signature) reached neither
+            // `record_turn` nor `session_entries`. Nothing in the engine ever
+            // called the store, so it now lives in this directory instead,
+            // which is what lets `tinycortex` leave this crate's dependencies
+            // (#5560). Same paths, same bytes: `store_tests` pins that against
+            // the engine's copy in both directions rather than asserting it.
+            let workspace = cfg.workspace_dir.as_path();
             let ts_ms = (timestamp * 1000.0) as i64;
-            let user_turn = tinycortex::memory::archivist::types::ArchivedTurn {
+            let user_turn = ArchivedTurn {
                 session_id: session_id.to_string(),
                 seq: 0, // assigned by record_turn
                 timestamp_ms: ts_ms,
@@ -110,7 +111,7 @@ impl PostTurnHook for ArchivistHook {
                 tool_calls_json: None,
                 cost_microdollars: 0,
             };
-            match tinycortex::memory::archivist::store::record_turn(&engine_config, user_turn) {
+            match record_turn(workspace, user_turn) {
                 Ok(stored) => current_seq = Some(stored.seq),
                 Err(e) => {
                     tracing::warn!("[archivist] memory_archivist user dual-write failed: {e}");
@@ -125,7 +126,7 @@ impl PostTurnHook for ArchivistHook {
             } else {
                 Some(serde_json::to_string(&ctx.tool_calls).unwrap_or_default())
             };
-            let assistant_turn = tinycortex::memory::archivist::types::ArchivedTurn {
+            let assistant_turn = ArchivedTurn {
                 session_id: session_id.to_string(),
                 seq: 0,
                 timestamp_ms: ts_ms + 1,
@@ -135,9 +136,7 @@ impl PostTurnHook for ArchivistHook {
                 tool_calls_json: assistant_tool_calls,
                 cost_microdollars: 0,
             };
-            if let Err(e) =
-                tinycortex::memory::archivist::store::record_turn(&engine_config, assistant_turn)
-            {
+            if let Err(e) = record_turn(workspace, assistant_turn) {
                 tracing::warn!("[archivist] memory_archivist assistant dual-write failed: {e}");
             }
         }
@@ -159,7 +158,28 @@ impl PostTurnHook for ArchivistHook {
         // moves the tree write to segment granularity inside on_segment_closed.
         if let Some(ref segment) = closed_segment {
             let now = Self::now_timestamp();
-            self.on_segment_closed(segment, session_id, now).await;
+            let recap_succeeded = self.on_segment_closed(segment, session_id, now).await;
+            // Recover segments an earlier failed recap left unsummarised
+            // (#6186). Driven from here rather than from a timer because a
+            // recap that just succeeded is first-hand evidence that the
+            // summariser is answering *now* — a scheduler would have to guess.
+            //
+            // The gate is load-bearing, not a nicety. `resummarise_pending`
+            // spends a per-segment attempt budget, and running it while the
+            // provider is still down would burn that budget on calls that
+            // cannot succeed: two segment closes during one outage would
+            // exhaust every pending segment's retries and skip them for the
+            // rest of the process — including after the provider came back.
+            // The outage would consume the recovery it is supposed to trigger.
+            //
+            // Deliberately not called from `flush_open_segment`, the other
+            // caller of `on_segment_closed`: that one is awaited unbounded at
+            // session wind-down, and opportunistic recovery must never be
+            // charged to how long the app takes to close. This path is a
+            // detached post-turn hook, so the time is invisible.
+            if recap_succeeded {
+                self.resummarise_pending(now).await;
+            }
         }
 
         tracing::debug!("[archivist] turn indexed successfully: session={session_id}");

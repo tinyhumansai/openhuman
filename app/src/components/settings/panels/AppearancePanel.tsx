@@ -12,6 +12,7 @@ import {
   setFontSize,
 } from '../../../store/themeSlice';
 import LanguageSelect from '../../LanguageSelect';
+import { Card } from '../../ui';
 import Slider from '../../ui/Slider';
 import { SettingsNumberField, SettingsRow, SettingsSection } from '../controls';
 import SettingsPanel from '../layout/SettingsPanel';
@@ -98,62 +99,66 @@ const AppearancePanel = () => {
 
       {/* ── Font size picker — intentional bespoke tile UI ─────────── */}
       <div>
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-content-faint mb-2 px-1">
+        <h3 className="mb-2 px-1 font-title text-sm font-semibold text-content">
           {t('settings.appearance.fontSizeHeading')}
         </h3>
-        <div
-          className="bg-surface rounded-xl border border-line overflow-hidden"
-          role="radiogroup"
-          aria-label={t('settings.appearance.fontSizeAria')}>
-          {FONT_SIZE_OPTIONS.map((opt, idx) => {
-            // Highlight the preset whose px matches the effective size, so a
-            // fine-tuned value landing exactly on a preset still lights it up.
-            const selected = Number.parseInt(FONT_SIZE_PX[opt.id], 10) === effectiveFontSizePx;
-            return (
-              <button
-                key={opt.id}
-                type="button"
-                role="radio"
-                aria-checked={selected}
-                onClick={() => dispatch(setFontSize(opt.id))}
-                className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors focus:outline-hidden focus-visible:bg-primary-50 dark:focus-visible:bg-primary-900/30 ${
-                  idx !== 0 ? 'border-t border-line-subtle' : ''
-                } ${selected ? 'bg-primary-50 dark:bg-primary-500/10' : 'hover:bg-surface-hover'}`}>
-                <span
-                  className={`flex items-center justify-center w-9 h-9 rounded-lg ${
-                    selected
-                      ? 'bg-primary-500 text-content-inverted'
-                      : 'bg-surface-subtle text-content-secondary'
-                  }`}>
-                  <span className={`font-semibold leading-none ${opt.glyphClass}`} aria-hidden>
-                    A
+        {/* Card forwards no `role`/`aria-label` to its wrapper, so the
+            radiogroup semantics move to an inner div that still encloses
+            every option — `within(group)` in the specs resolves the same. */}
+        <Card divided={false}>
+          <div role="radiogroup" aria-label={t('settings.appearance.fontSizeAria')}>
+            {FONT_SIZE_OPTIONS.map((opt, idx) => {
+              // Highlight the preset whose px matches the effective size, so a
+              // fine-tuned value landing exactly on a preset still lights it up.
+              const selected = Number.parseInt(FONT_SIZE_PX[opt.id], 10) === effectiveFontSizePx;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  onClick={() => dispatch(setFontSize(opt.id))}
+                  className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors focus:outline-hidden focus-visible:bg-primary-50 dark:focus-visible:bg-primary-900/30 ${
+                    idx !== 0 ? 'border-t border-line-subtle' : ''
+                  } ${selected ? 'bg-primary-50 dark:bg-primary-500/10' : 'hover:bg-surface-hover'}`}>
+                  <span
+                    className={`flex items-center justify-center w-9 h-9 rounded-lg ${
+                      selected
+                        ? 'bg-primary-500 text-content-inverted'
+                        : 'bg-surface-subtle text-content-secondary'
+                    }`}>
+                    <span className={`font-semibold leading-none ${opt.glyphClass}`} aria-hidden>
+                      A
+                    </span>
                   </span>
-                </span>
-                <span className="flex-1 min-w-0">
-                  <span className="block text-sm font-medium text-content">{opt.label}</span>
-                  <span className="block text-xs text-content-muted">{opt.description}</span>
-                </span>
-                {selected && (
-                  <svg
-                    className="w-5 h-5 text-primary-500"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                    aria-hidden>
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M5 13l4 4L19 7"
-                    />
-                  </svg>
-                )}
-              </button>
-            );
-          })}
-        </div>
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-sm font-medium text-content">{opt.label}</span>
+                    <span className="block text-xs text-content-muted">{opt.description}</span>
+                  </span>
+                  {selected && (
+                    <svg
+                      className="w-5 h-5 text-primary-500"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                      aria-hidden>
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M5 13l4 4L19 7"
+                      />
+                    </svg>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </Card>
         {/* Fine-tune the exact size beyond the presets (issue #4246). */}
-        <div className="bg-surface rounded-xl border border-line px-4 py-3 mt-3">
+        {/* px-4 py-3, not Card's `padded` p-4, to keep this box's original
+            (denser) vertical padding pixel-identical. */}
+        <Card divided={false} className="px-4 py-3 mt-3">
           <div className="flex items-center justify-between gap-3">
             <label htmlFor="font-size-custom-number" className="text-sm font-medium text-content">
               {t('settings.appearance.fontSizeCustomLabel')}
@@ -186,7 +191,7 @@ const AppearancePanel = () => {
             <span>{`${MIN_FONT_SIZE_PX}${t('settings.appearance.fontSizeUnit')}`}</span>
             <span>{`${MAX_FONT_SIZE_PX}${t('settings.appearance.fontSizeUnit')}`}</span>
           </div>
-        </div>
+        </Card>
 
         <p className="text-xs text-content-muted leading-relaxed px-1 mt-2">
           {t('settings.appearance.fontSizeHelperText')}

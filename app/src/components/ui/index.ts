@@ -101,6 +101,7 @@ export {
   AlertDescription,
   AlertTitle,
   alertVariants,
+  type AlertDensity,
   type AlertProps,
   type AlertVariant,
 } from './Alert';

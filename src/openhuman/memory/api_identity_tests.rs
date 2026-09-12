@@ -108,7 +108,7 @@ fn host_seam_types_are_the_contract_crates() {
 
     fn connection(
         c: crate::openhuman::memory::api::host::ComposioConnection,
-    ) -> tinymemory_api::host::composio::ComposioConnection {
+    ) -> tinyconnectors_bus::ComposioConnection {
         c
     }
     let _ = connection as fn(_) -> _;

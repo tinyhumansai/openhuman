@@ -19,6 +19,7 @@ import WorkflowProposalCard from '../../components/chat/WorkflowProposalCard';
 import { ConfirmationModal } from '../../components/intelligence/ConfirmationModal';
 import { SidebarContent } from '../../components/layout/shell/SidebarSlot';
 import { AssistantUiChat } from '../../features/conversations/components/AssistantUiChat';
+import { TranscriptOverlays } from '../../features/conversations/components/aui/TranscriptOverlays';
 import { selectBackgroundProcesses } from '../../features/conversations/components/BackgroundProcessesPanel';
 import {
   ChatThreadView,
@@ -58,7 +59,9 @@ import {
   parseMessageImages,
   validateAndReadFile,
 } from '../../lib/attachments';
+import { useRegisterAction } from '../../lib/commands/useRegisterAction';
 import { useT } from '../../lib/i18n/I18nContext';
+import type { TurnProcessTrail } from '../../providers/assistantUiMessages';
 import { threadApi } from '../../services/api/threadApi';
 import { fetchThreadTokenUsage } from '../../services/api/threadUsageApi';
 import {
@@ -81,7 +84,6 @@ import {
   clearRuntimeForThread,
   clearThreadSendPending,
   enqueueFollowup,
-  fetchAndHydrateDerivedTranscript,
   fetchAndHydrateTurnState,
   hydrateThreadUsage,
   markThreadSendPending,
@@ -292,6 +294,42 @@ const Conversations = ({
   // (its state now lives inside `ChatThreadView`) so the header badge below
   // can still open it without lifting that state back up.
   const threadViewRef = useRef<ChatThreadViewHandle>(null);
+  // Disclosure state for the three transcript-local overlays on the
+  // assistant-ui surface. `ChatThreadView` owns an identical trio for the
+  // legacy voice panel, but it is not mounted on `/chat` any more, so the
+  // panels it hosts (background processes, the sub-agent drawer, the Agent
+  // Process Source panel) had no host at all there.
+  const [showBackgroundProcesses, setShowBackgroundProcesses] = useState(false);
+  const [openSubagentTaskId, setOpenSubagentTaskId] = useState<string | null>(null);
+  const [showProcessSource, setShowProcessSource] = useState(false);
+  // One settled turn's process trail, opened from that turn's `TurnFooter`.
+  // Non-null takes over the process-source panel and scopes it to that turn —
+  // the palette command below still opens the whole-thread live view, which is
+  // the only view it ever had.
+  const [turnProcessTrail, setTurnProcessTrail] = useState<TurnProcessTrail | null>(null);
+  // The Agent Process Source panel's only trigger is the "View full agent
+  // process source →" link at the foot of `ToolTimelineBlock` — a legacy-panel
+  // component. assistant-ui renders its tool calls as inline cards and has no
+  // equivalent block, so the whole-run view (and the visited-source list, which
+  // exists nowhere else) is reached from the command palette instead.
+  //
+  // The composer check is not cosmetic: `showProcessSource` only drives
+  // `TranscriptOverlays`, which mounts inside `assistantUiMainPanel` alone, and
+  // the panel choice below is an either/or (`composer === 'mic-cloud' ?
+  // legacyMainPanel : assistantUiMainPanel`). In mic-cloud voice mode the state
+  // this sets has no host, so without the guard the palette would offer a
+  // command that silently does nothing. `enabled` is re-read through a ref on
+  // every render (see `useRegisterAction`), so switching modes updates it
+  // without re-registering.
+  useRegisterAction({
+    id: 'chat.agentProcessSource',
+    label: 'Open agent process source',
+    labelKey: 'conversations.agentTaskInsights.viewProcessSource',
+    group: 'Chat',
+    handler: () => setShowProcessSource(true),
+    enabled: () => selectedThreadId !== null && composer !== 'mic-cloud',
+    keywords: ['agent', 'process', 'source', 'timeline', 'run'],
+  });
   const [inputMode, setInputMode] = useState<InputMode>('text');
   const [replyMode, setReplyMode] = useState<ReplyMode>('text');
   const [isRecording, setIsRecording] = useState(false);
@@ -730,12 +768,6 @@ const Conversations = ({
     if (selectedThreadId) {
       void dispatch(loadThreadMessages(selectedThreadId));
       void dispatch(fetchAndHydrateTurnState(selectedThreadId));
-      // Per-turn history: each past answer's own process trail. Phase C derives
-      // this from the append-only transcript projection
-      // (`threads_transcript_get`), auto-falling back to the legacy
-      // `turn_state_history` hydration when the derived path is off, errors, or
-      // the thread has no persisted transcript (legacy thread).
-      void dispatch(fetchAndHydrateDerivedTranscript(selectedThreadId));
       void threadApi
         .getTaskBoard(selectedThreadId)
         .then(board => {
@@ -1706,6 +1738,14 @@ const Conversations = ({
     [selectedThreadToolTimeline]
   );
   const runningBackgroundCount = backgroundProcesses.filter(p => p.status === 'running').length;
+  // `TranscriptOverlays` resolves the open delegation out of this same live
+  // timeline and renders nothing when the id is absent, so an inline card must
+  // not offer "View full processing" for a delegation that would open an empty
+  // sheet -- a delegation replayed from the settled core transcript, say.
+  const canOpenSubagentDrawer = useCallback(
+    (taskId: string) => selectedThreadToolTimeline.some(entry => entry.subagent?.taskId === taskId),
+    [selectedThreadToolTimeline]
+  );
   // Poll-free live signal: lights the badge when memories are syncing even if
   // no sub-agent is running and the panel is closed.
   const memorySyncActive = useMemorySyncActive();
@@ -1952,6 +1992,217 @@ const Conversations = ({
     />
   );
 
+  // The two turn-gate cards that must render on BOTH main panels.
+  //
+  // They used to live inline in `legacyMainPanel`, which `/chat` never mounts:
+  // `mainPanel` below is an either/or — assistant-ui for text, legacy for
+  // mic-cloud voice — so a parked plan review and a drafted workflow were
+  // invisible on the surface every user actually sees. The plan gate hung the
+  // turn with nothing to decide, and `propose_workflow`'s only route to
+  // `flows_create` was unreachable. Hoisted to a shared fragment so the
+  // assistant-ui composer header can render the same cards without voice mode
+  // losing them; the two panels are mutually exclusive, so nothing doubles up.
+  const agentGateCards = (
+    <>
+      {/* Plan-mode review: the orchestrator parked the live turn on a
+          thread-scoped plan (request_plan_review gate). Surface it for the
+          user to Approve / Reject / send feedback on before anything executes;
+          the card resolves the parked turn via plan_review_decide. */}
+      {selectedThreadId && pendingPlanReview && (
+        // Key by request id so a re-parked (revised) plan — or a thread switch —
+        // remounts the card and resets its local decision/feedback state,
+        // matching the ApprovalRequestCard pattern above.
+        <PlanReviewCard
+          key={pendingPlanReview.requestId}
+          threadId={selectedThreadId}
+          review={pendingPlanReview}
+        />
+      )}
+
+      {/* Agent-first Workflow authoring (issue B4): the agent drafted a
+          candidate automation via `propose_workflow`. The tool only
+          validates — it never creates the flow — so this card is the ONLY
+          path from proposal to saved automation via "Save & enable"
+          (`flows_create`), or the user can Dismiss it outright. */}
+      {selectedThreadId && pendingWorkflowProposal && (
+        // Keyed by name so a second proposal in the same thread (before the
+        // first is resolved) remounts the card and resets its local
+        // saving/error state, matching the PlanReviewCard pattern above.
+        <WorkflowProposalCard
+          key={pendingWorkflowProposal.name}
+          threadId={selectedThreadId}
+          proposal={pendingWorkflowProposal}
+        />
+      )}
+    </>
+  );
+
+  // ── Composer-adjacent surfaces shared by BOTH chat panels ─────────────────
+  //
+  // Every one of these used to be written inline inside `legacyMainPanel`.
+  // The panel choice at the bottom of this component is an *either/or*
+  // (`composer === 'mic-cloud' ? legacyMainPanel : assistantUiMainPanel`), so
+  // when the text chat moved to the assistant-ui `Thread` they stopped
+  // rendering on `/chat` altogether — the send-error banner most damagingly,
+  // since a user whose send is rejected got no feedback of any kind.
+  //
+  // They are defined once here and rendered by both panels: the legacy voice
+  // footer below, and the assistant-ui `ComposerHeader` / `ComposerExtras`
+  // slots (`assistantComposerHeader` / `assistantComposerFooterExtras`). One
+  // definition is the point — a second copy is how they drifted apart before.
+
+  const sendAdvisoryBanner = sendAdvisory ? (
+    <div className="flex items-center justify-between mb-2">
+      <p className="text-xs text-amber-700" data-chat-send-advisory>
+        {sendAdvisory}
+      </p>
+      <button
+        type="button"
+        data-analytics-id="chat-send-advisory-dismiss"
+        onClick={() => setSendAdvisory(null)}
+        className="text-xs text-content-muted hover:text-content-secondary transition-colors ml-2">
+        {t('common.dismiss')}
+      </button>
+    </div>
+  ) : null;
+
+  const sendErrorBanner = displayedSendError ? (
+    <div className="flex items-center justify-between mb-2">
+      <p
+        className="text-xs text-coral-500"
+        data-testid="chat-send-error"
+        data-chat-send-error-code={displayedSendError.code}>
+        {displayedSendError.message}
+      </p>
+      <div className="flex items-center gap-2 shrink-0 ml-2">
+        {(displayedSendError.code === 'stt_not_ready' ||
+          displayedSendError.code === 'voice_transcription' ||
+          displayedSendError.code === 'tts_not_ready' ||
+          displayedSendError.code === 'voice_synthesis') && (
+          <button
+            type="button"
+            data-analytics-id="chat-send-error-setup"
+            onClick={() => {
+              setSendError(null);
+              // STT/TTS provider settings live on the Voice panel
+              // since PR 2; the legacy local-model route was for
+              // back when speech assets were lumped with Ollama.
+              navigate('/settings/voice');
+            }}
+            className="text-xs text-primary-500 hover:text-primary-600 font-medium transition-colors">
+            {t('chat.setup')}
+          </button>
+        )}
+        <button
+          type="button"
+          data-analytics-id="chat-send-error-dismiss"
+          onClick={() => {
+            setSendError(null);
+            dispatch(clearCreateThreadError());
+          }}
+          className="text-xs text-content-muted hover:text-content-secondary transition-colors">
+          {t('common.dismiss')}
+        </button>
+      </div>
+    </div>
+  ) : null;
+
+  // Flow-approval surface (chat): actionable banner(s) for paused tinyflows
+  // runs, pushed via the `flow_approval_request` socket event (issue:
+  // flow-approval surfacing). Not gated on the selected thread — see the hook
+  // call above for why — so every pending request renders regardless of which
+  // thread is open.
+  const flowApprovalDeck =
+    flowApprovalRequests.length > 0 ? (
+      <div className="mb-2 flex flex-col gap-2">
+        {flowApprovalRequests.map(request => (
+          <FlowApprovalRequestCard
+            key={request.request_id}
+            request={request}
+            onResolved={dismissFlowApprovalRequest}
+          />
+        ))}
+      </div>
+    ) : null;
+
+  // Surface in-flight + failed artifact cards above the composer (#2779).
+  // Mirrors the approval-card placement so the user sees the spinner / error
+  // without scrolling. `ready` cards are delegated to the header ChatFilesChip
+  // panel (#3024) so the chat scroll area isn't permanently occupied —
+  // restored decks are listable from the chip on demand.
+  //
+  // The failed-card Retry button re-dispatches the producing tool via
+  // `ai_regenerate` (#3162): the core reloads the persisted creation args and
+  // re-runs generation under the original artifact id, so the card swaps back
+  // to a spinner in place and then to ready/failed via the socket events.
+  const artifactDeckThreadId = selectedThreadId ?? firstActiveThreadId;
+  const liveArtifacts = artifactDeckThreadId
+    ? (artifactsByThread[artifactDeckThreadId] ?? []).filter(a => a.status !== 'ready')
+    : [];
+  const liveArtifactDeck =
+    liveArtifacts.length > 0 && artifactDeckThreadId ? (
+      <div className="mb-2 flex flex-col gap-2">
+        {liveArtifacts.map(artifact => (
+          <ArtifactCard
+            key={artifact.artifactId}
+            artifact={artifact}
+            onRetry={id => {
+              void aiRegenerate(id, artifactDeckThreadId).catch(err => {
+                console.warn('[artifact] regenerate failed:', err);
+              });
+            }}
+          />
+        ))}
+      </div>
+    ) : null;
+
+  const chatFilesChip =
+    (selectedThreadId ?? firstActiveThreadId) ? (
+      <ChatFilesChip threadId={(selectedThreadId ?? firstActiveThreadId) as string} />
+    ) : null;
+
+  // The control that opens the background-processes panel, plus its
+  // running-count / memory-sync badge. Takes its opener because each surface
+  // hosts its own panel: the legacy footer reaches into `ChatThreadView`'s
+  // imperative handle, the assistant-ui footer drives the overlay state above.
+  const renderBackgroundProcessesButton = (onOpen: () => void) =>
+    selectedThreadId ? (
+      <button
+        type="button"
+        data-testid="background-processes-toggle"
+        data-analytics-id="chat-header-background-processes"
+        onClick={onOpen}
+        aria-label={t('conversations.backgroundTasks.title')}
+        title={
+          backgroundProcesses.length > 0
+            ? t('conversations.backgroundTasks.titleWithCount').replace(
+                '{count}',
+                String(backgroundProcesses.length)
+              )
+            : t('conversations.backgroundTasks.title')
+        }
+        className="relative flex h-7 w-7 items-center justify-center rounded-lg text-content-muted transition-colors hover:bg-surface-hover hover:text-content-secondary">
+        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"
+          />
+        </svg>
+        {runningBackgroundCount > 0 ? (
+          <span className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-amber-500 px-0.5 text-[9px] font-semibold leading-none text-content-inverted">
+            {runningBackgroundCount}
+          </span>
+        ) : memorySyncActive ? (
+          <span
+            data-testid="background-activity-dot"
+            className="absolute -right-0.5 -top-0.5 h-2 w-2 animate-pulse rounded-full bg-amber-500"
+          />
+        ) : null}
+      </button>
+    ) : null;
+
   // Main chat area (right pane): header, message list, composer.
   const legacyMainPanel = (
     <div
@@ -2026,20 +2277,7 @@ const Conversations = ({
         }>
         <>{/* Cycle usage pill moved into ChatComposer toolbar */}</>
 
-        {sendAdvisory && (
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-xs text-amber-700" data-chat-send-advisory>
-              {sendAdvisory}
-            </p>
-            <button
-              type="button"
-              data-analytics-id="chat-send-advisory-dismiss"
-              onClick={() => setSendAdvisory(null)}
-              className="text-xs text-content-muted hover:text-content-secondary transition-colors ml-2">
-              {t('common.dismiss')}
-            </button>
-          </div>
-        )}
+        {sendAdvisoryBanner}
 
         {attachError && (
           <div className="flex items-center justify-between mb-2">
@@ -2056,45 +2294,7 @@ const Conversations = ({
           </div>
         )}
 
-        {displayedSendError && (
-          <div className="flex items-center justify-between mb-2">
-            <p
-              className="text-xs text-coral-500"
-              data-chat-send-error-code={displayedSendError.code}>
-              {displayedSendError.message}
-            </p>
-            <div className="flex items-center gap-2 shrink-0 ml-2">
-              {(displayedSendError.code === 'stt_not_ready' ||
-                displayedSendError.code === 'voice_transcription' ||
-                displayedSendError.code === 'tts_not_ready' ||
-                displayedSendError.code === 'voice_synthesis') && (
-                <button
-                  type="button"
-                  data-analytics-id="chat-send-error-setup"
-                  onClick={() => {
-                    setSendError(null);
-                    // STT/TTS provider settings live on the Voice panel
-                    // since PR 2; the legacy local-model route was for
-                    // back when speech assets were lumped with Ollama.
-                    navigate('/settings/voice');
-                  }}
-                  className="text-xs text-primary-500 hover:text-primary-600 font-medium transition-colors">
-                  {t('chat.setup')}
-                </button>
-              )}
-              <button
-                type="button"
-                data-analytics-id="chat-send-error-dismiss"
-                onClick={() => {
-                  setSendError(null);
-                  dispatch(clearCreateThreadError());
-                }}
-                className="text-xs text-content-muted hover:text-content-secondary transition-colors">
-                {t('common.dismiss')}
-              </button>
-            </div>
-          </div>
-        )}
+        {sendErrorBanner}
 
         {(() => {
           // Surface a parked ApprovalGate request for the shown thread just
@@ -2130,96 +2330,16 @@ const Conversations = ({
           );
         })()}
 
-        {/* Flow-approval surface (chat): actionable banner(s) for paused
-            tinyflows runs, pushed via the `flow_approval_request` socket
-            event (issue: flow-approval surfacing). Not gated on the selected
-            thread — see the hook call above for why — so every pending
-            request renders regardless of which thread is open. */}
-        {flowApprovalRequests.length > 0 && (
-          <div className="mb-2 flex flex-col gap-2">
-            {flowApprovalRequests.map(request => (
-              <FlowApprovalRequestCard
-                key={request.request_id}
-                request={request}
-                onResolved={dismissFlowApprovalRequest}
-              />
-            ))}
-          </div>
-        )}
+        {flowApprovalDeck}
 
-        {(() => {
-          // Surface in-flight + failed artifact cards above the composer
-          // (#2779). Mirrors the approval-card placement so the user sees
-          // the spinner / error without scrolling. `ready` cards are
-          // delegated to the header ChatFilesChip panel (#3024) so the
-          // chat scroll area isn't permanently occupied — restored decks
-          // are listable from the chip on demand.
-          //
-          // The failed-card Retry button re-dispatches the producing tool
-          // via `ai_regenerate` (#3162): the core reloads the persisted
-          // creation args and re-runs generation under the original
-          // artifact id, so the card swaps back to a spinner in place and
-          // then to ready/failed via the socket events.
-          const artifactThreadId = selectedThreadId ?? firstActiveThreadId;
-          const all = artifactThreadId ? (artifactsByThread[artifactThreadId] ?? []) : [];
-          const live = all.filter(a => a.status !== 'ready');
-          if (live.length === 0) return null;
-          return (
-            <div className="mb-2 flex flex-col gap-2">
-              {live.map(artifact => (
-                <ArtifactCard
-                  key={artifact.artifactId}
-                  artifact={artifact}
-                  onRetry={
-                    artifactThreadId
-                      ? id => {
-                          void aiRegenerate(id, artifactThreadId).catch(err => {
-                            console.warn('[artifact] regenerate failed:', err);
-                          });
-                        }
-                      : undefined
-                  }
-                />
-              ))}
-            </div>
-          );
-        })()}
+        {liveArtifactDeck}
+
+        {agentGateCards}
 
         {/* Thread-scoped todo list the agent maintains as it works — read-only,
             pinned above the composer. Distinct from the Intelligence-tab kanban
             (global `user-tasks`). Renders nothing when the thread has no active
             cards. */}
-        {/* Plan-mode review: the orchestrator parked the live turn on a
-            thread-scoped plan (request_plan_review gate). Surface it for the
-            user to Approve / Reject / send feedback on before anything executes;
-            the card resolves the parked turn via plan_review_decide. */}
-        {selectedThreadId && pendingPlanReview && (
-          // Key by request id so a re-parked (revised) plan — or a thread switch —
-          // remounts the card and resets its local decision/feedback state,
-          // matching the ApprovalRequestCard pattern above.
-          <PlanReviewCard
-            key={pendingPlanReview.requestId}
-            threadId={selectedThreadId}
-            review={pendingPlanReview}
-          />
-        )}
-
-        {/* Agent-first Workflow authoring (issue B4): the agent drafted a
-            candidate automation via `propose_workflow`. The tool only
-            validates — it never creates the flow — so this card is the ONLY
-            path from proposal to saved automation via "Save & enable"
-            (`flows_create`), or the user can Dismiss it outright. */}
-        {selectedThreadId && pendingWorkflowProposal && (
-          // Keyed by name so a second proposal in the same thread (before the
-          // first is resolved) remounts the card and resets its local
-          // saving/error state, matching the PlanReviewCard pattern above.
-          <WorkflowProposalCard
-            key={pendingWorkflowProposal.name}
-            threadId={selectedThreadId}
-            proposal={pendingWorkflowProposal}
-          />
-        )}
-
         {selectedThreadId && (
           <ThreadTodoStrip
             board={selectedTaskBoard}
@@ -2435,45 +2555,10 @@ const Conversations = ({
                   {t('chat.agentProfile.reasoning')}
                 </button>
               </div>
-              {selectedThreadId && (
-                <button
-                  type="button"
-                  data-testid="background-processes-toggle"
-                  data-analytics-id="chat-header-background-processes"
-                  onClick={() => threadViewRef.current?.openBackgroundProcesses()}
-                  aria-label={t('conversations.backgroundTasks.title')}
-                  title={
-                    backgroundProcesses.length > 0
-                      ? t('conversations.backgroundTasks.titleWithCount').replace(
-                          '{count}',
-                          String(backgroundProcesses.length)
-                        )
-                      : t('conversations.backgroundTasks.title')
-                  }
-                  className="relative flex h-7 w-7 items-center justify-center rounded-lg text-content-muted transition-colors hover:bg-surface-hover hover:text-content-secondary">
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"
-                    />
-                  </svg>
-                  {runningBackgroundCount > 0 ? (
-                    <span className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-amber-500 px-0.5 text-[9px] font-semibold leading-none text-content-inverted">
-                      {runningBackgroundCount}
-                    </span>
-                  ) : memorySyncActive ? (
-                    <span
-                      data-testid="background-activity-dot"
-                      className="absolute -right-0.5 -top-0.5 h-2 w-2 animate-pulse rounded-full bg-amber-500"
-                    />
-                  ) : null}
-                </button>
+              {renderBackgroundProcessesButton(() =>
+                threadViewRef.current?.openBackgroundProcesses()
               )}
-              {(selectedThreadId ?? firstActiveThreadId) && (
-                <ChatFilesChip threadId={(selectedThreadId ?? firstActiveThreadId) as string} />
-              )}
+              {chatFilesChip}
             </div>
           )}
         </div>
@@ -2483,6 +2568,17 @@ const Conversations = ({
 
   const assistantComposerHeader = (
     <>
+      {/* Turn gates first: a parked plan review and a drafted workflow both
+          block progress until the user decides, so they sit above the transient
+          attach error and the queued-followup strip. `ComposerHeader` is the
+          only host slot assistant-ui threads arbitrary React through
+          (`thread.tsx:385`), and it renders directly above the input — the same
+          place `legacyMainPanel` put these cards. */}
+      {agentGateCards}
+      {/* Paused tinyflows runs block the same way a plan gate does — the
+          banner carries the only Approve/Reject affordance — so they belong
+          with the gates, above the transient banners. */}
+      {flowApprovalDeck}
       {attachError && (
         <div className="rounded-lg border border-coral-200 bg-coral-50 px-3 py-2">
           <p className="text-xs text-coral-500" data-chat-send-error-code={attachError.code}>
@@ -2490,12 +2586,51 @@ const Conversations = ({
           </p>
         </div>
       )}
+      {/* A rejected send is the one failure the user cannot diagnose from the
+          transcript: nothing is added to it. Without this the composer simply
+          swallowed the message. */}
+      {sendErrorBanner}
+      {sendAdvisoryBanner}
+      {liveArtifactDeck}
+      {/* The thread todo board. Its only other mount is inside
+          `legacyMainPanel`, which the text surface never renders, so
+          `taskBoardByThread` reached Redux and stopped there: a long
+          multi-step turn lost its whole plan/progress strip. This is the same
+          position relative to the composer that the legacy panel gave it, and
+          the strip renders nothing when the board is empty, so it is inert on
+          an ordinary turn. */}
+      {selectedThreadId && (
+        <ThreadTodoStrip
+          board={selectedTaskBoard}
+          onViewSession={card => {
+            if (!card.sessionThreadId) return;
+            // Navigation only - do NOT mark the thread active. activeThreadId
+            // tracks a true in-flight turn; forcing a completed session active
+            // would wedge the composer.
+            dispatch(setSelectedThread(card.sessionThreadId));
+            void dispatch(loadThreadMessages(card.sessionThreadId));
+            if (shouldSyncChatRoute) {
+              navigate(chatThreadPath(card.sessionThreadId));
+            }
+          }}
+        />
+      )}
       {selectedThreadId && (queuedFollowupsByThread[selectedThreadId]?.length ?? 0) > 0 ? (
         <QueuedFollowups
           items={queuedFollowupsByThread[selectedThreadId] ?? []}
           onClear={() => void handleClearQueuedFollowups()}
         />
       ) : null}
+    </>
+  );
+
+  // Left-hand controls in the assistant-ui composer toolbar, alongside the
+  // model pill and the thread-goal trigger — the assistant-ui equivalent of
+  // `legacyMainPanel`'s footer row.
+  const assistantComposerFooterExtras = (
+    <>
+      {renderBackgroundProcessesButton(() => setShowBackgroundProcesses(true))}
+      {chatFilesChip}
     </>
   );
 
@@ -2511,6 +2646,7 @@ const Conversations = ({
         model={composerModelOverride ?? resolvedModel ?? CHAT_MODEL_HINT}
         modelContextWindow={composerModelContextWindow}
         composerHeader={assistantComposerHeader}
+        composerFooterExtras={assistantComposerFooterExtras}
         inputValue={inputValue}
         onInputValueChange={setInputValue}
         onEscape={handleComposerEscape}
@@ -2526,9 +2662,43 @@ const Conversations = ({
         // same conversation partner, not a second one.
         onOpenHumanMode={() => navigate('/human')}
         onSwitchToMicCloud={() => setComposerOverride('mic-cloud')}
+        // Lets a delegation card inside the transcript open the drawer below.
+        // `setOpenSubagentTaskId` is a stable setter, and `canOpenSubagent` is
+        // memoised on the timeline, so the context value only churns when the
+        // set of resolvable delegations actually changes.
+        onOpenSubagent={setOpenSubagentTaskId}
+        canOpenSubagent={canOpenSubagentDrawer}
+        // The settled turn's one-line footer opens the process rail on THAT
+        // turn's trail, which the footer carries with the click.
+        onOpenTurnProcess={setTurnProcessTrail}
         onModelChange={(value, contextWindow) => {
           setComposerModelOverride(value);
           setComposerModelContextWindow(contextWindow ?? null);
+        }}
+      />
+      {/* The three transcript-local modals. `ChatThreadView` hosts an identical
+          trio, but it is the legacy panel's transcript and is not mounted here,
+          so on `/chat` the background-processes button had nothing to open and
+          the sub-agent drawer / process-source panel could not be reached at
+          all. Mounted beside the Thread (not inside it) because each is its own
+          overlay, positioned against the viewport. */}
+      <TranscriptOverlays
+        threadId={selectedThreadId ?? null}
+        /* A turn footer's trail wins over the thread-wide live slices: those
+           hold only the newest turn (`chatRuntimeSlice` rehydrates
+           `processingByThread` from the single latest `TurnState` snapshot), so
+           they are the wrong answer for any older turn the user clicks. */
+        entries={turnProcessTrail ? [...turnProcessTrail.timeline] : selectedThreadToolTimeline}
+        transcript={turnProcessTrail ? [...turnProcessTrail.transcript] : selectedThreadProcessing}
+        backgroundProcesses={backgroundProcesses}
+        showBackgroundProcesses={showBackgroundProcesses}
+        onCloseBackgroundProcesses={() => setShowBackgroundProcesses(false)}
+        openSubagentTaskId={openSubagentTaskId}
+        onOpenSubagent={setOpenSubagentTaskId}
+        showProcessSource={showProcessSource || turnProcessTrail !== null}
+        onCloseProcessSource={() => {
+          setShowProcessSource(false);
+          setTurnProcessTrail(null);
         }}
       />
     </div>

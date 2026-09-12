@@ -80,4 +80,24 @@ describe('CloudHttpTransport', () => {
     const t = new CloudHttpTransport(URL);
     await expect(t.isHealthy()).resolves.toBe(false);
   });
+  it('a per-call timeoutMs replaces the transport default for that call', async () => {
+    // The RPC client forwards a caller's budget (a memory source sync runs for
+    // minutes); the transport must apply it instead of its own default.
+    const fetchMock = vi.fn().mockImplementation(
+      (_url: string, init?: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            const e = new Error('aborted');
+            e.name = 'AbortError';
+            reject(e);
+          });
+        })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const t = new CloudHttpTransport(URL);
+    await expect(t.call('openhuman.ping', {}, { timeoutMs: 30 })).rejects.toThrow(
+      /\[transport:cloud\] openhuman.ping timed out after 30ms/
+    );
+  });
 });

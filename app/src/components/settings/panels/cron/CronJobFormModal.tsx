@@ -287,7 +287,12 @@ const CronJobFormModal = ({
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log('[CronJobFormModal] save error: %s', msg);
-      setError(t('settings.cron.jobs.formError'));
+      // The core's reason (an invalid expression, an agent schedule tighter
+      // than the 5-minute floor, …) is the actionable part; the generic label
+      // alone would leave the user guessing what to change.
+      setError(
+        msg ? `${t('settings.cron.jobs.formError')}: ${msg}` : t('settings.cron.jobs.formError')
+      );
     } finally {
       setSaving(false);
     }
@@ -312,7 +317,7 @@ const CronJobFormModal = ({
       onClose={onClose}
       maxWidthClassName="max-w-lg"
       panelClassName="flex max-h-[90vh] flex-col"
-      contentClassName="overflow-y-auto px-6 py-4"
+      contentClassName="overflow-y-auto px-5 py-4"
       footer={
         <div className="flex items-center justify-end gap-3">
           <Button

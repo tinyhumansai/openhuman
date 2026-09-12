@@ -104,7 +104,7 @@ export default function ComposioConnectModal({
       subtitle={toolkit.description}
       icon={toolkit.icon}
       maxWidthClassName="max-w-[460px]"
-      contentClassName="p-4 space-y-3">
+      contentClassName="px-5 py-4 space-y-3">
       {phase === 'idle' && (
         <>
           <p className="text-sm text-content-secondary">

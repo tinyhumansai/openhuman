@@ -444,6 +444,26 @@ describe('threadSlice addInferenceResponse thunk', () => {
     expect(state.activeThreadIds).toEqual({});
   });
 
+  it('replaces a cached entry that already carries the persisted id instead of duplicating it (#5933)', async () => {
+    // A core-initiated turn's reply is persisted by the core under
+    // `agent:<run_id>` and announced afterwards; a thread reload can fetch that
+    // row before our own same-id append resolves.
+    const store = createStore();
+    store.dispatch(setSelectedThread('t-1'));
+    const coreRow = makeMessage({ id: 'agent:run-1', sender: 'agent', content: 'from core' });
+    mockedThreadApi.getThreadMessages.mockResolvedValueOnce({ messages: [coreRow], count: 1 });
+    await store.dispatch(loadThreadMessages('t-1'));
+
+    mockedThreadApi.appendMessage.mockResolvedValueOnce(coreRow);
+    await store.dispatch(
+      addInferenceResponse({ content: 'from core', threadId: 't-1', messageId: 'agent:run-1' })
+    );
+
+    const state = store.getState().thread;
+    expect(state.messagesByThreadId['t-1']).toEqual([coreRow]);
+    expect(state.messages).toEqual([coreRow]);
+  });
+
   it('falls back to the selected thread when no threadId is supplied', async () => {
     // Under parallel inference there is no single "active" thread to fall back
     // to, so the legacy fallback target is now the selected thread.

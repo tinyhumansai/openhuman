@@ -1,6 +1,7 @@
 import { type ReactNode, useCallback, useEffect } from 'react';
 import { LuChevronRight } from 'react-icons/lu';
 
+import { cn } from '../../lib/cn';
 import { useT } from '../../lib/i18n/I18nContext';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import {
@@ -11,13 +12,14 @@ import {
   setSidebarWidth,
   toggleSidebar,
 } from '../../store/layoutSlice';
+import { IS_DEV } from '../../utils/config';
 import { Button } from '../ui';
 import { clampWidth, useResizableDivider } from './useResizableDivider';
 
 const namespace = 'two-panel-layout';
 
 function debug(message: string, payload?: Record<string, unknown>) {
-  if (import.meta.env.DEV) {
+  if (IS_DEV) {
     console.debug(`[${namespace}] ${message}`, payload ?? {});
   }
 }
@@ -234,7 +236,7 @@ export default function TwoPanelLayout({
       {isOpen && (
         <>
           <div
-            className={`shrink-0 min-w-0 overflow-hidden ${paneCard} ${sidebarClassName}`}
+            className={cn('shrink-0 min-w-0 overflow-hidden', paneCard, sidebarClassName)}
             style={{ width }}
             data-testid={`two-panel-sidebar-${id}`}>
             {sidebar}
@@ -258,10 +260,11 @@ export default function TwoPanelLayout({
                 ? // Flush hairline seam: 1px visible line, wider invisible hit
                   // area, highlights on hover/focus.
                   'group relative w-px shrink-0 cursor-col-resize select-none self-stretch bg-surface-strong focus:outline-hidden'
-                : `group relative flex shrink-0 cursor-col-resize select-none items-center justify-center self-stretch focus:outline-hidden ${
+                : cn(
+                    'group relative flex shrink-0 cursor-col-resize select-none items-center justify-center self-stretch focus:outline-hidden',
                     // Tighter gutter between panes when there's no visible handle.
                     showDividerHandle ? 'mx-1 w-3' : 'mx-0 w-1.5'
-                  }`
+                  )
             }
             title={t('layout.resizeSidebar')}>
             {seamless ? (
@@ -277,12 +280,13 @@ export default function TwoPanelLayout({
                  centered vertically. When the handle is hidden it stays
                  transparent at rest and only surfaces on hover/focus. */
               <span
-                className={`h-10 w-1 rounded-full transition-colors group-hover:bg-primary-400 group-focus:bg-primary-500 ${
+                className={cn(
+                  'h-10 w-1 rounded-full transition-colors group-hover:bg-primary-400 group-focus:bg-primary-500',
                   // `line-strong` rather than a raw grey pair: the token
                   // already carries the per-theme value the two palette classes
                   // were hand-picking, so the handle tracks the theme.
                   showDividerHandle ? 'bg-line-strong' : 'bg-transparent'
-                }`}
+                )}
               />
             )}
           </div>
@@ -306,16 +310,16 @@ export default function TwoPanelLayout({
         </Button>
       )}
 
-      <div className={`flex-1 min-w-0 overflow-hidden ${paneCard} ${contentClassName}`}>
+      <div className={cn('flex-1 min-w-0 overflow-hidden', paneCard, contentClassName)}>
         {children}
       </div>
     </>
   );
 
   return (
-    <div className={`flex min-h-0 ${className}`}>
+    <div className={cn('flex min-h-0', className)}>
       {seamless ? (
-        <div className={`flex min-h-0 flex-1 overflow-hidden ${DEFAULT_PANE_CLASS}`}>{panes}</div>
+        <div className={cn('flex min-h-0 flex-1 overflow-hidden', DEFAULT_PANE_CLASS)}>{panes}</div>
       ) : (
         panes
       )}

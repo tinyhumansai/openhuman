@@ -17,8 +17,8 @@
 //! can be honest, in `tinymemory`'s own module E2E against a real module.
 
 use super::{
-    serve_interfaces, ComposioCallbacks, CHAT_NAME, CHAT_PATH, COMPOSIO_NAME, COMPOSIO_PATH,
-    EMBEDDING_NAME, EMBEDDING_PATH, RUNTIME_NAME, RUNTIME_PATH,
+    serve_interfaces, ComposioCallbacks, EmbeddingCallbacks, CHAT_NAME, CHAT_PATH, COMPOSIO_NAME,
+    COMPOSIO_PATH, EMBEDDING_NAME, EMBEDDING_PATH, RUNTIME_NAME, RUNTIME_PATH,
 };
 use crate::openhuman::config::Config;
 use crate::openhuman::integrations::composio::client::create_composio_client;
@@ -298,4 +298,98 @@ async fn execute_forwards_an_absent_connection_pin_as_absent() {
         .expect_err("no client can be built for an empty workspace");
         assert_eq!(error.wire_name(), HOST_ERROR, "{error}");
     }
+}
+
+#[tokio::test]
+async fn embed_takes_its_four_arguments_in_the_order_the_module_sends_them() {
+    // `Embed` is `(provider, model, dimensions, texts)`. The module shipped
+    // sending three — `(model, dimensions, texts)` — so `dimensions` landed in
+    // `model` and every call was refused at decode with "invalid type:
+    // integer, expected a string"; nothing ingested in module mode got a vector
+    // (#5820). Same cheapest-honest-check as `Execute` above: the right arity
+    // gets as far as the host's provider factory, the wrong one never does.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let callbacks = EmbeddingCallbacks(scoped_config(dir.path()));
+
+    let error = callbacks
+        .call(
+            &MemberName::new("Embed").expect("member name"),
+            json!(["no-such-provider", "some-model", 4, ["alpha"]]),
+        )
+        .await
+        .expect_err("an unknown provider slug fails inside the host's factory");
+    assert_eq!(
+        error.wire_name(),
+        HOST_ERROR,
+        "a well-formed call must reach the host's provider factory: {error}"
+    );
+
+    let error = callbacks
+        .call(
+            &MemberName::new("Embed").expect("member name"),
+            json!(["some-model", 4, ["alpha"]]),
+        )
+        .await
+        .expect_err("the module's old three-argument form is malformed");
+    assert_eq!(
+        error.wire_name(),
+        "ai.tinyhumans.tinybus.Error.BadArguments",
+        "a malformed call must be refused at decode, not inside the host: {error}"
+    );
+}
+
+// ── The summarization role resolves through the consent ladder ───────────────
+
+/// A model the role factory can hand back through the test override, so the
+/// tests below prove the ladder refuses *despite* a resolvable factory.
+struct StubModel;
+
+#[async_trait::async_trait]
+impl tinyinference::model::ChatModel<()> for StubModel {
+    async fn invoke(
+        &self,
+        _state: &(),
+        _request: tinyinference::model::ModelRequest,
+    ) -> tinyinference::Result<tinyinference::model::ModelResponse> {
+        Ok(tinyinference::model::ModelResponse::assistant("stub"))
+    }
+}
+
+/// With local AI off and no cloud opt-in, a module-side `"summarization"`
+/// chat call must be refused by the ladder — even while the role factory
+/// demonstrably CAN hand back a model (the override is installed). This is
+/// the consent hole the ladder plugs: before it, the blind role factory
+/// resolved `"summarization"` to the configured cloud provider regardless of
+/// `memory_tree.cloud_summarization_opt_in`.
+#[test]
+fn summarization_role_is_refused_without_local_ai_or_cloud_opt_in() {
+    let _guard =
+        crate::openhuman::inference::provider::factory::test_provider_override::install_model(
+            std::sync::Arc::new(StubModel),
+        );
+    let mut config = Config::default();
+    config.local_ai.runtime_enabled = false;
+    config.memory_tree.cloud_summarization_opt_in = false;
+
+    let error = match super::resolve_chat_model("summarization", &config) {
+        Err(error) => error,
+        Ok(_) => panic!("no local AI and no cloud opt-in must refuse the fold"),
+    };
+    assert!(
+        error.to_string().contains("cloud_summarization_opt_in"),
+        "the refusal must name the setting that unlocks it: {error}"
+    );
+}
+
+/// Any other role keeps the role factory unchanged — the ladder is scoped to
+/// the summarization role, not to the seam.
+#[test]
+fn non_summarization_roles_keep_the_role_factory() {
+    let _guard =
+        crate::openhuman::inference::provider::factory::test_provider_override::install_model(
+            std::sync::Arc::new(StubModel),
+        );
+    let config = Config::default();
+    super::resolve_chat_model("chat", &config)
+        .expect("a non-summarization role resolves through the factory (test override)");
 }

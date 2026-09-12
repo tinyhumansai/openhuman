@@ -52,6 +52,7 @@ pub mod schemas;
 pub mod types;
 
 #[cfg(test)]
+#[path = "hooks_tests.rs"]
 mod tests;
 
 pub use config::{HookConfig, HookDefinition, HookKind, HookLayer, HooksFile};

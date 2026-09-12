@@ -2,13 +2,24 @@ use anyhow::{Context, Result};
 
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::api::provider::ForgetSelector;
-use crate::openhuman::memory::sync::composio::providers::sync_state::KV_NAMESPACE;
 use crate::rpc::RpcOutcome;
+// The KV namespace the Composio sync pipelines keep their per-connection
+// cursor state under, named at the **contract** (#5560).
+//
+// It used to be `tinycortex::memory::sync::state::STATE_NAMESPACE`. The
+// contract publishes the same string under `composio::KV_NAMESPACE`, and its
+// own docs mark it a compatibility surface for exactly the reason this handler
+// cares about: the value is on disk, so a wipe that spelled it differently
+// would leave every cursor behind while reporting a clean sweep. Taking the
+// constant rather than copying the literal is what keeps that impossible —
+// and it is the same constant the driver writing those rows reads.
 use tinymemory_api::chunks::SourceKind;
+use tinymemory_api::composio::KV_NAMESPACE;
+use tinymemory_api::provider::types::BackfillTreesRequest;
 
 use super::types::{
-    DeleteSourceResponse, FlushNowResponse, FlushSourceTreeResponse, ResetTreeResponse,
-    WipeAllResponse,
+    BackfillConnectorTreesResponse, DeleteSourceResponse, FlushNowResponse,
+    FlushSourceTreeResponse, ResetTreeResponse, WipeAllResponse,
 };
 
 // ── wipe_all ─────────────────────────────────────────────────────────────
@@ -274,67 +285,61 @@ pub async fn reset_tree_rpc(config: &Config) -> Result<RpcOutcome<ResetTreeRespo
 
 /// Force a flush of one source's summary tree.
 ///
-/// # The last engine reference in this module (#5560)
+/// # Served by the driver, and `TreeFactory` is not a seam gap (#5560)
 ///
-/// **The upstream half of this is done. What is left is two host forwarders,
-/// and until they land migrating here would be a regression — read on before
-/// changing it.**
+/// Served by the bound driver's `MemoryTree::flush_source_tree`. The wire
+/// member is `tinymemory_bus::names::FLUSH_SOURCE_TREE`, which the pinned
+/// 131-method contract carries, so this is a contract call and not a method
+/// that answers `Unsupported` at run time.
 ///
-/// `get_or_create_source_tree` hands back a live `Tree` **object**, and both
-/// things this handler does next need the object rather than a namespace: the
-/// host's `TreeFactory::from_tree(&tree).label_strategy(&cfg)` picks the
-/// labelling policy from the tree's own kind/scope, and `force_flush_tree`
-/// takes `&tree.id`.
+/// This used to hold a live `Tree` object from the engine's
+/// `tree_source::get_or_create_source_tree`, because both things it did next
+/// wanted the object rather than a namespace: `TreeFactory::from_tree(&tree)
+/// .label_strategy(&cfg)` picked the labelling policy from the tree's own
+/// kind and scope, and `force_flush_tree` took `&tree.id`. **Neither is an
+/// upstream ask** — they are not narrower doors waiting to be opened, they are
+/// the two halves of a handle-passing shape the contract deliberately does not
+/// have, and the member below replaces both.
 ///
-/// This note used to say `MemoryTree` could not express that — namespace-addressed
-/// end to end, no member returning a tree handle — and asked upstream for
-/// "flush the tree for this source scope, using the host's label strategy".
-/// **tinymemory v1.7.0 shipped exactly that**:
-/// `MemoryTree::flush_source_tree(&self, source_scope) -> Result<u64, MemoryError>`,
-/// answering the seal count rather than a tree, with the labelling decision made
-/// driver-side (which is where it comes from anyway). The module serves it and
-/// `TinycortexProvider` implements it, so the driver behind the bus is ready.
+/// tinymemory v1.7.0 replaced that with a member answering the seal count and
+/// making the labelling decision driver-side — which is where it came from
+/// anyway — so no tree handle crosses the seam. Sealing and cascading are one
+/// call there rather than two here, which also closes the window the old
+/// two-step left open: a tree sealed but not yet cascaded reads as an empty
+/// tree to every structural query.
 ///
-/// What is **not** ready is this host's two forwarders onto that member:
-/// neither `modules::memory`'s `ModuleMemoryProvider` (`impl MemoryTree`) nor
-/// `memory::guard::families`' `GuardedTree` overrides it, so both inherit the
-/// trait default — `Err(Unsupported(Tree))`. Calling it today would turn a
-/// working flush into a runtime `Unsupported`, which is strictly worse than
-/// the direct call: the failure moves from compile time to run time, and this
-/// handler's caller has no fallback. That is the same trap
-/// `direct_engine_refs_tests`' module docs warn about for a method the pinned
-/// artifact does not serve; here the artifact serves it and the host does not
-/// ask.
-///
-/// So the remaining work is host-side and sits in two files this handler does
-/// not own. Once `ModuleMemoryProvider` and `GuardedTree` both forward
-/// `flush_source_tree`, this whole function collapses into the shape
-/// [`flush_now_rpc`] already has below: resolve the binding, take `as_tree()`,
-/// degrade by naming the driver when the family is absent, and map the returned
-/// count into `seals_fired`. Two behaviours have to survive that rewrite — the
-/// `ACTIVE` re-entrancy latch, and the fact that an unknown scope is a
-/// zero-count success rather than an error.
-///
-/// (`tinymemory_core::tree_source` itself is genuinely engine-owned — it wraps
-/// `tree::tree::registry::get_or_create_tree` and writes the `_source.md`
-/// mirror as a side effect — so there is no tinycortex twin to repoint at in
-/// the meantime.)
+/// Two behaviours survive the rewrite deliberately. The `ACTIVE` re-entrancy
+/// latch is still host-side, because it guards *this* handler against a second
+/// concurrent call rather than guarding the store. And a scope with nothing
+/// buffered is still a zero-count success rather than an error — now by the
+/// contract's own rule rather than by this function's convention.
 pub async fn flush_source_tree_rpc(
     config: &Config,
     source_scope: &str,
 ) -> Result<RpcOutcome<FlushSourceTreeResponse>, String> {
-    use tinymemory_core::tree_source::get_or_create_source_tree;
-
-    use crate::openhuman::memory::tree::tree::flush::force_flush_tree;
-    use crate::openhuman::memory::tree::tree::TreeFactory;
     use std::collections::HashSet;
     use std::sync::Mutex;
 
     static ACTIVE: std::sync::LazyLock<Mutex<HashSet<String>>> =
         std::sync::LazyLock::new(|| Mutex::new(HashSet::new()));
 
-    let scope = source_scope.to_string();
+    /// Releases the re-entrancy latch on every exit, including the error ones.
+    ///
+    /// The hand-rolled version this replaces removed the scope only after a
+    /// successful flush, so a driver error latched that scope out for the rest
+    /// of the process — the retry a caller would naturally make came back
+    /// "already running" forever. Dropping it in a guard is the fix.
+    struct Latch(String);
+    impl Drop for Latch {
+        fn drop(&mut self) {
+            ACTIVE
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&self.0);
+        }
+    }
 
+    let scope = source_scope.to_string();
     {
         let mut active = ACTIVE.lock().unwrap_or_else(|e| e.into_inner());
         if !active.insert(scope.clone()) {
@@ -347,43 +352,32 @@ pub async fn flush_source_tree_rpc(
             ));
         }
     }
+    let _latch = Latch(scope.clone());
 
-    let cfg = config.clone();
-    let scope_for_task = scope.clone();
-    let result = tokio::task::spawn_blocking(move || -> Result<FlushSourceTreeResponse> {
-        let tree = get_or_create_source_tree(&cfg, &scope_for_task)
-            .context("get_or_create_source_tree")?;
-        let _strategy = TreeFactory::from_tree(&tree).label_strategy(&cfg);
-        Ok(FlushSourceTreeResponse {
-            tree_scope: scope_for_task,
-            seals_fired: 0,
-        })
-    })
-    .await
-    .map_err(|e| format!("flush_source_tree join error: {e}"))?;
+    // Asked of the driver (`Tree::flush_source_tree`). The seal and the cascade
+    // are one call there rather than two here, which closes the window the old
+    // two-step left: a tree sealed but not cascaded reads as empty to every
+    // structural query. No `spawn_blocking` either — the driver owns whether
+    // its own reads block.
+    let binding = crate::openhuman::memory::binding::for_config(config)?;
+    let Some(tree) = binding.provider().as_tree() else {
+        return Err(format!(
+            "flush_source_tree: driver '{}' does not serve Tree",
+            binding.driver_id()
+        ));
+    };
 
-    let _tree_info = result.map_err(|e| format!("flush_source_tree: {e:#}"))?;
+    // A scope with nothing buffered is `Ok(0)` by the contract, not an error,
+    // which is the behaviour this handler already had for an unknown scope.
+    let seals_fired = tree
+        .flush_source_tree(&scope)
+        .await
+        .map_err(|e| format!("flush_source_tree: {e}"))?;
 
-    let cfg2 = config.clone();
-    let scope2 = scope.clone();
-    let resp = tokio::spawn(async move {
-        let tree = get_or_create_source_tree(&cfg2, &scope2)?;
-        let strategy = TreeFactory::from_tree(&tree).label_strategy(&cfg2);
-        let sealed = force_flush_tree(&cfg2, &tree.id, Some(chrono::Utc::now()), &strategy).await?;
-        Ok::<_, anyhow::Error>(FlushSourceTreeResponse {
-            tree_scope: scope2,
-            seals_fired: sealed.len() as u32,
-        })
-    })
-    .await
-    .map_err(|e| format!("flush_source_tree join error: {e}"))?
-    .map_err(|e| format!("flush_source_tree: {e:#}"))?;
-
-    {
-        let mut active = ACTIVE.lock().unwrap_or_else(|e| e.into_inner());
-        active.remove(&scope);
-    }
-
+    let resp = FlushSourceTreeResponse {
+        tree_scope: scope,
+        seals_fired: u32::try_from(seals_fired).unwrap_or(u32::MAX),
+    };
     let log = format!(
         "memory_tree::read: flush_source_tree scope={} seals={}",
         resp.tree_scope, resp.seals_fired
@@ -421,6 +415,67 @@ pub async fn flush_now_rpc(config: &Config) -> Result<RpcOutcome<FlushNowRespons
     let log = format!(
         "memory_tree::read: flush_now enqueued={} stale_buffers={}",
         resp.enqueued, resp.stale_buffers
+    );
+    Ok(RpcOutcome::single_log(resp, log))
+}
+
+// ── backfill_connector_trees ───────────────────────────────────────────────
+
+/// Re-file connector documents stored before the routing fix into the memory
+/// tree (#6012).
+///
+/// #6007 fixed the routing for items synced from then on. It could not fix the
+/// records already stored: the per-item sync gate treats an ingested document as
+/// done, so re-syncing fetches nothing and creates no tree rows. Those memories
+/// sit fully embedded in the document store and invisible to every tree-backed
+/// surface until something re-files them.
+///
+/// Asked of the driver rather than walked here. The namespaces, the
+/// `{toolkit}:{connection_id}` identity and the ingest funnel all live in the
+/// engine beside the sync path that writes the same rows — a host-side walk
+/// would be a second implementation of an identity that must not drift, which
+/// is the mistake that caused #6007 in the first place.
+///
+/// Expensive by nature: a pass is one read and one set of chunk embeddings per
+/// document. Nothing calls this on its own initiative, and `dry_run` defaults to
+/// true at the RPC boundary so a caller has to ask for the write.
+pub async fn backfill_connector_trees_rpc(
+    config: &Config,
+    limit: Option<u64>,
+    dry_run: bool,
+) -> Result<RpcOutcome<BackfillConnectorTreesResponse>, String> {
+    let binding = crate::openhuman::memory::binding::for_config(config)?;
+    let Some(maintenance) = binding.provider().as_maintenance() else {
+        return Err(format!(
+            "backfill_connector_trees: driver '{}' does not serve Maintenance",
+            binding.driver_id()
+        ));
+    };
+
+    let outcome = maintenance
+        .backfill_connector_trees(BackfillTreesRequest { limit, dry_run })
+        .await
+        .map_err(|error| format!("backfill_connector_trees: {error}"))?;
+
+    let resp = BackfillConnectorTreesResponse {
+        executed: !dry_run,
+        scanned: outcome.scanned,
+        ingested: outcome.ingested,
+        already_present: outcome.already_present,
+        skipped: outcome.skipped,
+        more_pending: outcome.more_pending,
+        notes: outcome.notes,
+    };
+
+    let log = format!(
+        "memory_tree::read: backfill_connector_trees executed={} scanned={} ingested={} \
+         already_present={} skipped={} more_pending={}",
+        resp.executed,
+        resp.scanned,
+        resp.ingested,
+        resp.already_present,
+        resp.skipped,
+        resp.more_pending
     );
     Ok(RpcOutcome::single_log(resp, log))
 }

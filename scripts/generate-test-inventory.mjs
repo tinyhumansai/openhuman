@@ -15,7 +15,7 @@
 //   (b) CONTROLLER-DOMAIN CHECK — every controller domain registered in
 //       `src/core/all.rs` (via `crate::openhuman::<domain>::all_*_controllers`)
 //       is referenced by >=1 file under `tests/`. Catches RPC domains that
-//       ship with zero integration/E2E coverage (recall_calendar, tinyplace,
+//       ship with zero integration/E2E coverage (recall_calendar,
 //       devices, …).
 //
 // Known-current offenders are seeded into the allowlists below so the check
@@ -74,7 +74,6 @@ const DOMAIN_ALLOWLIST = new Set([
   'task_sources',
   'text_input',
   'thread_goals',
-  'tinyplace',
 ]);
 
 // ─────────────────────────────────────────────────────────────────────────────

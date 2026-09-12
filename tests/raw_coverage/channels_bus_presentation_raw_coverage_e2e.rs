@@ -79,16 +79,13 @@ async fn presentation_segments_text_and_delivers_single_bubble_with_citations() 
 }
 
 #[tokio::test]
-async fn presentation_delivers_segment_events_then_deduping_done_event() {
+async fn presentation_delivers_one_unmodified_done_event() {
     let response = [
         "First paragraph has enough natural language content to stand alone as a separate chat bubble.",
         "Second paragraph also contains enough prose to exercise segmented delivery and delay calculation.",
         "Third paragraph ensures the final chat_done event carries the complete response for deduplication.",
     ]
     .join("\n\n");
-    let segments = presentation_test_support::segment_for_delivery_for_test(&response);
-    assert!(segments.len() >= 2, "expected segmented delivery");
-
     let mut rx = subscribe_web_channel_events();
     presentation_test_support::deliver_response_for_test(
         "round20-client",
@@ -100,30 +97,20 @@ async fn presentation_delivers_segment_events_then_deduping_done_event() {
     )
     .await;
 
-    let mut seen_segments = 0_u32;
     let final_event = timeout(Duration::from_secs(10), async {
         loop {
             let event = rx.recv().await.expect("presentation event");
             if event.request_id != "round20-segmented" {
                 continue;
             }
-            match event.event.as_str() {
-                "chat_segment" => {
-                    assert_eq!(event.segment_total, Some(segments.len() as u32));
-                    assert_eq!(event.segment_index, Some(seen_segments));
-                    assert!(event.full_response.as_deref().unwrap_or("").len() >= 40);
-                    seen_segments += 1;
-                }
-                "chat_done" => break event,
-                other => panic!("unexpected presentation event {other}"),
-            }
+            assert_eq!(event.event, "chat_done");
+            break event;
         }
     })
     .await
     .expect("segmented delivery timeout");
 
-    assert_eq!(seen_segments, segments.len() as u32);
-    assert_eq!(final_event.segment_total, Some(segments.len() as u32));
+    assert_eq!(final_event.segment_total, None);
     assert_eq!(
         final_event.full_response.as_deref(),
         Some(response.as_str())

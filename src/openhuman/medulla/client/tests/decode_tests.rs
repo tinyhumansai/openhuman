@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 // Event envelope / kind decode fixtures
 // ---------------------------------------------------------------------------
 
-fn envelope(event: Value) -> EventEnvelope {
+fn envelope(event: Value) -> WireEventEnvelope {
     let raw = json!({
         "seq": 5,
         "at": 1234,
@@ -17,6 +17,36 @@ fn envelope(event: Value) -> EventEnvelope {
         "event": event,
     });
     serde_json::from_value(raw).unwrap()
+}
+
+#[test]
+fn wire_envelope_carries_session_and_cycle_ids() {
+    // The wire type is what `ops::list_events` returns; it must decode the
+    // `sessionId` / `cycleId` fields the in-process contract type lacks. This
+    // pins the distinction from `events::EventEnvelope` so a future edit cannot
+    // silently reintroduce the naming ambiguity (#6078).
+    let env: WireEventEnvelope = serde_json::from_value(json!({
+        "at": 42,
+        "sessionId": "sess-1",
+        "event": {"kind": "user", "body": "hi"},
+    }))
+    .unwrap();
+    assert_eq!(env.session_id, "sess-1");
+    assert_eq!(env.at, 42);
+    // `seq` and `cycleId` are optional on the wire.
+    assert_eq!(env.seq, None);
+    assert_eq!(env.cycle_id, None);
+
+    let with_optionals: WireEventEnvelope = serde_json::from_value(json!({
+        "seq": 7,
+        "at": 43,
+        "sessionId": "sess-1",
+        "cycleId": "cyc-9",
+        "event": {"kind": "assistant", "body": "yo"},
+    }))
+    .unwrap();
+    assert_eq!(with_optionals.seq, Some(7));
+    assert_eq!(with_optionals.cycle_id, Some("cyc-9".into()));
 }
 
 #[test]

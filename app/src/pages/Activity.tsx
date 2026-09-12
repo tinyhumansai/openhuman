@@ -5,6 +5,7 @@ import { ConfirmationModal } from '../components/intelligence/ConfirmationModal'
 import { ToastContainer } from '../components/intelligence/Toast';
 import WorkflowsTab from '../components/intelligence/WorkflowsTab';
 import ChipTabs from '../components/layout/ChipTabs';
+import PageSectionHeader from '../components/layout/PageSectionHeader';
 import {
   useIntelligenceSocket,
   useIntelligenceSocketManager,
@@ -90,55 +91,59 @@ export default function Activity() {
   const activeTabDef = tabs.find(tab => tab.id === activeTab);
 
   return (
-    <div className="min-h-full p-4 pt-6">
-      <div className="max-w-4xl mx-auto space-y-4">
-        <ChipTabs<ActivityTab>
-          items={tabs.map(tab => ({
-            id: tab.id,
-            label: (
-              <span className="inline-flex items-center gap-1.5">
-                <span>{tab.label}</span>
-                {tab.comingSoon && (
-                  <span className="rounded-full border border-line bg-surface-muted px-1.5 py-0.5 text-[10px] text-content-muted">
-                    {t('misc.beta')}
-                  </span>
-                )}
+    // `p-4 pt-6` is the accepted top-level page inset (Notifications and Invites
+    // use the same), and `max-w-3xl` is the contentWidth `lg` step — the column
+    // used to be a hand-picked `max-w-4xl`, which is on no scale.
+    <div className="min-h-full space-y-4 p-4 pt-6">
+      <ChipTabs<ActivityTab>
+        items={tabs.map(tab => ({
+          id: tab.id,
+          label: (
+            <span className="inline-flex items-center gap-1.5">
+              <span>{tab.label}</span>
+              {tab.comingSoon && (
+                <span className="rounded-full border border-line bg-surface-muted px-1.5 py-0.5 text-[10px] text-content-muted">
+                  {t('misc.beta')}
+                </span>
+              )}
+            </span>
+          ),
+        }))}
+        value={activeTab}
+        onChange={setActiveTab}
+        // The page owns its own gutter, so the row drops ChipTabs' default
+        // padding and keeps only the canonical chip gap — `gap-1.5`, not the
+        // `gap-2 pb-1` this hand-picked before.
+        className="mx-auto flex max-w-3xl flex-wrap gap-1.5"
+      />
+
+      {/* Alerts hands the surface to the Notifications page, which brings its
+          own header card and per-section widths — so it renders outside this
+          page's content column and without the tab header above it. */}
+      {activeTab === 'alerts' ? (
+        <Notifications />
+      ) : (
+        // No card frame here: every routed page already sits inside
+        // `ContentSurface`'s opaque sheet, so wrapping the whole body in
+        // `rounded-2xl border bg-surface shadow-soft` was a card on a card.
+        // `PageSectionHeader` is the canonical header for a page view that is
+        // not a PanelPage — the same shape Notifications uses one level down.
+        <div className="mx-auto max-w-3xl space-y-4">
+          {/* Header — reflects the active tab so the panel title matches
+              what's shown below it, rather than a static "Activity". */}
+          <PageSectionHeader
+            title={
+              <span data-walkthrough="intelligence-header">
+                {activeTabDef?.label ?? t('nav.activity')}
               </span>
-            ),
-          }))}
-          value={activeTab}
-          onChange={setActiveTab}
-          className="flex flex-wrap gap-2 pb-1"
-        />
+            }
+            description={activeTabDef?.description}
+          />
 
-        {/* Alerts tab renders outside the card so Notifications can use its own
-            full-width layout with multiple sections. */}
-        {activeTab === 'alerts' ? (
-          <Notifications />
-        ) : (
-          <div className="bg-surface rounded-2xl shadow-soft border border-line p-6">
-            <div>
-              {/* Header — reflects the active tab so the panel title matches
-                  what's shown below it, rather than a static "Activity". */}
-              <div className="flex items-center justify-between mb-6">
-                <div className="min-w-0">
-                  <h1
-                    className="text-xl font-bold text-content"
-                    data-walkthrough="intelligence-header">
-                    {activeTabDef?.label ?? t('nav.activity')}
-                  </h1>
-                  {activeTabDef?.description && (
-                    <p className="mt-1 text-sm text-content-muted">{activeTabDef.description}</p>
-                  )}
-                </div>
-              </div>
-
-              {/* Tab content */}
-              {activeTab === 'automations' && <WorkflowsTab />}
-            </div>
-          </div>
-        )}
-      </div>
+          {/* Tab content */}
+          {activeTab === 'automations' && <WorkflowsTab />}
+        </div>
+      )}
 
       {/* Toast notifications */}
       <ToastContainer notifications={toasts} onRemove={removeToast} />

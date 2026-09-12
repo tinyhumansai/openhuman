@@ -117,7 +117,7 @@ const AutoRechargeSection = ({
       {/* Header row */}
       <div className="flex items-center justify-between p-3">
         <div>
-          <p className="text-md font-semibold text-content">
+          <p className="text-sm font-semibold text-content">
             {t('settings.billing.autoRecharge.title')}
           </p>
           <p className="text-[11px] text-content-faint mt-0.5">

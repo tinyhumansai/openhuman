@@ -15,9 +15,9 @@ export default function WorkflowDiscoveriesPage() {
       <SettingsTabbedPage
         title={t('flows.discoveries.title')}
         description={t('flows.discoveries.description')}>
-        <div className="pt-4">
-          <SuggestedWorkflows />
-        </div>
+        {/* No wrapper padding: SettingsTabbedPage's body already renders
+            `min-h-full pb-4 pt-4`, so a `pt-4` here double-pads the top. */}
+        <SuggestedWorkflows />
       </SettingsTabbedPage>
     </div>
   );

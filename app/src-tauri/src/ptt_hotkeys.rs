@@ -1,6 +1,5 @@
 //! Global push-to-talk hotkey state + parsing.
 //!
-//! See spec: `docs/superpowers/specs/2026-06-02-global-ptt-design.md`.
 //!
 //! `expand_ptt_shortcuts` mirrors `dictation_hotkeys::expand_dictation_shortcuts`
 //! but rejects pure-modifier shortcuts (Ctrl, Cmd+Shift, etc.) because they

@@ -3,9 +3,7 @@
 Date: 2026-07-22
 Method: web research against primary sources where they exist (GitHub repos and
 issue trackers, official docs), with every weakly-sourced figure flagged. Our
-own numbers come from the measured benchmarks in
-[`library-benchmarking.md`](library-benchmarking.md) and
-[`resource-profiling-session-2026-07-21.md`](resource-profiling-session-2026-07-21.md).
+own numbers come from the reproducible drivers under `scripts/profile/`.
 
 The single most important source-quality finding: **the only fully measured,
 reproducible numbers in this comparison are ours.** Codex publishes binary

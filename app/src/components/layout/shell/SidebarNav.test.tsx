@@ -94,7 +94,6 @@ describe('SidebarNav active matching', () => {
           messages: {},
           unread: {},
           logs: {},
-          overlayOpen: false,
         },
       },
     });

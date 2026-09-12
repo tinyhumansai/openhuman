@@ -70,7 +70,7 @@ export default function ChannelSetupModal({ definition, onClose }: ChannelSetupM
       titleId={titleId}
       icon={renderChannelIcon(definition.icon)}
       maxWidthClassName="max-w-[500px]"
-      contentClassName="max-h-[70vh] overflow-y-auto p-4"
+      contentClassName="max-h-[70vh] overflow-y-auto px-5 py-4"
       title={
         <span className="flex items-center gap-2">
           {definition.display_name}

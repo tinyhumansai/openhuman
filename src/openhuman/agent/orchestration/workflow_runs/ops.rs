@@ -2,16 +2,15 @@
 //!
 //! PR1 scope: expose the builtin [`WorkflowDefinition`]s, validate them
 //! (structure + agent existence), and read durable [`WorkflowRun`]s from
-//! `tinyagents::session::run_ledger`. No execution engine yet — starting / stopping /
+//! `tinyagents_session::run_ledger`. No execution engine yet — starting / stopping /
 //! resuming runs lands in a follow-up PR.
-
-use std::collections::{HashMap, HashSet, VecDeque};
 
 use anyhow::Result;
 
 use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 use crate::openhuman::config::Config;
-use tinyagents::session::run_ledger::{
+use tinyagents_graph::dag::{validate_dag, DagIssue, DagNode};
+use tinyagents_session::run_ledger::{
     get_workflow_run, list_workflow_runs, WorkflowRun, WorkflowRunListRequest,
     WorkflowRunListResponse,
 };
@@ -100,13 +99,7 @@ pub fn validate_structure(def: &WorkflowDefinition) -> Vec<DefinitionError> {
         return errors;
     }
 
-    let mut seen: HashSet<&str> = HashSet::new();
     for phase in &def.phases {
-        if !seen.insert(phase.name.as_str()) {
-            errors.push(DefinitionError::DuplicatePhase {
-                name: phase.name.clone(),
-            });
-        }
         if phase.agent_ids.is_empty() {
             errors.push(DefinitionError::EmptyPhase {
                 phase: phase.name.clone(),
@@ -114,20 +107,27 @@ pub fn validate_structure(def: &WorkflowDefinition) -> Vec<DefinitionError> {
         }
     }
 
-    let names: HashSet<&str> = def.phases.iter().map(|p| p.name.as_str()).collect();
-    for phase in &def.phases {
-        for dep in &phase.depends_on {
-            if !names.contains(dep.as_str()) {
-                errors.push(DefinitionError::UnknownDependency {
-                    phase: phase.name.clone(),
-                    depends_on: dep.clone(),
-                });
+    // Unique names, landed `depends_on` edges and acyclicity are the shared
+    // dependency-DAG question; `tinyagents_graph::dag` owns the algorithm and
+    // this maps its structural issues back onto the host's error vocabulary.
+    // A self-dependency arrives as `DagIssue::Cycle`, which is what the
+    // hand-rolled Kahn pass here reported too.
+    let nodes: Vec<DagNode<'_>> = def
+        .phases
+        .iter()
+        .map(|p| DagNode::new(p.name.as_str(), p.depends_on.iter().map(String::as_str)))
+        .collect();
+    for issue in validate_dag(&nodes) {
+        errors.push(match issue {
+            DagIssue::DuplicateNode { id } => DefinitionError::DuplicatePhase { name: id },
+            DagIssue::UnknownDependency { node, depends_on } => {
+                DefinitionError::UnknownDependency {
+                    phase: node,
+                    depends_on,
+                }
             }
-        }
-    }
-
-    if has_cycle(def) {
-        errors.push(DefinitionError::CyclicDependency);
+            DagIssue::Cycle => DefinitionError::CyclicDependency,
+        });
     }
 
     if def.default_concurrency == 0 || def.max_children == 0 {
@@ -208,48 +208,6 @@ pub fn validate_definition(def: &WorkflowDefinition) -> Vec<DefinitionError> {
     errors
 }
 
-/// Kahn's-algorithm cycle check over the phase dependency graph. Edges that
-/// point at unknown phases are ignored here (reported separately).
-fn has_cycle(def: &WorkflowDefinition) -> bool {
-    let names: HashSet<&str> = def.phases.iter().map(|p| p.name.as_str()).collect();
-    let mut indegree: HashMap<&str, usize> =
-        def.phases.iter().map(|p| (p.name.as_str(), 0)).collect();
-    let mut adjacency: HashMap<&str, Vec<&str>> = HashMap::new();
-    for phase in &def.phases {
-        for dep in &phase.depends_on {
-            let dep = dep.as_str();
-            if names.contains(dep) {
-                // edge dep -> phase
-                adjacency.entry(dep).or_default().push(phase.name.as_str());
-                *indegree.entry(phase.name.as_str()).or_insert(0) += 1;
-            }
-        }
-    }
-
-    let mut queue: VecDeque<&str> = indegree
-        .iter()
-        .filter(|(_, &d)| d == 0)
-        .map(|(&n, _)| n)
-        .collect();
-    let mut visited = 0usize;
-    while let Some(node) = queue.pop_front() {
-        visited += 1;
-        if let Some(children) = adjacency.get(node) {
-            for &child in children {
-                let entry = indegree.get_mut(child).expect("child in indegree");
-                *entry -= 1;
-                if *entry == 0 {
-                    queue.push_back(child);
-                }
-            }
-        }
-    }
-    // Compare against the unique-node count, not `def.phases.len()`: the graph
-    // is keyed by unique phase names, so duplicate names (reported separately as
-    // `DuplicatePhase`) would otherwise trip a false `CyclicDependency`.
-    visited != indegree.len()
-}
-
 /// List durable workflow runs (delegates to the run ledger).
 pub fn list_runs(
     config: &Config,
@@ -271,153 +229,5 @@ pub fn get_run(config: &Config, id: &str) -> Result<Option<WorkflowRun>> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn good_def() -> WorkflowDefinition {
-        definition_by_id(PARALLEL_RESEARCH_ID).expect("builtin present")
-    }
-
-    #[test]
-    fn builtin_is_structurally_valid() {
-        assert!(validate_structure(&good_def()).is_empty());
-    }
-
-    #[test]
-    fn builtin_agents_pass_when_all_known() {
-        // Treat the four referenced agents as registered.
-        let known = ["planner", "researcher", "critic", "summarizer"];
-        let errors = validate_agents(&good_def(), |id| known.contains(&id));
-        assert!(errors.is_empty(), "unexpected: {errors:?}");
-    }
-
-    #[test]
-    fn unknown_agent_is_reported() {
-        let errors = validate_agents(&good_def(), |id| id == "researcher");
-        // planner, critic, summarizer are unknown -> 3 errors.
-        assert_eq!(errors.len(), 3);
-        assert!(errors.iter().any(
-            |e| matches!(e, DefinitionError::UnknownAgent { agent_id, .. } if agent_id == "planner")
-        ));
-    }
-
-    #[test]
-    fn no_phases_is_rejected() {
-        let mut def = good_def();
-        def.phases.clear();
-        assert_eq!(validate_structure(&def), vec![DefinitionError::NoPhases]);
-    }
-
-    #[test]
-    fn duplicate_and_empty_phase_are_reported() {
-        let def = WorkflowDefinition {
-            phases: vec![
-                WorkflowPhase {
-                    name: "a".into(),
-                    description: String::new(),
-                    agent_ids: vec!["researcher".into()],
-                    depends_on: vec![],
-                },
-                WorkflowPhase {
-                    name: "a".into(),
-                    description: String::new(),
-                    agent_ids: vec![],
-                    depends_on: vec![],
-                },
-            ],
-            ..good_def()
-        };
-        let errors = validate_structure(&def);
-        assert!(errors.contains(&DefinitionError::DuplicatePhase { name: "a".into() }));
-        assert!(errors.contains(&DefinitionError::EmptyPhase { phase: "a".into() }));
-    }
-
-    #[test]
-    fn unknown_dependency_is_reported() {
-        let def = WorkflowDefinition {
-            phases: vec![WorkflowPhase {
-                name: "only".into(),
-                description: String::new(),
-                agent_ids: vec!["researcher".into()],
-                depends_on: vec!["ghost".into()],
-            }],
-            ..good_def()
-        };
-        let errors = validate_structure(&def);
-        assert!(errors.contains(&DefinitionError::UnknownDependency {
-            phase: "only".into(),
-            depends_on: "ghost".into(),
-        }));
-    }
-
-    #[test]
-    fn cycle_is_detected() {
-        let def = WorkflowDefinition {
-            phases: vec![
-                WorkflowPhase {
-                    name: "a".into(),
-                    description: String::new(),
-                    agent_ids: vec!["researcher".into()],
-                    depends_on: vec!["b".into()],
-                },
-                WorkflowPhase {
-                    name: "b".into(),
-                    description: String::new(),
-                    agent_ids: vec!["researcher".into()],
-                    depends_on: vec!["a".into()],
-                },
-            ],
-            ..good_def()
-        };
-        assert!(validate_structure(&def).contains(&DefinitionError::CyclicDependency));
-    }
-
-    #[test]
-    fn duplicate_phase_names_do_not_report_false_cycle() {
-        let def = WorkflowDefinition {
-            phases: vec![
-                WorkflowPhase {
-                    name: "a".into(),
-                    description: String::new(),
-                    agent_ids: vec!["researcher".into()],
-                    depends_on: vec![],
-                },
-                WorkflowPhase {
-                    name: "a".into(),
-                    description: String::new(),
-                    agent_ids: vec!["researcher".into()],
-                    depends_on: vec![],
-                },
-            ],
-            ..good_def()
-        };
-        let errors = validate_structure(&def);
-        assert!(errors.contains(&DefinitionError::DuplicatePhase { name: "a".into() }));
-        assert!(
-            !errors.contains(&DefinitionError::CyclicDependency),
-            "duplicate names must not trip a false cycle: {errors:?}"
-        );
-    }
-
-    #[test]
-    fn zero_concurrency_is_rejected() {
-        let def = WorkflowDefinition {
-            default_concurrency: 0,
-            max_children: 0,
-            ..good_def()
-        };
-        assert!(
-            validate_structure(&def).contains(&DefinitionError::InvalidConcurrency {
-                default_concurrency: 0,
-                max_children: 0,
-            })
-        );
-    }
-
-    #[test]
-    fn list_definitions_returns_builtins() {
-        let resp = list_definitions();
-        assert_eq!(resp.count, 1);
-        assert_eq!(resp.definitions[0].id, PARALLEL_RESEARCH_ID);
-    }
-}
+#[path = "ops_tests.rs"]
+mod tests;

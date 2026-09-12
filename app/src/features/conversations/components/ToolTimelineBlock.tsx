@@ -15,8 +15,8 @@ import type {
 import { formatTimelineEntry, stripToolCallEnvelopes } from '../../../utils/toolTimelineFormatting';
 import { parseWorkerThreadRef } from '../utils/workerThreadRef';
 import { agentNameTone, AgentTimelineRail } from './AgentTimelineRail';
+import { AssistantUiSubagentCall, isActiveSubagentStatus } from './AssistantUiSubagentCall';
 import { ProcessingTranscriptView } from './ProcessingTranscriptView';
-import { SubagentActivityBlock } from './SubagentActivityBlock';
 import {
   coalesceTimelineEntries,
   normalizeToolBody,
@@ -24,13 +24,6 @@ import {
   workerStatusFromEntry,
 } from './toolTimelineRows';
 import { WorkerThreadRefCard } from './WorkerThreadRefCard';
-
-/**
- * Re-exported so the historical import path keeps resolving. The component
- * itself moved to `./SubagentActivityBlock` when this file was split; it is a
- * pure move, no behaviour changed.
- */
-export { SubagentActivityBlock } from './SubagentActivityBlock';
 
 /** Tail of the parent's in-flight response shown in the processing panel. */
 const RESPONSE_PREVIEW_CHARS = 320;
@@ -426,8 +419,9 @@ export function ToolTimelineBlock({
             transcript={transcript}
             entries={ordered}
             renderSubagent={subagent => (
-              <SubagentActivityBlock
-                subagent={subagent}
+              <AssistantUiSubagentCall
+                activity={subagent}
+                running={isActiveSubagentStatus(subagent.status)}
                 onView={onViewSubagent ? () => onViewSubagent(subagent) : undefined}
               />
             )}
@@ -536,8 +530,9 @@ export function ToolTimelineBlock({
                         </pre>
                       ) : null}
                       {subagent ? (
-                        <SubagentActivityBlock
-                          subagent={subagent}
+                        <AssistantUiSubagentCall
+                          activity={subagent}
+                          running={entry.status === 'running' || entry.status === 'awaiting_user'}
                           onView={onViewSubagent ? () => onViewSubagent(subagent) : undefined}
                         />
                       ) : null}

@@ -55,7 +55,7 @@ function statusColorClass(status: TaskBoardCardStatus): string {
     case 'in_progress':
       return 'text-primary-600 dark:text-primary-300 font-medium';
     case 'blocked':
-      return 'text-coral dark:text-coral';
+      return 'text-coral-600 dark:text-coral-300';
     case 'awaiting_approval':
       return 'text-amber-700 dark:text-amber-300';
     default:
@@ -143,7 +143,9 @@ export const ThreadTodoStrip: React.FC<Props> = ({
                 {card.status === 'blocked' && card.blocker?.trim() && (
                   // Surface why a step is stuck + what's needed next, matching
                   // the todo-tool guidance to set `blocked` with a `blocker`.
-                  <span className="min-w-0 text-[11px] text-coral/80">{card.blocker.trim()}</span>
+                  <span className="min-w-0 text-[11px] text-coral-600/80 dark:text-coral-300/80">
+                    {card.blocker.trim()}
+                  </span>
                 )}
               </span>
               {card.sessionThreadId && onViewSession && (

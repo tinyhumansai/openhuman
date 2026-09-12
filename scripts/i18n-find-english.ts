@@ -78,6 +78,8 @@ const INTENTIONAL_ENGLISH = new Set([
   "settings.ai.localModelResolved",
   "settings.ai.localOllama",
   "settings.ai.minutesShort",
+  "settings.ai.loops.cadence.thirtyMin", // "30 min" — identical abbreviation in es/fr/pt/it/pl
+  "settings.ai.loops.cadence.twentyMin", // "20 min" — identical abbreviation in es/fr/pt/it/pl
   "settings.ai.openAiUrlLabel",
   "settings.appearance.fontSizeUnit", // "px" — CSS unit, identical in every locale
   "settings.billing.inferenceBudget.dailySpendPoint",

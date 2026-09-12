@@ -15,9 +15,8 @@ const NO_MESSAGES: ThreadMessageLike[] = [];
  * runtime of its own therefore inherits the app-wide one from
  * `ChatRuntimeProvider` — which is bound to `state.thread.selectedThreadId`,
  * the HOME chat's thread. For a surface whose conversation is not a chat thread
- * at all (the orchestration agent chat talks to sessions over
- * `orchestrationClient`), that inheritance points its composer at an unrelated
- * conversation. That is a data-loss-shaped mistake, not a cosmetic one.
+ * at all, that inheritance points its composer at an unrelated conversation.
+ * That is a data-loss-shaped mistake, not a cosmetic one.
  *
  * The obvious fix — `AssistantUiRuntimeProvider threadId={null}` — is the right
  * shape but the wrong dependency: that provider reads Redux unconditionally

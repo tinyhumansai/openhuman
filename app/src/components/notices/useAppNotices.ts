@@ -32,6 +32,7 @@ import type { UserActionableError, UserErrorAction } from '../../types/userError
 import { PRICING_URL } from '../../utils/links';
 import { openUrl } from '../../utils/openUrl';
 import { dismissBanner, shouldShowBanner } from '../upsell/upsellDismissState';
+import { useMemoryQuarantinePoll } from './useMemoryQuarantinePoll';
 
 export type NoticeSeverity = 'error' | 'warning' | 'info';
 
@@ -71,6 +72,10 @@ const ACTION_ROUTE: Record<Exclude<UserErrorAction, 'dismiss'>, string> = {
   // Opening this screen also restarts the integration health poll, so it is
   // both the explanation and the retry.
   open_connections: '/connections?tab=skills',
+  // openhuman#5820: after a corrupt-store quarantine the rebuilt tree is
+  // empty; the per-source Sync and All In controls that repopulate it live on
+  // Brain's Sources tab (the Sync tab only shows status and history).
+  open_memory_sync: '/brain?tab=sources',
 };
 
 const ACTION_LABEL_KEY: Record<Exclude<UserErrorAction, 'dismiss'>, string> = {
@@ -78,6 +83,7 @@ const ACTION_LABEL_KEY: Record<Exclude<UserErrorAction, 'dismiss'>, string> = {
   open_provider_settings: 'userErrors.action.openProviderSettings',
   open_embeddings_settings: 'userErrors.action.openEmbeddingsSettings',
   open_connections: 'userErrors.action.openConnections',
+  open_memory_sync: 'userErrors.action.openMemorySync',
 };
 
 const SEVERITY_RANK: Record<NoticeSeverity, number> = { error: 0, warning: 1, info: 2 };
@@ -115,6 +121,8 @@ export function useAppNotices(): AppNotice[] {
   const navigate = useNavigate();
   const active = useAppSelector(selectActiveUserErrors);
   const { level: budgetLevel, pct: budgetPct } = useEmbeddingBudgetState();
+  // openhuman#5820: durable, app-wide replay of a corrupt-store quarantine.
+  useMemoryQuarantinePoll();
   const {
     teamUsage,
     isLoading: usageLoading,

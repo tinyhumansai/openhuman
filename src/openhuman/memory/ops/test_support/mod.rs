@@ -1,28 +1,17 @@
 //! Shared test infrastructure for `memory::ops` submodule tests.
 //!
-//! All `ops` submodules that need a global `MemoryClient` call
-//! [`ensure_shared_memory_client`] instead of creating their own
-//! `OnceLock<PathBuf>`.  Sharing one leaked workspace means concurrent
-//! `global::init()` calls always resolve to the same path and hit the
-//! no-op fast-path inside `init_in_slot`, preventing one test thread
-//! from silently rebinding the global under another thread's feet.
+//! All `ops` submodules that need one workspace call
+//! [`shared_memory_test_workspace`] instead of creating their own
+//! `OnceLock<PathBuf>`. Sharing one leaked workspace is what makes concurrent
+//! tests agree on a path rather than racing to bind different ones.
 //!
-//! # This is the one engine reference in `memory::ops` that is meant to stay
+//! # It no longer boots an engine
 //!
-//! Everything else under `ops/` was routed onto the contract for openhuman#5560
-//! so `tinymemory-core` can leave `[dependencies]` and survive as a
-//! **dev-dependency only**. This fixture deliberately still boots the
-//! in-process engine, because that is what it is for: it hands the `ops` tests a
-//! real store to write rows into and read back, and a dev-dependency reference
-//! from `#[cfg(test)]` code is not linked into the shipped binary.
-//!
-//! It lives in a `test_support/` **directory** rather than as a
-//! `test_support.rs` file for one reason: both memory ratchets skip by path, and
-//! `is_test_path` matches a *path component* named `test_support`, not a file
-//! stem. As a flat file this module had to carry an entry in
-//! `direct_engine_refs_tests::ALLOWED` that read like an unmigrated production
-//! call site. The same reasoning already put `memory::test_support` in a
-//! directory — see its module docs.
+//! It used to also expose `ensure_shared_memory_client`, which called
+//! `tinymemory_core::global::init` to hand `ops` tests a real store to write
+//! rows into and read back. That is gone with the engine (openhuman#6161); what
+//! survives is the part that was never engine work — one agreed-upon temp
+//! directory.
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -42,27 +31,32 @@ pub(crate) fn shared_memory_test_workspace() -> PathBuf {
             let path = tmp.path().join("workspace");
             std::fs::create_dir_all(&path).expect("workspace dir");
             std::mem::forget(tmp);
+
+            // Bind a driver over it, which is the half callers actually depend
+            // on, and bind it exactly once.
+            //
+            // This helper replaced `ensure_shared_memory_client`, which booted
+            // the in-process engine and bound *that*. Handing back only the
+            // directory was the wrong half of the trade: `memory::ops`
+            // handlers resolve through the bound driver, so with nothing bound
+            // they fall through to the module path and fail with "the memory
+            // module failed to load" — an error about a missing artifact, in a
+            // unit test that never wanted one.
+            //
+            // Binding must happen **inside** `get_or_init`. `install_for_test`
+            // *replaces* the cached binding rather than leaving an existing one
+            // alone (`BINDINGS.write().insert(key, ..)`), and the driver it
+            // installs stores rows in itself. Calling it per caller therefore
+            // hands every test a brand-new empty store, and — because most of
+            // these tests do not hold `GLOBAL_MEMORY_TEST_LOCK` — a second
+            // test's setup wipes the rows a first test has already written and
+            // is about to read back. That failed 16 handler tests as
+            // "the write is not visible", which reads like a driver that
+            // discards writes and is really a fixture that discards stores.
+            let mut config = crate::openhuman::config::Config::default();
+            config.workspace_dir = path.clone();
+            crate::openhuman::memory::test_support::install_memory_driver_for_test(&config);
             path
         })
         .clone()
-}
-
-/// Binds the process-global memory client to a single shared temp workspace and
-/// returns that workspace path.
-///
-/// Safe to call from multiple test threads concurrently — subsequent calls with
-/// the same workspace path return the existing client without rebinding.
-///
-/// The returned path lets callers whose RPC path *also* resolves the workspace
-/// from `OPENHUMAN_WORKSPACE` (notably `memory::ops::documents` via
-/// `memory_init` → `current_workspace_dir`) pin the env var to this same path so
-/// the env and the bound client agree. See `documents::tests`.
-pub(crate) fn ensure_shared_memory_client() -> PathBuf {
-    // Building a client reaches the embedding seam, which fails loudly when
-    // unwired. Before the extraction these were direct calls and needed no
-    // setup; now they need the host impls installed.
-    crate::openhuman::memory::host_impls::install_for_tests();
-    let workspace = shared_memory_test_workspace();
-    tinymemory_core::global::init(workspace.clone()).expect("initialize shared test memory client");
-    workspace
 }

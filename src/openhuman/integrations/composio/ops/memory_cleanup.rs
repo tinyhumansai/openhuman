@@ -6,13 +6,21 @@ use tinymemory_api::chunks::SourceKind;
 use tinymemory_api::provider::ForgetSelector;
 
 /// KV namespace the Composio sync pipelines keep their per-connection cursor
-/// state under.
+/// state under, and the state record itself.
 ///
-/// `tinycortex`'s `memory::sync::state::STATE_NAMESPACE`, which
-/// `tinymemory-core`'s `sync_state::KV_NAMESPACE` aliases — one namespace, two
-/// crates naming it, and the row this module reads is written by whichever of
-/// them ran the last sync.
-const SYNC_STATE_NAMESPACE: &str = "composio-sync-state";
+/// Both named at the **contract** (#5560). This file used to hold the namespace
+/// as a hand-copied literal, with a comment explaining that two engine crates
+/// also spelled it and that the row could have been written by either. The
+/// contract publishes it — and marks it, with the record's serde field names, a
+/// compatibility surface — so there is one spelling now, and it is the one the
+/// driver that writes these rows reads.
+///
+/// [`SyncState`] likewise: this module only ever deserialised it to reach
+/// `synced_ids`, and the contract's declaration is the engine's field for
+/// field, in the same order, under the same `#[serde(default)]`s. Naming the
+/// contract's is what makes "the shape this reads is the shape that was
+/// written" a fact about the build rather than about two files agreeing.
+use tinymemory_api::composio::{SyncState, STATE_NAMESPACE as SYNC_STATE_NAMESPACE};
 
 /// One thing a connection delete has to remove from memory.
 ///
@@ -116,7 +124,7 @@ impl MemoryCleanupTarget {
 /// **Takes a `&Config`, not a memory handle, and that is the openhuman#5560
 /// change.** This used to take `&MemoryClientRef` — the caller's handle on the
 /// live in-process store — because the notion arm loaded sync state through
-/// `tinymemory_core::tinycortex::HostSyncAdapter`. That adapter is two lines
+/// the engine's `HostSyncAdapter`. That adapter is two lines
 /// (`kv_get` / `kv_set` on the client), the contract's `MemoryGraph` serves
 /// exactly those, and the in-process engine is gone — so the read goes over the
 /// bus and the parameter became the config the binding is keyed on.
@@ -207,7 +215,7 @@ async fn notion_memory_targets_for_connection(
         .map_err(sync_state_load_error)?;
     let synced_ids = match record {
         Some(record) => {
-            serde_json::from_value::<tinycortex::memory::sync::SyncState>(record.value)
+            serde_json::from_value::<SyncState>(record.value)
                 .map_err(sync_state_load_error)?
                 .synced_ids
         }

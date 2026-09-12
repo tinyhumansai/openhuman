@@ -16,10 +16,6 @@ mod store;
 // `raw_store` was `store/tools/`, `search` was `search/tools/`, `tool_memory`
 // was `tool_memory/tools/` — and `diff` / `goals` / `people` were each that
 // domain's `tools.rs`.
-// Git-backed diff snapshots only exist under `memory-git`; upstream gated this
-// at `diff::tools`, and the move here has to carry that with it.
-#[cfg(feature = "memory-git")]
-pub mod diff;
 pub mod goals;
 pub mod raw_store;
 pub mod search;
@@ -35,8 +31,6 @@ pub use store::MemoryStoreTool;
 // The tools that came back from the extracted crate, re-exported flat so
 // `openhuman::tools`'s glob keeps every historical name in scope — the
 // registration sites in `tools/ops.rs` name them unqualified.
-#[cfg(feature = "memory-git")]
-pub use diff::MemoryDiffTool;
-pub use goals::{GoalsAddTool, GoalsDeleteTool, GoalsEditTool, GoalsListTool};
+pub use goals::GoalsTool;
 pub use raw_store::{MemoryStoreKindsTool, MemoryStoreRawChunksTool, MemoryStoreRawSearchTool};
 pub use search::{MemoryChunkContextTool, MemoryHybridSearchTool, MemoryVectorSearchTool};

@@ -19,7 +19,7 @@ use crate::openhuman::tools::traits::{
 };
 use async_trait::async_trait;
 use serde_json::json;
-use tinyagents::harness::tool::ToolExecutionContext;
+use tinytools::ToolRunContext;
 
 pub struct SpawnParallelAgentsTool;
 
@@ -120,15 +120,15 @@ impl Tool for SpawnParallelAgentsTool {
         &self,
         args: serde_json::Value,
         _options: ToolCallOptions,
-        tool_context: Option<&ToolExecutionContext>,
+        tool_context: Option<&dyn ToolRunContext>,
     ) -> anyhow::Result<ToolResult> {
         tracing::debug!("[spawn_parallel_agents] execute entry");
-        let workspace_descriptor = tool_context.and_then(|ctx| ctx.workspace.clone());
+        let workspace_descriptor = tool_context.and_then(|ctx| ctx.workspace().cloned());
         let cancellation = current_run_cancellation().unwrap_or_else(|| {
             tracing::debug!(
                 "[spawn_parallel_agents] no active tinyagents run cancellation token; using local token"
             );
-            tinyagents::CancellationToken::new()
+            tinyagents_harness::CancellationToken::new()
         });
         let outcome = run_spawn_parallel_graph_with_cancellation_and_workspace(
             args,

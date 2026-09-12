@@ -37,7 +37,7 @@
 //!
 //! - **`cfg(test)`** — `test_support::shared_memory_test_workspace()`, the
 //!   single leaked temp workspace every `memory::ops` fixture shares and the
-//!   exact path `ensure_shared_memory_client()` binds. Asking the fixture
+//!   exact path `shared_memory_test_workspace()` binds. Asking the fixture
 //!   directly is strictly *more* reliable than asking a singleton it happened to
 //!   have initialised, because it cannot be re-pointed by an unrelated test.
 //!   (Named without a doc link on purpose: the module it lives in is
@@ -75,7 +75,7 @@ async fn fallback_workspace_dir() -> Result<std::path::PathBuf, String> {
 /// The workspace the pre-boot fallback guards — test build.
 ///
 /// The shared fixture's own path, so a test that seeded through
-/// `ensure_shared_memory_client()` is guaranteed the binding over the store its
+/// `shared_memory_test_workspace()` is guaranteed the binding over the store its
 /// fixtures wrote to. `async` to match the production arm; there is nothing to
 /// await.
 #[cfg(test)]

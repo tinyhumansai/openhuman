@@ -1,35 +1,17 @@
-//! Host layer over [`tinymemory_core::sync::composio::providers`].
+//! Host layer over the Composio provider vocabulary.
 //!
-//! The domain itself lives in the extracted crate; what stays here is its
-//! JSON-RPC surface — handlers and controller schemas name OpenHuman's
-//! `RpcOutcome` and `ControllerSchema`, which the engine crate cannot see.
-//! The glob re-export keeps every historical `memory::sync::composio::providers::…` path resolving.
+//! This used to be `pub use tinymemory_core::sync::composio::providers::*;` —
+//! a glob over the engine's entire provider registry (the six per-toolkit
+//! providers, the `ComposioProvider` trait, `ProviderContext`, `sync_state`,
+//! `profile`/`profile_md`, and the curated catalogs). tinymemory v1.13.4
+//! deleted that whole tree: reaching a connected account now needs a
+//! credential this crate must not hold, so there is no in-process registry to
+//! glob-import any more (see `crate::openhuman::integrations::composio::providers`
+//! for the fuller account of what replaced each piece).
 //!
-//! # The widest shim in the memory tree, and the least ambiguous (#5560)
-//!
-//! `integrations::composio::providers` is `pub use …providers::*` over this
-//! module, so the whole engine registry is public surface under two names: the
-//! six per-toolkit providers (`clickup`, `github`, `gmail`, `linear`, `notion`,
-//! `slack`), the curated catalogs, `tool_scope`, `user_scopes`, `sync_state`,
-//! `profile` / `profile_md`, and the `ComposioProvider` trait itself. Over a
-//! hundred call sites across `src/` and `tests/` reach it under one of the two
-//! — `flows`, the agent capability matrix, `memory::sources`, `read_rpc`, the
-//! composio RPC ops.
-//!
-//! There is nothing to route it through. The provider registry *is* the sync
-//! pipeline, no capability family addresses it, and the contract's
-//! `MemorySourceSink` covers source **records** rather than provider runs. So
-//! unlike the tree shims, this one is not blocked on a type identity or on a
-//! release — it is blocked on the sync pipelines moving behind the bus, which
-//! is a design pass upstream. Note the local `pub mod slack` below shadows the
-//! engine's `slack` from this glob; see that file before assuming either is
-//! droppable.
-
-pub use tinymemory_core::sync::composio::providers::*;
+//! What is left here is `slack` — this host's own JSON-RPC surface for the
+//! Composio-backed Slack provider (`openhuman.slack_memory_sync_trigger` /
+//! `openhuman.slack_memory_sync_status`), which now reads and writes through
+//! the `tinyconnectors` module rather than through an engine `SlackProvider`.
 
 pub mod slack;
-
-/// Backend-tenant client access for legacy provider helpers — see the module.
-pub mod context_ext;
-
-pub use context_ext::ProviderContextExt;

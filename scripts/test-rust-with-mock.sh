@@ -75,6 +75,53 @@ fi
 # Source of truth: scripts/ci/product-features.txt.
 PRODUCT_FEATURES="$(bash "$REPO_ROOT/scripts/ci/product-features.sh")"
 
+# The product test surface exercises memory through its native module. CI builds
+# the pinned submodule and supplies this explicit override; mirror that setup
+# locally so the full runner never falls back to GitHub release metadata (which
+# makes an otherwise hermetic mock-backend suite network-bound).
+if [ -z "${TINYMEMORY_TEST_MODULE:-}" ]; then
+  memory_manifest="vendor/tinymemory/crates/tinymemory-module/Cargo.toml"
+  memory_module="vendor/tinymemory/crates/tinymemory-module/target/release/libtinymemory_module.so"
+  echo "Building TinyMemory test module from the pinned submodule ..."
+  cargo build --release --manifest-path "$memory_manifest"
+  export TINYMEMORY_TEST_MODULE="$REPO_ROOT/$memory_module"
+fi
+
+# Tokenjuice JSON-RPC coverage loads the production native module. Keep the
+# test run hermetic by building the pinned submodule instead of falling back
+# to GitHub release metadata.
+if [ -z "${TINYJUICE_TEST_MODULE:-}" ]; then
+  juice_manifest="vendor/tinyjuice/crates/tinyjuice-module/Cargo.toml"
+  juice_module="vendor/tinyjuice/target/release/libtinyjuice_module.so"
+  echo "Building TinyJuice test module from the pinned submodule ..."
+  cargo build --release --manifest-path "$juice_manifest"
+  export TINYJUICE_TEST_MODULE="$REPO_ROOT/$juice_module"
+fi
+
+# Wallet JSON-RPC E2E sends a recovery phrase only to an attested module. Build
+# artifacts are deliberately not treated as release-pinned recipients, so use
+# the checksum-pinned release archive and its accompanying `modules.toml`.
+wallet_dir="$REPO_ROOT/target/test-modules/tinywallet"
+wallet_archive="$wallet_dir/tinywallet-module-0.5.1-ubuntu-22.04-x86_64.tar.gz"
+wallet_sha256="88b63685cab8a622416f24f1ad569153f249d6d74732ff33c79e4021cf64a611"
+if [ ! -f "$wallet_dir/libtinywallet_module.so" ]; then
+  echo "Downloading the pinned TinyWallet test module ..."
+  mkdir -p "$wallet_dir"
+  curl --fail --location --silent --show-error \
+    "https://github.com/tinyhumansai/tinywallet/releases/download/v0.5.1/$(basename "$wallet_archive")" \
+    --output "$wallet_archive"
+  echo "${wallet_sha256}  $wallet_archive" | sha256sum --check
+  tar -xzf "$wallet_archive" -C "$wallet_dir"
+fi
+export OPENHUMAN_MODULE_PATH="$wallet_dir${OPENHUMAN_MODULE_PATH:+:$OPENHUMAN_MODULE_PATH}"
+
+if [ -z "${TINYCONNECTORS_TEST_MODULE:-}" ]; then
+  connectors_manifest="vendor/tinyconnectors/crates/tinyconnectors/Cargo.toml"
+  connectors_module="$REPO_ROOT/vendor/tinyconnectors/target/release/libtinyconnectors.so"
+  echo "Building TinyConnectors test module from the pinned submodule ..."
+  cargo build --release --manifest-path "$connectors_manifest"
+fi
+
 cargo_test() {
   cargo test --manifest-path Cargo.toml --workspace \
     --features "${PRODUCT_FEATURES},bin-tools" "$@"
@@ -96,7 +143,18 @@ run_raw_coverage_modules() {
   while IFS= read -r module; do
     [ -n "$module" ] || continue
     echo "[test-rust-with-mock] raw coverage module: ${module}"
-    cargo_test --test raw_coverage_all -- "${module}::" --test-threads=1 "$@"
+    # Most Composio raw-coverage modules explicitly exercise the absent-module
+    # path. These groups verify the host-to-module round trip, so inject the
+    # pinned connector only for their processes.
+    if { [ "$module" = "composio_credentials_state_raw_coverage_e2e" ] ||
+         [ "$module" = "composio_ops_raw_coverage_e2e" ] ||
+         [ "$module" = "tools_composio_large_round25_raw_coverage_e2e" ]; } &&
+       [ -z "${TINYCONNECTORS_TEST_MODULE:-}" ]; then
+      TINYCONNECTORS_TEST_MODULE="$connectors_module" \
+        cargo_test --test raw_coverage_all -- "${module}::" --test-threads=1 "$@"
+    else
+      cargo_test --test raw_coverage_all -- "${module}::" --test-threads=1 "$@"
+    fi
   done < <(raw_coverage_modules)
 }
 
@@ -120,7 +178,7 @@ run_archivist_tree_tests() {
     phase2_ingested_content_is_raw_prose_not_recap \
     phase2_flush_also_triggers_tree_ingest; do
     echo "[test-rust-with-mock] archivist tree test: ${test_name}"
-    cargo_test --lib "openhuman::agent::harness::archivist::tests::${test_name}" -- --exact --test-threads=1 "$@"
+    cargo_test --lib "openhuman::agent::harness::archivist::tests::part_01_tests::${test_name}" -- --exact --test-threads=1 "$@"
   done
 }
 
@@ -128,7 +186,8 @@ run_full_suite() {
   # Several unit fixtures mutate process-wide state (provider overrides and
   # temporary executable paths). Keep this aggregate invocation deterministic;
   # integration targets below retain their own, narrower isolation strategies.
-  cargo_test --lib --bins -- --test-threads=1 \
+  TINYCONNECTORS_TEST_MODULE="${TINYCONNECTORS_TEST_MODULE:-$connectors_module}" \
+    cargo_test --lib --bins -- --test-threads=1 \
     --skip phase2_no_per_turn_tree_write \
     --skip phase2_exactly_one_tree_ingest_per_segment_close \
     --skip phase2_provenance_stamped_on_leaf_and_source_id_is_constant \
@@ -147,7 +206,8 @@ run_full_suite() {
     elif [ "$target" = "json_rpc_e2e" ]; then
       run_json_rpc_e2e "$@"
     else
-      cargo_test --test "$target" -- "$@"
+      TINYCONNECTORS_TEST_MODULE="${TINYCONNECTORS_TEST_MODULE:-$connectors_module}" \
+        cargo_test --test "$target" -- "$@"
     fi
   done < <(integration_test_targets)
 }

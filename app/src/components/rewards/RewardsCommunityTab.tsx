@@ -55,9 +55,9 @@ function roleAccentTone(index: number) {
       iconBorder: 'border-amber-100 dark:border-amber-500/20',
     },
     {
-      iconBg: 'bg-blue-50 dark:bg-blue-500/10',
+      iconBg: 'bg-primary-50 dark:bg-primary-500/10',
       iconText: 'text-primary-600 dark:text-primary-300',
-      iconBorder: 'border-blue-100 dark:border-blue-500/20',
+      iconBorder: 'border-primary-100 dark:border-primary-500/20',
     },
     {
       iconBg: 'bg-surface-subtle dark:bg-surface-strong',
@@ -65,9 +65,9 @@ function roleAccentTone(index: number) {
       iconBorder: 'border-line',
     },
     {
-      iconBg: 'bg-emerald-50 dark:bg-emerald-500/10',
-      iconText: 'text-emerald-600 dark:text-emerald-300',
-      iconBorder: 'border-emerald-100 dark:border-emerald-500/20',
+      iconBg: 'bg-sage-50 dark:bg-sage-500/10',
+      iconText: 'text-sage-600 dark:text-sage-300',
+      iconBorder: 'border-sage-100 dark:border-sage-500/20',
     },
   ] as const;
 
@@ -463,7 +463,7 @@ export default function RewardsCommunityTab({
             <div
               role="status"
               data-testid="rewards-claim-roles-banner"
-              className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-blue-100 dark:border-blue-500/30 bg-blue-50 dark:bg-blue-500/10 px-4 py-3">
+              className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-primary-100 dark:border-primary-500/30 bg-primary-50 dark:bg-primary-500/10 px-4 py-3">
               <div className="min-w-0">
                 <p className="text-sm font-bold text-content">
                   {t('rewards.community.roleClaimTitle')}
@@ -500,8 +500,7 @@ export default function RewardsCommunityTab({
                   ? role.discordRoleStatus === 'assigned'
                     ? {
                         label: t('rewards.community.roleAssigned'),
-                        classes:
-                          'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300',
+                        classes: 'bg-sage-50 text-sage-700 dark:bg-sage-500/10 dark:text-sage-300',
                       }
                     : role.discordRoleStatus === 'not_assigned'
                       ? {
@@ -513,7 +512,7 @@ export default function RewardsCommunityTab({
                         ? {
                             label: t('rewards.community.roleJoinToClaim'),
                             classes:
-                              'bg-blue-50 text-primary-700 dark:bg-blue-500/10 dark:text-primary-300',
+                              'bg-primary-50 text-primary-700 dark:bg-primary-500/10 dark:text-primary-300',
                           }
                         : null
                   : null;
@@ -599,7 +598,7 @@ export default function RewardsCommunityTab({
                         <>
                           <span
                             data-testid={`rewards-claimed-${role.id}`}
-                            className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
+                            className="inline-flex items-center gap-1.5 rounded-full bg-sage-50 px-3 py-1.5 text-xs font-semibold text-sage-700 dark:bg-sage-500/10 dark:text-sage-300">
                             <svg
                               className="h-3.5 w-3.5"
                               viewBox="0 0 24 24"
@@ -613,7 +612,7 @@ export default function RewardsCommunityTab({
                             <span
                               role="status"
                               data-testid={`rewards-claim-credited-${role.id}`}
-                              className="text-xs font-semibold text-emerald-600 dark:text-emerald-300">
+                              className="text-xs font-semibold text-sage-600 dark:text-sage-300">
                               {t('rewards.community.claimCredited').replace('{amount}', feedback)}
                             </span>
                           ) : null}

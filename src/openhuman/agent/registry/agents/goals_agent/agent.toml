@@ -9,7 +9,6 @@ background = true
 omit_identity = true
 omit_memory_context = true
 omit_safety_preamble = true
-omit_skills_catalog = true
 omit_memory_md = true
 
 # Cloud "agentic" model like other background specialists (researcher,
@@ -20,4 +19,4 @@ omit_memory_md = true
 hint = "agentic"
 
 [tools]
-named = ["goals_list", "goals_add", "goals_edit", "goals_delete", "memory_recall"]
+named = ["goals", "memory_recall"]

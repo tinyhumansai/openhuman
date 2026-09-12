@@ -1,95 +1,39 @@
-//! Host layer over [`tinymemory_core::sync::composio`].
+//! Host layer over the Composio memory-sync domain.
 //!
-//! The domain itself lives in the extracted crate; what stays here is its
-//! JSON-RPC surface — handlers and controller schemas name OpenHuman's
-//! `RpcOutcome` and `ControllerSchema`, which the engine crate cannot see.
-//! The glob re-export keeps every historical `memory::sync::composio::…` path resolving.
+//! This file used to be `pub use tinymemory_core::sync::composio::*;` — a
+//! glob over the engine's entire in-process Composio pipeline. tinymemory
+//! v1.13.4 deleted that pipeline outright (72 files, ~18.3k lines, commits
+//! `6007de4`/`cb9221b`/`71f4197`): reaching a connected account now needs a
+//! credential the engine must not hold, and every toolkit-keyed entry point
+//! on `MemorySourceSync` unconditionally refuses. What replaced it is
+//! host-initiated: the host reads through the `tinyconnectors` module and
+//! hands the resulting records to the bound driver's
+//! `MemorySourceSink::accept_source_items`. See
+//! `crate::openhuman::integrations::composio::ops::providers_ops::run_sync_pass`
+//! for the shared implementation every sync entry point in this domain now
+//! calls through.
 //!
-//! # This shim cannot go yet — but the reason changed, so read this before acting on it
+//! # What survives here, and why
 //!
-//! **The upstream blocker is closed.** This section used to say the loops could
-//! not move because the pinned v1.5.0 module carried a heading reading *"The
-//! periodic sync loops are deliberately NOT started here"* and three reasons
-//! behind it: the pipeline read Composio credentials off `Config` rather than
-//! the `ComposioHost` seam, `global::client_if_ready()` was `None` inside the
-//! module, and `EngineRuntimeConfig::memory_sync_interval_secs()` answered
-//! `Some(0)` (which the contract defines as *manual only*, so every tick would
-//! skip every source silently).
+//! [`SyncTarget`] / [`list_sync_targets`] — this host's own replacement for
+//! the engine's target discovery, ported onto `memory::sources` (the
+//! user-curated registry) with a live-connection-scan fallback, using
+//! [`crate::openhuman::integrations::composio::providers::has_native_provider`]
+//! in place of the deleted provider registry's `get_provider(toolkit).is_some()`.
+//! `memory::ops::sync`'s manual trigger path is still the one caller.
 //!
-//! tinymemory#100 closed all three and shipped as **v1.6.0**, which is what
-//! `modules::registry` and `modules::memory`'s `ARTIFACT_CAPABILITIES_PIN` now
-//! pin. The host's half is wired too: `modules::ops` puts
-//! `memory_sync_interval_secs`, `composio_mode` and `composio_entity_id` into
-//! the `ModuleConfig` precisely so the module's own loops have a cadence and a
-//! mode to run with. `core/runtime/services.rs` no longer starts either loop
-//! and its comment block records why.
+//! `SyncOutcome` / `SyncReason` / `ProviderUserProfile` are **not**
+//! re-exported from here any more — they never depended on the engine to
+//! begin with (`tinymemory-bus` defines them) and every consumer already
+//! reaches them through `integrations::composio::providers`, which is the one
+//! true path now that this module's glob cannot supply them as a side
+//! effect.
 //!
-//! # So what still pins this file, and it is not the loop
-//!
-//! The glob below is the only definition of every name in this list, and each
-//! one has a live caller and no capability family:
-//!
-//! - `periodic` — reached by `integrations::composio::{mod, periodic}`, and by
-//!   `super::bus`, which calls `periodic::record_sync_success` after a
-//!   trigger-driven sync.
-//! - `init_default_composio_sync_providers` + `all_composio_sync_providers` —
-//!   `memory::sources::rpc`'s supported-toolkit list is built from exactly this
-//!   pair; `get_composio_sync_provider` joins them in `tests/raw_coverage/`.
-//! - `SyncTarget` / `list_sync_targets` — `memory::ops::sync`'s manual
-//!   trigger path.
-//! - `ComposioProvider`, `ProviderContext`, `ProviderUserProfile`,
-//!   `SyncOutcome`, `SyncReason` — re-exported onward by
-//!   `integrations::composio`.
-//!
-//! # What v1.7.0 took off that list, and what it did not
-//!
-//! **Running a connection is no longer on it.** `MemorySourceSync` landed in
-//! tinymemory v1.7.0, so `run_connection_sync` / `source_sync_state` are
-//! contract members and all five host call sites moved onto the bound driver:
-//! `memory::ops::sync`, `super::bus`, `providers::slack::rpc` (both the trigger
-//! and the status read) and `integrations::composio::ops::providers_ops`. None
-//! of them names the engine crate any more. The member takes no `Config` —
-//! the driver resolves its own and reads the per-source budgets from the
-//! registry it already owns.
-//!
-//! **Two of the value types moved too, and the rest did not.** `SyncOutcome`,
-//! `SyncReason`, `ProviderUserProfile`, `SyncState` and the scope/task
-//! vocabulary are defined in `tinymemory-bus` now and re-exported here through
-//! the engine, so a consumer that wants a *type* can repoint at
-//! `tinymemory_api::composio::…` instead. What stayed behind is behaviour and
-//! I/O: `ProviderContext` (an `Arc<Config>` plus host-seam dispatch), the
-//! `ComposioProvider` trait and the provider registry, `profile_md`, and
-//! `SyncState`'s `load` / `save` — the contract crate holds no traits and no
-//! I/O, so those are the engine's `PersistedSyncState` extension trait. A host
-//! site reaching for `load`/`save` is a site that should be calling
-//! `source_sync_state` instead; the four above now do.
-//!
-//! So what still pins the glob is *target discovery and scheduling*:
-//! `list_sync_targets` / `SyncTarget`, the provider registry, and `periodic`.
-//! No capability family addresses those — `MemorySourceSink` covers source
-//! *records*, not which connections exist — so this shim goes when the registry
-//! moves behind the bus, which is a design pass upstream.
-//!
-//! # ⚠ One host caller did not get the memo (found 2026-08-25)
-//!
-//! `services.rs` dropped its `start_periodic_sync()` call, but
-//! `channels/runtime/startup.rs` still makes one, through
-//! `integrations::composio::start_periodic_sync` → `periodic` → this glob. That
-//! is the *engine's* loop, started in this process, next to the module's own —
-//! which is the case `services.rs` warns is "worse than a duplicate", because
-//! the `cdylib` links its own `tinymemory-core` and neither loop's
-//! `SCHEDULER_STARTED` `OnceLock` can see the other. Its store handle is a
-//! second question: no production path calls `tinymemory_core::global::init`
-//! any more — only test fixtures do — so whatever that loop reaches is not the
-//! client the rest of the host uses.
-//!
-//! It is left alone here deliberately — that file is outside this change — but
-//! do not read "the loops moved" as done until it goes. Composio sync degrades
-//! **quietly** in either direction: a run that reports zero connections is
-//! indistinguishable from a user who has none, so a half-removed loop looks
-//! like a working one until someone notices their mail stopped being indexed.
-
-pub use tinymemory_core::sync::composio::*;
+//! `ComposioProvider`, `ProviderContext`, `ProviderArc` and the provider
+//! registry (`all_providers`/`get_provider`/`register_provider`) are gone
+//! with no replacement — see
+//! `crate::openhuman::integrations::composio::providers` for where each of
+//! their former callers now gets its answer.
 
 pub mod providers;
 
@@ -99,3 +43,86 @@ pub use bus::{
     register_composio_trigger_subscriber, ComposioConfigChangedSubscriber,
     ComposioTriggerSubscriber,
 };
+
+use crate::openhuman::config::Config;
+use crate::openhuman::integrations::composio::providers::has_native_provider;
+
+/// One provider-backed connection the memory sync layer can execute.
+#[derive(Debug, Clone)]
+pub struct SyncTarget {
+    pub toolkit: String,
+    pub connection_id: String,
+}
+
+/// List active Composio connections that have a native memory-sync provider.
+///
+/// When `memory_sources` entries exist with `kind=composio` and
+/// `enabled=true`, those are used as the authoritative source list (user
+/// curated). When no `memory_sources` composio entries exist, falls back to
+/// scanning all active Composio connections.
+///
+/// Ported from the deleted engine's `sync::composio::list_sync_targets`
+/// verbatim in behaviour, substituting `has_native_provider` for the deleted
+/// provider registry's `get_provider(toolkit).is_some()` — the two answered
+/// the same six toolkits (gmail, notion, slack, clickup, github, linear) by
+/// construction, since the catalog's `NATIVE_PROVIDERS` table was always kept
+/// in step with the registry it described.
+pub async fn list_sync_targets(config: &Config) -> Result<Vec<SyncTarget>, String> {
+    let registry_sources = crate::openhuman::memory::sources::registry::list_enabled_by_kind(
+        crate::openhuman::memory::sources::SourceKind::Composio,
+    )
+    .await
+    .unwrap_or_default();
+
+    if !registry_sources.is_empty() {
+        let from_registry: Vec<SyncTarget> = registry_sources
+            .into_iter()
+            .filter_map(|s| {
+                let toolkit = s.toolkit?;
+                let connection_id = s.connection_id?;
+                has_native_provider(&toolkit).then_some(SyncTarget {
+                    toolkit,
+                    connection_id,
+                })
+            })
+            .collect();
+        if !from_registry.is_empty() {
+            tracing::debug!(
+                count = from_registry.len(),
+                "[composio:sync] using memory_sources registry for sync targets"
+            );
+            return Ok(from_registry);
+        }
+        tracing::debug!(
+            "[composio:sync] registry yielded zero valid targets; falling back to connection scan"
+        );
+    } else {
+        tracing::debug!(
+            "[composio:sync] no memory_sources entries; falling back to connection scan"
+        );
+    }
+
+    scan_active_sync_targets(config).await
+}
+
+/// Scan all active Composio connections that have a native memory-sync
+/// provider. Always hits Composio directly — does not consult the
+/// `memory_sources` registry. Used by reconciliation to seed the registry.
+pub async fn scan_active_sync_targets(config: &Config) -> Result<Vec<SyncTarget>, String> {
+    let connections =
+        crate::openhuman::integrations::composio::ops::composio_list_connections(config)
+            .await
+            .map_err(|error| format!("list_connections: {error}"))?
+            .value
+            .connections;
+
+    Ok(connections
+        .into_iter()
+        .filter(|connection| connection.is_active())
+        .filter(|connection| has_native_provider(&connection.normalized_toolkit()))
+        .map(|connection| SyncTarget {
+            toolkit: connection.normalized_toolkit(),
+            connection_id: connection.id,
+        })
+        .collect())
+}

@@ -20,8 +20,7 @@ import { useState } from 'react';
 import { createBlankWorkflowGraph } from '../../lib/flows/newFlow';
 import { type FlowTemplate, templateNameKey } from '../../lib/flows/templates';
 import { useT } from '../../lib/i18n/I18nContext';
-import Button from '../ui/Button';
-import { ModalShell } from '../ui/ModalShell';
+import { Alert, AlertDescription, Button, ModalShell } from '../ui';
 import FlowTemplateGallery from './FlowTemplateGallery';
 import { BLANK_FLOW_KEY, useCreateFlow } from './useCreateFlow';
 
@@ -102,12 +101,9 @@ export default function NewWorkflowModal({ onClose }: NewWorkflowModalProps) {
       maxWidthClassName={view === 'gallery' ? 'max-w-2xl' : 'max-w-md'}>
       <div className="space-y-3" data-testid="new-workflow-modal">
         {error && (
-          <p
-            role="alert"
-            data-testid="new-workflow-error"
-            className="rounded-xl border border-coral-200 bg-coral-50 px-3 py-2 text-xs text-coral-700 dark:border-coral-500/30 dark:bg-coral-500/10 dark:text-coral-300">
-            {error}
-          </p>
+          <Alert variant="destructive" density="compact" data-testid="new-workflow-error">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
         )}
 
         {view === 'chooser' ? (

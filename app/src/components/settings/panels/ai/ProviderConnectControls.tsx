@@ -4,69 +4,17 @@
  */
 import { Dialog as DialogPrimitive } from 'radix-ui';
 import { useState } from 'react';
-import { LuCheck } from 'react-icons/lu';
 
 import { useT } from '../../../../lib/i18n/I18nContext';
 import { openUrl } from '../../../../utils/openUrl';
-import Badge from '../../../ui/Badge';
 import Button from '../../../ui/Button';
 import { DialogContent, DialogRoot } from '../../../ui/Dialog';
 import Label from '../../../ui/Label';
-import Switch from '../../../ui/Switch';
 import TextField from '../../../ui/TextField';
+import OpenAiOAuthConnect from '../../oauth/OpenAiOAuthConnect';
 import { builtinCloudProvider } from '../builtinCloudProviders';
 import { presentProviderSetupError, ProviderSetupErrorNotice } from '../ProviderSetupErrorNotice';
-import {
-  defaultEndpointFor,
-  formatI18n,
-  KIMI_PLATFORM_URL,
-  providerToggleAriaLabel,
-  slugTone,
-} from './aiPanelTypes';
-
-export const ProviderToggleChip = ({
-  slug,
-  label,
-  enabled,
-  busy,
-  locked = false,
-  alwaysOn = false,
-  onToggle,
-}: {
-  slug: string;
-  label: string;
-  enabled: boolean;
-  busy?: boolean;
-  locked?: boolean;
-  // When true the provider is permanently available (e.g. Managed) and renders
-  // a static "Always on" indicator instead of a toggle. A locked toggle reads
-  // as switchable-but-broken (#3760); a badge has no affordance to fight.
-  alwaysOn?: boolean;
-  onToggle?: () => void;
-}) => {
-  const { t } = useT();
-  const tone = slugTone(slug);
-  return (
-    <div
-      className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium ring-1 transition-colors ${tone}`}>
-      <span>{label}</span>
-      {alwaysOn ? (
-        <Badge variant="success" className="gap-1 border-transparent bg-transparent">
-          <LuCheck className="h-3 w-3" />
-          {t('settings.ai.routing.managedAlwaysOn')}
-        </Badge>
-      ) : (
-        <Switch
-          id={`provider-toggle-${slug}`}
-          checked={enabled}
-          onCheckedChange={() => onToggle?.()}
-          disabled={busy || locked}
-          aria-label={providerToggleAriaLabel(t, enabled, label)}
-        />
-      )}
-    </div>
-  );
-};
+import { defaultEndpointFor, formatI18n, KIMI_PLATFORM_URL } from './aiPanelTypes';
 
 // Connect-provider dialog — shown when the user flips a provider toggle ON.
 //
@@ -86,6 +34,7 @@ export const ProviderKeyDialog = ({
   initialValue,
   initialKeyValue,
   oauthAction,
+  openAiOAuth,
   onCancel,
   onSubmit,
 }: {
@@ -104,6 +53,11 @@ export const ProviderKeyDialog = ({
   /** Pre-populate the API key field in `endpointKeyMode`. */
   initialKeyValue?: string;
   oauthAction?: { label: string; description?: string; onClick: () => Promise<void> | void } | null;
+  /** Register or remove the provider after the core OAuth operation succeeds. */
+  openAiOAuth?: {
+    onCompleted: () => Promise<void> | void;
+    onDisconnected: () => Promise<void> | void;
+  } | null;
   onCancel: () => void;
   /** Returns the entered value(s). For plain local runtimes this is the
    *  endpoint URL; for cloud providers it's the API key. In `endpointKeyMode`
@@ -313,6 +267,17 @@ export const ProviderKeyDialog = ({
           ) : null}
           {error ? <ProviderSetupErrorNotice error={error} /> : null}
         </div>
+
+        {openAiOAuth ? (
+          <div className="mt-4">
+            <OpenAiOAuthConnect
+              testIdPrefix="settings-openai-oauth"
+              allowDisconnect
+              onCompleted={openAiOAuth.onCompleted}
+              onDisconnected={openAiOAuth.onDisconnected}
+            />
+          </div>
+        ) : null}
 
         {oauthAction ? (
           <div className="mt-4 rounded-xl border border-line bg-surface-muted dark:bg-surface-muted/50 p-3">

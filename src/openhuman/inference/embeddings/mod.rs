@@ -19,17 +19,17 @@ mod factory;
 pub mod noop;
 mod provider_trait;
 pub mod rate_limit {
-    pub use tinyagents::harness::embeddings::{
+    pub use tinyinference::embeddings::{
         rate_limit as embedding_rate_limit, set_rate_limit as set_embedding_rate_limit,
         DEFAULT_REQUESTS_PER_MINUTE as DEFAULT_EMBEDDING_RATE_LIMIT_PER_MIN,
     };
 
     pub async fn acquire_embedding_slot(base_url: &str) {
-        tinyagents::harness::embeddings::acquire(base_url).await;
+        tinyinference::embeddings::acquire(base_url).await;
     }
 }
 pub mod retry_after {
-    pub use tinyagents::harness::embeddings::{
+    pub use tinyinference::embeddings::{
         backoff_ms_for_attempt, parse_retry_after_ms, BASE_BACKOFF_MS, MAX_BACKOFF_MS,
         MAX_RETRIES as MAX_429_RETRIES,
     };
@@ -49,8 +49,16 @@ pub use factory::{
 // `pub(crate)` helper — reused by the memory-tree OpenAI-compat adapter to gate
 // configs whose dimension the fixed-1024 tree can't store (#4056). Not part of
 // the public surface, so it can't ride the `pub use` above (E0364).
-// Its sole caller is `memory::host_impls`, which is unconditional again.
-pub(crate) use factory::model_supports_dimensions;
+// Read only by `modules::ops`, so gated with it — otherwise every feature set
+// without `modules` (the `flows` lane among them) carries an unused-import
+// warning. Pre-dates #5560; fixed here because the line next to it moved.
+#[cfg(feature = "modules")]
+pub(crate) use factory::MODELS_SUPPORTING_DIMENSIONS;
+// `model_supports_dimensions` used to be re-exported here beside it, for
+// `memory::host_impls`. That file is gone with the in-process engine
+// (openhuman#6161), and so is the re-export — the function is not test-only,
+// and `factory` and `embeddings::rpc` both reach it directly through
+// `super::factory::`, so nothing else had to move.
 // #002 FR-015: the memory-tree OpenAI-compat embedder reuses the same key
 // resolution the embeddings RPC uses, so there is one source of truth.
 pub use noop::NoopEmbedding;
@@ -58,12 +66,19 @@ pub use provider_trait::{
     format_embedding_signature, EmbeddingProvider, TinyAgentsEmbeddingProvider,
 };
 pub use rpc::provider_from_config;
+// Reached through this re-export by `modules::memory_host`, which serves the
+// seam over the bus. `memory::host_impls` served the same seam in-process and
+// reached it the same way, until the in-process engine left the test build too
+// (openhuman#6161) and took that file with it. `embeddings::rpc` itself names
+// the function through `super::rpc`, not through here, so this gate does not
+// narrow it.
+#[cfg(any(test, feature = "modules"))]
 pub(crate) use rpc::resolve_api_key;
 pub use schemas::{
     all_controller_schemas as all_embeddings_controller_schemas,
     all_registered_controllers as all_embeddings_registered_controllers,
 };
-pub use tinyagents::harness::embeddings::{
+pub use tinyinference::embeddings::{
     DEFAULT_OLLAMA_DIMENSIONS, DEFAULT_OLLAMA_MODEL, DEFAULT_OLLAMA_URL,
 };
 

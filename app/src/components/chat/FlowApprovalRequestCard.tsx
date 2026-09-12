@@ -110,7 +110,9 @@ export const FlowApprovalRequestCard: React.FC<Props> = ({ request, onResolved }
             <span className="font-mono text-amber-950 dark:text-amber-100">{request.flow_id}</span>
           </p>
 
-          {errorMsg && <p className="mt-2 text-xs text-coral">⚠ {errorMsg}</p>}
+          {errorMsg && (
+            <p className="mt-2 text-xs text-coral-600 dark:text-coral-400">⚠ {errorMsg}</p>
+          )}
         </>
       }
       actions={actions}

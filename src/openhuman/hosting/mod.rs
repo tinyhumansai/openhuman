@@ -37,6 +37,7 @@ use crate::openhuman::config::Config;
 pub mod tools;
 
 #[cfg(test)]
+#[path = "hosting_tests.rs"]
 mod test;
 
 /// One hosting account the agent may act on, and the workspace it deploys from.

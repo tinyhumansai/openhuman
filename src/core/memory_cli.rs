@@ -545,14 +545,16 @@ async fn create_memory_binding(
         }
     }
 
-    // The engine seams, plus the `[modules]` policy a module-backed driver
-    // needs published before it can load. Both idempotent. The seams are back
-    // because this process does still embed the engine — see the note in
-    // `runtime::context::init_stores`; a `memory` subcommand that reached one
-    // unwired would report a broken subsystem rather than a missing one.
-    crate::openhuman::memory::host_impls::install_memory_host_seams(std::sync::Arc::new(
-        config.clone(),
-    ));
+    // The contract event sink, plus the `[modules]` policy a module-backed
+    // driver needs published before it can load. Both idempotent.
+    //
+    // The seven engine seams that used to be installed here went with
+    // `tinymemory-core` (#5560) — this process embeds no engine, and every
+    // `memory` subcommand routes through `binding::for_workspace` below. The
+    // two that did not, `ingest` and `query`, resolved an in-process client
+    // and no longer exist. The sink is a `tinymemory-api` seam, not an engine
+    // one, and stays for the reason spelled out in `runtime::context`.
+    crate::openhuman::memory::host::install_memory_event_sink();
     #[cfg(feature = "modules")]
     crate::openhuman::modules::memory::set_modules_policy(std::sync::Arc::new(config.clone()));
 

@@ -77,6 +77,43 @@ const CLASSIC_DARK: Theme = {
   fonts: {},
 };
 
+// No preset carries a canvas gradient any more.
+//
+// Four did (Ocean light/dark, Matrix dark, HAL dark) — a linear or radial wash
+// painted on `body` through `--app-gradient`. They are flat `surface-canvas`
+// colours now. The gradient was competing with the thing it sat under rather
+// than supporting it: `RootShellLayout` lays `surface-chrome` at /30 over the
+// whole shell, so a hue that varied across the window met a scrim that did not,
+// and the frame read as a different colour at the top of the screen than at the
+// bottom. A solid canvas under a flat scrim gives one background colour.
+//
+// `Theme['gradient']` and `--app-gradient` both stay: `body` still falls back
+// through them (`index.css`), the Theme Studio still round-trips the field on
+// import/export, and a user theme may still set one. This is the presets
+// declining to, not the capability going away.
+//
+// Every preset names `surface-chrome` explicitly.
+//
+// It is the window chrome — the tinted frame the sidebar sits on, outside the
+// content card — and it is NOT just decorative here: `RootShellLayout` paints
+// it at /30 across the whole shell, over the body's canvas/gradient. So a
+// near-neutral chrome does not merely look grey itself, it desaturates whatever
+// the theme put behind it; HAL's red radial was washing out under exactly that.
+//
+// `lib/theme/chrome.ts` derives this token for themes that omit it (a Studio
+// theme built by tinting the canvas), and explicit values win over that
+// derivation. The presets set it by hand because the derivation's job is a safe
+// default, not art direction: for a DARK theme it steps the canvas *up* by 10,
+// matching the stock dark palette where chrome (10) sits above canvas (0). That
+// is right for a neutral theme and too timid for a saturated one — HAL derived
+// to `18 14 14`, tinted on paper and grey on screen.
+//
+// The hand-picked dark values go the other way: deeper and more saturated than
+// the canvas, so the /30 scrim tints toward the theme's hue instead of muting
+// it. Light values follow the derivation's direction (a step darker than the
+// canvas, since the scrim needs to read against a bright ground) but push the
+// hue harder than a flat ratio would.
+//
 // ── Ocean ──────────────────────────────────────────────────────────────────
 const OCEAN_LIGHT: Theme = {
   id: 'ocean',
@@ -85,6 +122,7 @@ const OCEAN_LIGHT: Theme = {
   builtIn: true,
   colors: {
     'surface-canvas': '233 242 252',
+    'surface-chrome': '196 214 236',
     surface: '255 255 255',
     'surface-muted': '224 236 248',
     'surface-subtle': '230 240 250',
@@ -97,7 +135,6 @@ const OCEAN_LIGHT: Theme = {
     'primary-600': '53 110 200',
     'primary-700': '40 92 176',
   },
-  gradient: { canvas: 'linear-gradient(180deg, rgb(235 244 253), rgb(214 230 248))' },
   fonts: {},
 };
 const OCEAN_DARK: Theme = {
@@ -107,6 +144,7 @@ const OCEAN_DARK: Theme = {
   builtIn: true,
   colors: {
     'surface-canvas': '7 12 24',
+    'surface-chrome': '2 5 14',
     surface: '22 30 52',
     'surface-muted': '30 40 66',
     'surface-subtle': '27 36 60',
@@ -129,7 +167,6 @@ const OCEAN_DARK: Theme = {
     'primary-500': '96 165 250',
     'primary-600': '59 130 246',
   },
-  gradient: { canvas: 'radial-gradient(circle at 30% 0%, rgb(20 34 64), rgb(7 12 24) 60%)' },
   fonts: {},
 };
 
@@ -141,6 +178,7 @@ const SEPIA_LIGHT: Theme = {
   builtIn: true,
   colors: {
     'surface-canvas': '244 236 222',
+    'surface-chrome': '216 202 178',
     surface: '250 244 233',
     'surface-muted': '238 228 210',
     'surface-subtle': '240 231 215',
@@ -164,6 +202,7 @@ const SEPIA_DARK: Theme = {
   builtIn: true,
   colors: {
     'surface-canvas': '26 22 17',
+    'surface-chrome': '14 11 7',
     surface: '40 34 26',
     'surface-muted': '48 41 31',
     'surface-subtle': '44 37 28',
@@ -197,6 +236,7 @@ const MATRIX_DARK: Theme = {
   builtIn: true,
   colors: {
     'surface-canvas': '2 8 4',
+    'surface-chrome': '0 5 2',
     surface: '6 18 10',
     'surface-muted': '10 26 14',
     'surface-subtle': '8 22 12',
@@ -215,7 +255,6 @@ const MATRIX_DARK: Theme = {
     'content-inverted': '2 8 4',
     ...GREEN_RAMP,
   },
-  gradient: { canvas: 'radial-gradient(circle at 50% 0%, rgb(6 32 16), rgb(2 8 4) 68%)' },
   fonts: { body: MONO_STACK, heading: MONO_STACK },
 };
 const MATRIX_LIGHT: Theme = {
@@ -225,6 +264,7 @@ const MATRIX_LIGHT: Theme = {
   builtIn: true,
   colors: {
     'surface-canvas': '234 245 237',
+    'surface-chrome': '198 224 208',
     surface: '246 252 248',
     'surface-muted': '224 240 229',
     'surface-subtle': '230 244 234',
@@ -251,6 +291,7 @@ const HAL_DARK: Theme = {
   builtIn: true,
   colors: {
     'surface-canvas': '8 4 4',
+    'surface-chrome': '5 0 0',
     surface: '20 12 12',
     'surface-muted': '28 16 16',
     'surface-subtle': '24 14 14',
@@ -270,7 +311,6 @@ const HAL_DARK: Theme = {
     // and accent text uses the lighter 300/400 shades, so the red identity holds.
     'primary-500': '214 30 30',
   },
-  gradient: { canvas: 'radial-gradient(circle at 50% 16%, rgb(84 10 10), rgb(8 4 4) 56%)' },
   fonts: {},
 };
 const HAL_LIGHT: Theme = {
@@ -280,6 +320,7 @@ const HAL_LIGHT: Theme = {
   builtIn: true,
   colors: {
     'surface-canvas': '245 238 238',
+    'surface-chrome': '220 200 200',
     surface: '252 247 247',
     'surface-muted': '240 228 228',
     'surface-subtle': '244 234 234',

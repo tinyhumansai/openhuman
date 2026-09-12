@@ -1,5 +1,11 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use openhuman_core::openhuman::agent::context::prompt::{
+    render_ambient_environment, render_subagent_system_prompt, render_tools, render_user_files,
+    ConnectedIntegration, CuratedMemoryPromptSnapshot, LearnedContextData, NamespaceSummary,
+    PersonalityRosterEntry, PromptContext, PromptTool, SubagentRenderOptions, SystemPromptBuilder,
+    ToolCallFormat, UserIdentity,
+};
 use openhuman_core::openhuman::agent::dispatcher::NativeToolDispatcher;
 use openhuman_core::openhuman::agent::harness::definition::AgentTier;
 use openhuman_core::openhuman::agent::harness::session::Agent;
@@ -8,16 +14,10 @@ use openhuman_core::openhuman::agent::harness::{
     ParentExecutionContext, PromptSource, SandboxMode, SubagentRunOptions, ToolScope,
 };
 use openhuman_core::openhuman::config::AgentConfig;
-use openhuman_core::openhuman::agent::context::prompt::{
-    render_ambient_environment, render_subagent_system_prompt, render_tools, render_user_files,
-    ConnectedIntegration, CuratedMemoryPromptSnapshot, LearnedContextData, NamespaceSummary,
-    PersonalityRosterEntry, PromptContext, PromptTool, SubagentRenderOptions, SystemPromptBuilder,
-    ToolCallFormat, UserIdentity,
-};
+use openhuman_core::openhuman::inference::tokenjuice::AgentTokenjuiceCompression;
 use openhuman_core::openhuman::memory::{
     Memory, MemoryCategory, MemoryEntry, NamespaceSummary as MemoryNamespaceSummary, RecallOpts,
 };
-use openhuman_core::openhuman::inference::tokenjuice::AgentTokenjuiceCompression;
 use openhuman_core::openhuman::tools::{PermissionLevel, Tool, ToolContent, ToolResult};
 use parking_lot::Mutex;
 use serde_json::json;
@@ -25,10 +25,10 @@ use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tempfile::TempDir;
-use tinyagents::harness::message::{AssistantMessage, ContentBlock, Message};
-use tinyagents::harness::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
-use tinyagents::harness::tool::ToolCall;
-use tinyagents::harness::usage::Usage;
+use tinyinference::message::{AssistantMessage, ContentBlock, Message};
+use tinyinference::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
+use tinyinference::tool::ToolCall;
+use tinyinference::usage::Usage;
 
 struct ScriptedModel {
     responses: Mutex<VecDeque<anyhow::Result<ModelResponse>>>,
@@ -70,7 +70,7 @@ impl ChatModel<()> for ScriptedModel {
         &self,
         _state: &(),
         request: ModelRequest,
-    ) -> tinyagents::Result<ModelResponse> {
+    ) -> tinyinference::Result<ModelResponse> {
         self.requests.lock().push(CapturedRequest {
             messages: request.messages,
             tool_names: request.tools.iter().map(|tool| tool.name.clone()).collect(),
@@ -79,7 +79,7 @@ impl ChatModel<()> for ScriptedModel {
             .lock()
             .pop_front()
             .unwrap_or_else(|| Ok(text_response("fallback final")))
-            .map_err(|error| tinyagents::TinyAgentsError::Model(error.to_string()))
+            .map_err(|error| tinyinference::Error::Model(error.to_string()))
     }
 }
 
@@ -248,7 +248,7 @@ fn tool_response(id: &str, name: &str, arguments: serde_json::Value) -> ModelRes
         raw: None,
         resolved_model: None,
         continue_turn: None,
-            served_from_cache: false,
+        served_from_cache: false,
     }
 }
 
@@ -326,7 +326,6 @@ fn definition(max_result_chars: Option<usize>) -> AgentDefinition {
         omit_identity: true,
         omit_memory_context: false,
         omit_safety_preamble: true,
-        omit_skills_catalog: true,
         omit_profile: true,
         omit_memory_md: true,
         model: ModelSpec::Inherit,
@@ -354,7 +353,7 @@ fn definition(max_result_chars: Option<usize>) -> AgentDefinition {
 
 fn parent_context(workspace: PathBuf, provider: Arc<ScriptedModel>) -> ParentExecutionContext {
     let tools = vec![tool("echo")];
-    let specs = tools.iter().map(|tool| tool.spec()).collect();
+    let specs = tools.iter().map(|tool| Arc::new(tool.spec())).collect();
     ParentExecutionContext {
         agent_definition_id: "orchestrator".into(),
         allowed_subagent_ids: [
@@ -364,11 +363,14 @@ fn parent_context(workspace: PathBuf, provider: Arc<ScriptedModel>) -> ParentExe
         ]
         .into_iter()
         .collect(),
-        turn_model_source: openhuman_core::openhuman::agent::tinyagents::TurnModelSource::from_model(
-            provider,
-        ),
+        turn_model_source:
+            openhuman_core::openhuman::agent::tinyagents::TurnModelSource::from_model(provider),
         all_tools: Arc::new(tools),
         all_tool_specs: Arc::new(specs),
+        // #6145: empty means "same surface as `all_tool_specs`" — the
+        // catalogue falls back to it, so these stubs keep the behaviour
+        // they had before the parent's visible set became its own field.
+        visible_tool_specs: Arc::new(Vec::new()),
         visible_tool_names: std::collections::HashSet::new(),
         subagent_tool_ceiling_names: std::collections::HashSet::new(),
         model_name: "round19-parent".to_string(),
@@ -661,7 +663,6 @@ fn subagent_prompt_renderer_handles_formats_caps_and_stale_tool_indices() -> Res
     let options = SubagentRenderOptions {
         include_safety_preamble: true,
         include_identity: false,
-        include_skills_catalog: false,
         include_profile: true,
         include_memory_md: true,
     };
@@ -690,7 +691,7 @@ fn subagent_prompt_renderer_handles_formats_caps_and_stale_tool_indices() -> Res
     assert!(json_prompt.contains("extra"));
     assert!(json_prompt.contains("truncated at 2000 chars"));
     assert!(json_prompt.contains("## Safety"));
-    assert!(json_prompt.contains("## Output style"));
+    assert!(json_prompt.contains("# Writing style"));
 
     let native_prompt = render_subagent_system_prompt(
         tmp.path(),
@@ -705,5 +706,194 @@ fn subagent_prompt_renderer_handles_formats_caps_and_stale_tool_indices() -> Res
     );
     assert!(!native_prompt.contains("## Tools"));
     assert!(native_prompt.contains("native tool-calling output"));
+    Ok(())
+}
+
+// ── Turn dispatch guard (#5810) ────────────────────────────────────────────────
+//
+// `run_subagent` consults `turn_dispatch_guard::check()` as its first statement
+// and refuses two ways: a graceful pause already requested at the model-call
+// cap, and less wall-clock remaining than this turn's slowest completed child.
+//
+// Both cases below install a REAL guard around the call — the gate is a no-op
+// outside a turn scope, so a test that skips `with_dispatch_guard` exercises
+// nothing. Each asserts on the refusal AND on the provider request count: the
+// refusal is meant to cost nothing, so a gate that let the dispatch reach the
+// model before erroring would still be a defect. Each also drives an ALLOWED
+// dispatch through the same guard first, so a gate that refused unconditionally
+// could not pass either test.
+
+#[tokio::test]
+async fn dispatch_is_refused_once_the_turn_has_requested_a_cap_pause() -> Result<()> {
+    let tmp = TempDir::new()?;
+    let provider = ScriptedModel::new(vec![text_response("first child answer")]);
+    let provider_handle = provider.clone();
+    let parent = parent_context(tmp.path().to_path_buf(), provider);
+
+    let outcome = with_parent_context(parent, async {
+        // No ceiling, so the budget gate can never fire here and the only thing
+        // under test is the pause.
+        openhuman_core::openhuman::agent::harness::turn_dispatch_guard::with_dispatch_guard(
+            None,
+            async {
+                // Control: inside the guard, with nothing recorded, a dispatch
+                // must still go through. Without this a gate that refused every
+                // call would satisfy the assertion below.
+                let allowed = run_subagent(
+                    &definition(None),
+                    "before the cap",
+                    SubagentRunOptions::default(),
+                )
+                .await;
+
+                let state =
+                    openhuman_core::openhuman::agent::harness::turn_dispatch_guard::current()
+                        .expect("the guard is installed for this turn");
+                state.record_pause_requested(15, 15);
+
+                let refused = run_subagent(
+                    &definition(None),
+                    "after the cap",
+                    SubagentRunOptions {
+                        task_id: Some("post-pause-dispatch".to_string()),
+                        ..SubagentRunOptions::default()
+                    },
+                )
+                .await;
+
+                (allowed, refused)
+            },
+        )
+        .await
+    })
+    .await;
+
+    let (allowed, refused) = outcome;
+    assert_eq!(
+        allowed
+            .expect("a dispatch before the pause must be allowed")
+            .output,
+        "first child answer",
+        "the guard must not refuse before a pause is recorded"
+    );
+
+    match refused {
+        Err(openhuman_core::openhuman::agent::harness::SubagentRunError::PauseRequested {
+            completed_model_calls,
+            cap,
+        }) => {
+            assert_eq!(completed_model_calls, 15);
+            assert_eq!(cap, 15);
+        }
+        other => panic!(
+            "a dispatch after the cap pause must be refused with PauseRequested, got: {other:?}"
+        ),
+    }
+
+    // The refusal is pre-dispatch: only the first (allowed) child may have
+    // reached the provider. A second request means the gate ran too late to
+    // stop the work it exists to stop.
+    assert_eq!(
+        provider_handle.requests().len(),
+        1,
+        "the refused dispatch must not reach the provider at all"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn dispatch_is_refused_when_less_budget_remains_than_the_slowest_child() -> Result<()> {
+    let tmp = TempDir::new()?;
+    let provider = ScriptedModel::new(vec![text_response("fast child answer")]);
+    let provider_handle = provider.clone();
+    let parent = parent_context(tmp.path().to_path_buf(), provider);
+
+    let outcome = with_parent_context(parent, async {
+        // A generous ceiling, so `remaining` stays far above the sample the
+        // control records and only the deliberate one below can trip the gate.
+        openhuman_core::openhuman::agent::harness::turn_dispatch_guard::with_dispatch_guard(
+            Some(std::time::Duration::from_secs(3600)),
+            async {
+                // Control: a budget of an hour against a one-millisecond
+                // observed maximum must still allow a dispatch.
+                openhuman_core::openhuman::agent::harness::turn_dispatch_guard::record_subagent_elapsed(
+                    std::time::Duration::from_millis(1),
+                );
+                let allowed = run_subagent(
+                    &definition(None),
+                    "while budget remains",
+                    SubagentRunOptions::default(),
+                )
+                .await;
+
+                // Now fold in a child that took far longer than the whole
+                // ceiling. `remaining` is at most an hour; the observed maximum
+                // is a hundred, so the refusal is a fact rather than a race.
+                openhuman_core::openhuman::agent::harness::turn_dispatch_guard::record_subagent_elapsed(
+                    std::time::Duration::from_secs(360_000),
+                );
+                let refused = run_subagent(
+                    &definition(None),
+                    "after the budget is gone",
+                    SubagentRunOptions {
+                        task_id: Some("over-budget-dispatch".to_string()),
+                        ..SubagentRunOptions::default()
+                    },
+                )
+                .await;
+
+                (allowed, refused)
+            },
+        )
+        .await
+    })
+    .await;
+
+    let (allowed, refused) = outcome;
+    assert_eq!(
+        allowed
+            .expect("a dispatch with budget to spare must be allowed")
+            .output,
+        "fast child answer",
+        "the guard must not refuse while the remaining budget exceeds the observed maximum"
+    );
+
+    match refused {
+        Err(
+            openhuman_core::openhuman::agent::harness::SubagentRunError::DispatchBudgetExhausted {
+                remaining_ms,
+                observed_max_ms,
+                observed_samples,
+            },
+        ) => {
+            assert_eq!(
+                observed_max_ms, 360_000_000,
+                "the refusal must quote the turn's own measured maximum"
+            );
+            assert!(
+                remaining_ms < observed_max_ms,
+                "refused with {remaining_ms} ms remaining against a {observed_max_ms} ms maximum"
+            );
+            // Three, not the two recorded by hand: the ALLOWED dispatch above
+            // completed, and `run_subagent` folds a real child's wall-clock
+            // into the estimator on its own success path. That the runner
+            // measures its own children is the whole mechanism gate 2 rests
+            // on, so counting it here is the assertion, not an off-by-one.
+            assert_eq!(
+                observed_samples, 3,
+                "the two hand-recorded samples plus the real completed dispatch"
+            );
+        }
+        other => panic!(
+            "a dispatch with less budget than the slowest child must be refused with \
+             DispatchBudgetExhausted, got: {other:?}"
+        ),
+    }
+
+    assert_eq!(
+        provider_handle.requests().len(),
+        1,
+        "the refused dispatch must not reach the provider at all"
+    );
     Ok(())
 }

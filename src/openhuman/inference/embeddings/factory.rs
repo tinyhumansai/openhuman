@@ -8,10 +8,152 @@ use super::cloud::{
 };
 use super::provider_trait::{EmbeddingProvider, TinyAgentsEmbeddingProvider};
 use crate::openhuman::config::Config;
-use tinyagents::harness::embeddings::{
+use tinyinference::embeddings::EmbeddingModel;
+use tinyinference::embeddings::{
     CohereEmbeddingModel, NoopEmbeddingModel, OllamaEmbeddingModel, OpenAiEmbeddingModel,
     VoyageEmbeddingModel,
 };
+
+/// Build the provider for an OpenAI-compatible custom endpoint.
+///
+/// `dims == 0` is the dimension-agnostic PROBE mode (issue #4056): send no
+/// `dimensions` param, accept whatever length comes back, let the caller adopt
+/// it. tinyinference's `OpenAiEmbeddingModel::embed` used to implement exactly
+/// that (its `parse_vectors` still skips the length guard when
+/// `dimensions == 0`), but the tinyagents pointer refresh brought a version
+/// whose `embed()` rejects `dimensions == 0` outright before the request is
+/// built — the two halves of that file now contradict, and the refusal breaks
+/// the Test-connection and save-time probes for every model outside the
+/// `text-embedding-3-*` family. Until that is reconciled upstream, the probe
+/// mode is served host-side by [`DimensionAgnosticOpenAiProbe`]; delete that
+/// type and route `dims == 0` back through `openai_model` once upstream
+/// honours it again.
+fn custom_openai_provider(
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+    dims: usize,
+) -> Box<dyn EmbeddingProvider> {
+    if dims == 0 {
+        Box::new(DimensionAgnosticOpenAiProbe::new(
+            openai_model(base_url, api_key, model, 0, false),
+            api_key,
+        ))
+    } else {
+        TinyAgentsEmbeddingProvider::boxed(openai_model(base_url, api_key, model, dims, false))
+    }
+}
+
+/// The dimension-agnostic probe for an OpenAI-compatible endpoint.
+///
+/// Exists only because upstream's `embed()` refuses `dimensions == 0` (see
+/// [`custom_openai_provider`]). One request shape, deliberately minimal: POST
+/// `{model, input}` — never a `dimensions` param — bearer auth when a key is
+/// present, and no vector-length guard, because learning the endpoint's real
+/// length is the entire point of the call.
+struct DimensionAgnosticOpenAiProbe {
+    /// Used for URL building, naming and the signature — not for `embed`.
+    inner: OpenAiEmbeddingModel,
+    /// Kept host-side because the inner model does not expose its key.
+    api_key: String,
+}
+
+impl DimensionAgnosticOpenAiProbe {
+    fn new(inner: OpenAiEmbeddingModel, api_key: &str) -> Self {
+        Self {
+            inner,
+            api_key: api_key.to_owned(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl EmbeddingProvider for DimensionAgnosticOpenAiProbe {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn model_id(&self) -> &str {
+        self.inner.model_id()
+    }
+
+    fn dimensions(&self) -> usize {
+        0
+    }
+
+    fn signature(&self) -> String {
+        self.inner.signature()
+    }
+
+    async fn embed(&self, texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
+        let url = self.inner.embeddings_url();
+        let mut request = reqwest::Client::new().post(&url).json(&serde_json::json!({
+            "model": self.inner.model(),
+            "input": texts,
+        }));
+        if !self.api_key.is_empty() {
+            request = request.header("Authorization", format!("Bearer {}", self.api_key));
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("openai embeddings request to {url} failed: {e}"))?;
+        let status = response.status();
+        let text = response
+            .text()
+            .await
+            .map_err(|e| anyhow::anyhow!("openai embeddings body read failed: {e}"))?;
+        if !status.is_success() {
+            anyhow::bail!("openai embeddings returned HTTP {status}: {text}");
+        }
+        let value: serde_json::Value = serde_json::from_str(&text)?;
+        let data = value
+            .get("data")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| anyhow::anyhow!("openai embeddings response missing `data` array"))?;
+        if data.len() != texts.len() {
+            anyhow::bail!(
+                "openai embed count mismatch: sent {} texts, got {} embeddings",
+                texts.len(),
+                data.len()
+            );
+        }
+        let mut vectors: Vec<Option<Vec<f32>>> = vec![None; texts.len()];
+        for item in data {
+            let index = item
+                .get("index")
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|v| usize::try_from(v).ok())
+                .filter(|i| *i < texts.len())
+                .ok_or_else(|| anyhow::anyhow!("openai embedding is missing a valid `index`"))?;
+            let embedding = item
+                .get("embedding")
+                .and_then(serde_json::Value::as_array)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("openai embeddings response missing `embedding` array")
+                })?;
+            let vector = embedding
+                .iter()
+                .map(|n| {
+                    n.as_f64().map(|v| v as f32).ok_or_else(|| {
+                        anyhow::anyhow!("openai embeddings response contains a non-numeric value")
+                    })
+                })
+                .collect::<anyhow::Result<Vec<f32>>>()?;
+            vectors[index] = Some(vector);
+        }
+        vectors
+            .into_iter()
+            .enumerate()
+            .map(|(i, v)| {
+                v.ok_or_else(|| anyhow::anyhow!("openai embeddings response is missing index {i}"))
+            })
+            .collect()
+    }
+}
 
 fn openai_model(
     base_url: &str,
@@ -37,6 +179,17 @@ fn openai_model(
 pub(crate) fn model_supports_dimensions(model: &str) -> bool {
     model.starts_with("text-embedding-3-")
 }
+
+/// The members of that family, by name, for a consumer that cannot call the
+/// predicate.
+///
+/// The tinymemory module's `EmbeddingHost::model_supports_dimensions` is
+/// synchronous and runs inside the module, so it is told a list at load time
+/// (`modules::ops::module_config`) rather than asking over the bus. Absent from
+/// the list means "does not support it", the safe direction: the engine omits
+/// the parameter instead of writing a batch the provider rejects halfway.
+pub(crate) const MODELS_SUPPORTING_DIMENSIONS: [&str; 2] =
+    ["text-embedding-3-small", "text-embedding-3-large"];
 
 /// Creates an embedding provider based on the specified name and configuration.
 ///
@@ -66,7 +219,7 @@ pub fn create_embedding_provider(
                 "",
                 model,
                 dims,
-                tinyagents::harness::embeddings::VOYAGE_API_BASE,
+                tinyinference::embeddings::VOYAGE_API_BASE,
             ),
         )),
         "ollama" => {
@@ -89,9 +242,7 @@ pub fn create_embedding_provider(
         )),
         name if name.starts_with("custom:") => {
             let base_url = name.strip_prefix("custom:").unwrap_or("");
-            Ok(TinyAgentsEmbeddingProvider::boxed(openai_model(
-                base_url, "", model, dims, false,
-            )))
+            Ok(custom_openai_provider(base_url, "", model, dims))
         }
         "none" => Ok(TinyAgentsEmbeddingProvider::boxed(NoopEmbeddingModel)),
         unknown => Err(anyhow::anyhow!(
@@ -122,7 +273,7 @@ pub fn create_embedding_provider_with_credentials(
                 api_key,
                 model,
                 dims,
-                tinyagents::harness::embeddings::VOYAGE_API_BASE,
+                tinyinference::embeddings::VOYAGE_API_BASE,
             ),
         )),
         "ollama" => {
@@ -145,15 +296,11 @@ pub fn create_embedding_provider_with_credentials(
         )),
         "custom" => {
             let url = custom_endpoint.unwrap_or("");
-            Ok(TinyAgentsEmbeddingProvider::boxed(openai_model(
-                url, api_key, model, dims, false,
-            )))
+            Ok(custom_openai_provider(url, api_key, model, dims))
         }
         name if name.starts_with("custom:") => {
             let url = custom_endpoint.unwrap_or_else(|| name.strip_prefix("custom:").unwrap_or(""));
-            Ok(TinyAgentsEmbeddingProvider::boxed(openai_model(
-                url, api_key, model, dims, false,
-            )))
+            Ok(custom_openai_provider(url, api_key, model, dims))
         }
         "none" => Ok(TinyAgentsEmbeddingProvider::boxed(NoopEmbeddingModel)),
         unknown => Err(anyhow::anyhow!(
@@ -203,6 +350,15 @@ pub fn create_embedding_provider_with_config(
                 model,
                 dims,
             )))
+        }
+        // Ollama must use the config-aware URL so a custom `local_ai.base_url`
+        // is honoured — the credential-store path calls `ollama_base_url()`
+        // (env-only) and diverges when the setting is set (#6032).
+        "ollama" => {
+            let base_url = crate::openhuman::inference::local::ollama_base_url_from_config(config);
+            Ok(TinyAgentsEmbeddingProvider::boxed(
+                OllamaEmbeddingModel::try_new(&base_url, model, dims)?,
+            ))
         }
         // Every other provider is credential-store-agnostic (BYO key or local
         // endpoint), so the existing construction is correct unchanged.
@@ -289,314 +445,5 @@ pub fn default_local_embedding_provider() -> Arc<dyn EmbeddingProvider> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::openhuman::security::credentials::{AuthService, APP_SESSION_PROVIDER};
-    use std::collections::HashMap;
-    use tempfile::TempDir;
-
-    fn test_config(tmp: &TempDir) -> Config {
-        let mut config = Config::default();
-        config.config_path = tmp.path().join("config.toml");
-        config
-    }
-
-    /// #5356 regression (the active production cause). Sign-in stores the
-    /// `app-session` token under the user-scoped config dir via
-    /// `AuthService::from_config`; the managed/cloud embedder must derive its
-    /// credential scope from that SAME `(config.config_path.parent(),
-    /// config.secrets.encrypt)`. The pre-fix hardcode `(None, true)` resolved to
-    /// `default_state_dir()` (`~/.openhuman` root) with encryption forced on —
-    /// the wrong file — so a signed-in user got "No backend session". Setting
-    /// `encrypt=false` also proves the flag is read from config, not hardcoded.
-    #[test]
-    fn managed_credential_scope_mirrors_config_not_default_state_dir() {
-        let tmp = TempDir::new().unwrap();
-        let mut config = test_config(&tmp);
-        config.secrets.encrypt = false;
-
-        let (dir, encrypt) = managed_credential_scope(&config);
-        assert_eq!(
-            dir.as_deref(),
-            config.config_path.parent(),
-            "managed embedder must use the config-scoped credential dir, not default_state_dir()"
-        );
-        assert!(
-            !encrypt,
-            "encrypt must reflect config.secrets.encrypt, not the hardcoded `true`"
-        );
-    }
-
-    /// End-to-end: a token stored exactly as sign-in stores it (via
-    /// `AuthService::from_config`) is recovered by the scope the managed branch
-    /// feeds the cloud embedder's bearer resolver. This is the round-trip the
-    /// old hardcode broke.
-    #[test]
-    fn managed_scope_resolves_signin_stored_app_session_token() {
-        let tmp = TempDir::new().unwrap();
-        let config = test_config(&tmp);
-
-        // Sign-in writes the app-session token here.
-        AuthService::from_config(&config)
-            .store_provider_token(
-                APP_SESSION_PROVIDER,
-                "default",
-                "sess-tok-5356",
-                HashMap::new(),
-                true,
-            )
-            .unwrap();
-
-        // The exact scope the managed branch uses must recover it.
-        let (dir, encrypt) = managed_credential_scope(&config);
-        let resolved = AuthService::new(dir.as_deref().unwrap(), encrypt)
-            .get_provider_bearer_token(APP_SESSION_PROVIDER, None)
-            .unwrap();
-        assert_eq!(
-            resolved.as_deref(),
-            Some("sess-tok-5356"),
-            "managed embedder scope must resolve the app-session token sign-in stored"
-        );
-
-        // Isolation: a DIFFERENT scope — what the old `(None, true)` hardcode
-        // resolved to via `default_state_dir()` (root `~/.openhuman`) instead of
-        // the user-scoped config dir — must NOT see the token. This is the half
-        // that fails if managed construction ignores `config`.
-        let default_like = TempDir::new().unwrap();
-        let wrong_scope = AuthService::new(default_like.path(), encrypt)
-            .get_provider_bearer_token(APP_SESSION_PROVIDER, None)
-            .unwrap();
-        assert!(
-            wrong_scope.is_none(),
-            "app-session token must be isolated to the config scope, not a default/root scope"
-        );
-    }
-
-    /// The `managed`/`cloud` arm builds a cloud embedder carrying the requested
-    /// dimensions (exercises the config-aware factory's managed branch). Mirrors
-    /// the existing `factory_managed`/`factory_cloud` assertions (name + dims).
-    #[test]
-    fn config_aware_factory_builds_managed_provider() {
-        let tmp = TempDir::new().unwrap();
-        let config = test_config(&tmp);
-        for provider in ["managed", "cloud"] {
-            let p = create_embedding_provider_with_config(
-                &config,
-                provider,
-                DEFAULT_CLOUD_EMBEDDING_MODEL,
-                DEFAULT_CLOUD_EMBEDDING_DIMENSIONS,
-                "",
-                None,
-            )
-            .expect("managed/cloud builds via config-aware factory");
-            assert_eq!(p.name(), "cloud");
-            assert_eq!(p.dimensions(), DEFAULT_CLOUD_EMBEDDING_DIMENSIONS);
-        }
-    }
-
-    /// Non-managed providers delegate unchanged to the credentialed factory —
-    /// the config scope has no effect on BYO-key / local providers.
-    #[test]
-    fn config_aware_factory_delegates_non_managed() {
-        let tmp = TempDir::new().unwrap();
-        let config = test_config(&tmp);
-        let p = create_embedding_provider_with_config(
-            &config,
-            "voyage",
-            "voyage-3-large",
-            1024,
-            "k",
-            None,
-        )
-        .expect("voyage builds via delegated path");
-        assert_eq!(p.dimensions(), 1024);
-
-        // Unknown provider still surfaces the same error, not a panic.
-        assert!(
-            create_embedding_provider_with_config(&config, "nope", "m", 1, "", None).is_err(),
-            "unknown provider must error through the delegated factory"
-        );
-    }
-
-    /// End-to-end binding proof (#5356): a provider built **through
-    /// `create_embedding_provider_with_config`** must authenticate with the
-    /// `app-session` token stored under the *config* credential scope. A local
-    /// mock stands in for the cloud backend (no external network) and captures
-    /// the bearer it receives. A regression to `OpenHumanCloudEmbedding::new(None,
-    /// None, true, …)` would resolve the token from `default_state_dir()` — a
-    /// different directory with no token — and fail with "No backend session"
-    /// before any request, so this test fails if the factory ignores `config`.
-    #[tokio::test]
-    async fn factory_managed_provider_authenticates_with_config_scoped_token() {
-        use std::sync::{Arc, Mutex};
-
-        use axum::{extract::State, http::HeaderMap, routing::post, Json, Router};
-
-        // Mock cloud embeddings backend at {BACKEND_URL}/openai/v1/embeddings.
-        #[derive(Clone, Default)]
-        struct Captured {
-            auth: Arc<Mutex<Option<String>>>,
-        }
-        let captured = Captured::default();
-        let app = Router::new()
-            .route(
-                "/openai/v1/embeddings",
-                post(
-                    |State(cap): State<Captured>,
-                     headers: HeaderMap,
-                     Json(_body): Json<serde_json::Value>| async move {
-                        *cap.auth.lock().unwrap() = headers
-                            .get("authorization")
-                            .and_then(|v| v.to_str().ok())
-                            .map(str::to_owned);
-                        Json(serde_json::json!({
-                            "object": "list",
-                            "data": [{ "object": "embedding", "index": 0, "embedding": [0.1_f32, 0.2, 0.3] }],
-                            "model": "voyage-3-large",
-                        }))
-                    },
-                ),
-            )
-            .with_state(captured.clone());
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let base = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-
-        // The app-session token lives ONLY under the config credential scope.
-        let tmp = TempDir::new().unwrap();
-        let config = test_config(&tmp);
-        AuthService::from_config(&config)
-            .store_provider_token(
-                APP_SESSION_PROVIDER,
-                "default",
-                "sess-scoped-5356",
-                HashMap::new(),
-                true,
-            )
-            .unwrap();
-
-        // `OpenHumanCloudEmbedding::new` bakes the base URL at construction, so
-        // BACKEND_URL only needs to point at the mock while the factory builds —
-        // held under the crate-wide backend-env lock (shared with `api::config`'s
-        // own BACKEND_URL tests) so the process-global env can't race.
-        let provider = {
-            let _env_guard = crate::api::config::backend_env_test_lock();
-            let prev = std::env::var("BACKEND_URL").ok();
-            std::env::set_var("BACKEND_URL", &base);
-            let built = create_embedding_provider_with_config(
-                &config,
-                "managed",
-                "voyage-3-large",
-                3,
-                "",
-                None,
-            )
-            .expect("managed provider builds via config-aware factory");
-            match prev {
-                Some(v) => std::env::set_var("BACKEND_URL", v),
-                None => std::env::remove_var("BACKEND_URL"),
-            }
-            built
-        };
-
-        // Embed: the lazy bearer resolver reads the config scope, finds the
-        // token, and authenticates to the mock.
-        let vectors = provider.embed(&["binding probe"]).await.expect(
-            "factory-built managed provider must resolve the config-scoped token and embed",
-        );
-        assert_eq!(vectors.first().map(|v| v.len()).unwrap_or(0), 3);
-        assert_eq!(
-            captured.auth.lock().unwrap().as_deref(),
-            Some("Bearer sess-scoped-5356"),
-            "managed provider must authenticate with the token from the config scope"
-        );
-    }
-
-    /// #5501 regression: the memory client's inline embedder is built through
-    /// [`default_embedding_provider_with_config`], which MUST authenticate with
-    /// the `app-session` token under the *config* credential scope — the same
-    /// scope "Test connection" uses. The pre-fix keyless
-    /// [`default_embedding_provider`] resolved `default_state_dir()` with
-    /// encryption forced on, so a signed-in user's ingested documents embedded
-    /// with "No backend session" and persisted vector-less while the connection
-    /// test still passed. A local mock stands in for the cloud backend (no
-    /// network) and captures the bearer it receives; a regression back to the
-    /// keyless constructor resolves a scope with no token and never reaches it.
-    #[tokio::test]
-    async fn default_provider_with_config_authenticates_with_config_scoped_token() {
-        use std::sync::{Arc, Mutex};
-
-        use axum::{extract::State, http::HeaderMap, routing::post, Json, Router};
-
-        #[derive(Clone, Default)]
-        struct Captured {
-            auth: Arc<Mutex<Option<String>>>,
-        }
-        let captured = Captured::default();
-        let app = Router::new()
-            .route(
-                "/openai/v1/embeddings",
-                post(
-                    |State(cap): State<Captured>,
-                     headers: HeaderMap,
-                     Json(_body): Json<serde_json::Value>| async move {
-                        *cap.auth.lock().unwrap() = headers
-                            .get("authorization")
-                            .and_then(|v| v.to_str().ok())
-                            .map(str::to_owned);
-                        // The embedder validates returned dims against the
-                        // requested default, so the mock must echo that width.
-                        let embedding = vec![0.1_f32; DEFAULT_CLOUD_EMBEDDING_DIMENSIONS];
-                        Json(serde_json::json!({
-                            "object": "list",
-                            "data": [{ "object": "embedding", "index": 0, "embedding": embedding }],
-                            "model": DEFAULT_CLOUD_EMBEDDING_MODEL,
-                        }))
-                    },
-                ),
-            )
-            .with_state(captured.clone());
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let base = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-
-        // The app-session token lives ONLY under the config credential scope.
-        let tmp = TempDir::new().unwrap();
-        let config = test_config(&tmp);
-        AuthService::from_config(&config)
-            .store_provider_token(
-                APP_SESSION_PROVIDER,
-                "default",
-                "sess-default-5501",
-                HashMap::new(),
-                true,
-            )
-            .unwrap();
-
-        let provider = {
-            let _env_guard = crate::api::config::backend_env_test_lock();
-            let prev = std::env::var("BACKEND_URL").ok();
-            std::env::set_var("BACKEND_URL", &base);
-            let built = default_embedding_provider_with_config(&config);
-            match prev {
-                Some(v) => std::env::set_var("BACKEND_URL", v),
-                None => std::env::remove_var("BACKEND_URL"),
-            }
-            built
-        };
-
-        let vectors = provider
-            .embed(&["binding probe"])
-            .await
-            .expect("config-scoped default embedder must resolve the app-session token and embed");
-        assert_eq!(
-            vectors.first().map(|v| v.len()).unwrap_or(0),
-            DEFAULT_CLOUD_EMBEDDING_DIMENSIONS
-        );
-        assert_eq!(
-            captured.auth.lock().unwrap().as_deref(),
-            Some("Bearer sess-default-5501"),
-            "the memory client's default embedder must authenticate with the config-scoped token"
-        );
-    }
-}
+#[path = "factory_tests.rs"]
+mod tests;

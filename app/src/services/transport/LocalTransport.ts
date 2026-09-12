@@ -37,7 +37,11 @@ export class LocalTransport implements CoreTransport {
     private readonly timeoutMs: number = 30_000
   ) {}
 
-  async call<T>(method: string, params: unknown, opts?: { signal?: AbortSignal }): Promise<T> {
+  async call<T>(
+    method: string,
+    params: unknown,
+    opts?: { signal?: AbortSignal; timeoutMs?: number }
+  ): Promise<T> {
     const id = _nextId++;
     const payload: JsonRpcRequestBody = { jsonrpc: '2.0', id, method, params: params ?? {} };
 
@@ -49,8 +53,9 @@ export class LocalTransport implements CoreTransport {
       headers.Authorization = `Bearer ${token}`;
     }
 
+    const timeoutMs = opts?.timeoutMs ?? this.timeoutMs;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     // Merge caller signal with timeout signal.
     opts?.signal?.addEventListener('abort', () => controller.abort());
@@ -65,7 +70,7 @@ export class LocalTransport implements CoreTransport {
       });
     } catch (err) {
       if (controller.signal.aborted) {
-        throw new Error(`[transport:local] ${method} timed out after ${this.timeoutMs}ms`);
+        throw new Error(`[transport:local] ${method} timed out after ${timeoutMs}ms`);
       }
       throw err;
     } finally {

@@ -1,9 +1,11 @@
 //! Host-owned callbacks used by the separately compiled TinyMemory module.
 //!
-//! This file is the bus-served twin of `memory/host_impls.rs`. That file
-//! installs the engine's seam traits as process globals, which only works while
-//! the engine is compiled into this binary; these interfaces serve the same
-//! capabilities to an engine that is *not*, over the module's connection.
+//! This file was the bus-served twin of `memory/host_impls.rs`, and is now the
+//! only one of the pair. That file installed the engine's seam traits as
+//! process globals, which only works while the engine is compiled into this
+//! binary — so it went when the engine left the test build too
+//! (openhuman#6161). These interfaces serve the same capabilities to an engine
+//! that is *not* compiled in, over the module's connection.
 //!
 //! # Which seams are here, and why only these
 //!
@@ -35,9 +37,9 @@
 use crate::core::bus::BUS;
 use crate::openhuman::config::Config;
 use std::sync::Arc;
-use tinyagents::harness::model::{ModelRequest, ModelResponse};
 use tinybus::ObjectPath;
-use tinymemory_api::host::composio::{ComposioConnection, ComposioExecuteResponse};
+use tinyconnectors_bus::{ComposioConnection, ComposioExecuteResponse};
+use tinyinference::model::{ModelRequest, ModelResponse};
 use tinymemory_api::host::{MemoryEvent, SpacyResponse};
 
 const EMBEDDING_NAME: &str = "ai.tinyhumans.tinymemory.EmbeddingHost";
@@ -75,7 +77,18 @@ impl EmbeddingCallbacks {
             )
             .map_err(method_error)?;
         let borrowed: Vec<&str> = texts.iter().map(String::as_str).collect();
-        embedder.embed(&borrowed).await.map_err(method_error)
+        // Timed because this is one of the two host round trips behind every
+        // per-turn memory lookup (the other is `extract_spacy` below); the
+        // `[auto_recall]` line reports the total, these report the split.
+        let started = std::time::Instant::now();
+        let result = embedder.embed(&borrowed).await.map_err(method_error);
+        log::debug!(
+            "[memory_host] embed provider={provider} texts={} elapsed_ms={} ok={}",
+            borrowed.len(),
+            started.elapsed().as_millis(),
+            result.is_ok()
+        );
+        result
     }
 }
 
@@ -89,14 +102,46 @@ impl ChatCallbacks {
         role: String,
         request: ModelRequest,
     ) -> tinybus::Result<ModelResponse> {
-        let (model, _) = crate::openhuman::inference::provider::create_chat_model_with_model_id(
-            &role,
-            &self.0,
-            self.0.default_temperature,
-        )
-        .map_err(method_error)?;
+        let model = resolve_chat_model(&role, &self.0).map_err(method_error)?;
         model.invoke(&(), request).await.map_err(method_error)
     }
+}
+
+/// Resolve the model a module-side chat call runs on, by role.
+///
+/// The `"summarization"` role is special-cased through the tree summarizer's
+/// provider ladder (`tree_runtime::ops::create_provider`) rather than the
+/// role factory, because every memory fold the module performs — an explicit
+/// `tree_summarizer_run`/`rebuild`, the scheduled `seal`/`cascade` passes, and
+/// the archivist's recap `summarise` — reaches the host through this one seam,
+/// and the ladder is where the host's routing *policy* lives: local Ollama
+/// when `local_ai.runtime_enabled`, the configured cloud provider only under
+/// `memory_tree.cloud_summarization_opt_in`, and a refusal otherwise.
+///
+/// Routing the role factory directly here was a consent hole, not just a
+/// preference miss: with local AI enabled and the cloud opt-in `false`, the
+/// host-side `create_provider` precondition in `tree_runtime::ops` succeeds
+/// (a local model is constructible), and the blind role factory then resolved
+/// `"summarization"` to the configured cloud provider anyway — memory content
+/// leaving the machine against an explicit opt-out. The ladder cannot make
+/// that move: local wins while it is enabled, and cloud requires the opt-in.
+///
+/// Every other role keeps the role factory unchanged.
+fn resolve_chat_model(
+    role: &str,
+    config: &Config,
+) -> anyhow::Result<std::sync::Arc<dyn tinyinference::model::ChatModel<()>>> {
+    if role == "summarization" {
+        let (model, _) = crate::openhuman::memory::tree::tree_runtime::ops::create_provider(config)
+            .map_err(anyhow::Error::msg)?;
+        return Ok(model);
+    }
+    let (model, _) = crate::openhuman::inference::provider::create_chat_model_with_model_id(
+        role,
+        config,
+        config.default_temperature,
+    )?;
+    Ok(model)
 }
 
 /// Composio, as the engine's sync pipelines need it.
@@ -126,10 +171,10 @@ impl ChatCallbacks {
 /// the sync layer treats that as *skip silently* — the exact
 /// looks-empty-rather-than-broken failure the seam exists to prevent.
 ///
-/// `memory/host_impls.rs` gets liveness a cheaper way: its async methods
-/// re-read from disk, and its two synchronous probes recover the caller's
-/// config, which the engine's own loops keep fresh. With no caller config to
-/// recover, a fresh read is what "current as of the call" costs here. It is
+/// `memory/host_impls.rs` got liveness a cheaper way while it existed: its
+/// async methods re-read from disk, and its two synchronous probes recovered
+/// the caller's config, which the engine's own loops kept fresh. With no caller
+/// config to recover, a fresh read is what "current as of the call" costs here. It is
 /// bounded — the probes sit on periodic sync paths, a handful of reads per
 /// tick, next to network calls that dominate them.
 ///
@@ -312,6 +357,25 @@ struct RuntimeCallbacks(Arc<Config>);
 
 #[tinybus::interface(name = "ai.tinyhumans.tinymemory.RuntimeHost")]
 impl RuntimeCallbacks {
+    /// Bridge a module-side memory event onto this host.
+    ///
+    /// Every arm is [`into_domain_event`]'s: it either maps the event onto a
+    /// [`DomainEvent`](crate::core::events::DomainEvent) for the bus or handles
+    /// it web-channel-side and answers `None`. `StoreCorruptQuarantined` is the
+    /// second kind — it publishes the durable user error and returns `None`,
+    /// the same shape the in-process sink's arm has in `memory::host`.
+    ///
+    /// **There is deliberately no in-process chunk-store reset here any more
+    /// (#5560).** It existed because this process embedded a second copy of the
+    /// engine whose cached SQLite handle still pointed at the inode the module
+    /// had just renamed, so an in-process read kept failing with `database disk
+    /// image is malformed` until restart (openhuman#5820). Every in-process
+    /// reader it protected is gone: `sources::status` asks
+    /// `MemoryChunks::source_ingest_status`, recall goes through
+    /// `memory::binding` to this same driver, and the only surviving openers of
+    /// the host's chunk store are `#[cfg(test)]`. Nothing else in the corruption
+    /// path needs an engine either — `user_error`'s detectors classify text, and
+    /// `tree::tree::rpc`'s `latest_quarantine` reads the directory.
     async fn publish_event(&self, event: MemoryEvent) -> tinybus::Result<()> {
         if let Some(event) = into_domain_event(event) {
             BUS.publish(event);
@@ -341,10 +405,57 @@ impl RuntimeCallbacks {
         Ok(())
     }
 
+    /// The host's background-AI policy, as wire strings.
+    ///
+    /// Answered from `cron::scheduler_gate` — the same process-global the
+    /// in-process `OpenHumanSchedulerGate` seam reads — so mode
+    /// (`auto`/`always_on`/`off`), battery, CPU pressure and signed-out state
+    /// all reach a loaded module. The module polls this and caches it; see
+    /// `BusSchedulerGate` in tinymemory-module. The tier crosses as a string
+    /// pair rather than the `Policy` enum so the wire stays additive: a tier
+    /// this host grows later degrades to `normal` on an older module instead
+    /// of failing decode.
+    async fn scheduler_policy(&self) -> tinybus::Result<(String, Option<String>)> {
+        use tinymemory_api::host::{PauseReason, Policy};
+        Ok(
+            match crate::openhuman::cron::scheduler_gate::gate::current_policy() {
+                Policy::Aggressive => ("aggressive".to_string(), None),
+                Policy::Normal => ("normal".to_string(), None),
+                Policy::Throttled => ("throttled".to_string(), None),
+                Policy::Paused { reason } => (
+                    "paused".to_string(),
+                    Some(
+                        match reason {
+                            PauseReason::UserDisabled => "user_disabled",
+                            PauseReason::OnBattery => "on_battery",
+                            PauseReason::CpuPressure => "cpu_pressure",
+                            PauseReason::SignedOut => "signed_out",
+                            PauseReason::Unknown => "unknown",
+                        }
+                        .to_string(),
+                    ),
+                ),
+            },
+        )
+    }
+
     async fn extract_spacy(&self, text: String) -> tinybus::Result<SpacyResponse> {
+        // The module asks for this on every query it retrieves for, so its
+        // latency lands directly on the chat turn. Timed for the same reason
+        // `embed` above is; the first call after boot also carries the Python
+        // server start and the model load, which is what the boot warm-up in
+        // `memory::auto_recall::warm` exists to pay early.
+        let started = std::time::Instant::now();
         let response = crate::openhuman::runtime::python_server::extract_spacy(&self.0, &text)
             .await
-            .map_err(method_error)?;
+            .map_err(method_error);
+        log::debug!(
+            "[memory_host] extract_spacy chars={} elapsed_ms={} ok={}",
+            text.chars().count(),
+            started.elapsed().as_millis(),
+            response.is_ok()
+        );
+        let response = response?;
         serde_json::from_value(serde_json::to_value(response).map_err(method_error)?)
             .map_err(method_error)
     }
@@ -552,6 +663,20 @@ fn into_domain_event(event: MemoryEvent) -> Option<crate::core::events::DomainEv
         }
         MemoryEvent::LocalModelUnavailable { origin } => {
             crate::openhuman::memory::tree::health::user_error::publish_local_model_unavailable_user_error(&origin);
+            return None;
+        }
+        // Web-channel-only (openhuman#5820): the module's engine already
+        // quarantined and rebuilt its store; the host's job is to make sure
+        // the user durably hears it — this is the arm the incident lacked,
+        // where a module-side quarantine was invisible to every host surface.
+        MemoryEvent::StoreCorruptQuarantined {
+            origin,
+            quarantined_path,
+        } => {
+            crate::openhuman::memory::tree::health::user_error::publish_store_corrupt_user_error(
+                &origin,
+                quarantined_path.as_deref(),
+            );
             return None;
         }
     })

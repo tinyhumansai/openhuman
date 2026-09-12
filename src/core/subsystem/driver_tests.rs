@@ -196,11 +196,13 @@ fn every_memory_contract_capability_string_maps_into_driver_capabilities() {
     // A literal, so adding a family forces a look at this test rather than
     // sliding past it. 13 → 17 when the port added People, Chunks, Retrieval
     // and Profile, then 18 with Episodic, then 20 when tinymemory v1.7.0 added
-    // SourceSync and CodingSessions. The assertion above is the load-bearing
-    // one: it says the mapping is lossless, which is what makes the kernel's
-    // opaque-string set able to carry the contract without knowing what a
-    // memory capability is.
-    assert_eq!(caps.len(), 20);
+    // SourceSync and CodingSessions, then 21 with v1.13.2 adding Scoring,
+    // then 26 with v1.13.7's typed-ingestion round (Document/Conversation/
+    // Learning/Event ingest and Answer). The assertion above is the
+    // load-bearing one: it says the mapping is lossless, which is what makes
+    // the kernel's opaque-string set able to carry the contract without
+    // knowing what a memory capability is.
+    assert_eq!(caps.len(), 26);
     assert!(
         caps.contains("tool_memory"),
         "the one non-identity snake_case family must survive"

@@ -65,6 +65,24 @@ export interface CoreAppSnapshot {
   localState: CoreLocalState;
   keyringStatus: KeyringStatus;
   runtime: CoreRuntimeSnapshot;
+  /**
+   * Whether `currentUser` is being served from the core's stored snapshot
+   * because the backend could not be refreshed (#5930). Plan tier, credits and
+   * feature flags read off a stale `currentUser` may be wrong.
+   *
+   * Optional on the type, always concrete at runtime: `normalizeSnapshot`
+   * defaults it and `emptySnapshot` carries it. Optional so a snapshot literal
+   * — of which there are several in tests — stays valid without restating a
+   * field it does not care about. Read it as `?? false`.
+   */
+  currentUserStale?: boolean;
+  /**
+   * Seconds since the backend last answered, or `null` when it has not answered
+   * at all this process — the age is then genuinely unknown, not zero. A
+   * surface deciding whether to warn owns its own threshold; the core does not
+   * pick one.
+   */
+  currentUserStaleSeconds?: number | null;
 }
 
 export interface CoreState {
@@ -91,6 +109,8 @@ const emptySnapshot: CoreAppSnapshot = {
     backendName: 'os',
   },
   runtime: { localAi: null, service: null },
+  currentUserStale: false,
+  currentUserStaleSeconds: null,
 };
 
 let currentState: CoreState = {

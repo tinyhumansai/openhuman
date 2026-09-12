@@ -1,6 +1,6 @@
 //! Command-center view types for the background agent surface (issue #3373).
 //!
-//! The durable run ledger (`tinyagents::session::run_ledger`) stores fine-grained
+//! The durable run ledger (`tinyagents_session::run_ledger`) stores fine-grained
 //! `AgentRunStatus` values for every background agent run. The background
 //! agent command center groups that work into five user-facing buckets so a
 //! reviewer can see, at a glance, what needs input, what is still working, and
@@ -57,7 +57,7 @@ impl AgentWorkBucket {
 /// Kept deliberately lean — transcripts and checkpoints stay in the ledger /
 /// thread stores and are fetched on demand when a user opens a row.
 ///
-/// [`AgentRun`]: tinyagents::session::run_ledger::AgentRun
+/// [`AgentRun`]: tinyagents_session::run_ledger::AgentRun
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentWorkRow {

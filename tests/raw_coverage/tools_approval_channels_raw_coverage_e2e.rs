@@ -285,7 +285,6 @@ fn coverage_agent_definition(
         omit_identity: true,
         omit_memory_context: true,
         omit_safety_preamble: true,
-        omit_skills_catalog: true,
         omit_profile: true,
         omit_memory_md: true,
         model: ModelSpec::Inherit,
@@ -366,6 +365,20 @@ fn ensure_rpc_auth() {
         let token_dir = std::env::temp_dir().join("openhuman-tools-channels-e2e-auth");
         init_rpc_token(&token_dir).expect("init rpc auth token");
     });
+}
+
+/// The bearer this process actually validates.
+///
+/// `core::auth::RPC_TOKEN` is a process-global `OnceLock` and `init_rpc_token`
+/// returns early once it is set — deliberately, so a second call cannot 401 live
+/// clients. Since `tests/raw_coverage/` is one aggregated binary, only the first
+/// suite to reach `ensure_rpc_auth` pins its own `TEST_RPC_TOKEN`; every other
+/// suite sending its literal gets a 401 and trips its own `assert_eq!` (#6112).
+/// Ask the auth module what it settled on instead of assuming we won the race.
+fn rpc_bearer() -> &'static str {
+    ensure_rpc_auth();
+    openhuman_core::core::auth::get_rpc_token()
+        .expect("ensure_rpc_auth initialises the token subsystem on the line above")
 }
 
 async fn serve_rpc() -> (
@@ -730,7 +743,7 @@ async fn rpc(rpc_base: &str, id: i64, method: &str, params: Value) -> Value {
     let url = format!("{}/rpc", rpc_base.trim_end_matches('/'));
     let response = client
         .post(&url)
-        .header(AUTHORIZATION, format!("Bearer {TEST_RPC_TOKEN}"))
+        .header(AUTHORIZATION, format!("Bearer {}", rpc_bearer()))
         .json(&json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -1558,7 +1571,11 @@ fn tools_and_tool_registry_public_surfaces_cover_schema_and_assembly_paths() {
     assert!(!default_tool.is_concurrency_safe(&json!({})));
     assert!(!default_tool.external_effect());
     assert!(!default_tool.external_effect_with_args(&json!({})));
-    assert!(default_tool.generated_runtime_context(&json!({})).is_none());
+    assert!(openhuman_core::openhuman::tools::traits::generated_runtime_context(
+        &default_tool,
+        &json!({})
+    )
+    .is_none());
     assert!(default_tool.max_result_size_chars().is_none());
 
     let computer = ComputerUseConfig {

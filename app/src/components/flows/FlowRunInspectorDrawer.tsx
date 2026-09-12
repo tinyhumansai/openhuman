@@ -31,7 +31,7 @@ import { type FlowRunItem, normalizeItems } from '../../lib/flows/runItems';
 import { summarizeStep } from '../../lib/flows/runStepSummary';
 import { useT } from '../../lib/i18n/I18nContext';
 import type { FlowRunStep } from '../../services/api/flowsApi';
-import Button from '../ui/Button';
+import { Alert, AlertDescription, Button, CenteredLoadingState } from '../ui';
 import { FlowRunPendingApprovalCard } from './FlowRunPendingApprovalCard';
 import {
   flowRunStatusAccentClass,
@@ -323,21 +323,17 @@ export function FlowRunInspectorDrawer({ runId, onClose, onFixWithAgent }: Props
 
         <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
           {loading && !run && (
-            <div
-              className="flex items-center gap-2 py-8 text-content-faint"
-              data-testid="flow-run-inspector-loading">
-              <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary-500 border-t-transparent" />
-              <span className="text-sm">{t('flowRuns.inspector.loading')}</span>
+            <div data-testid="flow-run-inspector-loading">
+              <CenteredLoadingState label={t('flowRuns.inspector.loading')} />
             </div>
           )}
 
           {error && (
-            <div
-              role="alert"
-              data-testid="flow-run-inspector-error"
-              className="rounded-xl border border-coral-200 bg-coral-50 px-3 py-2 text-xs text-coral-700 dark:border-coral-500/30 dark:bg-coral-500/10 dark:text-coral-300">
-              {t('flowRuns.inspector.loadError')}: {error}
-            </div>
+            <Alert variant="destructive" density="compact" data-testid="flow-run-inspector-error">
+              <AlertDescription>
+                {t('flowRuns.inspector.loadError')}: {error}
+              </AlertDescription>
+            </Alert>
           )}
 
           {run && (
@@ -360,12 +356,11 @@ export function FlowRunInspectorDrawer({ runId, onClose, onFixWithAgent }: Props
 
               {/* Error banner */}
               {run.error && (
-                <div
-                  role="alert"
-                  data-testid="flow-run-error-banner"
-                  className="rounded-xl border border-coral-200 bg-coral-50 px-3 py-2 text-xs text-coral-700 dark:border-coral-500/30 dark:bg-coral-500/10 dark:text-coral-300">
-                  {t('flowRuns.inspector.error')}: {run.error}
-                </div>
+                <Alert variant="destructive" density="compact" data-testid="flow-run-error-banner">
+                  <AlertDescription>
+                    {t('flowRuns.inspector.error')}: {run.error}
+                  </AlertDescription>
+                </Alert>
               )}
 
               {/* Repair entry point (Phase 5c): open the canvas copilot preloaded

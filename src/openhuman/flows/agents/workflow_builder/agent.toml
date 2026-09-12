@@ -25,7 +25,6 @@ omit_memory_context = true
 # path it stays hidden entirely (`restrict_builder_toolset`, #4593/#4881) since
 # there is no approval surface to park against there.
 omit_safety_preamble = true
-omit_skills_catalog = true
 
 [model]
 # Graph authoring is multi-step structured reasoning (ground slugs, wire

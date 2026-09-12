@@ -376,7 +376,9 @@ const WorkflowProposalCard: React.FC<Props> = ({ threadId, proposal, onSaved }) 
                 </p>
               )}
 
-              {errorMsg && <p className="mt-2 text-xs text-coral">⚠ {errorMsg}</p>}
+              {errorMsg && (
+                <p className="mt-2 text-xs text-coral-600 dark:text-coral-400">⚠ {errorMsg}</p>
+              )}
 
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <Button

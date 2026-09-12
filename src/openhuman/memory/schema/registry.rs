@@ -39,6 +39,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("graph_export"),
         schemas("obsidian_vault_status"),
         schemas("vault_health_check"),
+        schemas("backfill_connector_trees"),
         schemas("flush_now"),
         schemas("flush_source"),
         schemas("wipe_all"),
@@ -118,6 +119,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("vault_health_check"),
             handler: handle_vault_health_check,
+        },
+        RegisteredController {
+            schema: schemas("backfill_connector_trees"),
+            handler: handle_backfill_connector_trees,
         },
         RegisteredController {
             schema: schemas("flush_now"),

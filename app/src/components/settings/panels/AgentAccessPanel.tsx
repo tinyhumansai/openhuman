@@ -11,7 +11,7 @@ import {
   type TrustedAccess,
   type TrustedRoot,
 } from '../../../utils/tauriCommands';
-import { openhumanCronList, openhumanCronUpdate } from '../../../utils/tauriCommands/cron';
+import { Alert, AlertDescription } from '../../ui';
 import Button from '../../ui/Button';
 import {
   SettingsBadge,
@@ -59,16 +59,6 @@ const AgentAccessPanel = () => {
   const [newRootPath, setNewRootPath] = useState('');
   const [newRootAccess, setNewRootAccess] = useState<TrustedAccess>('read');
 
-  // Autonomous tiny.place agent ("autopilot") — a seeded, *disabled* cron job
-  // the user opts into here. It's not an autonomy field: we resolve its id by
-  // name from the cron list and flip its `enabled` flag via cron_update. The
-  // section only renders once the job is found (id known).
-  const [autopilotJobId, setAutopilotJobId] = useState<string | null>(null);
-  const [autopilotEnabled, setAutopilotEnabled] = useState(false);
-  // Monotonic guard so rapid toggles can't resolve out-of-order and leave the
-  // UI showing a stale enabled state (last write wins).
-  const autopilotSeqRef = useRef(0);
-
   // Action timeout (the tool/action wall-clock limit, issue #3100). Held as the
   // raw input string so the field can be edited freely; validated on save.
   const [timeoutInput, setTimeoutInput] = useState('');
@@ -110,20 +100,6 @@ const AgentAccessPanel = () => {
           setError(e instanceof Error ? e.message : t('settings.agentAccess.loadError'));
       }
       try {
-        // Resolve the seeded tinyplace_autopilot cron job by name so the toggle
-        // below can flip its enabled flag. Non-fatal: the section just stays
-        // hidden if the job isn't present or the list call fails.
-        const cronResp = await openhumanCronList();
-        if (cancelled) return;
-        const autopilot = cronResp.result.find(j => j.name === 'tinyplace_autopilot');
-        if (autopilot) {
-          setAutopilotJobId(autopilot.id);
-          setAutopilotEnabled(autopilot.enabled);
-        }
-      } catch {
-        // Non-fatal — bounty-worker toggle stays hidden.
-      }
-      try {
         const agentResp = await openhumanGetAgentSettings();
         if (cancelled) return;
         setTimeoutInput(String(agentResp.result.agent_timeout_secs));
@@ -151,7 +127,7 @@ const AgentAccessPanel = () => {
   // Pass explicit `next` values (setState is async).
   //
   // `onError` lets a caller revert its own optimistic `setState` if the RPC
-  // fails (mirrors `toggleAutopilot`'s revert-on-failure below) — otherwise a
+  // fails — otherwise a
   // failed save leaves the switch showing the new value locally while the
   // server-side field silently kept its old one.
   const persist = async (
@@ -227,29 +203,6 @@ const AgentAccessPanel = () => {
       { workspaceOnly, requireTaskPlanApproval, trustedRoots, autoApproveAll: next },
       () => setAutoApproveAll(prev)
     );
-  };
-
-  // The autopilot is a cron job, not an autonomy field — flip its `enabled`
-  // flag directly via cron_update. Optimistic, with revert on failure, and a
-  // sequence guard so only the most recent toggle writes UI state back.
-  const toggleAutopilot = async (next: boolean) => {
-    if (!autopilotJobId || !isTauri()) return;
-    const seq = ++autopilotSeqRef.current;
-    const prev = autopilotEnabled;
-    setAutopilotEnabled(next);
-    setError(null);
-    setSavedNote(null);
-    try {
-      await openhumanCronUpdate(autopilotJobId, { enabled: next });
-      if (autopilotSeqRef.current === seq) {
-        setSavedNote(t('settings.agentAccess.saved'));
-      }
-    } catch (e) {
-      if (autopilotSeqRef.current === seq) {
-        setAutopilotEnabled(prev);
-        setError(e instanceof Error ? e.message : t('settings.agentAccess.saveError'));
-      }
-    }
   };
 
   const addRoot = () => {
@@ -354,11 +307,16 @@ const AgentAccessPanel = () => {
               }
             />
             <div className="px-4 pb-3 -mt-1">
-              <p
-                className="rounded border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-300 leading-relaxed"
+              {/* Persistent, visible regardless of toggle state — not a
+                  response to a user action, so it must not interrupt with an
+                  assertive announcement on every visit. */}
+              <Alert
+                variant="warning"
+                density="compact"
+                role={undefined}
                 data-testid="auto-approve-all-warning">
-                {t('settings.agentAccess.autoApproveAll.desc')}
-              </p>
+                <AlertDescription>{t('settings.agentAccess.autoApproveAll.desc')}</AlertDescription>
+              </Alert>
             </div>
           </SettingsSection>
 
@@ -392,27 +350,6 @@ const AgentAccessPanel = () => {
             />
           </SettingsSection>
 
-          {/* Autonomous tiny.place agent (opt-in). Only shown once the seeded
-                cron job is found, so users without it never see a dead toggle. */}
-          {autopilotJobId && (
-            <SettingsSection
-              title={t('settings.agentAccess.tinyplaceAutopilot.title')}
-              description={t('settings.agentAccess.tinyplaceAutopilot.desc')}>
-              <SettingsRow
-                htmlFor="switch-tinyplace-autopilot"
-                label={t('settings.agentAccess.tinyplaceAutopilot.label')}
-                control={
-                  <SettingsSwitch
-                    id="switch-tinyplace-autopilot"
-                    checked={autopilotEnabled}
-                    onCheckedChange={next => void toggleAutopilot(next)}
-                    aria-label={t('settings.agentAccess.tinyplaceAutopilot.label')}
-                  />
-                }
-              />
-            </SettingsSection>
-          )}
-
           {/* Action timeout */}
           <SettingsSection
             title={t('settings.agentAccess.timeout.label')}
@@ -434,9 +371,14 @@ const AgentAccessPanel = () => {
                     aria-label={t('settings.agentAccess.timeout.label')}
                   />
                   {timeoutEnvOverride && (
-                    <p className="rounded border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-300">
-                      {t('settings.agentAccess.timeout.envOverride')}
-                    </p>
+                    // Reflects a resolved config value, not a user action —
+                    // opt out of the assertive default for the same reason
+                    // as the auto-approve-all warning above.
+                    <Alert variant="warning" density="compact" role={undefined}>
+                      <AlertDescription>
+                        {t('settings.agentAccess.timeout.envOverride')}
+                      </AlertDescription>
+                    </Alert>
                   )}
                   <SettingsStatusLine
                     saving={false}

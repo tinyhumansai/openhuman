@@ -48,7 +48,7 @@ const ConfigHelpModal = ({
       titleId={titleId}
       title={t('mcp.connectAuth.howToGetToken')}
       maxWidthClassName="max-w-2xl"
-      contentClassName="flex h-[78vh] max-h-[88vh] min-h-0 flex-col p-4">
+      contentClassName="flex h-[78vh] max-h-[88vh] min-h-0 flex-col px-5 py-4">
       <ConfigAssistantPanel
         qualifiedName={qualifiedName}
         autoPrompt={autoPrompt}

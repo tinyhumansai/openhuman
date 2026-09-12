@@ -2,8 +2,10 @@ use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 
 use crate::openhuman::config::Config;
+use crate::openhuman::memory::api::provider::retrieval::{
+    RetrievalNodeKind, RetrievalResponse, SourceRetrievalQuery,
+};
 use crate::openhuman::memory::api::provider::{ChunkListRow, ChunkQuery};
-use crate::openhuman::memory::tree::retrieval::types::NodeKind;
 use crate::rpc::RpcOutcome;
 use tinymemory_api::chunks::SourceKind;
 
@@ -398,33 +400,54 @@ pub async fn recall_rpc(
         limit
     );
 
-    // Explicit scope: `query_source` (unscoped) reads the *engine's* own
-    // task-local, which nothing on the host side ever sets — the host's
-    // per-turn allowlist lives in `memory::source_scope` instead (see its
-    // module docs). Calling the unscoped form here would always see `None`
-    // and recall would run unrestricted regardless of the active profile's
-    // `memory_sources` allowlist. Mirrors `query_source_rpc` in
-    // `tree/retrieval/rpc.rs`.
-    let resp = crate::openhuman::memory::tree::retrieval::source::query_source_scoped(
-        config,
-        crate::openhuman::memory::tree::retrieval::source::SourceQuery {
-            source_id: None,
-            source_kind: None,
-            time_window_days: None,
-            query: Some(query.as_str()),
-            limit,
-        },
-        crate::openhuman::memory::source_scope::current_source_scope(),
-    )
-    .await
-    .map_err(|e| format!("recall query_source: {e:#}"))?;
+    // Through the bound driver's `MemoryRetrieval` rather than the engine
+    // (#5560), and with an explicit scope.
+    //
+    // `binding.provider()` is the UNGUARDED driver: nothing between here and
+    // the store re-applies the active profile's `memory_sources` allowlist, so
+    // the scope this call passes is the gate. The engine's `*_scoped` entry
+    // points existed for the same reason — their ambient twins read the
+    // ENGINE's task-local, which a separately compiled module cannot see, and
+    // an absent scope means unrestricted, i.e. the gate failing open.
+    //
+    // `as_bus_scope()` renders this host's own task-local in the contract's
+    // vocabulary. `None` from it means genuinely unrestricted and must stay
+    // `None` — an *empty* `SourceScope` denies every source-attributed row, so
+    // mapping "no restriction" onto one would invert the policy. Mirrors
+    // `query_source_rpc` in `tree/retrieval/rpc.rs`.
+    let scope = crate::openhuman::memory::source_scope::as_bus_scope();
+    let binding = crate::openhuman::memory::binding::for_config(config)?;
+    let resp = match binding.provider().as_retrieval() {
+        Some(retrieval) => retrieval
+            .retrieve_source(
+                &SourceRetrievalQuery {
+                    source_id: None,
+                    source_kind: None,
+                    time_window_days: None,
+                    query: Some(query.clone()),
+                    limit,
+                },
+                scope.as_ref(),
+            )
+            .await
+            .map_err(|e| format!("recall query_source: {e}"))?,
+        // Read-only, so an empty page is the honest answer: a driver with no
+        // retrieval family keeps no summary tree to rank.
+        None => {
+            log::debug!(
+                "[memory_tree::read::recall] driver '{}' does not serve Retrieval; reporting empty",
+                binding.driver_id()
+            );
+            RetrievalResponse::default()
+        }
+    };
 
     let mut chunk_rows: Vec<ChunkRow> = Vec::new();
     let mut scores: Vec<f32> = Vec::new();
     let leaves: Vec<(String, f32)> = resp
         .hits
         .into_iter()
-        .filter(|h| matches!(h.node_kind, NodeKind::Summary) && h.level == 1)
+        .filter(|h| matches!(h.node_kind, RetrievalNodeKind::Summary) && h.level == 1)
         .flat_map(|h| {
             h.child_ids
                 .into_iter()

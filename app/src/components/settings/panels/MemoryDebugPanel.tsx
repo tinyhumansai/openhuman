@@ -12,6 +12,7 @@ import {
   memoryRecallNamespace,
 } from '../../../utils/tauriCommands';
 import { MemoryTextWithEntities } from '../../intelligence/MemoryTextWithEntities';
+import { Spinner } from '../../ui';
 import Button from '../../ui/Button';
 import {
   SettingsEmptyState,
@@ -213,8 +214,9 @@ const MemoryDebugPanel = () => {
                 variant="secondary"
                 size="xs"
                 onClick={() => void loadDocuments()}
-                disabled={documentsLoading}>
-                {documentsLoading ? '...' : t('memory.refresh')}
+                disabled={documentsLoading}
+                leadingIcon={documentsLoading ? <Spinner className="h-3 w-3" /> : undefined}>
+                {t('memory.refresh')}
               </Button>
             </div>
             <SettingsStatusLine saving={false} error={documentsError} savingLabel="" />
@@ -242,8 +244,13 @@ const MemoryDebugPanel = () => {
                       variant="tertiary"
                       size="xs"
                       disabled={Boolean(deleteLoadingId)}
-                      onClick={() => void handleDelete(doc)}>
-                      {deleteLoadingId === doc.documentId ? '...' : t('memory.delete')}
+                      onClick={() => void handleDelete(doc)}
+                      leadingIcon={
+                        deleteLoadingId === doc.documentId ? (
+                          <Spinner className="h-3 w-3" />
+                        ) : undefined
+                      }>
+                      {t('memory.delete')}
                     </Button>
                   </div>
                 ))}
@@ -275,8 +282,9 @@ const MemoryDebugPanel = () => {
                 variant="secondary"
                 size="xs"
                 onClick={() => void loadNamespaces()}
-                disabled={namespacesLoading}>
-                {namespacesLoading ? '...' : t('memory.refresh')}
+                disabled={namespacesLoading}
+                leadingIcon={namespacesLoading ? <Spinner className="h-3 w-3" /> : undefined}>
+                {t('memory.refresh')}
               </Button>
             </div>
             <SettingsStatusLine saving={false} error={namespacesError} savingLabel="" />
@@ -329,16 +337,18 @@ const MemoryDebugPanel = () => {
                 variant="secondary"
                 size="xs"
                 onClick={() => void handleQuery()}
-                disabled={queryLoading || !namespaceInput.trim() || !queryInput.trim()}>
-                {queryLoading ? '...' : t('memory.query')}
+                disabled={queryLoading || !namespaceInput.trim() || !queryInput.trim()}
+                leadingIcon={queryLoading ? <Spinner className="h-3 w-3" /> : undefined}>
+                {t('memory.query')}
               </Button>
               <Button
                 type="button"
                 variant="secondary"
                 size="xs"
                 onClick={() => void handleRecall()}
-                disabled={recallLoading || !namespaceInput.trim()}>
-                {recallLoading ? '...' : t('memory.recall')}
+                disabled={recallLoading || !namespaceInput.trim()}
+                leadingIcon={recallLoading ? <Spinner className="h-3 w-3" /> : undefined}>
+                {t('memory.recall')}
               </Button>
             </div>
             <SettingsStatusLine
@@ -419,8 +429,9 @@ const MemoryDebugPanel = () => {
                 tone="danger"
                 size="xs"
                 onClick={() => void handleClearNamespace()}
-                disabled={clearLoading || !clearNamespaceInput.trim()}>
-                {clearLoading ? '...' : t('memory.clear')}
+                disabled={clearLoading || !clearNamespaceInput.trim()}
+                leadingIcon={clearLoading ? <Spinner className="h-3 w-3" /> : undefined}>
+                {t('memory.clear')}
               </Button>
             </div>
             <SettingsStatusLine

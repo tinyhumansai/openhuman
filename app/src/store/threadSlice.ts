@@ -71,21 +71,35 @@ const initialState: ThreadState = {
   createThreadRequestId: null,
 };
 
+/**
+ * Append a persisted message to the thread cache, or replace the entry that
+ * already carries its id.
+ *
+ * Ids are no longer guaranteed fresh on append: a core-initiated turn's reply
+ * is persisted by the core under `agent:<run_id>` and then persisted again by
+ * our `chat_done` handler under the same id (the store collapses the two —
+ * #5933). If a `loadThreadMessages` fetch lands between those two writes, the
+ * cache already holds that id when the append resolves, and a second entry
+ * would hand React and assistant-ui a duplicate key (assistant-ui throws on
+ * one). `replaceExisting` keeps its narrower contract for callers that only
+ * ever update a message already in the cache (reactions).
+ */
 function appendMessageToCache(
   state: ThreadState,
   threadId: string,
   message: ThreadMessage,
   replaceExisting = false
 ) {
-  const existing = state.messagesByThreadId[threadId] ?? [];
-  const next = replaceExisting
-    ? existing.map(e => (e.id === message.id ? message : e))
-    : [...existing, message];
-  state.messagesByThreadId[threadId] = next;
+  const upsert = (list: ThreadMessage[]) => {
+    const present = list.some(e => e.id === message.id);
+    if (replaceExisting || present) {
+      return list.map(e => (e.id === message.id ? message : e));
+    }
+    return [...list, message];
+  };
+  state.messagesByThreadId[threadId] = upsert(state.messagesByThreadId[threadId] ?? []);
   if (threadId === state.selectedThreadId) {
-    state.messages = replaceExisting
-      ? state.messages.map(e => (e.id === message.id ? message : e))
-      : [...state.messages, message];
+    state.messages = upsert(state.messages);
   }
 }
 

@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest';
 
 import { READBACK_PREFIX } from './useRealtimeVoiceSession';
 
-const HARNESS_RELATIVE = 'src/openhuman/voice/realtime_harness.rs';
+const HARNESS_RELATIVE = 'src/openhuman/voice/realtime_harness_part_01.rs';
 
 /**
  * Walk up from the working directory to the repo root. `import.meta.url` is not a

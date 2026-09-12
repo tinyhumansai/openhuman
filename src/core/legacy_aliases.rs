@@ -377,14 +377,12 @@ mod tests {
 
     #[cfg(not(feature = "channels"))]
     fn channels_method_compiled_out(method: &str) -> bool {
-        // `channels` feature OFF ⇒ the channels + webview_apis +
-        // webview_notifications + whatsapp_data controllers are unregistered
-        // (#4801). NOTE: the in-app web chat (`openhuman.channel_*`) is NOT
-        // gated (core product surface, #5002) — do not add that prefix here.
+        // `channels` feature OFF ⇒ the channels + webview_notifications
+        // controllers are unregistered (#4801). NOTE: the in-app web chat
+        // (`openhuman.channel_*`) is NOT gated (core product surface, #5002) —
+        // do not add that prefix here.
         method.starts_with("openhuman.channels_")
-            || method.starts_with("openhuman.webview_apis_")
             || method.starts_with("openhuman.webview_notifications_")
-            || method.starts_with("openhuman.whatsapp_data_")
     }
 
     #[test]

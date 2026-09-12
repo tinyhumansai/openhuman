@@ -19,7 +19,9 @@
 //! prior sessions. Registered after `LearnedContextSection` in the section chain.
 
 use crate::openhuman::agent::context::prompt::{PromptContext, PromptSection};
+use crate::openhuman::tools::traits::Tool;
 use anyhow::Result;
+use std::collections::HashSet;
 
 /// Injects recent observations and patterns from the learning subsystem.
 pub struct LearnedContextSection;
@@ -101,23 +103,31 @@ impl PromptSection for UserProfileSection {
 
 /// Static bias instruction that tells the agent to call `memory_recall` before
 /// answering questions involving named people, projects, prior decisions, or
-/// anything the user mentioned in past sessions.
+/// anything the user mentioned in past sessions — and never to claim something
+/// is not stored without having looked (#6040).
 ///
 /// The text is frozen at compile time — no I/O at build time.
 /// Register this section after [`LearnedContextSection`] in the prompt-section
-/// composition order (see `SystemPromptBuilder::with_defaults`).
+/// composition order (see `SystemPromptBuilder::with_defaults`). It is added
+/// whenever a retrieval tool is registered and visible, independently of
+/// `learning.enabled`: the instruction is about the memory tools, which exist
+/// whether or not the learning subsystem runs.
 pub struct MemoryAccessSection;
 
-/// The static prose injected into every system prompt. Kept at ≤ 80 tokens.
+/// The static prose injected into every system prompt. Kept at ≤ 100 words
+/// (the composition test pins that ceiling).
 pub const MEMORY_ACCESS_INSTRUCTION: &str = "\
 ## Memory access\n\
 \n\
 Before answering questions involving named people, projects, threads, prior \
 decisions, recurring topics, or anything the user has mentioned in past sessions, \
 call `memory_recall` (or `memory_search` for keyword lookups) to retrieve \
-relevant context. Surface what matters in your reply; don't stitch together \
-continuity from prompt history alone. Skip retrieval for purely procedural \
-requests where prior context isn't relevant.";
+relevant context. Questions about the user themselves — favourites, idols, \
+people, plans, habits — always warrant a retrieval first. Never say something is \
+not stored or not remembered unless a retrieval you just ran returned nothing. \
+Surface what matters in your reply; don't stitch together continuity from prompt \
+history alone. Skip retrieval for purely procedural requests where prior context \
+isn't relevant.";
 
 impl PromptSection for MemoryAccessSection {
     fn name(&self) -> &str {
@@ -127,6 +137,168 @@ impl PromptSection for MemoryAccessSection {
     fn build(&self, _ctx: &PromptContext<'_>) -> Result<String> {
         Ok(MEMORY_ACCESS_INSTRUCTION.to_string())
     }
+}
+
+// ── MemoryWriteSection ────────────────────────────────────────────────────────
+
+/// Instruction that turns "remember this" into a write before the reply.
+///
+/// The read-side rule above tells the model when to look. Nothing told it that
+/// an explicit request to remember must become a tool call, or that it may not
+/// say "saved" without one — so, left to itself, it narrated a save it never
+/// made and the next chat had nothing to find (#6048).
+///
+/// It names only the routes this session actually holds. Naming both
+/// unconditionally would point a profile that carries just one of them at a
+/// tool it cannot see — the failure [`any_tool_offered`] exists to prevent
+/// (review finding).
+pub struct MemoryWriteSection {
+    preferences: bool,
+    facts: bool,
+    delegate: bool,
+}
+
+impl MemoryWriteSection {
+    /// `preferences` = `save_preference` is offered here, `facts` =
+    /// `memory_store` is, `delegate` = [`MEMORY_WRITE_DELEGATE_TOOL`] is.
+    #[must_use]
+    pub fn new(preferences: bool, facts: bool, delegate: bool) -> Self {
+        Self {
+            preferences,
+            facts,
+            delegate,
+        }
+    }
+}
+
+/// The instruction for a session offering `save_preference` (`preferences`)
+/// and/or `memory_store` (`facts`).
+///
+/// Kept at ≤ 80 words in every variant (the composition test pins the ceiling).
+/// Empty when neither tool is offered — which is also when nothing registers
+/// the section, so the empty string is a guard, not a path in normal use.
+#[must_use]
+pub fn memory_write_instruction(preferences: bool, facts: bool, delegate: bool) -> String {
+    let route = match (preferences, facts) {
+        (true, true) => "— `save_preference` for preferences, `memory_store` for everything else",
+        (true, false) => "with `save_preference`",
+        (false, true) => "with `memory_store`",
+        // Only when neither direct tool is held, so an agent that has one
+        // renders exactly the text it rendered before this arm existed.
+        //
+        // `blocking: true` is not a stylistic detail, it is what makes the
+        // sentence above true (#6200 review). `ArchetypeDelegationTool`
+        // defaults an omitted `blocking` to `false` and dispatches
+        // `PreferAsync`, which hands back an immediate reference while the
+        // worker runs later — so a model told merely to "write with
+        // `manage_profile_memory`" would confirm a save that had not happened,
+        // which is the #6048 bug arriving by a new route. The argument is
+        // advertised on the tool's own schema, so this is a demand the model
+        // can actually satisfy.
+        (false, false) if delegate => {
+            "with `manage_profile_memory` (pass `blocking: true` so the write \
+             gates your reply)"
+        }
+        (false, false) => return String::new(),
+    };
+    format!(
+        "## Remembering\n\n\
+         When the user asks you to remember, note, or keep something — a date, \
+         plan, person, decision, or preference — write it before you confirm \
+         {route}. Never say saved, noted, or remembered unless that write \
+         succeeded in this turn; if it failed or was refused, say so instead."
+    )
+}
+
+impl PromptSection for MemoryWriteSection {
+    fn name(&self) -> &str {
+        "memory_write"
+    }
+
+    fn build(&self, _ctx: &PromptContext<'_>) -> Result<String> {
+        Ok(memory_write_instruction(
+            self.preferences,
+            self.facts,
+            self.delegate,
+        ))
+    }
+}
+
+/// The retrieval tools [`MemoryAccessSection`] is keyed on.
+///
+/// `retrieve_memory` is the **delegate** to the memory sub-agent, synthesised
+/// from `delegate_name` in `memory/agent/agent/agent.toml`, and it belongs here
+/// for the same reason the two direct tools do: the section is a rule about
+/// what the model must do before claiming something is not stored, and an agent
+/// holding the delegate can retrieve. Keying only on the direct names meant an
+/// orchestrator whose memory arrives by delegation — which is how the
+/// orchestrator is configured — got the tool and no rule about using it. That
+/// is the shape of the bug #6040 and #6048 were both filed for.
+///
+/// [`any_tool_offered`] already receives the delegation tools separately, so
+/// this needed no new plumbing; the list was simply the wrong list.
+pub const MEMORY_READ_TOOLS: [&str; 3] = ["memory_recall", "memory_search", "retrieve_memory"];
+
+/// The tool a preference is written through.
+pub const SAVE_PREFERENCE_TOOL: &str = "save_preference";
+
+/// The tool every other remembered fact is written through.
+pub const MEMORY_STORE_TOOL: &str = "memory_store";
+
+/// The delegate an agent writes through when it holds neither direct write
+/// tool.
+///
+/// Synthesised from `profile_memory_agent`'s `delegate_name`, and the write-side
+/// counterpart of `retrieve_memory` in [`MEMORY_READ_TOOLS`]. The orchestrator
+/// is configured this way: its visible set carries this delegate and neither
+/// [`MEMORY_STORE_TOOL`] nor [`SAVE_PREFERENCE_TOOL`], so keying the section on
+/// the direct pair alone dropped the rule for the agent that needed it most —
+/// the #6048 case, "got it, saved" with no tool call behind it.
+///
+/// The section's promise survives the indirection **only under a blocking
+/// delegation**. `profile_memory_agent` holds both direct tools, so a delegated
+/// write reaches the same store — but `ArchetypeDelegationTool` defaults to an
+/// async dispatch that returns before the worker runs, so the route text demands
+/// `blocking: true`. Without that the parent could confirm a save that had not
+/// happened yet, which is exactly the bug this section exists to prevent.
+pub const MEMORY_WRITE_DELEGATE_TOOL: &str = "manage_profile_memory";
+
+/// The writing routes [`MemoryWriteSection`] is keyed on, delegate included.
+///
+/// Mirrors [`MEMORY_READ_TOOLS`], which lists `retrieve_memory` beside its two
+/// direct tools for the same reason. The live gate in `add_memory_prompt_sections`
+/// asks about each of these separately rather than reading this array — the
+/// section names the route it found, so it cannot treat them interchangeably —
+/// but a reader reaching for "what does the write section care about" should get
+/// the whole answer here (#6200 review).
+pub const MEMORY_WRITE_TOOLS: [&str; 3] = [
+    MEMORY_STORE_TOOL,
+    SAVE_PREFERENCE_TOOL,
+    MEMORY_WRITE_DELEGATE_TOOL,
+];
+
+/// Whether any of `names` is registered on this session **and** survives tool
+/// filtering.
+///
+/// Both are required: a tool can be registered but filtered out by the agent's
+/// scope, or allowed by the filter but never registered on this agent. An empty
+/// `visible` set means "no filter" (the wildcard / orchestrator path), so any
+/// registered tool is reachable. A section that tells the model to call a tool
+/// it cannot see would only teach it to apologise.
+pub fn any_tool_offered(
+    names: &[&str],
+    tools: &[Box<dyn Tool>],
+    delegation_tools: &[Box<dyn Tool>],
+    visible: &HashSet<String>,
+) -> bool {
+    names.iter().any(|name| {
+        let registered = tools
+            .iter()
+            .chain(delegation_tools)
+            .any(|tool| tool.name() == *name);
+        let allowed_by_filter = visible.is_empty() || visible.contains(*name);
+        registered && allowed_by_filter
+    })
 }
 
 // ── Cache-backed loader ───────────────────────────────────────────────────────
@@ -219,296 +391,5 @@ pub async fn load_learned_from_cache(
 mod prompt_sections_tests;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::openhuman::agent::context::prompt::LearnedContextData;
-    use crate::openhuman::memory::{Memory, MemoryCategory, MemoryEntry};
-    use async_trait::async_trait;
-    use std::collections::HashSet;
-    use std::path::Path;
-    use std::sync::Arc;
-
-    struct NoopMemory;
-
-    #[async_trait]
-    impl Memory for NoopMemory {
-        fn name(&self) -> &str {
-            "noop"
-        }
-
-        async fn store(
-            &self,
-            _namespace: &str,
-            _key: &str,
-            _content: &str,
-            _category: MemoryCategory,
-            _session_id: Option<&str>,
-        ) -> anyhow::Result<()> {
-            Ok(())
-        }
-
-        async fn recall(
-            &self,
-            _query: &str,
-            _limit: usize,
-            _opts: crate::openhuman::memory::RecallOpts<'_>,
-        ) -> anyhow::Result<Vec<MemoryEntry>> {
-            Ok(Vec::new())
-        }
-
-        async fn get(&self, _namespace: &str, _key: &str) -> anyhow::Result<Option<MemoryEntry>> {
-            Ok(None)
-        }
-
-        async fn list(
-            &self,
-            _namespace: Option<&str>,
-            _category: Option<&MemoryCategory>,
-            _session_id: Option<&str>,
-        ) -> anyhow::Result<Vec<MemoryEntry>> {
-            Ok(Vec::new())
-        }
-
-        async fn forget(&self, _namespace: &str, _key: &str) -> anyhow::Result<bool> {
-            Ok(false)
-        }
-
-        async fn namespace_summaries(
-            &self,
-        ) -> anyhow::Result<Vec<crate::openhuman::memory::NamespaceSummary>> {
-            Ok(Vec::new())
-        }
-
-        async fn count(&self) -> anyhow::Result<usize> {
-            Ok(0)
-        }
-
-        async fn health_check(&self) -> bool {
-            true
-        }
-    }
-
-    fn prompt_context(learned: LearnedContextData) -> PromptContext<'static> {
-        let visible_tool_names = Box::leak(Box::new(HashSet::new()));
-        PromptContext {
-            workspace_dir: Path::new("/tmp"),
-            model_name: "test-model",
-            agent_id: "",
-            tools: &[],
-            workflows: &[],
-            dispatcher_instructions: "",
-            learned,
-            visible_tool_names,
-            tool_call_format: crate::openhuman::agent::context::prompt::ToolCallFormat::PFormat,
-            connected_integrations: &[],
-            connected_identities_md: String::new(),
-            include_profile: false,
-            include_memory_md: false,
-            user_identity: None,
-            personality_soul_md: None,
-            personality_memory_md: None,
-            personality_roster: vec![],
-            agents_md_global: None,
-            agents_md_local: None,
-            curated_snapshot: None,
-        }
-    }
-
-    #[test]
-    fn learned_context_section_renders_observations_and_patterns() {
-        let section = LearnedContextSection::new(Arc::new(NoopMemory));
-        let rendered = section
-            .build(&prompt_context(LearnedContextData {
-                observations: vec!["Tool use succeeded".into()],
-                patterns: vec!["User prefers terse replies".into()],
-                user_profile: Vec::new(),
-                reflections: Vec::new(),
-                tree_root_summaries: Vec::new(),
-            }))
-            .unwrap();
-
-        assert_eq!(section.name(), "learned_context");
-        assert!(rendered.contains("## Learned Context"));
-        assert!(rendered.contains("### Recent Observations"));
-        assert!(rendered.contains("- Tool use succeeded"));
-        assert!(rendered.contains("### Recognized Patterns"));
-        assert!(rendered.contains("- User prefers terse replies"));
-    }
-
-    #[test]
-    fn learned_context_section_returns_empty_without_entries() {
-        let section = LearnedContextSection::new(Arc::new(NoopMemory));
-        assert!(section
-            .build(&prompt_context(LearnedContextData::default()))
-            .unwrap()
-            .is_empty());
-    }
-
-    #[test]
-    fn user_profile_section_renders_bullets() {
-        let section = UserProfileSection::new(Arc::new(NoopMemory));
-        let rendered = section
-            .build(&prompt_context(LearnedContextData {
-                observations: Vec::new(),
-                patterns: Vec::new(),
-                user_profile: vec![
-                    "Timezone: America/Los_Angeles".into(),
-                    "Prefers Rust".into(),
-                ],
-                reflections: Vec::new(),
-                tree_root_summaries: Vec::new(),
-            }))
-            .unwrap();
-
-        assert_eq!(section.name(), "user_profile");
-        assert!(rendered.starts_with("## Your standing preferences\n\n"));
-        assert!(rendered.contains("- Timezone: America/Los_Angeles"));
-        assert!(rendered.contains("- Prefers Rust"));
-    }
-
-    #[test]
-    fn user_profile_section_returns_empty_without_profile_entries() {
-        let section = UserProfileSection::new(Arc::new(NoopMemory));
-        assert!(section
-            .build(&prompt_context(LearnedContextData::default()))
-            .unwrap()
-            .is_empty());
-    }
-
-    // ── load_learned_from_cache ───────────────────────────────────────────────
-
-    #[tokio::test]
-    async fn load_learned_from_cache_formats_active_facets() {
-        use tinymemory_api::provider::{FacetState, FacetType, ProfileFacet, UserState};
-        let cache = crate::openhuman::agent::learning::test_profile::in_memory_cache();
-
-        let make_facet = |id: &str, key: &str, value: &str, stab: f64| ProfileFacet {
-            facet_id: id.into(),
-            facet_type: FacetType::Preference,
-            key: key.into(),
-            value: value.into(),
-            confidence: 0.8,
-            evidence_count: 2,
-            source_segment_ids: None,
-            first_seen_at: 1000.0,
-            last_seen_at: 1200.0,
-            state: FacetState::Active,
-            stability: stab,
-            user_state: UserState::Auto,
-            evidence_refs: vec![],
-            class: None,
-            cue_families: None,
-        };
-
-        cache
-            .upsert(&make_facet("f1", "style/verbosity", "terse", 2.0))
-            .await
-            .unwrap();
-        cache
-            .upsert(&make_facet("f2", "identity/name", "Alice", 1.8))
-            .await
-            .unwrap();
-        cache
-            .upsert(&make_facet(
-                "f3",
-                "goal/learn_rust",
-                "Learn Rust this year",
-                1.6,
-            ))
-            .await
-            .unwrap();
-
-        // Provisional — should NOT appear.
-        let mut prov = make_facet("f4", "style/tone", "formal", 0.8);
-        prov.state = FacetState::Provisional;
-        cache.upsert(&prov).await.unwrap();
-
-        let result = load_learned_from_cache(&cache).await;
-
-        assert!(
-            !result.is_empty(),
-            "should produce entries for Active facets"
-        );
-        // Phase 4 format: "**style/verbosity**: terse"
-        assert!(
-            result.iter().any(|s| s.contains("style/verbosity")),
-            "style/verbosity should appear"
-        );
-        assert!(
-            result
-                .iter()
-                .any(|s| s.contains("**style/verbosity**: terse")),
-            "style/verbosity should use Phase 4 bold format"
-        );
-        // Goal class → value only (no key prefix)
-        assert!(
-            result.iter().any(|s| s == "Learn Rust this year"),
-            "goal class should render value only"
-        );
-        // Provisional should not appear
-        assert!(
-            !result.iter().any(|s| s.contains("style/tone")),
-            "provisional facet must not appear in cache prompt"
-        );
-    }
-
-    #[tokio::test]
-    async fn load_learned_from_cache_empty_when_no_active_facets() {
-        let cache = crate::openhuman::agent::learning::test_profile::in_memory_cache();
-
-        let result = load_learned_from_cache(&cache).await;
-        assert!(result.is_empty());
-    }
-
-    // ── MemoryAccessSection ───────────────────────────────────────────────────
-
-    #[test]
-    fn memory_access_section_renders_static_text() {
-        let section = MemoryAccessSection;
-        assert_eq!(section.name(), "memory_access");
-        let rendered = section
-            .build(&prompt_context(LearnedContextData::default()))
-            .unwrap();
-        assert!(
-            rendered.contains("## Memory access"),
-            "heading missing:\n{rendered}"
-        );
-        assert!(
-            rendered.contains("memory_recall"),
-            "memory_recall tool not mentioned:\n{rendered}"
-        );
-        assert!(
-            rendered.contains("memory_search"),
-            "memory_search tool not mentioned:\n{rendered}"
-        );
-        // Verify the rendered text matches the constant.
-        assert_eq!(rendered.trim(), MEMORY_ACCESS_INSTRUCTION.trim());
-    }
-
-    #[test]
-    fn memory_access_section_present_in_system_prompt_compose() {
-        // Verify the section renders correctly when added to a prompt composition.
-        let section = MemoryAccessSection;
-        let rendered = section
-            .build(&prompt_context(LearnedContextData::default()))
-            .unwrap();
-        // Spot-check the content constraint: ≤ 80 tokens (rough word count).
-        let word_count = rendered.split_whitespace().count();
-        assert!(
-            word_count <= 100,
-            "MemoryAccessSection is too long ({word_count} words, target ≤ 80 tokens)"
-        );
-        // The section name must be stable (used for insert_section_before).
-        assert_eq!(section.name(), "memory_access");
-        // Content check: the section must mention both retrieval tools.
-        assert!(rendered.contains("memory_recall"));
-        assert!(rendered.contains("memory_search"));
-        // Verify it is non-empty for any PromptContext (not context-gated).
-        let empty_ctx = prompt_context(LearnedContextData::default());
-        let rendered_empty_ctx = section.build(&empty_ctx).unwrap();
-        assert!(
-            !rendered_empty_ctx.trim().is_empty(),
-            "must render regardless of learned context"
-        );
-    }
-}
+#[path = "prompt_sections_tests_2_tests.rs"]
+mod tests;

@@ -256,9 +256,30 @@
      Near-opaque on purpose: the card sits on the themed chrome, and at the
      original 0.45/0.7 the edge read as a smudge rather than an edge on a light
      surface. The bottom edge stays the stronger of the two so the card still
-     reads as resting on the chrome rather than floating in it. */
+     reads as resting on the chrome rather than floating in it.
+
+     Keyed to `--content-faint`, not `--line-chrome`, because raising the alpha
+     had nowhere left to go — it was already 0.9, and `line-chrome` is only
+     stone-300 (light) / neutral-700 (dark), so the edge resolved to ~216 on a
+     white card and ~60 on a dark one: a value the card's own surface almost
+     matches. `content-faint` is a genuine step along the grey ramp in BOTH
+     directions (stone-400 light, neutral-500 dark — darker against a light
+     card, brighter against a dark one), which is what actually buys contrast
+     rather than opacity does. `--line-chrome` itself is deliberately left
+     alone: `Sidebar`'s rail drag indicator paints with it too, and that rail
+     wants to stay a hairline.
+
+     The alphas then pull back to roughly halfway between the old edge and a
+     full-strength `content-faint` one, which turned out to be the same number
+     in both themes. Composited over the card, the ring read ~216 (light) /
+     ~60 (dark) before and ~172 / ~106 at 0.9; the midpoints of those pairs
+     both solve to α≈0.65, because `content-faint` sits a similar distance from
+     the card surface in either direction. 0.75 on the bottom edge keeps it the
+     stronger of the two, which is what makes the card read as resting on the
+     chrome rather than floating in it. */
   --shadow-content-edge:
-    inset 0 0 0 1px rgb(var(--line-chrome) / 0.9), inset 0 -1px 0 rgb(var(--line-chrome));
+    inset 0 0 0 1px rgb(var(--content-faint) / 0.65),
+    inset 0 -1px 0 rgb(var(--content-faint) / 0.75);
 
   --animate-fade-in: fadeIn 0.2s ease-out forwards;
   --animate-fade-up: fadeUp 0.5s cubic-bezier(0.4, 0, 0.2, 1);
@@ -271,6 +292,10 @@
   --animate-float: float 3s ease-in-out infinite;
   --animate-ticker: ticker 30s linear infinite;
   --animate-wiggle: wiggle 0.5s ease-in-out;
+  /* The composer's ambient shadow orbit — see the `composerShadowOrbit`
+     keyframes below. `linear`, not an ease: the offset traces a circle, and an
+     ease would make the light appear to speed up and stall twice per lap. */
+  --animate-composer-shadow: composerShadowOrbit 18s linear infinite;
 
   --backdrop-blur-xs: 2px;
   --backdrop-blur-sm: 4px;
@@ -383,6 +408,76 @@
     }
     50% {
       opacity: 0.5;
+    }
+  }
+  /* Orbits the composer's shadow clockwise, as though the light above it
+     circles the room. Deliberately slow (18s a lap) and small: the point is
+     that you never catch it moving, only notice the composer feels lit rather
+     than stamped on.
+
+     The offset traces a CIRCLE, so both x and y move — that is the difference
+     between this and a sideways drift. Each layer orbits a centre that stays
+     below the box (y=8 near, y=30 far) with a radius smaller than that centre
+     (4 and 8), so the shadow swings but never rises above the composer, which
+     would read as light from underneath.
+
+     Eight stops, not four. Four corners interpolate as a diamond — the shadow
+     visibly tracks straight lines and turns hard at the compass points. The
+     45-degree stops (x and y both at 0.707 of the radius) round it into an
+     actual circle. Clockwise on screen: top, right, bottom, left, with y
+     growing downward.
+
+     The two layers orbit with different radii (4px near, 8px far) in phase.
+     That is parallax — a shadow cast further moves more for the same change in
+     light angle. Equal radii would read as one flat sheet swinging.
+
+     Blur and spread are identical in every frame. Animating blur would pulse
+     the shadow in and out of focus, which no light source does.
+
+     Paired with `motion-reduce:animate-none` at the call site, which falls back
+     to the static `shadow-[…]` utility beside it — so the composer keeps its
+     elevation when motion is off, it just stops moving. */
+  @keyframes composerShadowOrbit {
+    0%,
+    100% {
+      box-shadow:
+        0 4px 12px -4px rgb(0 0 0 / 0.34),
+        0 22px 44px -16px rgb(0 0 0 / 0.48);
+    }
+    12.5% {
+      box-shadow:
+        3px 5px 12px -4px rgb(0 0 0 / 0.34),
+        6px 24px 44px -16px rgb(0 0 0 / 0.48);
+    }
+    25% {
+      box-shadow:
+        4px 8px 12px -4px rgb(0 0 0 / 0.34),
+        8px 30px 44px -16px rgb(0 0 0 / 0.48);
+    }
+    37.5% {
+      box-shadow:
+        3px 11px 12px -4px rgb(0 0 0 / 0.34),
+        6px 36px 44px -16px rgb(0 0 0 / 0.48);
+    }
+    50% {
+      box-shadow:
+        0 12px 12px -4px rgb(0 0 0 / 0.34),
+        0 38px 44px -16px rgb(0 0 0 / 0.48);
+    }
+    62.5% {
+      box-shadow:
+        -3px 11px 12px -4px rgb(0 0 0 / 0.34),
+        -6px 36px 44px -16px rgb(0 0 0 / 0.48);
+    }
+    75% {
+      box-shadow:
+        -4px 8px 12px -4px rgb(0 0 0 / 0.34),
+        -8px 30px 44px -16px rgb(0 0 0 / 0.48);
+    }
+    87.5% {
+      box-shadow:
+        -3px 5px 12px -4px rgb(0 0 0 / 0.34),
+        -6px 24px 44px -16px rgb(0 0 0 / 0.48);
     }
   }
   @keyframes float {

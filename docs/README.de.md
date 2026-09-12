@@ -73,7 +73,6 @@ OpenHuman ist drei Dinge, die die meisten Assistenten nicht sind: **ein Gehirn**
 - **[Workflows](https://tinyhumans.gitbook.io/openhuman/features/workflows)**: der Agent schlägt die Automatisierung vor; du prüfst sie auf einer Canvas und speicherst. Dauerhafte, trigger-gesteuerte, freigabe-gesicherte Läufe auf dem quelloffenen [tinyflows](https://github.com/tinyhumansai/tinyflows).
 - **[Ein Harness, das die Arbeit zu Ende bringt](https://tinyhumans.gitbook.io/openhuman/developing/architecture/agent-harness)**: checkpointed Graph-Läufe auf dem quelloffenen [tinyagents](https://github.com/tinyhumansai/tinyagents). Festgefahrene Agenten werden nachgesteuert, gestoppte liefern eine Root Cause zurück, jeder Lauf lässt sich mit echten Kosten pro Aufruf wieder abspielen.
 - **[Ein Split Brain, immer an](https://tinyhumans.gitbook.io/openhuman/features/orchestration)**: ein schneller Reflex-Agent triagiert eingehenden Traffic, während ein tiefer Reasoning-Kern an Worker-Flotten delegiert, gesteuert vom Unterbewusstsein.
-- **[Eine Agenten-Ökonomie](https://tinyhumans.gitbook.io/openhuman/features/tinyplace)**: ein `@handle` auf [tiny.place](https://tiny.place), Signal-verschlüsselte Agent-zu-Agent-Orchestrierung, x402-USDC-Bounties und Handel. Keys berühren nie die Festplatte.
 
 ### 🔬 Der Deep Researcher & Macher
 
@@ -153,11 +152,11 @@ Gespeicherte Workflows sind dauerhaft und trigger-gesteuert: sie feuern auf Zeit
 
 ## Beitragen aus dem Quellcode
 
-Neu hier? Beginne mit [`CONTRIBUTING.md`](../CONTRIBUTING.md) für den Fork-/PR-Workflow und die lokalen Prüfbefehle, oder nutze den Copy-Paste-Prompt für KI-Coding-Agenten in [`CONTRIBUTING-BEGINNERS.md`](../CONTRIBUTING-BEGINNERS.md#optional--let-an-ai-coding-agent-guide-you). Der kurze Weg:
+Neu hier? Beginne mit [`CONTRIBUTING.md`](../CONTRIBUTING.md) für den Fork-/PR-Workflow und die lokalen Prüfbefehle, oder nutze den Copy-Paste-Prompt für KI-Coding-Agenten in [`CONTRIBUTING-BEGINNERS.md`](CONTRIBUTING-BEGINNERS.md#optional--let-an-ai-coding-agent-guide-you). Der kurze Weg:
 
-1. Installiere Git, Node.js 24+, pnpm 10.10.0, Rust 1.93.0 (`rustfmt` + `clippy`), CMake, Ninja, ripgrep sowie die plattformspezifischen Desktop-Build-Voraussetzungen.
+1. Installiere Git, Node.js 24+, pnpm 10.10.0, Rust 1.96.1 (`rustfmt` + `clippy`), CMake, Ninja, ripgrep sowie die plattformspezifischen Desktop-Build-Voraussetzungen.
 2. Forke und klone das Repo, führe dann `git submodule update --init --recursive` aus, bevor du `pnpm install` startest, damit die mitgelieferten Tauri/CEF-Quellen vorhanden sind.
-3. Nutze `pnpm dev` für reine Web-UI-Arbeit, `pnpm --filter openhuman-app dev:app` für die Desktop-Shell sowie gezielte Checks wie `pnpm typecheck`, `pnpm format:check` und `cargo check -p openhuman --lib`, bevor du einen PR öffnest.
+3. Nutze `pnpm dev` für reine Web-UI-Arbeit, `pnpm --filter openhuman-app dev:app` (macOS) oder `pnpm dev:app:win` (Windows) für die Desktop-Shell sowie gezielte Checks wie `pnpm typecheck`, `pnpm format:check` und `cargo check -p openhuman --lib`, bevor du einen PR öffnest.
 
 Tiefer einsteigen: [Architektur](https://tinyhumans.gitbook.io/openhuman/developing/architecture) · [Einrichtung](https://tinyhumans.gitbook.io/openhuman/developing/getting-set-up) · [Cloud-Deployment](../gitbooks/features/cloud-deploy.md).
 

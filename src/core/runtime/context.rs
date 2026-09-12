@@ -99,6 +99,42 @@ struct WorkspaceBinding {
     memory_subsystem: crate::openhuman::config::schema::MemorySubsystemConfig,
 }
 
+/// Say so when the workspace is rebound after the memory module has already
+/// loaded.
+///
+/// The module is handed its `config_path` once, when it loads, and tinybus
+/// never unloads a library — there is no shutdown path and nothing a shutdown
+/// could reclaim (`modules/host.rs`). So a rebind after the module is `Ready`
+/// leaves it reading the *previous* profile's source registry for the rest of
+/// the process: the host writes `[[memory_sources]]` into the new profile's
+/// `config.toml`, and every id it registers is unknown to the driver.
+///
+/// This is the boot-signed-out-then-log-in case. It cannot be repaired in
+/// process, so this does not try. It makes the moment the binding went stale
+/// visible in the log, beside the rebind that caused it, instead of leaving a
+/// bare `NotFound` on a sync minutes later as the only evidence.
+///
+/// Best-effort and never fatal: a build without the modules feature, or a
+/// process whose memory module never loaded, has nothing stale to report.
+#[cfg(feature = "modules")]
+fn warn_if_memory_module_outlived_its_profile(workspace_dir: &std::path::Path) {
+    use crate::openhuman::modules::types::ModuleState;
+    if crate::openhuman::modules::state_of(crate::openhuman::modules::memory::MODULE_ID)
+        == ModuleState::Ready
+    {
+        log::warn!(
+            "[core-context] workspace rebound to {} while the memory module is already loaded. \
+             The module keeps the source registry it was given when it loaded and cannot be \
+             rebound in this process, so memory sources registered under this profile will not \
+             be visible to it until the app is restarted.",
+            workspace_dir.display()
+        );
+    }
+}
+
+#[cfg(not(feature = "modules"))]
+fn warn_if_memory_module_outlived_its_profile(_workspace_dir: &std::path::Path) {}
+
 impl CoreContext {
     /// Run the core initialization sequence and return the context plus whether
     /// an operator-supplied RPC bearer exists (for the public-bind safety check
@@ -482,6 +518,7 @@ impl CoreContext {
             workspace_dir: Some(workspace_dir.to_path_buf()),
             memory_subsystem,
         };
+        warn_if_memory_module_outlived_its_profile(workspace_dir);
         Ok(())
     }
 
@@ -490,6 +527,20 @@ impl CoreContext {
     /// tenant's context here so the handler's `current()` reads isolated state.
     pub async fn scope<F: Future>(ctx: Arc<CoreContext>, fut: F) -> F::Output {
         CURRENT_CONTEXT.scope(ctx, fut).await
+    }
+
+    /// Capture the current context now and carry it across a subsequently
+    /// spawned task. Calling this before `tokio::spawn` is essential: reading
+    /// `current()` inside the child would already have fallen back to the
+    /// process default.
+    pub fn propagate<F: Future>(fut: F) -> impl Future<Output = F::Output> {
+        let ctx = Self::current();
+        async move {
+            match ctx {
+                Some(ctx) => Self::scope(ctx, fut).await,
+                None => fut.await,
+            }
+        }
     }
 
     /// Test-only constructor: build a context with an explicit
@@ -520,6 +571,33 @@ impl CoreContext {
             domains,
             tool_groups: Default::default(),
             embedder_config: None,
+        })
+    }
+
+    /// Test-only constructor that carries an embedder-supplied config, so a
+    /// cross-module test can exercise the `load_config_with_timeout()` read
+    /// path (which prefers [`CoreContext::current_embedder_config`]) without a
+    /// full boot or a racy on-disk `config.toml`.
+    ///
+    /// Distinct from [`CoreContext::for_test`] — which always sets
+    /// `embedder_config: None` — so the ~30 existing `for_test` call sites are
+    /// unaffected. The workspace binding is anchored to the config's
+    /// `workspace_dir`, matching how [`CoreContext::init`] wires an
+    /// embedder-supplied config.
+    #[cfg(test)]
+    pub(crate) fn for_test_with_config(
+        domains: crate::core::runtime::DomainSet,
+        config: crate::openhuman::config::Config,
+    ) -> Arc<CoreContext> {
+        Arc::new(CoreContext {
+            host_kind: HostKind::Cli,
+            workspace_binding: RwLock::new(WorkspaceBinding {
+                workspace_dir: Some(config.workspace_dir.clone()),
+                memory_subsystem: Default::default(),
+            }),
+            domains,
+            tool_groups: Default::default(),
+            embedder_config: Some(config),
         })
     }
 }
@@ -596,24 +674,35 @@ pub async fn init_stores(
         domains,
     );
     if plan.memory {
-        // The seams the in-process engine calls back through. They must be
-        // installed BEFORE the first memory call: they fail loudly when
-        // unwired rather than degrading, because a quiet degrade would write
-        // vectors into the wrong embedding space or make a sync run look empty
-        // instead of broken.
+        // The engine seams are gone from here (#5560). They installed embedding
+        // / chat / config / NLP / scheduler / shutdown / error-reporting
+        // callbacks into *this process's* copy of `tinymemory-core`, and that
+        // copy no longer exists: the crate has left `[dependencies]`, and with
+        // openhuman#6161 it has left `[dev-dependencies]` too, taking
+        // `memory::host_impls` and the `memory-engine-seams` feature that
+        // gated it. The module answers these over the bus through
+        // `modules::memory_host` instead.
         //
-        // #5560 removed this on the reasoning that "this process embeds no
-        // engine, so there is nothing to call back". That is not true yet.
-        // `tinymemory-core` is still a normal dependency of this crate, and
-        // `session::builder::factory` still reaches
+        // The first attempt at this removal shipped an outage, and the reason
+        // is worth keeping. It was not that the seams were needed in the
+        // abstract — it was that `session::builder::factory` still reached
         // `store::factories::create_session_memory_with_local_ai`, which calls
-        // `require_embedding_host()` on the chat hot path — so every chat turn
-        // failed with "no EmbeddingHost installed". The module installing its
-        // own seams does not help: a `cdylib` has its own statics, so what it
-        // sets is invisible here.
+        // `require_embedding_host()` on the chat hot path, so every chat turn
+        // died with "no EmbeddingHost installed". That caller is gone, along
+        // with `ops::helpers::active_memory_client`, the `global::{init,
+        // client_if_ready}` sites and the `tree_runtime` glob; the only
+        // remaining namers of the engine crate are test-only, served by
+        // the `[dev-dependencies]` entry. A dev-dependency is not linked into
+        // the shipped binary, so there is nothing left here to call back.
         //
-        // These go when the last in-process engine caller goes, not before.
-        crate::openhuman::memory::host_impls::install_memory_host_seams(Arc::new(cfg.clone()));
+        // The event sink is NOT one of those seams and must stay. It installs
+        // into `tinymemory-api` — the contract crate, still a normal
+        // dependency — and `memory::sync::composio::bus` publishes
+        // `ComposioIntegrationsChanged` through it from production host code.
+        // `tinymemory_api::events::publish` *silently drops* when unwired, by
+        // design, so losing this install would be an invisible regression
+        // rather than a loud one.
+        crate::openhuman::memory::host::install_memory_event_sink();
         // Publish the config a module-backed memory driver should load
         // against, before the binding below can construct one. Boot-only and
         // idempotent (first call wins) — see `modules::memory::set_modules_policy`
@@ -860,6 +949,20 @@ mod tests {
         })
         .await;
         assert_eq!(seen, Some(PathBuf::from("/tmp/ctx-a")));
+    }
+
+    #[tokio::test]
+    async fn propagate_carries_scoped_context_into_spawned_task() {
+        let a = ctx("/tmp/ctx-propagated");
+        let seen = CoreContext::scope(a, async {
+            tokio::spawn(CoreContext::propagate(async {
+                CoreContext::current().unwrap().workspace_dir().unwrap()
+            }))
+            .await
+            .unwrap()
+        })
+        .await;
+        assert_eq!(seen, PathBuf::from("/tmp/ctx-propagated"));
     }
 
     #[tokio::test]

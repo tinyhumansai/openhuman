@@ -37,12 +37,7 @@ export interface Theme {
    * `mesh` opts into the animated WebGL mesh gradient; `image` paints
    * `imageUrl` (cover). Controlled in the Theme Studio.
    */
-  backdrop?: {
-    kind: 'mesh' | 'solid' | 'image';
-    imageUrl?: string;
-    /** Show the dotted-canvas overlay (default true when omitted). */
-    dots?: boolean;
-  };
+  backdrop?: { kind: 'mesh' | 'solid' | 'image'; imageUrl?: string };
 }
 
 export type BackdropKind = 'mesh' | 'solid' | 'image';

@@ -79,11 +79,6 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 const UNWRAP_CACHE_LIMIT = 512;
 const unwrapCache = new Map<string, UnwrappedToolCallMessage>();
 
-/** Exposed for tests that need a clean slate; not part of the public contract. */
-export function __clearToolCallEnvelopeCache(): void {
-  unwrapCache.clear();
-}
-
 export function unwrapToolCallEnvelope(raw: string): UnwrappedToolCallMessage {
   if (typeof raw !== 'string' || raw.trim().length === 0) {
     return { text: raw ?? '', toolNames: [] };

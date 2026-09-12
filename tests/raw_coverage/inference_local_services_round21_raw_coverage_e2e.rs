@@ -154,7 +154,7 @@ async fn local_services_cover_mocked_inference_assets_speech_and_ops_entry_point
         "adds tests"
     );
 
-    let progress = service.downloads_progress(&config).await.expect("progress");
+    let _progress = service.downloads_progress(&config).await.expect("progress");
     let after_tts = service
         .download_asset(&config, "tts")
         .await

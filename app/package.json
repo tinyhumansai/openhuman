@@ -1,6 +1,6 @@
 {
   "name": "openhuman-app",
-  "version": "0.63.17",
+  "version": "0.63.25",
   "type": "module",
   "engines": {
     "node": ">=24.0.0"
@@ -9,6 +9,7 @@
     "dev": "vite",
     "dev:web": "vite",
     "dev:app": "bash ../scripts/run-dev-macos.sh",
+    "dev:app:web": "bash ../scripts/run-dev-web.sh",
     "dev:app:win": "\"C:/Program Files/Git/bin/bash.exe\" ../scripts/run-dev-win.sh",
     "core:stage": "echo '[core:stage] no-op — core is linked in-process; sidecar removed (PR #1061)'",
     "tauri:ios:init": "bash ../scripts/ios-init.sh",
@@ -64,8 +65,8 @@
     "format:check": "prettier --check . && pnpm rust:format:check",
     "lint": "eslint . --ext .ts,.tsx --cache",
     "lint:fix": "eslint . --ext .ts,.tsx --fix --cache",
-    "lint:commands-tokens": "bash -c 'command -v rg >/dev/null 2>&1 || { echo \"lint:commands-tokens requires ripgrep. Install: brew install ripgrep (macOS) / apt install ripgrep (Debian/Ubuntu) / see https://github.com/BurntSushi/ripgrep#installation\" >&2; exit 1; }; ! rg -nU \"(bg|text|border|ring|shadow)-(neutral|primary|sage|amber|canvas|stone|slate)\" src/components/commands/'",
-    "lint:ui-tokens": "bash -c 'command -v rg >/dev/null 2>&1 || { echo \"lint:ui-tokens requires ripgrep. Install: brew install ripgrep (macOS) / apt install ripgrep (Debian/Ubuntu)\" >&2; exit 1; }; ! rg -nP \"^(?!\\s*(//|\\*|/\\*)).*\\b(bg|text|border|ring|divide)-(neutral|stone|slate|canvas|white|black)\\b\" src/components/ui/ src/components/layout/ src/components/settings/ src/features/conversations/ src/components/intelligence/ src/components/feedback/ src/components/flows/ src/components/chat/ src/components/rewards/ src/components/skills/ src/components/channels/ && ! rg -nP \"^(?!\\s*(//|\\*|/\\*)).*(color-mix\\(|oklch\\(|@layer )\" src/components/ui/ src/styles/fonts.css && node scripts/lint-undefined-scales.mjs'",
+    "lint:commands-tokens": "bash scripts/lint-token-scan.sh lint:commands-tokens -nU \"(bg|text|border|ring|shadow)-(neutral|primary|sage|amber|canvas|stone|slate)\" src/components/commands/",
+    "lint:ui-tokens": "bash scripts/lint-token-scan.sh lint:ui-tokens -nP \"^(?!\\s*(//|\\*|/\\*)).*\\b(bg|text|border|ring|divide)-(neutral|stone|slate|canvas|white|black)\\b\" src/components/ui/ src/components/layout/ src/components/settings/ src/features/conversations/ src/components/intelligence/ src/components/feedback/ src/components/flows/ src/components/chat/ src/components/rewards/ src/components/skills/ src/components/channels/ src/pages/ src/components/dashboard/ src/components/composio/ src/components/notifications/ src/components/accounts/ src/components/approvals/ src/features/human/ && bash scripts/lint-token-scan.sh lint:ui-tokens -nP \"^(?!\\s*(//|\\*|/\\*)).*(color-mix\\(|oklch\\(|@layer )\" src/components/ui/ src/styles/fonts.css && node scripts/lint-undefined-scales.mjs",
     "knip": "knip --config knip.json",
     "knip:production": "knip --config knip.json --production"
   },
@@ -80,12 +81,7 @@
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.0.1",
     "@noble/secp256k1": "^3.0.0",
-    "@radix-ui/react-avatar": "^1.2.6",
     "@radix-ui/react-collapsible": "^1.1.20",
-    "@radix-ui/react-dialog": "^1.1.23",
-    "@radix-ui/react-popover": "^1.1.23",
-    "@radix-ui/react-slot": "^1.3.3",
-    "@radix-ui/react-tooltip": "^1.2.16",
     "@reduxjs/toolkit": "^2.11.2",
     "@rive-app/react-webgl2": "^4.28.6",
     "@scure/base": "^2.2.0",
@@ -131,7 +127,6 @@
     "three": "^0.183.2",
     "tw-animate-css": "^1.4.0",
     "util": "^0.12.5",
-    "zod": "4.3.6",
     "zustand": "^5.0.15"
   },
   "devDependencies": {

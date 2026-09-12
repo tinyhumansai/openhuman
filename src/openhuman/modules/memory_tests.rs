@@ -13,7 +13,7 @@ use tinymemory_api::capabilities::{Capabilities, Capability};
 use tinymemory_api::error::MemoryError;
 use tinymemory_api::provider::MemoryProvider;
 
-use super::{from_bus, ModuleMemoryProvider, MODULE_ID};
+use super::{from_bus, ModuleMemoryProvider, INGEST_BUS_GRACE, MODULE_ID};
 use crate::openhuman::config::Config;
 use crate::openhuman::modules::registry;
 
@@ -233,6 +233,122 @@ async fn shutdown_on_an_unused_driver_is_a_no_op() {
     assert!(provider.shutdown().await.is_ok());
 }
 
+#[tokio::test]
+async fn a_read_against_a_loading_module_reports_unavailable_within_its_grace() {
+    use crate::openhuman::modules::resolution::{self, Resolution};
+    use tinymemory_api::provider::mandatory::MemoryCore;
+
+    // Plant an in-flight slot for the memory module. The table is process-wide
+    // and shared with the rest of the suite, so the slot is settled and
+    // removed before this test returns; a parallel caller sees, at worst, a
+    // brief "loading" followed by the terminal failure it would have reached
+    // anyway with downloads off.
+    let table = resolution::table();
+    let sender = table.mark_in_flight_for_test(MODULE_ID);
+    let provider = ModuleMemoryProvider::new(Arc::new(Config::default()))
+        .with_loading_grace(std::time::Duration::from_millis(30));
+
+    // Observe first, assert last. An assertion that fired here would leave
+    // MODULE_ID parked in `Loading` for every test that runs after this one in
+    // the same process, turning one failure into a cascade of unrelated ones.
+    let health = provider.health().await;
+    let started = std::time::Instant::now();
+    let outcome = MemoryCore::get(&provider, "ns", "key").await;
+    let elapsed = started.elapsed();
+
+    table.complete(
+        MODULE_ID,
+        Resolution::Failed("planted by a test".to_string()),
+        sender,
+    );
+    table.reset_for_test(MODULE_ID);
+
+    // Loading is degraded, never down: `Down` is what rebinds the fallback.
+    assert!(
+        matches!(
+            health,
+            tinymemory_api::health::MemoryHealth::Degraded { .. }
+        ),
+        "a loading module must report Degraded, got {health:?}"
+    );
+    // A read gives up after its grace with the retryable class, and does so
+    // promptly rather than at some caller's deadline.
+    assert!(
+        matches!(outcome, Err(MemoryError::Unavailable(_))),
+        "expected Unavailable while loading, got {outcome:?}"
+    );
+    assert!(elapsed < std::time::Duration::from_secs(5));
+}
+
+#[test]
+fn writes_wait_for_the_module_and_reads_do_not() {
+    let provider = provider();
+    // Every family that mutates, one representative each. A bounded wait here
+    // does not delay the call, it discards it: none of these has a retry above
+    // it, so the archivist's turn, the autosaved message or the operator's
+    // sync would be lost rather than late.
+    for write in [
+        "store",
+        "forget",
+        "import_records",
+        "ingest_document",
+        "ingest_chat",
+        "ingest_email",
+        "ingest_coding_sessions",
+        "typed_ingest_event",
+        "insert_turn",
+        "insert_event",
+        "open_segment",
+        "set_goals",
+        "append",
+        "put_document",
+        "put_relation",
+        "put_tool_rule",
+        "upsert_facet",
+        "delete_facet",
+        "forget_source",
+        "purge_all",
+        "compact",
+        "consolidate",
+        "reembed",
+        "retry_failed",
+        "flush_pending",
+        "cascade",
+        "seal",
+        "summarise",
+        "run_source_sync",
+        "run_connection_sync",
+        "bootstrap_connection",
+        "override_scheduler_gate",
+        "shutdown",
+    ] {
+        assert_eq!(
+            provider.loading_grace(write),
+            None,
+            "{write} mutates, so it must wait the module out"
+        );
+    }
+    for read in [
+        "get",
+        "recall",
+        "list",
+        "health",
+        "namespaces",
+        "export_page",
+    ] {
+        assert!(
+            provider.loading_grace(read).is_some(),
+            "{read} must be bounded"
+        );
+    }
+    // The default for anything nobody classified is to wait, so a member added
+    // upstream tomorrow cannot start silently dropping writes.
+    assert_eq!(
+        provider.loading_grace("a_member_from_a_future_contract"),
+        None,
+        "an unrecognised operation must wait rather than be treated as a read"
+    );
+}
 #[test]
 fn the_capability_list_matches_the_pinned_release() {
     // ARTIFACT_CAPABILITIES describes what ONE specific release of the module
@@ -369,3 +485,211 @@ fn the_ci_workflows_pin_the_same_module_digest_as_the_registry() {
          guard silently stopped checking anything"
     );
 }
+
+/// The bus deadline on `IngestCodingSessions` must never be the one that fires.
+///
+/// This is the defect from #5802 in test form. Before the fix the module call
+/// took tinybus' flat 30 s `DEFAULT_TIMEOUT` while the RPC around it allowed
+/// 120 s + 90 s per session, so a perfectly healthy 35 s import was abandoned
+/// by the caller, reported as a failure, and finished successfully five
+/// seconds later with nobody listening.
+///
+/// Asserted across the whole input range rather than at one point, because the
+/// budget is piecewise: it scales linearly and then clamps at `HARD_CAP_SECS`.
+/// A future edit that raises the cap, the base, or the per-session allowance
+/// without touching the grace fails here instead of in the field.
+#[test]
+fn the_ingest_bus_deadline_always_outlasts_the_rpc_budget() {
+    use crate::openhuman::memory::sources::rpc::ingest_budget;
+
+    // Below the cap, at the cap, and far past it (`max_sessions` is untrusted
+    // input from an advertised RPC, so `usize::MAX` is a reachable argument).
+    for max_sessions in [0, 1, 5, 6, 7, 100, 10_000, usize::MAX] {
+        let budget = ingest_budget(max_sessions);
+        let bus = budget + INGEST_BUS_GRACE;
+        assert!(
+            bus > budget,
+            "max_sessions={max_sessions}: the bus deadline ({bus:?}) must outlast the \
+             RPC budget ({budget:?}), or the wire member's error wins and the caller \
+             is released while the module is still working"
+        );
+    }
+}
+
+/// The grace has to be big enough to order two timers, not merely non-zero.
+///
+/// A one-millisecond grace would satisfy the assertion above and still lose the
+/// race under ordinary scheduling jitter, which would put the failure back
+/// where it started: a bus-member error surfacing instead of the RPC's
+/// structured one.
+#[test]
+fn the_ingest_bus_grace_is_wide_enough_to_order_the_two_timers() {
+    assert!(
+        INGEST_BUS_GRACE >= std::time::Duration::from_secs(5),
+        "INGEST_BUS_GRACE is {INGEST_BUS_GRACE:?}; a grace this small does not \
+         reliably order the RPC's timeout ahead of the bus deadline"
+    );
+}
+
+/// Every `MemorySourceSync` and `MemoryMaintenance` member the trait defaults
+/// must be bridged to the module rather than left to inherit the default.
+///
+/// Three of these members carry a default body that returns
+/// `Unsupported(SourceSync)`, and `diagnose` one that returns
+/// `Unsupported(Maintenance)`. A defaulted member cannot break an implementor at
+/// compile time, so when they were added to the contract `ModuleMemoryProvider`
+/// kept compiling and silently began refusing — which is #5801: the manual
+/// "Sync now" button answered `unsupported capability: source_sync` while the
+/// module's own scheduler, which never crosses this bridge, kept syncing fine.
+///
+/// The discriminator needs no module. With the host disabled, `proxy()` fails
+/// with `MemoryError::Other`, so a member that really dispatches through
+/// `module_call!` reports `Other` while one that fell through to the default
+/// reports `Unsupported`. Asserting "not Unsupported" therefore asserts the
+/// dispatch itself, which is the part that was missing.
+#[tokio::test]
+async fn the_defaulted_members_dispatch_to_the_module_instead_of_refusing() {
+    use tinymemory_api::provider::{MemoryMaintenance, MemorySourceSync};
+
+    let mut config = Config::default();
+    config.modules.enabled = false;
+    let provider = ModuleMemoryProvider::new(Arc::new(config));
+
+    let refused = |label: &str, error: MemoryError| {
+        assert!(
+            !matches!(error, MemoryError::Unsupported { .. }),
+            "{label} answered from the trait default instead of dispatching to the \
+             module — the `module_call!` arm is missing, so every caller gets \
+             `unsupported capability` however capable the artifact is. Got {error:?}"
+        );
+    };
+
+    refused(
+        "run_source_sync",
+        provider
+            .run_source_sync("src_whatever")
+            .await
+            .expect_err("a disabled host cannot succeed"),
+    );
+    refused(
+        "bootstrap_connection",
+        provider
+            .bootstrap_connection("gmail", "ca_whatever")
+            .await
+            .expect_err("a disabled host cannot succeed"),
+    );
+    refused(
+        "is_toolkit_syncable",
+        provider
+            .is_toolkit_syncable("gmail")
+            .await
+            .expect_err("a disabled host cannot succeed"),
+    );
+    refused(
+        "diagnose",
+        MemoryMaintenance::diagnose(&provider)
+            .await
+            .expect_err("a disabled host cannot succeed"),
+    );
+
+    // The five doors tinymemory added for the openhuman engine shed. Each is
+    // defaulted upstream, so a missing `module_call!` arm here is invisible at
+    // compile time and turns a working feature into a runtime
+    // `unsupported capability`.
+    use tinymemory_api::provider::{MemoryChunks, MemoryTree, SummaryContext};
+    refused(
+        "summarise",
+        MemoryTree::summarise(
+            &provider,
+            &[],
+            &SummaryContext {
+                tree_id: "t".into(),
+                tree_kind: "source".into(),
+                target_level: 0,
+                token_budget: 1,
+                input_token_budget: 1,
+                overhead_reserve_tokens: 0,
+                ask: None,
+            },
+        )
+        .await
+        .expect_err("a disabled host cannot succeed"),
+    );
+    refused(
+        "root_summaries_with_caps",
+        MemoryTree::root_summaries_with_caps(&provider, 1, 1)
+            .await
+            .expect_err("a disabled host cannot succeed"),
+    );
+    refused(
+        "chunk_score",
+        MemoryChunks::chunk_score(&provider, "chunk_whatever")
+            .await
+            .expect_err("a disabled host cannot succeed"),
+    );
+    refused(
+        "source_ingest_status",
+        MemoryChunks::source_ingest_status(&provider, &[])
+            .await
+            .expect_err("a disabled host cannot succeed"),
+    );
+    refused(
+        "degraded_state",
+        MemoryMaintenance::degraded_state(&provider)
+            .await
+            .expect_err("a disabled host cannot succeed"),
+    );
+
+    // The seven the runtime-tree round added (contract 4.0). Six carry the
+    // `tree_summarizer_*` RPC surface and the `tree-summarizer` CLI; the
+    // seventh is what `memory_flavour` reads. All seven are defaulted upstream,
+    // so a missing `module_call!` arm is invisible to the compiler and turns
+    // "Build Summary Trees" into `unsupported capability` against an artifact
+    // that serves it.
+    let at = chrono::Utc::now();
+    refused(
+        "runtime_buffer_write",
+        MemoryTree::runtime_buffer_write(&provider, "ns", "content", at, None)
+            .await
+            .expect_err("a disabled host cannot succeed"),
+    );
+    refused(
+        "runtime_read_node",
+        MemoryTree::runtime_read_node(&provider, "ns", "root")
+            .await
+            .expect_err("a disabled host cannot succeed"),
+    );
+    refused(
+        "runtime_read_children",
+        MemoryTree::runtime_read_children(&provider, "ns", "root")
+            .await
+            .expect_err("a disabled host cannot succeed"),
+    );
+    refused(
+        "runtime_tree_status",
+        MemoryTree::runtime_tree_status(&provider, "ns")
+            .await
+            .expect_err("a disabled host cannot succeed"),
+    );
+    refused(
+        "runtime_summarize",
+        MemoryTree::runtime_summarize(&provider, "ns", at)
+            .await
+            .expect_err("a disabled host cannot succeed"),
+    );
+    refused(
+        "runtime_rebuild",
+        MemoryTree::runtime_rebuild(&provider, "ns")
+            .await
+            .expect_err("a disabled host cannot succeed"),
+    );
+    refused(
+        "flavour_profile",
+        MemoryTree::flavour_profile(&provider, "persona/communication")
+            .await
+            .expect_err("a disabled host cannot succeed"),
+    );
+}
+
+#[path = "memory_tests_part_01_tests.rs"]
+mod part_01_tests;

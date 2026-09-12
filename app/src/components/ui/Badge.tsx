@@ -1,5 +1,5 @@
 import { cva, type VariantProps } from 'class-variance-authority';
-import { type ReactNode } from 'react';
+import { type HTMLAttributes, type ReactNode } from 'react';
 
 import { cn } from '../../lib/cn';
 
@@ -25,14 +25,23 @@ export const badgeVariants = cva(
 
 export type BadgeVariant = NonNullable<VariantProps<typeof badgeVariants>['variant']>;
 
-export interface BadgeProps extends VariantProps<typeof badgeVariants> {
+export interface BadgeProps
+  extends Omit<HTMLAttributes<HTMLSpanElement>, 'children'>, VariantProps<typeof badgeVariants> {
   children: ReactNode;
   className?: string;
   'data-testid'?: string;
 }
 
-const Badge = ({ variant, children, className, 'data-testid': testId }: BadgeProps) => (
+/**
+ * Pill label. Any extra span attribute (`title`, `aria-*`, `onClick`, …) is
+ * forwarded to the rendered element, so a hand-rolled pill carrying a tooltip
+ * or an event handler can adopt this primitive without losing it. The
+ * component-owned attributes are applied after `...rest` so the default render
+ * is identical whether or not extra props are passed.
+ */
+const Badge = ({ variant, children, className, 'data-testid': testId, ...rest }: BadgeProps) => (
   <span
+    {...rest}
     data-slot="badge"
     data-variant={variant ?? 'neutral'}
     data-testid={testId}

@@ -10,6 +10,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { LuPlus } from 'react-icons/lu';
 import { useNavigate } from 'react-router-dom';
 
+import { errorMessage } from '../../../lib/errorMessage';
 import { useT } from '../../../lib/i18n/I18nContext';
 import {
   deleteAgentProfile,
@@ -43,7 +44,9 @@ const ProfilesPanel = () => {
       try {
         await dispatch(selectAgentProfile(id)).unwrap();
       } catch (err) {
-        setActionError(err instanceof Error ? err.message : String(err));
+        // See #5900: `.unwrap()` rejects with a SerializedError, so the old
+        // `instanceof` guard rendered "[object Object]" here.
+        setActionError(errorMessage(err, 'Failed to switch profile'));
       }
     },
     [dispatch]
@@ -56,7 +59,7 @@ const ProfilesPanel = () => {
       try {
         await dispatch(deleteAgentProfile(id)).unwrap();
       } catch (err) {
-        setActionError(err instanceof Error ? err.message : String(err));
+        setActionError(errorMessage(err, 'Failed to delete profile'));
       }
     },
     [dispatch, t]

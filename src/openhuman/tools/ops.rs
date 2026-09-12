@@ -276,21 +276,6 @@ pub fn all_tools_with_runtime(
         Box::new(ResolveTimeTool::new()),
         Box::new(DetectToolsTool::new()),
         Box::new(InstallToolTool::new(security.clone())),
-        // Orchestration session-history read tools — browse persisted
-        // OpenHuman↔agent transcripts. Read-only; workspace-internal store access.
-        Box::new(
-            crate::openhuman::hosted::orchestration::tools::ListSessionsTool::new(config.clone()),
-        ),
-        Box::new(
-            crate::openhuman::hosted::orchestration::tools::ReadSessionTool::new(config.clone()),
-        ),
-        // List the agent's tiny.place contacts (browse-loop entry point).
-        Box::new(crate::openhuman::hosted::orchestration::tools::ListContactsTool),
-        // Send-on-behalf: DM another agent for the user. Linked-peers-only,
-        // reuse-or-mint per-peer session id; Write-class external effect.
-        Box::new(
-            crate::openhuman::hosted::orchestration::tools::SendToAgentTool::new(config.clone()),
-        ),
         Box::new(CronAddTool::new(config.clone(), security.clone())),
         Box::new(CronListTool::new(config.clone())),
         Box::new(CronRemoveTool::new(config.clone())),
@@ -480,16 +465,6 @@ pub fn all_tools_with_runtime(
         // per-query recall). Written verbatim to user_pref_{general,situational};
         // bypasses the inference/stability pipeline. Always registered.
         Box::new(SavePreferenceTool::new(security.clone())),
-        // WhatsApp data store — read-only agent surface (issue #1341). The
-        // store lives in the Tauri shell; these tools reach it over the
-        // in-process native request bus. The matching ingest write-path is
-        // scanner-only (dispatched by the shell) and intentionally NOT a tool.
-        #[cfg(feature = "channels")]
-        Box::new(WhatsAppDataListChatsTool),
-        #[cfg(feature = "channels")]
-        Box::new(WhatsAppDataListMessagesTool),
-        #[cfg(feature = "channels")]
-        Box::new(WhatsAppDataSearchMessagesTool),
         Box::new(ScheduleTool::new(security.clone(), root_config.clone())),
         Box::new(ProxyConfigTool::new(config.clone(), security.clone())),
         Box::new(UpdateCheckTool::new()),
@@ -701,15 +676,6 @@ pub fn all_tools_with_runtime(
          memory_hybrid_search, memory_store_raw_search, memory_store_raw_chunks, memory_store_kinds"
     );
 
-    // Memory diff — structured "what changed in the agent's world since a
-    // checkpoint/last sync". Drives the subconscious tick's first stage and is
-    // available to any agent that lists it. Unit struct, no runtime deps.
-    // Absent rather than erroring when `memory-git` is off: a registered tool
-    // that always fails is worse than no tool, because the model keeps
-    // choosing it and reporting the failure back to the user.
-    #[cfg(feature = "memory-git")]
-    tools.push(Box::new(crate::openhuman::memory::diff::MemoryDiffTool));
-
     // Presentation generation (#2778). Native-Rust engine (ppt-rs
     // backed) as of the #2780-follow-up rust-engine refactor — no
     // managed Python venv, no first-call install latency. Always
@@ -730,24 +696,13 @@ pub fn all_tools_with_runtime(
         security.clone(),
     )));
 
-    // Long-term goals list tools. Used primarily by the background
-    // `goals_agent` (which filters to these via its `[tools] named`
-    // allowlist); also available to the main agent for explicit edits.
-    {
-        let goals_dir = root_config.workspace_dir.clone();
-        tools.push(Box::new(
-            crate::openhuman::memory::tools::goals::GoalsListTool::new(goals_dir.clone()),
-        ));
-        tools.push(Box::new(
-            crate::openhuman::memory::tools::goals::GoalsAddTool::new(goals_dir.clone()),
-        ));
-        tools.push(Box::new(
-            crate::openhuman::memory::tools::goals::GoalsEditTool::new(goals_dir.clone()),
-        ));
-        tools.push(Box::new(
-            crate::openhuman::memory::tools::goals::GoalsDeleteTool::new(goals_dir),
-        ));
-    }
+    // Long-term goals list tool. Used primarily by the background
+    // `goals_agent` (which filters to it via its `[tools] named` allowlist);
+    // also available to the main agent for explicit edits. One `op`-dispatched
+    // tool, not four — see the module docs on `memory::tools::goals`.
+    tools.push(Box::new(
+        crate::openhuman::memory::tools::goals::GoalsTool::new(root_config.workspace_dir.clone()),
+    ));
 
     // Thread-level goal tools (Codex-style per-thread completion contract).
     // Visible only to agents that allowlist them (orchestrator). The target
@@ -1298,12 +1253,15 @@ fn tool_group(name: &str) -> crate::core::all::DomainGroup {
         "notify_user",
     ];
     const THREADS_EXTRA: &[&str] = &["goal_get", "goal_set", "goal_complete"];
-    // Memory extras not covered by the `memory_`/`goals_` prefixes.
+    // Memory extras not covered by the `memory_`/`goals_` prefixes. `goals`
+    // has no trailing underscore since the four `goals_*` tools collapsed into
+    // one `op`-dispatched tool, so it needs an entry here rather than a prefix.
     const MEMORY_EXTRA: &[&str] = &[
         "remember_preference",
         "save_preference",
         "update_memory_md",
         "tool_stats",
+        "goals",
     ];
 
     // MCP: every MCP tool name is `mcp_` prefixed (mcp_registry_*, mcp_setup_*,
@@ -1324,12 +1282,6 @@ fn tool_group(name: &str) -> crate::core::all::DomainGroup {
     // Media generation: `media_` prefix (media_generate_image/video, media_list_models).
     if name.starts_with("media_") {
         return DomainGroup::Media;
-    }
-    // Channels family agent tools: read-only WhatsApp data surface. Gated with
-    // the other channel/webview domains; without this they fall to Platform and
-    // stay callable when Channels is gated off (#4808 review).
-    if name.starts_with("whatsapp_data_") {
-        return DomainGroup::Channels;
     }
     // Voice family: explicit audio_* podcast tools plus the defensive
     // voice_/tts_/stt_ prefixes for any future tool.
@@ -1387,7 +1339,7 @@ fn tool_group(name: &str) -> crate::core::all::DomainGroup {
     // ── Families carved out of Platform by the DomainGroup realignment ──────
     // Each of these previously fell through to Platform, which meant the tool
     // stayed callable when its family was gated off under a custom DomainSet —
-    // the leak the #4808 review flagged for whatsapp_data. Keep these in
+    // leak the #4808 review flagged. Keep these in
     // lockstep with the `push(...)` tags in `core::all`.
     //
     // Automation: scheduled jobs (`cron_*`) plus the subconscious monitor +
@@ -1402,7 +1354,7 @@ fn tool_group(name: &str) -> crate::core::all::DomainGroup {
         || name.starts_with("exa_")
         || name.starts_with("brave_")
         || name.starts_with("parallel_")
-        || name.starts_with("querit_")
+        || name.starts_with("querit_") || name.starts_with("tavily_")
         || name.starts_with("google_places_")
         || name.starts_with("stock_")
         || name.starts_with("storage_")
@@ -1424,8 +1376,6 @@ fn tool_group(name: &str) -> crate::core::all::DomainGroup {
     if name.starts_with("orchestration_") {
         return DomainGroup::Hosted;
     }
-    // Relay owns no agent tools since the `tinyplace_*` family was removed —
-    // see `TOOL_LESS` in `ops_tests.rs`, which is what keeps that honest.
     // Desktop: shell-facing surfaces.
     if name.starts_with("dashboard_") {
         return DomainGroup::Desktop;
@@ -1477,16 +1427,16 @@ fn tool_group(name: &str) -> crate::core::all::DomainGroup {
 /// wrong default is worse than no rule. Hence enumeration plus two narrow
 /// prefix rules, backed by the drift guard.
 ///
-/// ## Honesty clause — three assignments run ahead of the plumbing
-///
-/// `goals_*` is filesystem-backed today (`tinycortex::memory::goals::store`), not
-/// `MemoryGoals`; `tool_stats` reads the legacy `Arc<dyn Memory>` plus
-/// `agent::learning::tool_tracker`, not `MemoryToolMemory`; `memory_diff` reads
-/// `memory::diff::ops`, not `MemoryDiff`. Filtering them on the driver's
-/// advertised set is nevertheless the correct M5 behaviour: §3.3 is a contract
-/// about what the *model is told exists*, and the later re-point onto
-/// `MemoryGuard` must not change the advertised surface. Assigning them `None`
-/// to dodge the mismatch would bake the wrong contract in.
+/// ## Honesty clause — two assignments still run ahead of the plumbing:
+/// `tool_stats` reads the legacy `Arc<dyn Memory>` + `tool_tracker`, not
+/// `MemoryToolMemory`; `memory_diff` reads `memory::diff::ops`, not
+/// `MemoryDiff`. Filtering both on the driver's advertised set is still the
+/// correct M5 behaviour: §3.3 contracts what the *model is told exists*, so
+/// the later re-point onto `MemoryGuard` must not change the advertised
+/// surface, and `None` to dodge the mismatch would bake the wrong contract in.
+/// `goals_*` was the third until #5560 routed it onto the guarded
+/// `MemoryGoals` family — the advertised capability did not change when
+/// the plumbing caught up: the exact property this clause protects.
 fn tool_capability(name: &str) -> Option<tinymemory_api::capabilities::Capability> {
     use tinymemory_api::capabilities::Capability;
 
@@ -1523,6 +1473,13 @@ fn tool_capability(name: &str) -> Option<tinymemory_api::capabilities::Capabilit
         "memory_diff" => Capability::Diff,
         "memory_doctor" => Capability::Maintenance,
         "tool_stats" => Capability::ToolMemory,
+
+        // The long-term goals tool. It was four `goals_*` tools and is now one
+        // `op`-dispatched `goals`; the exact arm is what the prefix rule below
+        // no longer covers. The per-thread `goal_get`/`goal_set`/
+        // `goal_complete` tools are `DomainGroup::Threads` and a different
+        // concept, and neither `goals` nor `goals_` catches them.
+        "goals" => Capability::Goals,
 
         // Prefix rules, so a NEW tool in one of these families auto-gates
         // instead of silently landing in the un-filtered bucket — the same

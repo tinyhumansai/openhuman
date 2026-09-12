@@ -28,7 +28,14 @@ export type CloudProvider = {
   maskedKey: string;
 };
 
-export type OllamaState = 'disabled' | 'missing' | 'stopped' | 'starting' | 'running' | 'error';
+export type OllamaState =
+  | 'disabled'
+  | 'missing'
+  | 'stopped'
+  | 'starting'
+  | 'running'
+  | 'degraded'
+  | 'error';
 
 export type OllamaModel = { id: string; sizeBytes: number; family: string };
 
@@ -333,10 +340,6 @@ export function providerToggleAriaLabel(
     enabled ? t('settings.ai.disconnectProvider') : t('settings.ai.connectProviderLabel'),
     { label }
   );
-}
-
-export function humanizeModelId(id: string): string {
-  return id.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
 export function appendTemperatureToProviderString(

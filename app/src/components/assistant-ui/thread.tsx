@@ -28,6 +28,7 @@ import { TooltipIconButton } from '@/components/assistant-ui/tooltip-icon-button
 import { Button } from '@/components/assistant-ui/ui/button';
 import { Skeleton } from '@/components/assistant-ui/ui/skeleton';
 import ModelQualityPill from '@/components/chat/ModelQualityPill';
+import { useAuiEditCapabilities } from '@/features/conversations/components/aui/auiThreadState';
 import {
   ActionBarMorePrimitive,
   ActionBarPrimitive,
@@ -99,6 +100,27 @@ export type ThreadComponents = {
   ComposerExtras?: ComponentType | undefined;
   /** Full-width host content immediately above the composer shell. */
   ComposerHeader?: ComponentType | undefined;
+  /**
+   * Host-owned progress line for the turn in flight, rendered under the last
+   * message while `thread.isRunning`.
+   *
+   * A seam rather than a fixed widget because `isRunning` is all this file
+   * knows: what the model is actually doing right now — reasoning round, active
+   * tool, delegated sub-agent — lives in the host's own transport state, and
+   * without somewhere to put it a long turn is an unlabelled spinner. The host
+   * component returns `null` when it has nothing to say.
+   */
+  RunningStatus?: ComponentType | undefined;
+  /**
+   * Host-owned one-line footer for a **settled** assistant message — the
+   * turn's process summary and the single door to its detail.
+   *
+   * A seam for the same reason `RunningStatus` is one: this file knows the
+   * message, not what the host recorded while producing it. The host component
+   * reads the message's own metadata and returns `null` when the turn has no
+   * process behind it, so a plain answer gets no footer.
+   */
+  TurnFooter?: ComponentType | undefined;
   /** Host-owned attachment previews rendered above the editor. */
   ComposerAttachments?: ComponentType | undefined;
   /** Host-owned attachment picker rendered in the action row. */
@@ -137,6 +159,31 @@ export type ThreadProps = {
    */
   slashCommands?: readonly Unstable_SlashCommand[] | undefined;
 };
+
+/**
+ * Whether Lexical's own `SyncPlugin` is driving the composer store, making the
+ * host's DOM→store bridge below not merely redundant but harmful.
+ *
+ * Lexical reconciles from `beforeinput` and needs `getTargetRanges()` to know
+ * what the event will change. jsdom implements neither, so there the plugin
+ * never commits editor state and the bridge is the ONLY path from a synthetic
+ * `input` to the store — which is exactly why #5763 gated that bridge rather
+ * than deleting it, and why 54 composer tests depend on it.
+ *
+ * In a real browser the plugin does commit, and then the bridge's write moves
+ * the store through the *external* path. `SyncPlugin`'s runtime subscription
+ * reads that as a foreign edit, calls `root.clear()` and rebuilds the editor —
+ * and the rebuild restores the caret to the offset captured from the editor
+ * state, which still lags the DOM by one keystroke. So the caret never
+ * advances: typing `hello` one key at a time produced `holle` with the caret
+ * stuck at 1 (#6163).
+ *
+ * Feature-detected rather than `import.meta.env` because the condition is a
+ * real capability, not a build mode: any environment that reconciles from
+ * `beforeinput` must not be bridged, and any that cannot must be.
+ */
+const lexicalDrivesTheStore = (): boolean =>
+  typeof InputEvent !== 'undefined' && 'getTargetRanges' in InputEvent.prototype;
 
 const EMPTY_COMPONENTS: ThreadComponents = {};
 
@@ -247,6 +294,7 @@ const ThreadRoot: FC<{
 
           <div data-slot="aui_message-group" className="mb-14 flex flex-col gap-y-6 empty:hidden">
             <ThreadPrimitive.Messages>{() => <ThreadMessage />}</ThreadPrimitive.Messages>
+            <RunningStatusSlot />
           </div>
 
           <ThreadPrimitive.ViewportFooter
@@ -264,6 +312,22 @@ const ThreadRoot: FC<{
         </div>
       </ThreadPrimitive.Viewport>
     </ThreadPrimitive.Root>
+  );
+};
+
+/**
+ * The host's `RunningStatus`, gated on the thread actually running.
+ *
+ * Kept inside the message group so the line sits under the last message —
+ * where the answer is about to appear — rather than pinned to the composer.
+ */
+const RunningStatusSlot: FC = () => {
+  const { RunningStatus } = useContext(ThreadComponentsContext);
+  if (!RunningStatus) return null;
+  return (
+    <AuiIf condition={s => s.thread.isRunning}>
+      <RunningStatus />
+    </AuiIf>
   );
 };
 
@@ -350,6 +414,32 @@ const Composer: FC<{
     };
   }, []);
 
+  // Set for as long as an IME composition is open. The gate is a ref rather
+  // than state because it is read from a microtask, not from a render.
+  //
+  // Adopted from #5764 (@ligjn), which identified the hazard this closes: the
+  // store write below is deferred, and a fast CJK typist can open the next
+  // composition before it runs. That stale write would rebuild the editor
+  // mid-composition and cancel it -- #5763 again, one composition later.
+  const isComposingTextRef = useRef(false);
+
+  // DOM text -> composer store. The text is read at event time; only the write
+  // is deferred by a microtask, so the editor has finished applying the event
+  // before the store changes under it.
+  //
+  // The gate is re-checked INSIDE the microtask, not just at event time: a
+  // composition that started in between makes this write stale, and dropping it
+  // loses nothing, because the DOM is the source of truth and that
+  // composition's own commit reads the whole of it.
+  const syncComposerFromDom = (target: EventTarget | null) => {
+    if (!(target instanceof HTMLElement)) return;
+    const text = target.textContent ?? '';
+    globalThis.queueMicrotask(() => {
+      if (isComposingTextRef.current) return;
+      aui.composer.setText(text);
+    });
+  };
+
   return (
     <ComposerPrimitive.Unstable_TriggerPopoverRoot>
       <ComposerPrimitive.Root
@@ -359,7 +449,64 @@ const Composer: FC<{
         <ComposerPrimitive.AttachmentDropzone asChild>
           <div
             data-slot="aui_composer-shell"
-            className="border-line focus-within:border-line-strong data-[dragging=true]:border-ring flex w-full cursor-text flex-col gap-2 rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) transition-[border-color] data-[dragging=true]:border-dashed data-[dragging=true]:bg-[color-mix(in_oklab,var(--color-accent)_50%,var(--color-background))]">
+            // Keyed to `content-faint` rather than `line`/`line-strong`, which
+            // sat too close to the composer's own surface to read as an edge at
+            // all; `content-faint` is a real step along the grey ramp in both
+            // themes and the alpha then pulls it back.
+            //
+            // The border is deliberately fainter than the content card's edge
+            // (0.65 in `index.css`) because it is not carrying the definition
+            // alone: `shadow-soft` lifts the composer off the transcript, and a
+            // lifted surface needs less outline than a flat one to read as
+            // separate. Border and shadow together at low strength read calmer
+            // than either at full — a hard 0.65 line under a shadow reads as
+            // two competing edges.
+            //
+            // Two roles, kept apart: the SHADOW is constant and the BORDER is
+            // what moves.
+            //
+            // The shadow is an explicit near-black pair rather than
+            // `shadow-soft`/`shadow-medium`. Those tokens are black at 0.08
+            // alpha, which is a diffuse haze — on the themed chrome behind this
+            // composer it reads as a smudge rather than a cast shadow.
+            //
+            // Both layers are pushed DOWN rather than spread evenly, because an
+            // even shadow reads as a glow: it implies light from everywhere,
+            // which is no light at all, and the composer ends up looking fuzzy
+            // instead of raised. The offsets (6px, 22px) exceed each layer's
+            // negative spread (-4px, -16px), so the cast clears the box on the
+            // bottom edge and is pulled in at the top — the asymmetry is what
+            // says "lit from above".
+            //
+            //   0 8px  12px -4px  / 0.34  — contact: tight, near the edge
+            //   0 30px 44px -16px / 0.48  — cast: far, wide, and the stronger
+            //
+            // The far layer carrying more alpha than the near one is
+            // deliberate and is what gives depth; the usual instinct is the
+            // reverse, which flattens it back out.
+            //
+            // `animate-composer-shadow` then orbits those offsets clockwise on
+            // a slow loop (`composerShadowOrbit`, `index.css`), as though the
+            // light above the composer circles the room. The static values here
+            // are the orbit's 25% stop, so the animation starts from roughly
+            // where the unanimated composer sits rather than jumping on load. The static `shadow-[…]` above is
+            // not redundant: it is what `motion-reduce:animate-none` falls back
+            // to, so the composer keeps its elevation when the OS asks for less
+            // motion and merely stops moving. Keyframes override the utility
+            // while the animation runs, which is why the two can coexist.
+            //
+            // Focus is now carried entirely by the border — 0.35 → 0.90 on the
+            // same token, so the edge sharpens rather than changing colour —
+            // and `transition` names border-color alone. Animating the shadow
+            // as well meant two things moving at once for a single event; with
+            // the elevation fixed, the composer stays put and only its outline
+            // responds. `duration-200 ease-out` is the settle, and
+            // `motion-reduce` drops it for anyone who asked the OS for less
+            // motion — the cue still lands, just instantly.
+            //
+            // `border-ring` on drag is untouched — that state is meant to break
+            // the pattern.
+            className="border-content-faint/35 focus-within:border-content-faint/90 data-[dragging=true]:border-ring shadow-[0_8px_12px_-4px_rgb(0_0_0/0.34),0_30px_44px_-16px_rgb(0_0_0/0.48)] animate-composer-shadow motion-reduce:animate-none flex w-full cursor-text flex-col gap-2 rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) transition-[border-color] duration-200 ease-out motion-reduce:transition-none data-[dragging=true]:border-dashed data-[dragging=true]:bg-[color-mix(in_oklab,var(--color-accent)_50%,var(--color-background))]">
             {HostComposerAttachments ? <HostComposerAttachments /> : <ComposerAttachments />}
             {/*
              * Lexical rather than the plain `ComposerPrimitive.Input` textarea,
@@ -372,12 +519,37 @@ const Composer: FC<{
             <LexicalComposerInput
               ref={inputWrapperRef}
               placeholder="Send a message..."
+              onCompositionStartCapture={() => {
+                isComposingTextRef.current = true;
+              }}
               onInputCapture={event => {
-                const target = event.target;
-                if (target instanceof HTMLElement) {
-                  const text = target.textContent ?? '';
-                  globalThis.queueMicrotask(() => aui.composer.setText(text));
+                // An IME fires `input` per keystroke while the candidate window is
+                // still open, and the text on the DOM then is the pre-edit, not the
+                // user's input. Writing it into the store re-renders the editor and
+                // cancels the composition, so `nihao` + Enter committed as
+                // `n ni nihao 你好` (#5763). The keydown guard below already refuses
+                // to act mid-composition; this bridge was the one that did not.
+                //
+                // Two checks, because they catch different things: the ref covers
+                // the whole composition from `compositionstart`, and the native flag
+                // covers an `input` that arrives without one.
+                if (isComposingTextRef.current) return;
+                if ('isComposing' in event.nativeEvent && event.nativeEvent.isComposing) {
+                  return;
                 }
+                if (lexicalDrivesTheStore()) return;
+                syncComposerFromDom(event.target);
+              }}
+              onCompositionEndCapture={event => {
+                // Re-open the gate before syncing: what the DOM holds now is what the
+                // user committed, and it is the store's turn to catch up.
+                //
+                // Chromium emits a trailing `input` with `isComposing === false` that
+                // the handler above picks up; WebKit does not, so on Safari the
+                // committed text exists only here. Running in both is harmless -- the
+                // second write carries the same string.
+                isComposingTextRef.current = false;
+                syncComposerFromDom(event.target);
               }}
               onKeyDownCapture={event => {
                 if (event.key === 'Escape' && onEscape) {
@@ -388,6 +560,7 @@ const Composer: FC<{
                 }
                 const native = event.nativeEvent;
                 if (
+                  isComposingTextRef.current ||
                   native.isComposing ||
                   native.keyCode === 229 ||
                   ('which' in native && native.which === 229)
@@ -492,13 +665,27 @@ const ComposerAction: FC<{
           {showIdleAction ? (
             <ComposerIdleAction />
           ) : hasComposerAttachments && composerText.trim().length === 0 ? (
+            // Pinned to `primary-500` rather than left on `variant="default"`.
+            // That variant paints `bg-primary`, which `styles/shadcn-tokens.css`
+            // aliases to `primary-500` in light but `primary-400` in DARK — a
+            // pale sky blue. Its label is `--content-inverted`, which is white
+            // in both themes (not actually inverted per theme), so in dark the
+            // send button was white-on-pale-blue: washed out, and about 2.4:1,
+            // which is below AA for a control. `primary-500` under white is
+            // ~4.6:1 and reads as the accent in both themes.
+            // Overriding here rather than repointing the dark `--primary`
+            // alias: that token backs every `variant="default"` button in the
+            // app, and dark-mode-lightens-the-accent is a defensible palette
+            // choice to make deliberately, not as a side effect of fixing one
+            // button. `cn` is tailwind-merge, so the later `bg-primary-500`
+            // replaces the variant's `bg-primary` cleanly.
             <TooltipIconButton
               tooltip="Send message"
               side="bottom"
               type="button"
               variant="default"
               size="icon"
-              className="aui-composer-send size-7 rounded-full"
+              className="aui-composer-send size-7 rounded-full bg-primary-500 text-content-inverted hover:bg-primary-600"
               data-testid="send-message-button"
               aria-label="Send message"
               onClick={() => {
@@ -515,7 +702,7 @@ const ComposerAction: FC<{
                 type="button"
                 variant="default"
                 size="icon"
-                className="aui-composer-send size-7 rounded-full"
+                className="aui-composer-send size-7 rounded-full bg-primary-500 text-content-inverted hover:bg-primary-600"
                 data-testid="send-message-button"
                 aria-label="Send message">
                 <ArrowUpIcon className="aui-composer-send-icon size-4" />
@@ -529,7 +716,7 @@ const ComposerAction: FC<{
               type="button"
               variant="default"
               size="icon"
-              className="aui-composer-cancel size-7 rounded-full"
+              className="aui-composer-cancel size-7 rounded-full bg-primary-500 text-content-inverted hover:bg-primary-600"
               data-testid="stop-generation-button"
               aria-label="Stop generating">
               <SquareIcon className="aui-composer-cancel-icon size-3.5 fill-current" />
@@ -556,18 +743,36 @@ const AssistantMessage: FC = () => {
     ToolFallback: ToolFallbackComponent = ToolFallback,
     ToolGroup,
     ReasoningGroup,
+    TurnFooter,
   } = useContext(ThreadComponentsContext);
 
   const ACTION_BAR_PT = 'pt-1.5';
-  // Keep the action bar inside the contained root's paint box, then cancel its reserved space in flow.
-  const ACTION_BAR_HEIGHT = `min-h-7.5 ${ACTION_BAR_PT}`;
+  // `min-h` reserves the bar's height (`pt-1.5` + a `size-6` button = 7.5) so a
+  // bar revealed on hover does not shift the transcript, and `-mb` gives that
+  // reservation back to the flow so it does not stack on top of the spacing the
+  // message group already provides. Both MUST sit on this one element: the `-mb`
+  // had drifted onto the root, where it only cancelled that element's own `pb`,
+  // leaving the reservation uncompensated — a dead 30px band under every turn.
+  //
+  // The `-mb` step is `gap-y-6` from the message group, NOT the full `min-h`.
+  // The bar is pulled into the inter-message gap and must stay inside it: give
+  // back more than the gap and the bar's tail paints over the next message's
+  // first line, which sits at the same left inset (`ms-2` here, `px-2` there).
+  // So the bar occupies the gap exactly and the turns end up 7.5 apart.
+  // Keep this in step with `aui_message-group`'s `gap-y-*`; the pairing is
+  // asserted in `thread.actionBarSpacing.test.tsx`.
+  const ACTION_BAR_HEIGHT = `-mb-6 min-h-7.5 ${ACTION_BAR_PT}`;
+  // The root's own `-mb-7.5 pb-7.5` pair below is PAINT-ONLY and unrelated to
+  // the above: `content-visibility:auto` implies `contain: paint`, so `pb`
+  // widens the paint box to cover the bar that `-mb` pulls past the content
+  // box, and the root's `-mb` cancels that padding again in flow.
 
   return (
     <MessagePrimitive.Root
       data-slot="aui_assistant-message-root"
       data-role="assistant"
       data-testid="agent-message"
-      className="fade-in slide-in-from-bottom-1 animate-in relative -mb-7.5 pb-7.5 duration-150 [contain-intrinsic-size:auto_200px] [content-visibility:auto]">
+      className="fade-in slide-in-from-bottom-1 animate-in relative -mb-7.5 pb-7.5 duration-150">
       {/*
        * One vertical rhythm for the whole message, rather than each part
        * bringing its own margin. Measured before this change the gaps ran
@@ -671,6 +876,7 @@ const AssistantMessage: FC = () => {
             Stopped
           </span>
         </AuiIf>
+        {TurnFooter ? <TurnFooter /> : null}
         <BranchPicker />
         <AssistantActionBar />
       </div>
@@ -738,7 +944,7 @@ const UserMessage: FC = () => {
   return (
     <MessagePrimitive.Root
       data-slot="aui_user-message-root"
-      className="fade-in slide-in-from-bottom-1 animate-in grid auto-rows-auto grid-cols-[minmax(72px,1fr)_auto] content-start gap-y-2 px-2 duration-150 [contain-intrinsic-size:auto_200px] [content-visibility:auto] [&:where(>*)]:col-start-2"
+      className="fade-in slide-in-from-bottom-1 animate-in grid auto-rows-auto grid-cols-[minmax(72px,1fr)_auto] content-start gap-y-2 px-2 duration-150 [&:where(>*)]:col-start-2"
       data-role="user">
       <UserMessageAttachments />
 
@@ -760,6 +966,29 @@ const UserMessage: FC = () => {
 };
 
 const UserActionBar: FC = () => {
+  // Edit is offered only when the bound runtime can honour it. The
+  // external-store adapter supplies `onNew` / `onCancel` and neither `onEdit`
+  // nor `setMessages`, so assistant-ui reports `edit: false` and
+  // `EditComposer` below never renders — the button was clickable and did
+  // nothing (#5897).
+  //
+  // Gated on the capability rather than hard-coded off, so the affordance
+  // appears by itself the day the adapter grows `onEdit`.
+  const { canEdit } = useAuiEditCapabilities();
+
+  // Hoisted out of the JSX rather than written as `{canEdit && (…)}` inline: a
+  // bare JSX logical expression emits no coverage record on its own line, so
+  // `diff-cover` reported the gate as an uncovered changed line even while the
+  // v8 report showed the surrounding function fully exercised. As a `const` it
+  // is an ordinary statement, instrumented like any other.
+  const editAction = canEdit ? (
+    <ActionBarPrimitive.Edit asChild>
+      <TooltipIconButton tooltip="Edit" className="aui-user-action-edit">
+        <PencilIcon />
+      </TooltipIconButton>
+    </ActionBarPrimitive.Edit>
+  ) : null;
+
   return (
     <ActionBarPrimitive.Root
       hideWhenRunning
@@ -770,20 +999,14 @@ const UserActionBar: FC = () => {
           <CopyIcon />
         </TooltipIconButton>
       </ActionBarPrimitive.Copy>
-      <ActionBarPrimitive.Edit asChild>
-        <TooltipIconButton tooltip="Edit" className="aui-user-action-edit">
-          <PencilIcon />
-        </TooltipIconButton>
-      </ActionBarPrimitive.Edit>
+      {editAction}
     </ActionBarPrimitive.Root>
   );
 };
 
 const EditComposer: FC = () => {
   return (
-    <MessagePrimitive.Root
-      data-slot="aui_edit-composer-wrapper"
-      className="flex flex-col px-2 [contain-intrinsic-size:auto_200px] [content-visibility:auto]">
+    <MessagePrimitive.Root data-slot="aui_edit-composer-wrapper" className="flex flex-col px-2">
       <ComposerPrimitive.Root className="aui-edit-composer-root border-border/60 dark:border-muted-foreground/15 ms-auto flex w-full max-w-[85%] cursor-text flex-col rounded-(--composer-radius) border bg-(--composer-bg)">
         <ComposerPrimitive.Input
           className="aui-edit-composer-input text-foreground min-h-14 w-full resize-none bg-transparent px-4 pt-3 pb-1 text-base outline-hidden"
@@ -807,6 +1030,15 @@ const EditComposer: FC = () => {
 };
 
 const BranchPicker: FC<BranchPickerPrimitive.Root.Props> = ({ className, ...rest }) => {
+  // The same defect class as the Edit button above, one step from biting: this
+  // is rendered unconditionally at both call sites and is invisible today only
+  // because `hideWhenSingleBranch` happens to hold — the adapter implements no
+  // `setMessages`, so there is never more than one branch. That is
+  // assistant-ui's guard doing the work this app intended to do itself, and it
+  // would become a second dead control if the prop ever went away.
+  const { canSwitchToBranch } = useAuiEditCapabilities();
+  if (!canSwitchToBranch) return null;
+
   return (
     <BranchPickerPrimitive.Root
       hideWhenSingleBranch

@@ -1,134 +1,16 @@
+//! Host-side coverage for the tool-filter adapter.
+//!
+//! The ranking algorithm itself is tested upstream in
+//! `tinyagents_harness::tool::select`, against synthetic catalogues. What is
+//! tested here is the half that stayed: the `ConnectedIntegrationTool`
+//! adapter, exercised against the real Composio tool-list dumps in
+//! `tests/fixtures/` (1000 actions across nine toolkits). Those fixtures are
+//! host data about a specific integration provider and have no business in a
+//! provider-neutral library crate, so this suite stays here rather than
+//! moving up with the algorithm.
+
 use super::*;
-
-fn tool(name: &str, desc: &str) -> ConnectedIntegrationTool {
-    ConnectedIntegrationTool {
-        name: name.to_string(),
-        description: desc.to_string(),
-        parameters: None,
-    }
-}
-
-fn github_sample() -> Vec<ConnectedIntegrationTool> {
-    vec![
-        tool("GITHUB_CREATE_A_PULL_REQUEST",
-             "Creates a pull request in a GitHub repository, requiring existing base and head branches."),
-        tool("GITHUB_CREATE_A_REVIEW_FOR_A_PULL_REQUEST",
-             "Creates a pull request review, allowing approval, change requests, or comments."),
-        tool("GITHUB_CREATE_A_DEPLOYMENT_BRANCH_POLICY",
-             "Creates a deployment branch or tag policy for an existing environment in a repository."),
-        tool("GITHUB_DELETE_A_REVIEW_COMMENT_FOR_A_PULL_REQUEST",
-             "Deletes a review comment on a pull request."),
-        tool("GITHUB_FIND_PULL_REQUESTS",
-             "Primary tool to find and search pull requests."),
-        tool("GITHUB_GET_A_PULL_REQUEST",
-             "Retrieves a specific pull request by number."),
-        tool("GITHUB_LIST_ASSIGNEES",
-             "Lists users who can be assigned to issues in a repository."),
-    ]
-}
-
-#[test]
-fn create_pr_ranks_create_a_pull_request_first() {
-    let actions = github_sample();
-    let idx = filter_actions_by_prompt("create a PR from my feature branch to main", &actions, 5);
-    assert!(!idx.is_empty());
-    // Top match must be a CREATE verb tool (not DELETE/GET).
-    let top_name = &actions[idx[0]].name;
-    assert!(
-        top_name.contains("CREATE") && top_name.contains("PULL_REQUEST"),
-        "expected top match to be a CREATE + PULL_REQUEST tool, got {top_name}"
-    );
-    // The DELETE tool must not appear — verb gate should drop it.
-    for &i in &idx {
-        assert!(
-            !actions[i].name.starts_with("GITHUB_DELETE"),
-            "DELETE tool leaked past verb gate: {}",
-            actions[i].name
-        );
-    }
-}
-
-#[test]
-fn list_prs_ranks_find_pull_requests_first() {
-    let actions = github_sample();
-    let idx = filter_actions_by_prompt("list open PRs assigned to me", &actions, 5);
-    assert!(!idx.is_empty());
-    let top_name = &actions[idx[0]].name;
-    assert!(
-        top_name == "GITHUB_FIND_PULL_REQUESTS" || top_name == "GITHUB_LIST_ASSIGNEES",
-        "expected FIND_PULL_REQUESTS or LIST_ASSIGNEES on top, got {top_name}"
-    );
-}
-
-#[test]
-fn empty_prompt_returns_empty() {
-    let actions = github_sample();
-    let idx = filter_actions_by_prompt("", &actions, 5);
-    assert!(idx.is_empty());
-}
-
-#[test]
-fn abbreviation_expansion_works() {
-    let qt = query_tokens("create a PR from feature branch");
-    assert!(qt.contains("pr"));
-    assert!(qt.contains("pull"));
-    assert!(qt.contains("request"));
-}
-
-#[test]
-fn stopwords_removed() {
-    let qt = query_tokens("send the email to my manager");
-    assert!(!qt.contains("the"));
-    assert!(!qt.contains("to"));
-    assert!(!qt.contains("my"));
-    assert!(qt.contains("send"));
-    assert!(qt.contains("email"));
-    assert!(qt.contains("manager"));
-}
-
-#[test]
-fn verb_detection_handles_aliases() {
-    let v = detect_verbs("post a message to general channel");
-    assert!(v.contains(&Verb::Send) || v.contains(&Verb::Create));
-
-    let v = detect_verbs("delete all promotional emails");
-    assert!(v.contains(&Verb::Delete));
-
-    let v = detect_verbs("merge pull request 42");
-    assert!(v.contains(&Verb::Merge));
-}
-
-#[test]
-fn tool_verb_handles_plurals() {
-    assert_eq!(tool_verb("SLACK_DELETES_A_MESSAGE"), Some(Verb::Delete));
-    assert_eq!(
-        tool_verb("GITHUB_CREATE_A_PULL_REQUEST"),
-        Some(Verb::Create)
-    );
-    assert_eq!(tool_verb("GMAIL_SEND_EMAIL"), Some(Verb::Send));
-    assert_eq!(tool_verb("NOTION_QUERY_DATABASE"), Some(Verb::List));
-    // Neutral — no verb prefix recognised
-    assert_eq!(tool_verb("GITHUB_GIST_COMMENT"), None);
-}
-
-#[test]
-fn delete_query_excludes_create_tools() {
-    let actions = vec![
-        tool("GMAIL_SEND_EMAIL", "Sends an email."),
-        tool("GMAIL_DELETE_MESSAGE", "Deletes a message by id."),
-        tool("GMAIL_DELETE_THREAD", "Deletes a thread."),
-        tool("GMAIL_BATCH_DELETE_MESSAGES", "Bulk delete messages."),
-    ];
-    let idx = filter_actions_by_prompt("delete all promotional emails", &actions, 10);
-    for &i in &idx {
-        assert!(
-            actions[i].name.contains("DELETE"),
-            "non-DELETE tool leaked: {}",
-            actions[i].name
-        );
-    }
-    assert!(idx.len() >= 3);
-}
+use crate::openhuman::agent::context::prompt::ConnectedIntegrationTool;
 
 // ── Real-dataset integration tests ────────────────────────────────
 //
@@ -354,4 +236,76 @@ fn repro_3152_create_page_reachable_in_top_k() {
         "NOTION_CREATE_NOTION_PAGE",
         "#3152 notion create-page",
     );
+}
+
+// ── Ranking-drift guard ────────────────────────────────────────────
+//
+// Exact top-5 orderings captured from the pre-extraction implementation,
+// before the algorithm moved into `tinyagents`. The ranker decides which
+// actions a model is shown, so a scoring change is a silent behaviour change;
+// these pin the ordering through the adapter, over real catalogues.
+#[test]
+fn adapter_ranking_matches_the_pre_extraction_snapshot() {
+    let cases: &[(&str, &str, usize, &[&str])] = &[
+        (
+            "github",
+            "Create a pull request from feature/auth-fix to main in the openhuman repo",
+            15,
+            &[
+                "GITHUB_CREATE_A_CODESPACE_FROM_A_PULL_REQUEST",
+                "GITHUB_CREATE_A_PULL_REQUEST",
+                "GITHUB_CREATE_REACTION_FOR_A_PULL_REQUEST_REVIEW_COMMENT",
+                "GITHUB_CREATE_A_REVIEW_COMMENT_FOR_A_PULL_REQUEST",
+                "GITHUB_CREATE_A_REVIEW_FOR_A_PULL_REQUEST",
+            ],
+        ),
+        (
+            "gmail",
+            "Send an email to john@example.com with subject 'Q2 Report' and body attached",
+            10,
+            &[
+                "GMAIL_SEND_EMAIL",
+                "GMAIL_SEND_DRAFT",
+                "GMAIL_SETTINGS_SEND_AS_GET",
+                "GMAIL_REPLY_TO_THREAD",
+                "GMAIL_FORWARD_MESSAGE",
+            ],
+        ),
+        (
+            "slack",
+            "Post a message to the #general channel saying the deploy is complete",
+            15,
+            &[
+                "SLACK_SEND_MESSAGE",
+                "SLACK_SEND_EPHEMERAL_MESSAGE",
+                "SLACK_SEND_ME_MESSAGE",
+                "SLACK_CREATE_CHANNEL",
+                "SLACK_CREATE_CHANNEL_BASED_CONVERSATION",
+            ],
+        ),
+        (
+            "notion",
+            "Create a new page in the Engineering workspace titled 'Sprint Plan'",
+            15,
+            &[
+                "NOTION_CREATE_NOTION_PAGE",
+                "NOTION_CREATE_COMMENT",
+                "NOTION_ADD_MULTIPLE_PAGE_CONTENT",
+                "NOTION_ADD_PAGE_CONTENT",
+                "NOTION_CREATE_DATABASE",
+            ],
+        ),
+    ];
+    for (toolkit, prompt, top_k, expected) in cases {
+        let actions = load_real_toolkit(toolkit);
+        let got: Vec<&str> = filter_actions_by_prompt(prompt, &actions, *top_k)
+            .into_iter()
+            .take(expected.len())
+            .map(|i| actions[i].name.as_str())
+            .collect();
+        assert_eq!(
+            &got, expected,
+            "ranking drifted for {toolkit} prompt {prompt:?}"
+        );
+    }
 }

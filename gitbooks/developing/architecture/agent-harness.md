@@ -7,6 +7,26 @@ icon: layer-group
 
 # Agent Harness
 
+## Embedding OpenHuman as a library
+
+`openhuman_core::Harness` builds one in-process core for a caller that supplies
+its workspace, provider endpoint and credential, skills, MCP servers, and tool
+policy. Such a harness identifies as `HostKind::Library`: inference does not
+depend on OpenHuman app login, including inference-readiness checks for workflow
+agent nodes. Backend features such as integrations and managed services still
+need whatever identity their endpoint requires.
+
+Build one harness and issue concurrent `run` or `turn(...).send()` calls on it;
+do not build one core per agent. Each call owns a distinct session unless a
+prior session id is supplied. The conversation store coordinates metadata per
+workspace and message writes per thread, so independent agents do not serialize
+on one process-wide store mutex.
+
+`Workspace::Inherit` together with `Provider::inherit()` is deliberately not
+library-routed inference. It borrows the installed OpenHuman configuration and
+therefore keeps the installed application's session checks. Supply an explicit
+provider when embedding without app login.
+
 > **Status (issue #4249, tinyagents migration):** the agent turn no longer runs
 > on the in-tree `run_turn_engine` loop. **All three entry points (`Agent::turn`,
 > the channel/CLI bus path, and `run_subagent`) now drive every turn through the
@@ -120,6 +140,17 @@ A **session** is the live conversation an `Agent` instance is running. The `Agen
 5. **Spawns post-turn hooks** in the background - the user gets their answer before archivist / learning / cost logging finishes.
 
 The system prompt is **not** rebuilt on subsequent turns. Even cosmetic byte changes invalidate the KV-cache prefix and force a full re-prefill, so dynamic per-turn context (memory recall, freshly-learned snippets) is appended as user-visible message content rather than spliced into the system prompt.
+
+#### The cacheable prefix is wider than the system prompt
+
+Freezing the prompt is only one third of the contract, and the other two are easier to break because nothing about them looks like caching:
+
+- **The tool block counts, and it comes _first_.** Every prefix cache in production renders the tool catalogue ahead of the conversation — a chat template has to put it somewhere the model reads before the first user turn. OpenAI's automatic cache, Anthropic's `cache_control` (tools → system → messages), DeepSeek's context cache and any vLLM/SGLang radix cache all work this way. So a `tools` array that changes between turns invalidates the frozen system prompt too, and the JSON key order of the request body (which puts `messages` before `tools`) says nothing about it. The mid-session Composio reconcile is still correct — a tool surface that lies about what the model can call is worse than a cold prefill — but it must fire only on a real capability change and be byte-stable otherwise. `connected_set_hash` sorts before hashing so a reordered backend response never reaches a rebuild, and `collect_orchestrator_tools` sorts the connected-toolkit enum for the same reason.
+- **History must be append-only.** Turn N's serialization has to survive verbatim as the opening of turn N+1. `pair_tool_cycles` drops half-finished tool cycles at serialization time, so its verdict for an entry must depend only on that entry and its immediate neighbour — never on anything appended later, or an earlier message's presence flips retroactively and the prefix moves under the cache. Context compaction is the one deliberate exception; it rewrites the middle and pays for a re-prefill.
+
+A resumed session's replayed prefix is folded into `Agent::history` rather than spliced into one request, so the request, the following turn and the persisted transcript all read the same sequence. Splicing it cost the conversation twice: the next turn went out without it, and the transcript written afterwards (serialized from `history`) held only the new turn — which the *next* resume then read back, truncating the thread a little further on every restart.
+
+Measure this rather than reasoning about it. `CAPTURE_ALL=1 node scripts/debug/capture-first-inference.mjs` records a whole session's requests, `scripts/debug/run-multi-turn-capture.mjs` drives a multi-turn thread through the production RPC, and `scripts/debug/audit-inference-prefix.mjs` reports the first divergence and attributes it. A single-turn capture cannot see any of these — the question is never what turn 1 costs, it is whether turn 2 can reuse it.
 
 ### AGENTS.md project instructions
 
@@ -288,7 +319,7 @@ The child run itself still uses the same runner:
 
 `wait_subagent` and `steer_subagent` accept either the durable `subagent_session_id` or the transient `task_id`; durable ids are preferred across turns. `list_subagents` shows reusable children for the current parent thread, and `close_subagent` marks a worker non-reusable and cancels it if it is still running. Inline blocking is explicit via `blocking: true`; it is no longer the default.
 
-The synthesized archetype delegations (`delegate_*`, `build_workflow`, and the other `delegate_name` tools) follow the same contract: they route through the durable async path by default, returning an `[async_subagent_ref]` (with `subagent_session_id` + `task_id`) immediately, and the finished result is inserted into the parent chat as a new system turn via `background_completions`/`background_delivery`. They fall back to inline blocking automatically when there is no parent agent turn or no chat thread to deliver into (cron/CLI), or when `blocking: true` is passed. Cross-turn continuity comes from three pieces: the per-turn `[active_subagents]` roster merges the live in-memory registry with the durable `subagent_sessions` store (so a cold-booted orchestrator still sees earlier workers); `continue_subagent` falls back from pause checkpoints to the durable store, resuming an idle worker with its persisted history; and a `workflow_proposal` payload found in a finished child's history is persisted as a parent-thread message (`extraMetadata.scope = "workflow_proposal"`) that the frontend rehydrates into the proposal card on thread load.
+The synthesized archetype delegations (`delegate_*`, `build_workflow`, and the other `delegate_name` tools) follow the same contract: they route through the durable async path by default, returning an `[async_subagent_ref]` (with `subagent_session_id` + `task_id`) immediately, and the finished result is inserted into the parent chat as a new system turn via `background_completions`/`background_delivery`. That delivery turn (`task_dispatcher::run_system_turn_on_thread`, the same runner autonomous task sessions use) persists its own closing message — `sender: "agent"`, id `agent:<run_id>`, `extraMetadata.requestId = run_id` — **before** it emits `chat_done` as `client_id: "system"`; the frontend reuses that id, so its usual `chat_done` append collapses onto the same row (the conversation store is idempotent for these deterministic `agent:`-prefixed ids; every other id is UUID-fresh and keeps the constant-time append path) instead of persisting the delivered result a second time (#5933). **Interactive turns follow the same contract since #6034**: `web_chat::presentation::deliver_response` stores the reply under `agent:<request_id>` before publishing `chat_done`, so an answer the core produced exists on disk whether or not a client is there to receive the announcement — a dropped socket, a failed append or a reloaded webview costs a repaint, not the reply. The exception is a segmented delivery, where the client owns one row per segment and the core stores none; the frontend keeps generated ids there for exactly that reason. They fall back to inline blocking automatically when there is no parent agent turn or no chat thread to deliver into (cron/CLI), or when `blocking: true` is passed. Cross-turn continuity comes from three pieces: the per-turn `[active_subagents]` roster merges the live in-memory registry with the durable `subagent_sessions` store (so a cold-booted orchestrator still sees earlier workers); `continue_subagent` falls back from pause checkpoints to the durable store, resuming an idle worker with its persisted history; and a `workflow_proposal` payload found in a finished child's history is persisted as a parent-thread message (`extraMetadata.scope = "workflow_proposal"`) that the frontend rehydrates into the proposal card on thread load.
 
 ### Spawn hierarchy and tiers
 

@@ -29,6 +29,15 @@ export interface ModalShellProps {
   closePolicy?: ModalClosePolicy;
   /** Portal target — see `DialogContent`. Defaults to `document.body`. */
   container?: HTMLElement | null;
+  /**
+   * `data-testid` for the dialog panel — the element carrying `role="dialog"`.
+   *
+   * There is deliberately no default. A hand-rolled overlay migrating onto this
+   * shell brings its own hook (`add-account-modal`, `flow-action-confirm`, …),
+   * and inventing a default would stamp a new attribute onto all ~40 existing
+   * call sites for the benefit of none of them.
+   */
+  testId?: string;
 }
 
 /**
@@ -67,6 +76,7 @@ export function ModalShell({
   describedBy,
   closePolicy,
   container,
+  testId,
 }: ModalShellProps) {
   const { t } = useT();
   const allowEscapeClose = closePolicy?.escape ?? true;
@@ -86,6 +96,7 @@ export function ModalShell({
       }}>
       <DialogContent
         container={container}
+        data-testid={testId}
         aria-labelledby={labelledBy ?? titleId}
         aria-describedby={describedBy}
         className={cn('mx-4', maxWidthClassName, panelClassName)}

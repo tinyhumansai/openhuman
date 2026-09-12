@@ -10,9 +10,10 @@ use crate::openhuman::inference::local::ollama::{
     ollama_base_url_from_config, redact_ollama_base_url,
 };
 use crate::openhuman::inference::local::provider::{provider_from_config, LocalAiProvider};
-use tinyagents::harness::message::Message;
-use tinyagents::harness::model::{ChatModel, ModelRequest};
-use tinyagents::harness::providers::openai::OpenAiModel;
+use tinyinference::message::Message;
+use tinyinference::model::{ChatModel, ModelRequest};
+use tinyinference::providers::openai::OpenAiModel;
+use tinyinference::providers::{ProviderKind, ProviderSpec};
 
 pub(super) struct ModelRpcOutcome {
     pub reply: String,
@@ -41,10 +42,21 @@ fn local_model(config: &Config, model_id: &str) -> Result<OpenAiModel, String> {
                 model = %model_id,
                 "[local_ai:model_rpc] selecting LM Studio RPC model"
             );
-            OpenAiModel::lm_studio(
-                base,
+            // `OpenAiModel::lm_studio` no longer exists as a named preset; go
+            // through `from_spec` with `ProviderKind::LmStudio` instead, which
+            // routes to the same private `local_runtime` construction
+            // (auth-style none, vision/native-tool-choice/json-object off,
+            // context probing enabled) that the old preset used.
+            OpenAiModel::from_spec(
+                ProviderSpec {
+                    kind: ProviderKind::LmStudio,
+                    provider: "lm_studio".to_string(),
+                    model: model_id.to_string(),
+                    base_url: base,
+                    api_key_env: None,
+                    requires_api_key: false,
+                },
                 config.local_ai.api_key.as_deref().unwrap_or_default(),
-                model_id,
             )
         }
         LocalAiProvider::Ollama => {
@@ -70,14 +82,18 @@ fn local_model(config: &Config, model_id: &str) -> Result<OpenAiModel, String> {
 
 pub(super) async fn invoke(
     config: &Config,
-    client: reqwest::Client,
     messages: Vec<Message>,
     max_tokens: Option<u32>,
     temperature: f32,
     allow_empty: bool,
 ) -> Result<ModelRpcOutcome, String> {
     let model_id = crate::openhuman::inference::model_ids::effective_chat_model_id(config);
-    let model = local_model(config, &model_id)?.with_client(client);
+    // `OpenAiModel` no longer exposes `with_client`/injects an external
+    // `reqwest::Client` — each model now builds and owns its own client
+    // internally (`OpenAiModel::new`). This host no longer shares its app-wide
+    // HTTP client (connection pooling, proxy config) with local-inference
+    // calls as a result; there is no replacement hook upstream.
+    let model = local_model(config, &model_id)?;
     let provider = provider_from_config(config);
     tracing::debug!(
         provider = provider.as_str(),
@@ -126,7 +142,7 @@ pub(super) async fn invoke(
 }
 
 fn model_outcome(
-    response: tinyagents::harness::model::ModelResponse,
+    response: tinyinference::model::ModelResponse,
     allow_empty: bool,
 ) -> Result<ModelRpcOutcome, String> {
     let mut reply = response.text();
@@ -136,9 +152,7 @@ fn model_outcome(
             .content
             .iter()
             .filter_map(|block| match block {
-                tinyagents::harness::message::ContentBlock::Thinking { text, .. } => {
-                    Some(text.as_str())
-                }
+                tinyinference::message::ContentBlock::Thinking { text, .. } => Some(text.as_str()),
                 _ => None,
             })
             .collect::<Vec<_>>()
@@ -174,100 +188,5 @@ fn model_outcome(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{local_model, model_outcome, throughput};
-    use crate::openhuman::config::Config;
-    use tinyagents::harness::message::{AssistantMessage, ContentBlock};
-    use tinyagents::harness::model::ModelResponse;
-    use tinyagents::harness::usage::Usage;
-
-    #[test]
-    fn throughput_reads_ollama_timing_metadata() {
-        let raw = serde_json::json!({
-            "eval_count": 25,
-            "eval_duration": 500_000_000_u64,
-        });
-
-        assert_eq!(
-            throughput(Some(&raw), "eval_count", "eval_duration"),
-            Some(50.0)
-        );
-        assert_eq!(
-            throughput(Some(&raw), "prompt_eval_count", "prompt_eval_duration"),
-            None
-        );
-    }
-
-    #[test]
-    fn local_model_selects_configured_provider() {
-        let mut config = Config::default();
-        config.local_ai.provider = "ollama".to_string();
-        let ollama = local_model(&config, "qwen3").unwrap();
-        assert_eq!(ollama.provider(), "ollama");
-
-        config.local_ai.provider = "lm_studio".to_string();
-        let lm_studio = local_model(&config, "local-model").unwrap();
-        assert_eq!(lm_studio.provider(), "lm_studio");
-    }
-
-    #[test]
-    fn model_outcome_enforces_empty_and_normalizes_usage() {
-        let response = |text: &str, usage: Usage| ModelResponse {
-            message: AssistantMessage {
-                id: None,
-                content: vec![ContentBlock::Text(text.to_string())],
-                tool_calls: Vec::new(),
-                usage: Some(usage),
-            },
-            usage: Some(usage),
-            finish_reason: None,
-            raw: None,
-            resolved_model: None,
-            continue_turn: None,
-            served_from_cache: false,
-        };
-
-        assert!(model_outcome(response(" ", Usage::default()), false).is_err());
-        let empty = model_outcome(response(" ", Usage::default()), true).unwrap();
-        assert_eq!(empty.reply, "");
-        assert_eq!(empty.prompt_tokens, None);
-        assert_eq!(empty.completion_tokens, None);
-
-        let populated = model_outcome(
-            response(
-                "done",
-                Usage {
-                    input_tokens: 7,
-                    output_tokens: 3,
-                    ..Usage::default()
-                },
-            ),
-            false,
-        )
-        .unwrap();
-        assert_eq!(populated.prompt_tokens, Some(7));
-        assert_eq!(populated.completion_tokens, Some(3));
-
-        let reasoning_only = ModelResponse {
-            message: AssistantMessage {
-                id: None,
-                content: vec![ContentBlock::Thinking {
-                    text: "reasoning fallback".to_string(),
-                    signature: None,
-                }],
-                tool_calls: Vec::new(),
-                usage: None,
-            },
-            usage: None,
-            finish_reason: None,
-            raw: None,
-            resolved_model: None,
-            continue_turn: None,
-            served_from_cache: false,
-        };
-        assert_eq!(
-            model_outcome(reasoning_only, false).unwrap().reply,
-            "reasoning fallback"
-        );
-    }
-}
+#[path = "model_rpc_tests.rs"]
+mod tests;

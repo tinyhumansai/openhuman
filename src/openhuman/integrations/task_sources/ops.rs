@@ -5,14 +5,10 @@
 //! `ControllerFuture` boundary. Business logic stays here; `schemas.rs`
 //! only parses params and delegates.
 
-use std::sync::Arc;
-
 use serde_json::{json, Value};
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::sync::composio::providers::{
-    get_provider, NormalizedTask, ProviderContext, TaskContainer,
-};
+use crate::openhuman::integrations::composio::providers::{NormalizedTask, TaskContainer};
 use crate::rpc::RpcOutcome;
 
 use super::types::{
@@ -176,24 +172,17 @@ pub async fn preview_filter(
             provider.as_str()
         ));
     }
-    let provider_impl = get_provider(provider.as_str())
-        .ok_or_else(|| format!("no native provider registered for '{}'", provider.as_str()))?;
-    let ctx = ProviderContext {
-        config: Arc::new(config.clone()),
-        toolkit: provider.as_str().to_string(),
-        connection_id: connection_id.filter(|s| !s.trim().is_empty()),
-        usage: Default::default(),
-        max_items: None,
-        sync_depth_days: None,
-    };
+    let _ = connection_id;
     let max = max.unwrap_or(config.task_sources.max_tasks_per_fetch);
-    let fetch_filter = filter::to_fetch_filter(&filter_spec, max);
-    let tasks = provider_impl
-        .fetch_tasks(&ctx, &fetch_filter)
-        .await
-        .map_err(|e| format!("preview fetch failed: {e}"))?;
-    tracing::debug!(count = tasks.len(), "[task_sources:ops] preview_filter");
-    Ok(RpcOutcome::new(tasks, vec![]))
+    let _fetch_filter = filter::to_fetch_filter(&filter_spec, max);
+    // `ComposioProvider::fetch_tasks` has no replacement — see
+    // `pipeline::fetch_tasks_unavailable`'s doc comment for why.
+    Err(format!(
+        "task_sources preview for toolkit '{}' is unavailable: tinymemory v1.13.4 deleted \
+         ComposioProvider::fetch_tasks with no replacement, and the tinyconnectors module \
+         exposes no structured task-fetch surface to reimplement it against",
+        provider.as_str()
+    ))
 }
 
 /// List the selectable containers (today: Notion databases) a connected
@@ -204,26 +193,15 @@ pub async fn list_databases(
     provider: ProviderSlug,
     connection_id: Option<String>,
 ) -> Result<RpcOutcome<Vec<TaskContainer>>, String> {
-    let provider_impl = get_provider(provider.as_str())
-        .ok_or_else(|| format!("no native provider registered for '{}'", provider.as_str()))?;
-    let ctx = ProviderContext {
-        config: Arc::new(config.clone()),
-        toolkit: provider.as_str().to_string(),
-        connection_id: connection_id.filter(|s| !s.trim().is_empty()),
-        usage: Default::default(),
-        max_items: None,
-        sync_depth_days: None,
-    };
-    let databases = provider_impl
-        .list_databases(&ctx)
-        .await
-        .map_err(|e| format!("list databases failed: {e}"))?;
-    tracing::debug!(
-        count = databases.len(),
-        provider = provider.as_str(),
-        "[task_sources:ops] list_databases"
-    );
-    Ok(RpcOutcome::new(databases, vec![]))
+    let _ = (config, connection_id);
+    // `ComposioProvider::list_databases` has no replacement — see
+    // `pipeline::fetch_tasks_unavailable`'s doc comment for why.
+    Err(format!(
+        "task_sources list_databases for toolkit '{}' is unavailable: tinymemory v1.13.4 \
+         deleted ComposioProvider::list_databases with no replacement, and the tinyconnectors \
+         module exposes no structured task-fetch surface to reimplement it against",
+        provider.as_str()
+    ))
 }
 
 /// Domain status: enabled flag + source counts.

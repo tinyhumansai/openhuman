@@ -22,7 +22,7 @@ import {
 } from '../../../services/api/embeddingsApi';
 import { isLocalSessionToken } from '../../../utils/localSession';
 import PanelPage from '../../layout/PanelPage';
-import { Alert, AlertDescription, Button, ConfirmDialog } from '../../ui';
+import { Alert, AlertDescription, Button, CenteredLoadingState, ConfirmDialog } from '../../ui';
 import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsStatusLine } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
@@ -110,13 +110,13 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
         description={embedded ? undefined : t('pages.settings.ai.embeddingsDesc')}
         leading={embedded ? undefined : <SettingsBackButton onBack={navigateBack} />}>
         <div className={embedded ? '' : 'p-4'}>
-          <div className="rounded-xl border border-line bg-surface p-4 text-xs text-content-muted">
-            {status.kind === 'loading'
-              ? t('common.loading')
-              : status.kind === 'error'
-                ? status.message
-                : ''}
-          </div>
+          {status.kind === 'loading' ? (
+            <CenteredLoadingState label={t('common.loading')} />
+          ) : status.kind === 'error' ? (
+            <Alert variant="destructive" density="compact">
+              <AlertDescription>{status.message}</AlertDescription>
+            </Alert>
+          ) : null}
         </div>
       </PanelPage>
     );
@@ -135,20 +135,37 @@ const EmbeddingsPanel = ({ embedded = false }: EmbeddingsPanelProps = {}) => {
 
   function handleProviderClick(entry: EmbeddingProviderEntry) {
     if (entry.slug !== 'managed') setManagedSessionMissing(false);
+
+    if (entry.slug === 'custom') {
+      // Custom is an editable profile, not a plain selection: reopen (and
+      // hydrate from the retained profile) even when already selected.
+      const loadedSettings = settings!;
+      const activeEndpoint = loadedSettings.provider.startsWith('custom:')
+        ? loadedSettings.provider.slice('custom:'.length)
+        : '';
+      const profile = activeEndpoint
+        ? {
+            endpoint: activeEndpoint,
+            model: loadedSettings.model,
+            dimensions: loadedSettings.dimensions,
+          }
+        : loadedSettings.custom_settings;
+      setCustomEndpoint(profile?.endpoint ?? customEndpoint);
+      setCustomModel(profile?.model ?? customModel);
+      setCustomDims(String(profile?.dimensions ?? customDims));
+      setSetupProvider(entry);
+      setSetupKey('');
+      setSetupShowKey(false);
+      setSetupTestResult(null);
+      setSetupError('');
+      return;
+    }
+
     if (entry.slug === selectedProvider) return;
 
     if (entry.slug === 'managed' && isLocalSession) {
       setManagedSessionMissing(true);
       setStatus({ kind: 'error', message: managedLoginMessage });
-      return;
-    }
-
-    if (entry.slug === 'custom') {
-      // For custom, open setup popup to enter endpoint
-      setSetupProvider(entry);
-      setSetupKey('');
-      setSetupTestResult(null);
-      setSetupError('');
       return;
     }
 

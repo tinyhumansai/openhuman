@@ -136,7 +136,7 @@ fn default_tool_result_budget_bytes() -> usize {
 
 fn default_summarizer_payload_threshold_tokens() -> usize {
     // Re-enabled at 4000 tokens after the recursive-dispatch root cause
-    // was fixed by the `omit_skills_catalog = true` guard on the
+    // was fixed by the narrow sub-agent prompt built for the
     // summarizer archetype (which prevents it from seeing `spawn_subagent`
     // and thus cannot recurse). 0 would leave this entirely disabled.
     4000

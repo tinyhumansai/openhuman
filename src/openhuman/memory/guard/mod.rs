@@ -108,7 +108,7 @@ pub mod policy;
 pub mod provider;
 
 #[cfg(test)]
-mod test_support;
+pub(crate) mod test_support;
 
 pub use policy::GuardPolicy;
 pub use provider::MemoryGuard;

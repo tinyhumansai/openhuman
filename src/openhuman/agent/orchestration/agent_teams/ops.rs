@@ -1,12 +1,12 @@
 //! Business logic for durable agent-team coordination (#3374).
 //!
-//! Thin orchestration over `tinyagents::session::run_ledger`: create teams + members,
+//! Thin orchestration over `tinyagents_session::run_ledger`: create teams + members,
 //! assign dependency-aware tasks (with self/unknown/cycle validation reusing
 //! the same Kahn's-algorithm shape as `workflow_runs`), atomically claim tasks,
 //! and exchange teammate messages. Messaging rides the run-ledger event stream
 //! (`run_id = team_id`, `event_type = "team_message"`) — no new message table.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::HashSet;
 
 use anyhow::{anyhow, Result};
 use chrono::Utc;
@@ -14,7 +14,8 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::openhuman::config::Config;
-use tinyagents::session::run_ledger::{
+use tinyagents_graph::dag::{has_cycle, DagNode};
+use tinyagents_session::run_ledger::{
     self, AgentTeam, AgentTeamListRequest, AgentTeamListResponse, AgentTeamMemberStatus,
     AgentTeamMemberUpsert, AgentTeamStatus, AgentTeamTask, AgentTeamTaskStatus,
     AgentTeamTaskUpsert, AgentTeamUpsert, ClaimOutcome, CompletionOutcome, RunEvent,
@@ -389,9 +390,10 @@ fn team_view(config: &Config, team_id: &str) -> Result<TeamView> {
 /// Validate a new task's dependency edges against the team's existing tasks.
 ///
 /// Rejects self-dependency, unknown dependency ids, and any edge that would
-/// introduce a cycle. The cycle check builds the full graph (existing tasks +
-/// the new task with its proposed deps) and runs Kahn's algorithm — the same
-/// shape used for workflow phase graphs in `workflow_runs::ops::has_cycle`.
+/// introduce a cycle. The self and unknown checks stay here because they are
+/// scoped to the *new* task: a pre-existing task carrying a dangling edge is
+/// not this caller's fault and must not block the assignment. The cycle check
+/// delegates to `tinyagents_graph::dag`.
 fn validate_dependencies(
     new_task_id: &str,
     depends_on: &[String],
@@ -419,446 +421,27 @@ fn validate_dependencies(
     Ok(())
 }
 
-/// Kahn's-algorithm cycle check over the task dependency graph (existing tasks
-/// plus the candidate new task). Edge `dep -> task` means `task` depends on
-/// `dep`. Edges pointing at unknown ids are ignored here (rejected separately).
+/// Cycle check over the task dependency graph (existing tasks plus the
+/// candidate new task), delegating to `tinyagents_graph::dag::has_cycle`.
+///
+/// Edge `dep -> task` means `task` depends on `dep`. Edges pointing at unknown
+/// ids are ignored by the shared validator (they are rejected separately).
 fn has_task_cycle(
     new_task_id: &str,
     new_depends_on: &[String],
     existing: &[AgentTeamTask],
 ) -> bool {
-    // Node set: every existing task id plus the new one.
-    let mut nodes: HashSet<&str> = existing.iter().map(|t| t.id.as_str()).collect();
-    nodes.insert(new_task_id);
-
-    let mut indegree: HashMap<&str, usize> = nodes.iter().map(|&n| (n, 0)).collect();
-    let mut adjacency: HashMap<&str, Vec<&str>> = HashMap::new();
-
-    // Existing edges.
-    for task in existing {
-        for dep in &task.depends_on {
-            let dep = dep.as_str();
-            if nodes.contains(dep) {
-                adjacency.entry(dep).or_default().push(task.id.as_str());
-                *indegree.entry(task.id.as_str()).or_insert(0) += 1;
-            }
-        }
-    }
-    // Candidate edges for the new task.
-    for dep in new_depends_on {
-        let dep = dep.as_str();
-        if nodes.contains(dep) {
-            adjacency.entry(dep).or_default().push(new_task_id);
-            *indegree.entry(new_task_id).or_insert(0) += 1;
-        }
-    }
-
-    let mut queue: VecDeque<&str> = indegree
+    let mut nodes: Vec<DagNode<'_>> = existing
         .iter()
-        .filter(|(_, &d)| d == 0)
-        .map(|(&n, _)| n)
+        .map(|t| DagNode::new(t.id.as_str(), t.depends_on.iter().map(String::as_str)))
         .collect();
-    let mut visited = 0usize;
-    while let Some(node) = queue.pop_front() {
-        visited += 1;
-        if let Some(children) = adjacency.get(node) {
-            for &child in children {
-                let entry = indegree.get_mut(child).expect("child in indegree");
-                *entry -= 1;
-                if *entry == 0 {
-                    queue.push_back(child);
-                }
-            }
-        }
-    }
-    visited != indegree.len()
+    nodes.push(DagNode::new(
+        new_task_id,
+        new_depends_on.iter().map(String::as_str),
+    ));
+    has_cycle(&nodes)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-
-    fn test_config(dir: &TempDir) -> Config {
-        let mut config = Config::default();
-        config.workspace_dir = dir.path().to_path_buf();
-        config.action_dir = dir.path().join("actions");
-        config
-    }
-
-    fn team_err(err: anyhow::Error) -> TeamError {
-        err.downcast::<TeamError>().expect("TeamError")
-    }
-
-    #[test]
-    fn create_team_rejects_duplicate_member_names() {
-        let dir = TempDir::new().unwrap();
-        let config = test_config(&dir);
-        let err = create_team(
-            &config,
-            "lead",
-            None,
-            None,
-            &[
-                NewMember {
-                    name: "alice".into(),
-                    agent_id: None,
-                },
-                NewMember {
-                    name: "alice".into(),
-                    agent_id: None,
-                },
-            ],
-        )
-        .unwrap_err();
-        assert_eq!(
-            team_err(err),
-            TeamError::DuplicateMemberName {
-                name: "alice".into()
-            }
-        );
-    }
-
-    #[test]
-    fn assign_task_rejects_self_unknown_and_cycle() {
-        let dir = TempDir::new().unwrap();
-        let config = test_config(&dir);
-        let view = create_team(
-            &config,
-            "lead",
-            None,
-            None,
-            &[NewMember {
-                name: "alice".into(),
-                agent_id: None,
-            }],
-        )
-        .unwrap();
-        let team_id = view.team.id.clone();
-
-        // Unknown dependency.
-        let err =
-            assign_task(&config, &team_id, "task one", None, None, &["ghost".into()]).unwrap_err();
-        assert_eq!(
-            team_err(err),
-            TeamError::UnknownDependency {
-                depends_on: "ghost".into()
-            }
-        );
-
-        // Seed A, then B depends_on A — fine.
-        let a = assign_task(&config, &team_id, "A", None, None, &[]).unwrap();
-        let b = assign_task(&config, &team_id, "B", None, None, &[a.id.clone()]).unwrap();
-
-        // Self-dependency.
-        let err = assign_task(&config, &team_id, "self", None, None, &["task-xyz".into()]);
-        // self id is generated, so simulate via an existing-task edit path instead:
-        // unknown id path already covered; ensure self check fires when dep == new id.
-        // We can't predict the new id; verify cycle path instead.
-        let _ = err;
-
-        // Cycle: try to make A depend_on B (A already an upstream of B).
-        // Re-upserting A with depends_on [B] would close the loop; assign_task
-        // only creates new tasks, so emulate the cycle check directly.
-        let existing = run_ledger::list_agent_team_tasks(&config.workspace_dir, &team_id).unwrap();
-        assert!(has_task_cycle(&a.id, &[b.id.clone()], &existing));
-    }
-
-    #[test]
-    fn self_dependency_is_rejected() {
-        // Directly exercise validate_dependencies with a matching id.
-        let err = validate_dependencies("task-self", &["task-self".into()], &[]).unwrap_err();
-        assert_eq!(
-            team_err(err),
-            TeamError::SelfDependency {
-                task_id: "task-self".into()
-            }
-        );
-    }
-
-    #[test]
-    fn message_append_then_list_in_order() {
-        let dir = TempDir::new().unwrap();
-        let config = test_config(&dir);
-        let view = create_team(
-            &config,
-            "lead",
-            None,
-            None,
-            &[
-                NewMember {
-                    name: "alice".into(),
-                    agent_id: None,
-                },
-                NewMember {
-                    name: "bob".into(),
-                    agent_id: None,
-                },
-            ],
-        )
-        .unwrap();
-        let team_id = view.team.id.clone();
-        let alice = view.members[0].id.clone();
-        let bob = view.members[1].id.clone();
-
-        message_member(&config, &team_id, Some(&alice), Some(&bob), "first", None).unwrap();
-        message_member(&config, &team_id, Some(&bob), Some(&alice), "second", None).unwrap();
-
-        let messages = list_messages(&config, &team_id, None).unwrap();
-        assert_eq!(messages.len(), 2);
-        assert_eq!(messages[0].sequence, 1);
-        assert_eq!(messages[1].sequence, 2);
-        assert_eq!(messages[0].payload["content"], "first");
-        assert_eq!(messages[1].payload["content"], "second");
-    }
-
-    #[test]
-    fn message_member_lead_origin_and_unknown_from() {
-        let dir = TempDir::new().unwrap();
-        let config = test_config(&dir);
-        let (team_id, alice) = solo_team(&config, "alice");
-
-        // Lead/user-originated message: from = None → stored as "lead", no
-        // member validation on the sender.
-        message_member(&config, &team_id, None, Some(&alice), "from the lead", None).unwrap();
-        let messages = list_messages(&config, &team_id, None).unwrap();
-        assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].payload["from"], LEAD_SENDER);
-        assert_eq!(messages[0].payload["to"], alice);
-
-        // A non-None sender that is not a member is still rejected.
-        let err =
-            message_member(&config, &team_id, Some("ghost"), Some(&alice), "x", None).unwrap_err();
-        assert_eq!(
-            team_err(err),
-            TeamError::UnknownMember {
-                member_id: "ghost".into()
-            }
-        );
-    }
-
-    /// Create a single-member team and return `(team_id, member_id)`.
-    fn solo_team(config: &Config, name: &str) -> (String, String) {
-        let view = create_team(
-            config,
-            "lead",
-            None,
-            None,
-            &[NewMember {
-                name: name.into(),
-                agent_id: None,
-            }],
-        )
-        .unwrap();
-        let member_id = view.members[0].id.clone();
-        (view.team.id, member_id)
-    }
-
-    #[test]
-    fn complete_task_gate_passes_and_marks_done() {
-        let dir = TempDir::new().unwrap();
-        let config = test_config(&dir);
-        let (team_id, alice) = solo_team(&config, "alice");
-
-        let task = assign_task(&config, &team_id, "ship it", None, None, &[]).unwrap();
-        let claim = claim_task(&config, &team_id, &task.id, &alice, "tok-1").unwrap();
-        assert!(matches!(claim, ClaimOutcome::Claimed(_)));
-
-        let outcome = complete_task(
-            &config,
-            &team_id,
-            &task.id,
-            &alice,
-            &["https://ci/run/1".to_string()],
-            true,
-        )
-        .unwrap();
-        match outcome {
-            CompletionOutcome::Completed(done) => {
-                assert_eq!(done.status, AgentTeamTaskStatus::Done);
-                assert_eq!(done.gate_status, "passed");
-                assert_eq!(done.gate_reason, None);
-                assert_eq!(done.evidence, vec!["https://ci/run/1".to_string()]);
-            }
-            other => panic!("expected Completed, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn complete_task_requires_evidence_then_recovers() {
-        let dir = TempDir::new().unwrap();
-        let config = test_config(&dir);
-        let (team_id, alice) = solo_team(&config, "alice");
-
-        let task = assign_task(&config, &team_id, "ship it", None, None, &[]).unwrap();
-        claim_task(&config, &team_id, &task.id, &alice, "tok-1").unwrap();
-
-        // No evidence + require_evidence → gate fails, task stays in progress.
-        let failed = complete_task(&config, &team_id, &task.id, &alice, &[], true).unwrap();
-        match failed {
-            CompletionOutcome::GateFailed { reasons } => {
-                assert!(
-                    reasons.iter().any(|r| r.contains("evidence")),
-                    "{reasons:?}"
-                );
-            }
-            other => panic!("expected GateFailed, got {other:?}"),
-        }
-        let mid = run_ledger::get_agent_team_task(&config.workspace_dir, &task.id)
-            .unwrap()
-            .unwrap();
-        assert_eq!(mid.status, AgentTeamTaskStatus::InProgress);
-        assert_eq!(mid.gate_status, "failed");
-
-        // Retry with evidence → passes.
-        let ok = complete_task(
-            &config,
-            &team_id,
-            &task.id,
-            &alice,
-            &["proof".to_string()],
-            true,
-        )
-        .unwrap();
-        assert!(matches!(ok, CompletionOutcome::Completed(_)));
-    }
-
-    #[test]
-    fn complete_task_is_not_double_completable() {
-        let dir = TempDir::new().unwrap();
-        let config = test_config(&dir);
-        let (team_id, alice) = solo_team(&config, "alice");
-
-        let task = assign_task(&config, &team_id, "ship it", None, None, &[]).unwrap();
-        claim_task(&config, &team_id, &task.id, &alice, "tok-1").unwrap();
-
-        let first = complete_task(&config, &team_id, &task.id, &alice, &[], false).unwrap();
-        assert!(matches!(first, CompletionOutcome::Completed(_)));
-
-        // A task that is already `done` is no longer in progress, so a second
-        // completion is rejected (the `status = 'in_progress'` UPDATE guard makes
-        // the CAS airtight even under a concurrent double-complete).
-        let second = complete_task(&config, &team_id, &task.id, &alice, &[], false).unwrap();
-        assert_eq!(second, CompletionOutcome::NotClaimed);
-    }
-
-    #[test]
-    fn complete_task_rejects_non_claimant() {
-        let dir = TempDir::new().unwrap();
-        let config = test_config(&dir);
-        let view = create_team(
-            &config,
-            "lead",
-            None,
-            None,
-            &[
-                NewMember {
-                    name: "alice".into(),
-                    agent_id: None,
-                },
-                NewMember {
-                    name: "bob".into(),
-                    agent_id: None,
-                },
-            ],
-        )
-        .unwrap();
-        let team_id = view.team.id.clone();
-        let alice = view.members[0].id.clone();
-        let bob = view.members[1].id.clone();
-
-        let task = assign_task(&config, &team_id, "ship it", None, None, &[]).unwrap();
-        claim_task(&config, &team_id, &task.id, &alice, "tok-1").unwrap();
-
-        // Bob is a member but not the claimant → NotClaimed.
-        let outcome = complete_task(&config, &team_id, &task.id, &bob, &[], false).unwrap();
-        assert_eq!(outcome, CompletionOutcome::NotClaimed);
-
-        // Unknown member → typed error (not an outcome).
-        let err = complete_task(&config, &team_id, &task.id, "ghost", &[], false).unwrap_err();
-        assert_eq!(
-            team_err(err),
-            TeamError::UnknownMember {
-                member_id: "ghost".into()
-            }
-        );
-    }
-
-    #[test]
-    fn complete_task_owner_mismatch_fails_gate() {
-        let dir = TempDir::new().unwrap();
-        let config = test_config(&dir);
-        let view = create_team(
-            &config,
-            "lead",
-            None,
-            None,
-            &[
-                NewMember {
-                    name: "alice".into(),
-                    agent_id: None,
-                },
-                NewMember {
-                    name: "bob".into(),
-                    agent_id: None,
-                },
-            ],
-        )
-        .unwrap();
-        let team_id = view.team.id.clone();
-        let alice = view.members[0].id.clone();
-        let bob = view.members[1].id.clone();
-
-        // Task owned by bob, but alice claims + tries to complete.
-        let task = assign_task(&config, &team_id, "ship it", None, Some(&bob), &[]).unwrap();
-        claim_task(&config, &team_id, &task.id, &alice, "tok-1").unwrap();
-
-        let outcome = complete_task(&config, &team_id, &task.id, &alice, &[], false).unwrap();
-        match outcome {
-            CompletionOutcome::GateFailed { reasons } => {
-                assert!(
-                    reasons.iter().any(|r| r.contains("owned by")),
-                    "{reasons:?}"
-                );
-            }
-            other => panic!("expected GateFailed, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn shutdown_member_releases_in_progress_tasks() {
-        let dir = TempDir::new().unwrap();
-        let config = test_config(&dir);
-        let (team_id, alice) = solo_team(&config, "alice");
-
-        let task = assign_task(&config, &team_id, "ship it", None, None, &[]).unwrap();
-        claim_task(&config, &team_id, &task.id, &alice, "tok-1").unwrap();
-
-        let result = shutdown_member(&config, &team_id, &alice).unwrap();
-        assert_eq!(result.released_task_ids, vec![task.id.clone()]);
-        assert_eq!(result.member.member_status, AgentTeamMemberStatus::Stopped);
-
-        // Task is back to todo and unclaimed → another teammate could claim it.
-        let released = run_ledger::get_agent_team_task(&config.workspace_dir, &task.id)
-            .unwrap()
-            .unwrap();
-        assert_eq!(released.status, AgentTeamTaskStatus::Todo);
-        assert_eq!(released.claimed_by_member_id, None);
-        assert_eq!(released.claim_token, None);
-    }
-
-    #[test]
-    fn shutdown_member_unknown_errors() {
-        let dir = TempDir::new().unwrap();
-        let config = test_config(&dir);
-        let (team_id, _alice) = solo_team(&config, "alice");
-
-        let err = shutdown_member(&config, &team_id, "ghost").unwrap_err();
-        assert_eq!(
-            team_err(err),
-            TeamError::UnknownMember {
-                member_id: "ghost".into()
-            }
-        );
-    }
-}
+#[path = "ops_tests.rs"]
+mod tests;

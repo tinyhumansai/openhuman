@@ -28,8 +28,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use tinyagents::harness::message::Message as TaMessage;
-use tinyagents::harness::steering::{SteeringCommand, SteeringHandle};
+use tinyagents_harness::steering::{SteeringCommand, SteeringHandle};
+use tinyinference::message::Message as TaMessage;
 
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;

@@ -9,7 +9,6 @@ sandbox_mode = "none"
 omit_identity = true
 omit_memory_context = true
 omit_safety_preamble = false
-omit_skills_catalog = true
 
 [model]
 # Multi-step tool driver (discover → list tools → call → summarise), so it

@@ -9,15 +9,34 @@
  */
 import { useAui, useAuiState } from '@assistant-ui/react';
 import { combineReducers, configureStore } from '@reduxjs/toolkit';
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import chatRuntimeReducer, { streamDeltaReceived } from '../../store/chatRuntimeSlice';
+import { threadApi } from '../../services/api/threadApi';
+import chatRuntimeReducer, {
+  beginInferenceTurn,
+  markInferenceTurnStreaming,
+  streamDeltaReceived,
+} from '../../store/chatRuntimeSlice';
 import threadReducer from '../../store/threadSlice';
 import type { ThreadMessage } from '../../types/thread';
 import { AssistantUiRuntimeProvider } from '../AssistantUiRuntimeProvider';
 import { __resetChatSurfaces, registerChatSurface } from '../chatSurfaceHandlers';
+
+vi.mock('../../services/api/threadApi', () => ({
+  threadApi: {
+    getDerivedTranscript: vi
+      .fn()
+      .mockResolvedValue({
+        threadId: 't-aui',
+        items: [],
+        total: 0,
+        hasMore: false,
+        hasTranscript: false,
+      }),
+  },
+}));
 
 const THREAD_ID = 't-aui';
 
@@ -63,6 +82,15 @@ function RuntimeProbe() {
           .map(m => m.content.map(p => (p.type === 'text' ? p.text : '')).join(''))
           .join('|')}
       </div>
+      <div data-testid="tools">
+        {thread.messages
+          .flatMap(message =>
+            message.role === 'assistant'
+              ? message.content.flatMap(part => (part.type === 'tool-call' ? [part.toolName] : []))
+              : []
+          )
+          .join('|')}
+      </div>
     </div>
   );
 }
@@ -91,12 +119,14 @@ describe('AssistantUiRuntimeProvider', () => {
     expect(screen.getByTestId('count')).toHaveTextContent('0');
   });
 
-  it('surfaces the live stream as a running tail message', () => {
+  it('surfaces the live stream as a running tail message', async () => {
     const store = buildStore([msg('a', 'user', 'question')]);
     renderWith(store);
     expect(screen.getByTestId('count')).toHaveTextContent('1');
 
     act(() => {
+      store.dispatch(beginInferenceTurn({ threadId: THREAD_ID }));
+      store.dispatch(markInferenceTurnStreaming({ threadId: THREAD_ID }));
       store.dispatch(
         streamDeltaReceived({
           threadId: THREAD_ID,
@@ -108,8 +138,37 @@ describe('AssistantUiRuntimeProvider', () => {
       );
     });
 
-    expect(screen.getByTestId('count')).toHaveTextContent('2');
+    await waitFor(() => expect(screen.getByTestId('count')).toHaveTextContent('2'));
     expect(screen.getByTestId('text')).toHaveTextContent('question|partial answer');
+  });
+
+  it('reads settled reasoning and tools directly from the core transcript RPC', async () => {
+    vi.mocked(threadApi.getDerivedTranscript).mockResolvedValueOnce({
+      threadId: THREAD_ID,
+      // RPC pages are newest-first: reverse traversal sees the boundary first.
+      items: [
+        {
+          kind: 'toolCall',
+          callId: 'call-web',
+          name: 'web_fetch',
+          args: { url: 'https://example.com' },
+          result: 'Example Domain',
+          status: 'success',
+        },
+        { kind: 'reasoning', text: 'I should fetch the source.' },
+        { kind: 'turnBoundary', requestId: 'req-core' },
+      ],
+      total: 3,
+      hasMore: false,
+      hasTranscript: true,
+    });
+    const answer = msg('answer', 'agent', 'done');
+    answer.extraMetadata = { requestId: 'req-core' };
+
+    renderWith(buildStore([msg('question', 'user', 'fetch it'), answer]));
+
+    await waitFor(() => expect(screen.getByTestId('tools')).toHaveTextContent('web_fetch'));
+    expect(threadApi.getDerivedTranscript).toHaveBeenCalledWith(THREAD_ID, { limit: 500 });
   });
 
   it('forwards onNew to the surface that owns the thread', async () => {

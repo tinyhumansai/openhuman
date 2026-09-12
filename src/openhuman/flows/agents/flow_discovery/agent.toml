@@ -29,7 +29,6 @@ agent_tier = "reasoning"
 omit_identity = true
 omit_memory_context = false
 omit_safety_preamble = true
-omit_skills_catalog = true
 # Keep PROFILE.md (the user's stated goals from onboarding) and MEMORY.md
 # (archivist-curated long-term memory) IN the prompt: grounding suggestions in
 # who the user is and what they want is the whole job, so the scout reads them

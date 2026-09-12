@@ -149,28 +149,35 @@ export const BackgroundLoopControls = ({
 
   const loops = [
     {
-      name: 'Memory tree workers',
+      name: t('settings.ai.loops.memoryTreeWorkers.name'),
       enabled: true,
-      cadence: 'queue',
+      cadence: t('settings.ai.loops.cadence.queue'),
       route: describeProvider(routing.memory, cloudProviders),
-      work: 'Extracts chunks, seals branches, runs daily digests, routes topics.',
-      risk: `${MEMORY_WORKERS} workers poll every ${MEMORY_POLL_SECONDS}s; LLM calls only when queue has extract/seal/digest/topic jobs.`,
+      work: t('settings.ai.loops.memoryTreeWorkers.work'),
+      risk: t('settings.ai.loops.memoryTreeWorkers.risk')
+        .replace('{workers}', String(MEMORY_WORKERS))
+        .replace('{seconds}', String(MEMORY_POLL_SECONDS)),
     },
     {
-      name: 'Reflection rebuild',
+      name: t('settings.ai.loops.reflectionRebuild.name'),
       enabled: true,
-      cadence: '30 min',
+      cadence: t('settings.ai.loops.cadence.thirtyMin'),
       route: describeProvider(routing.learning, cloudProviders),
-      work: 'Refreshes reflection state after memory activity.',
-      risk: `${formatCount(learningTicksPerWeek)} wakeups/week; LLM work only when rebuild needs reflection.`,
+      work: t('settings.ai.loops.reflectionRebuild.work'),
+      risk: t('settings.ai.loops.reflectionRebuild.risk').replace(
+        '{count}',
+        formatCount(learningTicksPerWeek)
+      ),
     },
     {
-      name: 'Composio sync',
+      name: t('settings.ai.loops.composioSync.name'),
       enabled: true,
-      cadence: '20 min',
-      route: 'Integration APIs',
-      work: 'Polls connected tools when provider sync is due.',
-      risk: `${formatCount(composioPeriodicTicksPerWeek)} wakeups/week; scans ${activeConnections.length} active connection(s).`,
+      cadence: t('settings.ai.loops.cadence.twentyMin'),
+      route: t('settings.ai.loops.composioSync.route'),
+      work: t('settings.ai.loops.composioSync.work'),
+      risk: t('settings.ai.loops.composioSync.risk')
+        .replace('{count}', formatCount(composioPeriodicTicksPerWeek))
+        .replace('{active}', String(activeConnections.length)),
     },
   ];
 

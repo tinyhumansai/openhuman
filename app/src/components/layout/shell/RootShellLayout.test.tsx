@@ -127,6 +127,19 @@ describe('RootShellLayout — redux-controlled geometry', () => {
     expect(panel(store).sidebarWidth).toBe(340);
   });
 
+  it('detaches drag listeners when the window loses focus mid-drag', () => {
+    renderShell({}, withLayout(true, 300));
+    const divider = screen.getByTestId('root-shell-divider');
+
+    fireEvent.pointerDown(divider, { clientX: 500 });
+    // Window loses focus before the pointer is released.
+    fireEvent.blur(window);
+    // Subsequent pointer moves must not affect layout — listeners are detached.
+    fireEvent.pointerMove(window, { clientX: 580 });
+
+    expect(screen.getByTestId('root-shell-sidebar').style.width).toBe('300px');
+  });
+
   it('narrows the column to the icon width when collapsed, rather than unmounting it', () => {
     const { store } = renderShell({}, withLayout(false, 300));
 

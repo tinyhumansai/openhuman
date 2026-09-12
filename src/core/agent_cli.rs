@@ -442,10 +442,6 @@ fn run_list(args: &[String]) -> Result<()> {
                 "omit_identity".into(),
                 serde_json::Value::Bool(def.omit_identity),
             );
-            obj.insert(
-                "omit_skills_catalog".into(),
-                serde_json::Value::Bool(def.omit_skills_catalog),
-            );
             arr.push(serde_json::Value::Object(obj));
         }
         println!(

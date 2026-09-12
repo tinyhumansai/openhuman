@@ -18,7 +18,7 @@
 //! * the session builder
 //!   ([`Agent::from_config`](crate::openhuman::agent::Agent::from_config)),
 //!   which turns it into the turn's
-//!   [`WorkspaceDescriptor`](tinyagents::harness::workspace::WorkspaceDescriptor)
+//!   [`WorkspaceDescriptor`](tinyagents_harness::workspace::WorkspaceDescriptor)
 //!   so acting tools (shell, file, git) resolve their default cwd there; and
 //! * [`SecurityPolicy::is_within_trusted_root`](crate::openhuman::security::SecurityPolicy::is_within_trusted_root),
 //!   which treats the scoped root as a read/write trusted root for the
@@ -68,7 +68,7 @@ pub async fn with_workspace<F: std::future::Future>(root: PathBuf, fut: F) -> F:
 /// The workspace root scoped for the current turn, when an embedder set one.
 ///
 /// `None` — the default everywhere — means "no per-turn root": the session
-/// binds no [`WorkspaceDescriptor`](tinyagents::harness::workspace::WorkspaceDescriptor)
+/// binds no [`WorkspaceDescriptor`](tinyagents_harness::workspace::WorkspaceDescriptor)
 /// of its own and the path policy grants nothing beyond its configured roots.
 pub fn current() -> Option<PathBuf> {
     AGENT_TURN_WORKSPACE.try_with(|root| root.clone()).ok()
@@ -97,54 +97,5 @@ pub fn propagate<F: std::future::Future>(fut: F) -> impl std::future::Future<Out
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn scope_sets_and_clears_the_root() {
-        assert!(current().is_none(), "baseline outside any scope");
-        let observed = with_workspace(PathBuf::from("/work/checkout"), async { current() }).await;
-        assert_eq!(observed, Some(PathBuf::from("/work/checkout")));
-        assert!(current().is_none(), "root must not leak past the scope");
-    }
-
-    /// A detached sub-agent must keep working in the tree its parent turn was
-    /// bound to; a bare `tokio::spawn` drops the root, which is what put its
-    /// writes back outside the sandbox.
-    #[tokio::test]
-    async fn propagate_carries_the_root_across_a_spawn() {
-        let observed = with_workspace(PathBuf::from("/work/checkout"), async {
-            tokio::spawn(propagate(async { current() }))
-                .await
-                .expect("spawned task panicked")
-        })
-        .await;
-        assert_eq!(observed, Some(PathBuf::from("/work/checkout")));
-    }
-
-    /// Without the wrapper the same spawn loses the root — pinned so the fix
-    /// cannot be silently undone.
-    #[tokio::test]
-    async fn a_bare_spawn_loses_the_root() {
-        let observed = with_workspace(PathBuf::from("/work/checkout"), async {
-            tokio::spawn(async { current() })
-                .await
-                .expect("spawned task panicked")
-        })
-        .await;
-        assert!(observed.is_none());
-    }
-
-    #[tokio::test]
-    async fn nested_scope_overrides_the_outer_root() {
-        with_workspace(PathBuf::from("/outer"), async {
-            assert_eq!(current(), Some(PathBuf::from("/outer")));
-            with_workspace(PathBuf::from("/inner"), async {
-                assert_eq!(current(), Some(PathBuf::from("/inner")));
-            })
-            .await;
-            assert_eq!(current(), Some(PathBuf::from("/outer")));
-        })
-        .await;
-    }
-}
+#[path = "turn_workspace_tests.rs"]
+mod tests;

@@ -237,3 +237,64 @@ fn default_memory_relative_dir_is_memory() {
     // Empty string == the memory root itself (`<workspace>/memory`).
     assert_eq!(super::default_memory_relative_dir(), "");
 }
+
+use crate::openhuman::memory::ingestion_models::{
+    ExtractionMode, MemoryIngestionConfig, MemoryIngestionResult,
+};
+
+/// The shapes came home from `tinycortex::memory::ingest` — this pins the
+/// JSON literal-for-literal so the move can never drift the wire.
+#[test]
+fn ingestion_result_serialises_the_engine_shape() {
+    let result = MemoryIngestionResult {
+        document_id: "doc-1".into(),
+        namespace: "global".into(),
+        model_name: "driver-managed".into(),
+        extraction_mode: "driver-managed".into(),
+        chunk_count: 0,
+        entity_count: 0,
+        relation_count: 0,
+        preference_count: 0,
+        decision_count: 0,
+        tags: vec!["t".into()],
+        entities: Vec::new(),
+        relations: Vec::new(),
+    };
+    let value = serde_json::to_value(&result).expect("serialise");
+    assert_eq!(
+        value,
+        serde_json::json!({
+            "documentId": "doc-1",
+            "namespace": "global",
+            "modelName": "driver-managed",
+            "extractionMode": "driver-managed",
+            "chunkCount": 0,
+            "entityCount": 0,
+            "relationCount": 0,
+            "preferenceCount": 0,
+            "decisionCount": 0,
+            "tags": ["t"],
+            "entities": [],
+            "relations": []
+        })
+    );
+}
+
+/// A config the old engine accepted must still deserialize: `modelName`
+/// required, everything else defaulted — including the mode's
+/// `snake_case` spelling.
+#[test]
+fn ingestion_config_defaults_match_the_engine() {
+    let config: MemoryIngestionConfig =
+        serde_json::from_value(serde_json::json!({ "modelName": "heuristic-only" }))
+            .expect("minimal config deserialises");
+    assert_eq!(config.extraction_mode, ExtractionMode::Sentence);
+    assert!((config.entity_threshold - 0.45).abs() < f32::EPSILON);
+    assert!((config.relation_threshold - 0.30).abs() < f32::EPSILON);
+    assert!((config.adjacency_threshold - 0.50).abs() < f32::EPSILON);
+    assert_eq!(config.batch_size, 16);
+    let chunk: ExtractionMode =
+        serde_json::from_value(serde_json::json!("chunk")).expect("snake_case mode");
+    assert_eq!(chunk, ExtractionMode::Chunk);
+    assert!(serde_json::from_value::<MemoryIngestionConfig>(serde_json::json!({})).is_err());
+}

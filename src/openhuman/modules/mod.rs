@@ -39,6 +39,7 @@
 //! - [`boot`] — what happens at startup.
 
 pub mod boot;
+pub mod connectors;
 #[cfg(feature = "documents")]
 pub mod documents;
 pub mod host;
@@ -47,6 +48,7 @@ mod memory_host;
 pub mod ops;
 pub mod platform;
 pub mod registry;
+mod resolution;
 pub mod runtime;
 pub mod schemas;
 mod tokenjuice_host;
@@ -56,6 +58,6 @@ pub mod voice;
 #[cfg(feature = "web3")]
 pub mod wallet;
 
-pub use ops::ensure_loaded;
+pub use ops::{ensure_loaded, ensure_loaded_within, state_of, LoadError};
 pub use schemas::{all_controller_schemas, all_registered_controllers};
 pub use types::{LoadPolicy, ModuleRecord, ModuleState, ModuleStatus, PlatformAsset};

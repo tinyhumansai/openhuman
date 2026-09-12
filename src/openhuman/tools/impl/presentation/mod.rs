@@ -45,7 +45,7 @@ mod engine;
 mod types;
 
 #[cfg(test)]
-#[path = "tests.rs"]
+#[path = "presentation_tests.rs"]
 mod tests;
 
 use self::types::{

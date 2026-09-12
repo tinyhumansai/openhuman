@@ -20,7 +20,6 @@ use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::{self, Tool};
 use anyhow::Result;
 use std::sync::Arc;
-use tinymemory_core::store as memory_store;
 
 impl Agent {
     /// Constructs an `Agent` instance from a global system configuration.
@@ -203,11 +202,6 @@ impl Agent {
             config.workspace_dir.clone(),
         )?;
 
-        let local_embedding = config.workload_local_model("embeddings");
-        let embedding_api_key = crate::openhuman::inference::embeddings::resolve_api_key(
-            config,
-            &config.memory.embedding_provider,
-        );
         // Route this session's captures + recall into the active profile's memory
         // subtree so `dedicatedMemory` isolation takes effect on the ordinary
         // session path (web chat, cron), not just delegation preambles. The
@@ -232,67 +226,39 @@ impl Agent {
             has_profile = profile.is_some(),
             "[profiles] session memory subtree selected"
         );
-        // ── The engine reference this file has left (#5560) ──────────────────
+        // The session's store, through the same binding the archivist resolves
+        // two statements down — so one subtree yields one store rather than an
+        // engine handle beside a driver over the same files.
         //
-        // `direct_engine_refs_tests::ALLOWED` still explains this entry as
-        // "boots the in-process engine handle (`global::init`)". That is stale:
-        // `global::init` is gone from here, and what remains is this one
-        // factory call — the *only* caller of
-        // `create_session_memory_with_local_ai` anywhere in the tree. The
-        // bypass allowlist's `.memory_handle(` entry for this file is stale for
-        // the same reason; the only `memory_handle` left below is in prose.
-        //
-        // A door onto the contract does exist —
-        // `experience::ops::DriverMemory::for_subtree(config, &memory_subdir)`
-        // hands back an `Arc<dyn Memory>` over exactly the binding
-        // `archivist_provider` resolves two statements down, so the swap is
-        // one line and would collapse two stores over one subtree into one.
-        // It is deliberately NOT taken here yet, for two reasons that need
-        // measuring rather than reasoning about:
-        //
-        // 1. **Embedder resolution differs.** This factory resolves the
-        //    embedding provider from `local_embedding` + `embedding_api_key` +
-        //    `embedding_routes` and applies an Ollama reachability health-gate
-        //    before falling back. The bound driver resolves its own embedder
-        //    from the boot policy config instead. Those two ladders are
-        //    *believed* to agree; nothing here proves it, and disagreeing means
-        //    vectors filed under the wrong provider signature — silent, not
-        //    loud, exactly as `memory::tools::flavour` warns about the same
-        //    class of mistake.
-        // 2. **The test build binds a different workspace.** Under
-        //    `cfg(test)`, `binding::module_provider` pins every binding to the
-        //    shared `memory::ops` test workspace and to a module that a unit
-        //    test cannot `dlopen`, so a migrated session would get a driver
-        //    that answers nothing where it gets a working store today. The
-        //    archivist tolerates that (it degrades); a session's `Arc<dyn
-        //    Memory>` is on the recall path and does not.
-        //
-        // So this is not "no contract door exists" — it is one behavioural
-        // equivalence and one test-fixture problem, both of which need the
-        // harness suite run against the change to settle.
-        let session_memory = memory_store::factories::create_session_memory_with_local_ai(
-            &config.memory,
-            local_embedding.as_deref(),
-            &embedding_api_key,
-            &config.embedding_routes,
-            Some(&config.storage.provider.config),
-            &config.workspace_dir,
-            &memory_subdir,
-        )?;
+        // The two reasons this was deferred are both settled. **Embedder
+        // resolution**: the factory's ladder and the driver's are the same
+        // code reading the same field. `Config::workload_local_model` and
+        // `EngineRuntimeConfig::workload_local_model` both take
+        // `embeddings_provider`, strip `"ollama:"`, trim and reject empty, and
+        // that `Option` is the only input to `effective_embedding_settings`.
+        // The Ollama health-gate is not a difference either: it lives inside
+        // `create_unified_memory_full`, which the module runs because the
+        // module *is* the engine, and its probe address is proxied back here
+        // through `EmbeddingHost::ollama_base_url`. (`embedding_routes` never
+        // mattered — the engine's own parameter is underscore-prefixed and
+        // unused.) **The test build**: `binding::module_provider` under
+        // `cfg(test)` loads the module when `TINYMEMORY_TEST_MODULE` names it
+        // and degrades to the null driver otherwise, which is the same footing
+        // the archivist has had here all along.
+        let memory: Arc<dyn Memory> =
+            crate::openhuman::agent::experience::ops::DriverMemory::for_subtree(
+                config,
+                &memory_subdir,
+            )
+            .map_err(|e| anyhow::anyhow!("session memory binding: {e}"))?;
         // The archivist takes the bound driver for this session's memory
         // subtree — the same subtree `session_memory` opened — rather than the
         // raw SQLite handle the factory used to strip off the engine result.
         // That handle was the #5378 `:290` blocker: a concrete connection no
         // module or remote driver can supply. The engine's connection is now
-        // exclusively the engine's.
-        let archivist_provider = crate::openhuman::memory::binding::for_subtree(
-            &config.workspace_dir,
-            &memory_subdir,
-            &config.subsystems.memory,
-        )
-        .map(|binding| binding.provider().clone())
-        .map_err(|e| anyhow::anyhow!("archivist memory binding: {e}"))?;
-        let memory: Arc<dyn Memory> = Arc::from(session_memory.memory);
+        // exclusively the engine's. Lane C (#6040) rides the same binding.
+        let (archivist_provider, auto_recall) =
+            super::helpers::bind_session_memory(config, &memory_subdir)?;
         // Dedicated profiles still recall unstamped experiences written by
         // pre-profile versions from the shared memory DB. Resolve that shared
         // store once, here, and hand it to the session rather than making the
@@ -564,7 +530,6 @@ impl Agent {
                     text.clone(),
                     def.omit_identity,
                     def.omit_safety_preamble,
-                    def.omit_skills_catalog,
                 ),
                 PromptSource::File { path } => {
                     let prompt_root = config.workspace_dir.join("agent").join("prompts");
@@ -601,7 +566,6 @@ impl Agent {
                         body_text,
                         def.omit_identity,
                         def.omit_safety_preamble,
-                        def.omit_skills_catalog,
                     )
                 }
             },
@@ -694,20 +658,19 @@ impl Agent {
                 let full_config = Arc::clone(&base_config);
                 // For cloud reflection, wrap the provider in an Arc.
                 // For local, no provider needed.
-                let reflection_provider: Option<
-                    Arc<dyn tinyagents::harness::model::ChatModel<()>>,
-                > = if config.learning.reflection_source
-                    == crate::openhuman::config::ReflectionSource::Cloud
-                {
-                    let (model, resolved_model) =
-                        provider::create_chat_model_with_model_id("reasoning", config, 0.3)?;
-                    log::debug!(
+                let reflection_provider: Option<Arc<dyn tinyinference::model::ChatModel<()>>> =
+                    if config.learning.reflection_source
+                        == crate::openhuman::config::ReflectionSource::Cloud
+                    {
+                        let (model, resolved_model) =
+                            provider::create_chat_model_with_model_id("reasoning", config, 0.3)?;
+                        log::debug!(
                         "[learning] built crate-native reflection model resolved_model={resolved_model}"
                     );
-                    Some(model)
-                } else {
-                    None
-                };
+                        Some(model)
+                    } else {
+                        None
+                    };
                 post_turn_hooks.push(Arc::new(
                     crate::openhuman::agent::learning::ReflectionHook::new(
                         config.learning.clone(),
@@ -777,7 +740,7 @@ impl Agent {
                     archivist_provider,
                     true,
                 )
-                .with_config(config.clone()),
+                .with_config(Arc::clone(&base_config)),
             );
             post_turn_hooks
                 .push(Arc::clone(&hook) as Arc<dyn crate::openhuman::agent::hooks::PostTurnHook>);
@@ -1010,49 +973,20 @@ impl Agent {
             }
         }
 
-        // Phase 4 (#566): add the MemoryAccessSection bias instruction only
-        // when at least one retrieval tool is actually loaded AND survives
-        // filtering. We require both because:
-        //   - the tool may be filtered out by the agent's scope config
-        //   - the tool may not be registered at all on this agent (tool
-        //     listing is build-time configurable)
-        // An empty `visible` set means "no filter" (wildcard / orchestrator
-        // path); in that case any registered retrieval tool is reachable.
-        if config.learning.enabled {
-            let recall_tools = ["memory_recall", "memory_search"];
-            let has_retrieval = recall_tools.iter().any(|name| {
-                let registered = tools.iter().any(|t| t.name() == *name)
-                    || delegation_tools.iter().any(|t| t.name() == *name);
-                let allowed_by_filter = visible.is_empty() || visible.contains(*name);
-                registered && allowed_by_filter
-            });
-            if has_retrieval {
-                prompt_builder = prompt_builder.add_section(Box::new(
-                    crate::openhuman::agent::learning::MemoryAccessSection,
-                ));
-                log::debug!("[learning] memory_access prompt section registered");
-            } else {
-                log::debug!(
-                    "[learning] skipping MemoryAccessSection — neither memory_recall nor \
-                     memory_search is registered+visible for agent={agent_id}"
-                );
-            }
-        }
+        // Memory prompt sections — the read side (#566) and the write side
+        // (#6048); both gates live in `helpers::add_memory_prompt_sections`.
+        prompt_builder = super::helpers::add_memory_prompt_sections(
+            prompt_builder,
+            &tools,
+            &delegation_tools,
+            &visible,
+            agent_id,
+        );
 
-        // De-duplicate: some synthesised tool names may collide with
-        // already-registered tools (unlikely for `delegate_*` names but
-        // cheap to guard against).
-        let existing_names: std::collections::HashSet<String> =
-            tools.iter().map(|t| t.name().to_string()).collect();
-        let inserted_delegation_tools: Vec<Box<dyn Tool>> = delegation_tools
-            .into_iter()
-            .filter(|t| !existing_names.contains(t.name()))
-            .collect();
-        let synthesized_tool_names: std::collections::HashSet<String> = inserted_delegation_tools
-            .iter()
-            .map(|t| t.name().to_string())
-            .collect();
-        tools.extend(inserted_delegation_tools);
+        // The delegation tools stay beside the durable registry rather than
+        // inside it: the builder holds them in `Agent::synthesized_tools`,
+        // drops any name a durable tool already owns, and
+        // `refresh_delegation_tools` replaces the whole set later (#6145).
 
         // Pre-fetch Critical + High priority tool-scoped memory rules so they
         // pin into the (compression-resistant) system prompt for the whole
@@ -1063,8 +997,11 @@ impl Agent {
         // or when the runtime cannot host a synchronous bridge (single-threaded
         // test harnesses).
         if config.learning.enabled && config.learning.tool_memory_capture_enabled {
-            let agent_tool_names: Vec<String> =
-                tools.iter().map(|t| t.name().to_string()).collect();
+            let agent_tool_names: Vec<String> = tools
+                .iter()
+                .chain(delegation_tools.iter())
+                .map(|t| t.name().to_string())
+                .collect();
             let pinned = prefetch_tool_memory_rules_blocking(memory.clone(), &agent_tool_names);
             if !pinned.is_empty() {
                 log::info!(
@@ -1079,7 +1016,12 @@ impl Agent {
         // (including orchestrator tools) so every tool gets a signature
         // entry. The registry is self-contained — it doesn't hold a
         // reference back into the tools Vec.
-        let pformat_registry = crate::openhuman::agent::pformat::build_registry(&tools);
+        let pformat_registry = crate::openhuman::agent::pformat::build_registry_from_refs(
+            tools
+                .iter()
+                .chain(delegation_tools.iter())
+                .map(|t| t.as_ref()),
+        );
         let dispatcher_kind =
             resolve_dispatcher_kind(&dispatcher_choice, supports_native, agent_id);
         let tool_dispatcher: Box<dyn crate::openhuman::agent::dispatcher::ToolDispatcher> =
@@ -1244,9 +1186,11 @@ impl Agent {
         let mut builder = Agent::builder()
             .crate_native_provider(provider_role, Arc::clone(&base_config))
             .tools(tools)
+            .synthesized_tools(delegation_tools)
             .visible_tool_names(visible)
             .memory(memory)
             .shared_experience_memory(shared_experience_memory)
+            .auto_recall(Some(auto_recall))
             .tool_dispatcher(tool_dispatcher)
             .prompt_builder(prompt_builder)
             .config(effective_agent_config)
@@ -1301,12 +1245,15 @@ impl Agent {
         let connected_integrations_initialized = prewarmed_integrations.is_some();
         agent.connected_integrations = prewarmed_integrations.unwrap_or_default();
         agent.connected_integrations_initialized = connected_integrations_initialized;
-        agent.runtime_config = Some(Arc::new(config.clone()));
+        // The same snapshot `base_config` already holds — `Config` is immutable
+        // after construction, so a second deep clone bought nothing but a
+        // second resident copy of a 95-field struct with nested `Vec`s
+        // (openhuman#6218).
+        agent.runtime_config = Some(Arc::clone(&base_config));
         agent.last_seen_integrations_hash =
             crate::openhuman::integrations::composio::connected_set_hash(
                 &agent.connected_integrations,
             );
-        agent.synthesized_tool_names = synthesized_tool_names;
         Ok(agent)
     }
 }
@@ -1470,114 +1417,14 @@ pub(crate) fn provider_role_for(agent_id: &str, default_model: Option<&str>) -> 
 }
 
 #[cfg(test)]
-mod provider_role_tests {
-    use super::provider_role_for;
-    use super::{resolve_dispatcher_kind, DispatcherKind};
-
-    #[test]
-    fn legacy_orchestrator_fallback_defaults_to_chat() {
-        assert_eq!(provider_role_for("orchestrator", Some("chat-v1")), "chat");
-        assert_eq!(provider_role_for("orchestrator", None), "chat");
-        // A legacy heavy default_model tier still falls through to chat.
-        assert_eq!(
-            provider_role_for("orchestrator", Some("reasoning-v1")),
-            "chat"
-        );
-    }
-
-    #[test]
-    fn explicit_hints_route_to_workload() {
-        assert_eq!(
-            provider_role_for("orchestrator", Some("hint:agentic")),
-            "agentic"
-        );
-        assert_eq!(
-            provider_role_for("orchestrator", Some("hint:reasoning")),
-            "reasoning"
-        );
-        assert_eq!(
-            provider_role_for("orchestrator", Some("hint:coding")),
-            "coding"
-        );
-        // The cloud tick: orchestrator agent_id + the subconscious hint.
-        assert_eq!(
-            provider_role_for("orchestrator", Some("hint:subconscious")),
-            "subconscious"
-        );
-    }
-
-    #[test]
-    fn subconscious_agent_id_routes_to_subconscious_without_hint() {
-        // The event-driven long-lived session builds with agent_id="subconscious"
-        // and no hint — it must still resolve the subconscious workload (Codex P2).
-        assert_eq!(provider_role_for("subconscious", None), "subconscious");
-        assert_eq!(
-            provider_role_for("subconscious", Some("chat-v1")),
-            "subconscious"
-        );
-        assert_eq!(provider_role_for(" subconscious ", None), "subconscious");
-    }
-
-    #[test]
-    fn auto_prefers_native_when_supported_never_pformat() {
-        assert_eq!(
-            resolve_dispatcher_kind("auto", true, "chat"),
-            DispatcherKind::Native
-        );
-        // Text-only provider defaults to JSON-in-tag, NOT P-Format.
-        assert_eq!(
-            resolve_dispatcher_kind("auto", false, "chat"),
-            DispatcherKind::Xml
-        );
-        // An unrecognized value behaves like "auto".
-        assert_eq!(
-            resolve_dispatcher_kind("bogus", false, "chat"),
-            DispatcherKind::Xml
-        );
-    }
-
-    #[test]
-    fn explicit_choices_are_honoured_including_opt_in_pformat() {
-        assert_eq!(
-            resolve_dispatcher_kind("native", false, "chat"),
-            DispatcherKind::Native
-        );
-        assert_eq!(
-            resolve_dispatcher_kind("xml", true, "chat"),
-            DispatcherKind::Xml
-        );
-        // P-Format is only ever selected when explicitly requested.
-        assert_eq!(
-            resolve_dispatcher_kind("pformat", true, "chat"),
-            DispatcherKind::PFormat
-        );
-    }
-
-    #[test]
-    fn integrations_agent_falls_off_native_to_json_in_tag() {
-        // Native would ship JSON tool specs and blow the provider grammar-rule
-        // ceiling on large Composio toolkits → force JSON-in-tag.
-        assert_eq!(
-            resolve_dispatcher_kind("auto", true, "integrations_agent"),
-            DispatcherKind::Xml
-        );
-        assert_eq!(
-            resolve_dispatcher_kind("native", true, "integrations_agent"),
-            DispatcherKind::Xml
-        );
-        // An explicit non-native choice is left untouched for that agent.
-        assert_eq!(
-            resolve_dispatcher_kind("pformat", true, "integrations_agent"),
-            DispatcherKind::PFormat
-        );
-    }
-}
+#[path = "factory_provider_role_tests_tests.rs"]
+mod provider_role_tests;
 
 /// Section D — derive the top-level chat turn's per-profile workspace
 /// descriptor. Shared by [`Agent::build_session_agent_inner`] and its unit tests
 /// so the two can never drift.
 ///
-/// Returns a [`WorkspaceDescriptor`](tinyagents::harness::workspace::WorkspaceDescriptor)
+/// Returns a [`WorkspaceDescriptor`](tinyagents_harness::workspace::WorkspaceDescriptor)
 /// rooted at `<action_dir>/profiles/<id>` when `profile` opts into
 /// `dedicated_workspace` and its id passes validation (via
 /// [`dedicated_workspace_dir`](crate::openhuman::agent::profiles::dedicated_workspace_dir)),
@@ -1589,7 +1436,7 @@ mod provider_role_tests {
 pub(crate) fn derive_profile_workspace_descriptor(
     action_dir: &std::path::Path,
     profile: Option<&crate::openhuman::agent::profiles::AgentProfile>,
-) -> Option<tinyagents::harness::workspace::WorkspaceDescriptor> {
+) -> Option<tinyagents_harness::workspace::WorkspaceDescriptor> {
     let (profile_id, dir) = profile.and_then(|p| {
         crate::openhuman::agent::profiles::dedicated_workspace_dir(action_dir, p)
             .map(|dir| (p.id.clone(), dir))
@@ -1612,7 +1459,7 @@ pub(crate) fn derive_profile_workspace_descriptor(
         "[profiles] session bound to dedicated workspace as default cwd"
     );
     Some(
-        tinyagents::harness::workspace::WorkspaceDescriptor::new(dir).with_policy_id(
+        tinyagents_harness::workspace::WorkspaceDescriptor::new(dir).with_policy_id(
             crate::openhuman::agent::profiles::workspace_policy_id(&profile_id),
         ),
     )
@@ -1622,7 +1469,7 @@ pub(crate) fn derive_profile_workspace_descriptor(
 /// per-turn root an embedder scoped via
 /// [`turn_workspace::with_workspace`](crate::openhuman::agent::turn_workspace::with_workspace).
 ///
-/// Returns a [`WorkspaceDescriptor`](tinyagents::harness::workspace::WorkspaceDescriptor)
+/// Returns a [`WorkspaceDescriptor`](tinyagents_harness::workspace::WorkspaceDescriptor)
 /// rooted at the scoped directory so this turn's acting tools (shell, file,
 /// git) resolve their default cwd there instead of the shared `action_dir`.
 /// `None` — every caller that scoped nothing — leaves the shared-`action_dir`
@@ -1636,7 +1483,7 @@ pub(crate) fn derive_profile_workspace_descriptor(
 ///
 /// The policy id is a fixed label rather than the path: it is surfaced in tool
 /// logs, and a host's checkout path is not something to spread through them.
-fn derive_turn_workspace_descriptor() -> Option<tinyagents::harness::workspace::WorkspaceDescriptor>
+fn derive_turn_workspace_descriptor() -> Option<tinyagents_harness::workspace::WorkspaceDescriptor>
 {
     let root = crate::openhuman::agent::turn_workspace::current()?;
     if !root.is_dir() {
@@ -1652,7 +1499,7 @@ fn derive_turn_workspace_descriptor() -> Option<tinyagents::harness::workspace::
         "[turn_workspace] turn bound to the embedder's per-turn root as default cwd"
     );
     Some(
-        tinyagents::harness::workspace::WorkspaceDescriptor::new(root)
+        tinyagents_harness::workspace::WorkspaceDescriptor::new(root)
             .with_policy_id("turn-workspace"),
     )
 }
@@ -1677,97 +1524,5 @@ fn build_profile_security(
 /// `<action_dir>/profiles/<id>` for an opted-in profile, and that shared/legacy
 /// profiles produce no descriptor (so the shared `action_dir` cwd is preserved).
 #[cfg(test)]
-mod profile_workspace_descriptor_tests {
-    use super::{build_profile_security, derive_profile_workspace_descriptor};
-    use crate::openhuman::agent::profiles::store::built_in_default_profile;
-
-    fn profile(
-        id: &str,
-        dedicated_workspace: bool,
-    ) -> crate::openhuman::agent::profiles::AgentProfile {
-        let mut p = built_in_default_profile();
-        p.id = id.to_string();
-        p.name = id.to_string();
-        p.built_in = false;
-        p.is_master = false;
-        p.memory_dir_suffix = None;
-        p.dedicated_workspace = dedicated_workspace;
-        p
-    }
-
-    #[test]
-    fn dedicated_workspace_profile_roots_descriptor_at_profile_dir() {
-        // Real temp action_dir: the production fn creates the profile dir as a
-        // side effect, so assert against the resolved path suffix.
-        let action = tempfile::tempdir().expect("action tempdir");
-        let p = profile("alice", true);
-        let desc = derive_profile_workspace_descriptor(action.path(), Some(&p))
-            .expect("dedicated_workspace profile yields a descriptor");
-        let expected = action.path().join("profiles").join("alice");
-        assert_eq!(desc.root.as_path(), expected.as_path());
-        // The production path really created the dir.
-        assert!(desc.root.is_dir());
-    }
-
-    #[test]
-    fn shared_profile_yields_no_descriptor() {
-        let action = tempfile::tempdir().expect("action tempdir");
-        let p = profile("bob", false);
-        assert!(derive_profile_workspace_descriptor(action.path(), Some(&p)).is_none());
-    }
-
-    #[test]
-    fn none_profile_yields_no_descriptor() {
-        let action = tempfile::tempdir().expect("action tempdir");
-        assert!(derive_profile_workspace_descriptor(action.path(), None).is_none());
-    }
-
-    #[test]
-    fn legacy_invalid_id_yields_no_descriptor_even_when_opted_in() {
-        let action = tempfile::tempdir().expect("action tempdir");
-        // An id that fails validation can't mint a workspace path → no descriptor,
-        // so the session falls back to the shared action_dir cwd.
-        let p = profile("Bad Id", true);
-        assert!(derive_profile_workspace_descriptor(action.path(), Some(&p)).is_none());
-    }
-
-    #[test]
-    fn create_dir_failure_yields_no_descriptor() {
-        // Point `action_dir` at a regular file so `profiles/…` can't be created.
-        // The function must fall back to `None` (shared action_dir cwd) rather
-        // than hand tools a descriptor rooted at a nonexistent dir.
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let action_file = tmp.path().join("not-a-dir");
-        std::fs::write(&action_file, b"x").expect("write file");
-        let p = profile("alice", true);
-        assert!(
-            derive_profile_workspace_descriptor(&action_file, Some(&p)).is_none(),
-            "a create_dir_all failure must fall back to None"
-        );
-    }
-
-    #[test]
-    fn shared_profile_still_arms_cross_profile_guard() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let mut config = crate::openhuman::config::Config::default();
-        config.action_dir = temp.path().join("actions");
-        config.workspace_dir = temp.path().join("state");
-        let profile = profile("default", false);
-
-        let security = build_profile_security(&config, Some(&profile));
-
-        let guard = security
-            .active_profile
-            .expect("every active profile must arm the guard");
-        assert_eq!(guard.profile_id, "default");
-        assert_eq!(guard.action_dir, config.action_dir);
-    }
-
-    #[test]
-    fn profile_less_session_leaves_cross_profile_guard_disarmed() {
-        let config = crate::openhuman::config::Config::default();
-        assert!(build_profile_security(&config, None)
-            .active_profile
-            .is_none());
-    }
-}
+#[path = "factory_profile_workspace_descriptor_tests_tests.rs"]
+mod profile_workspace_descriptor_tests;
