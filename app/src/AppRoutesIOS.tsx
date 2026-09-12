@@ -97,8 +97,6 @@ const MobileTransportBootstrap: FC<{ children: React.ReactNode }> = ({ children 
     }
     if (!profile?.kind) {
       setActiveCoreTransport(null);
-      setBindingFailed(false);
-      setReady(true);
       return;
     }
 
@@ -141,8 +139,9 @@ const MobileTransportBootstrap: FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   if (location.pathname === '/pair') return <>{children}</>;
-  if (bindingFailed && !getActiveCoreTransport()) return <TransportBootstrapError />;
-  return ready || Boolean(getActiveCoreTransport()) ? <>{children}</> : null;
+  const activeTransport = getActiveCoreTransport();
+  if (bindingFailed && !activeTransport && isPaired()) return <TransportBootstrapError />;
+  return ready || Boolean(activeTransport) || !isPaired() ? <>{children}</> : null;
 };
 
 const AppRoutesIOS: FC = () => {
