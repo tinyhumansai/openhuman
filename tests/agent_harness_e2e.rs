@@ -784,7 +784,14 @@ where
         })
         .expect("spawn agent harness e2e thread")
         .join()
-        .expect("agent harness e2e thread should not panic");
+        .unwrap_or_else(|panic| {
+            if let Some(message) = panic.downcast_ref::<&str>() {
+                eprintln!("agent harness inner panic: {message}");
+            } else if let Some(message) = panic.downcast_ref::<String>() {
+                eprintln!("agent harness inner panic: {message}");
+            }
+            std::panic::resume_unwind(panic);
+        });
 }
 
 // ─── Task 2: Multi-turn state persistence ────────────────────────────────────
