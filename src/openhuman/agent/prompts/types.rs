@@ -351,6 +351,9 @@ pub struct PromptContext<'a> {
     /// Id of the agent this prompt is being built for.
     pub agent_id: &'a str,
     pub tools: &'a [PromptTool<'a>],
+    /// Installed skill metadata. The skills domain historically calls these
+    /// entries `Workflow`; this is the catalog rendered by
+    /// [`SkillsCatalogSection`], not a list of runtime workflow definitions.
     pub workflows: &'a [Workflow],
     pub dispatcher_instructions: &'a str,
     /// Pre-fetched learned context (empty when learning is disabled).
