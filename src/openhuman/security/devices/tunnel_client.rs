@@ -189,10 +189,15 @@ pub(crate) fn parse_register_ack(ack: serde_json::Value) -> Result<TunnelRegiste
     // Describe the shape before `from_value` consumes the value, so the success
     // path pays no clone and the failure path can still say what arrived.
     let shape = describe_ack_shape(&ack);
-    serde_json::from_value::<TunnelRegisterResponse>(ack).map_err(|e| {
+    let response = serde_json::from_value::<TunnelRegisterResponse>(ack).map_err(|e| {
         log::error!("[devices/tunnel] parse tunnel:register ack failed: {e}; ack was a {shape}");
         format!("[devices/tunnel] parse tunnel:register ack failed: {e}")
-    })
+    })?;
+    log::debug!(
+        "[devices/tunnel] tunnel:register accepted channel_id={}",
+        response.channel_id
+    );
+    Ok(response)
 }
 
 /// The backend's error message when an ACK carries the `{ ok: false, error }`
