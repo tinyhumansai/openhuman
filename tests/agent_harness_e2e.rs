@@ -1128,10 +1128,16 @@ async fn subagent_clarification_flow_inner() {
     let _lock = env_lock();
     reset_script(vec![
         // ── turn 1 ──
-        // request[0]: Orchestrator calls schedule_task (scheduler_agent's delegate_name).
+        // request[0]: Orchestrator reaches the packed scheduler delegate through
+        // use_skill. Packed delegate names are intentionally withheld from the
+        // orchestrator's direct schema, but remain executable through the pack.
         tool_call_completion(
-            "schedule_task",
-            json!({ "prompt": "Schedule a weekly reminder", "blocking": true }),
+            "use_skill",
+            json!({
+                "skill": "scheduling",
+                "tool": "schedule_task",
+                "args": { "prompt": "Schedule a weekly reminder", "blocking": true }
+            }),
         ),
         // request[1]: scheduler_agent first iter → tries ask_user_clarification.
         //   ask_user_clarification is NOT in all_tools_with_runtime (tools/ops.rs), so
@@ -1197,10 +1203,6 @@ async fn subagent_clarification_flow_inner() {
     .await;
     let second =
         wait_for_terminal_request(&mut events, &second_request_id, Duration::from_secs(120)).await;
-    for (i, req) in with_captured(|c| c.clone()).iter().enumerate() {
-        let messages = req.pointer("/body/messages").and_then(Value::as_array);
-        eprintln!("CLARIFY DEBUG {i}: messages={} last={:?}", messages.map_or(0, Vec::len), messages.and_then(|m| m.last()).and_then(|v| v.get("content")));
-    }
     assert_eq!(
         second.get("event").and_then(Value::as_str),
         Some("chat_done"),
@@ -1229,7 +1231,7 @@ async fn subagent_clarification_flow_inner() {
     );
 
     // ── scheduler_agent actually ran (≥4 upstream requests) ──
-    // request[0] = orchestrator (schedule_task call),
+    // request[0] = orchestrator (use_skill -> schedule_task call),
     // request[1] = scheduler_agent first iter (ask_user_clarification blocked),
     // request[2] = scheduler_agent second iter (text output with question),
     // request[3] = orchestrator turn-2 synthesis (turn-2 end).
