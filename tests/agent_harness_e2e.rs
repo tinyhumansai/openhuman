@@ -742,11 +742,7 @@ async fn wait_for_web_chat_idle(rpc_base: &str, thread_id: &str) {
         )
         .await;
         let result = assert_no_jsonrpc_error(&status, "web_queue_status");
-        if result
-            .get("result")
-            .and_then(|value| value.get("active"))
-            == Some(&json!(false))
-        {
+        if result.get("result").and_then(|value| value.get("active")) == Some(&json!(false)) {
             return;
         }
         assert!(
@@ -770,8 +766,10 @@ async fn wait_for_terminal_request(
             Ok(None) => panic!("SSE channel closed waiting for request {request_id}"),
             Err(_) => panic!("timed out waiting for terminal request {request_id}"),
         };
-        if matches!(event.get("event").and_then(Value::as_str), Some("chat_done") | Some("chat_error"))
-            && event.get("request_id").and_then(Value::as_str) == Some(request_id)
+        if matches!(
+            event.get("event").and_then(Value::as_str),
+            Some("chat_done") | Some("chat_error")
+        ) && event.get("request_id").and_then(Value::as_str) == Some(request_id)
         {
             return event;
         }
@@ -871,7 +869,7 @@ async fn multi_turn_state_persistence_inner() {
         stack.rpc_base
     ));
 
-    let second_request_id = send_web_chat(
+    send_web_chat(
         &stack.rpc_base,
         200,
         "harness-multiturn",
@@ -1189,7 +1187,7 @@ async fn subagent_clarification_flow_inner() {
     wait_for_web_chat_idle(&stack.rpc_base, "thread-clarify").await;
 
     // ── turn 2: resume with answer → final response must reach the user ──
-    send_web_chat(
+    let second_request_id = send_web_chat(
         &stack.rpc_base,
         401,
         "harness-clarify",
