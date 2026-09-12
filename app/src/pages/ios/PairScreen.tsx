@@ -23,6 +23,7 @@ import { useT } from '../../lib/i18n/I18nContext';
 import { base64urlEncode, generateKeypair } from '../../lib/tunnel/crypto';
 import { type ConnectionProfile, saveProfile } from '../../services/transport/profileStore';
 import { createTransportManager } from '../../services/transport/TransportManager';
+import { setActiveCoreTransport } from '../../services/coreRpcClient';
 import { BACKEND_URL } from '../../utils/config';
 
 const log = debug('ios:pair-screen');
@@ -160,6 +161,7 @@ export const PairScreen: FC = () => {
         setState({ kind: 'error', message: t('iosPair.error.unreachableDesktop') });
         return;
       }
+      setActiveCoreTransport(transport);
       log('[ios] transport healthy kind=%s; navigating to /human', transport.kind);
     } catch (err) {
       logErr('[ios] transport probe error: %o', err);

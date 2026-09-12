@@ -13,7 +13,7 @@
  *      the saved profile.
  */
 import debug from 'debug';
-import { type FC } from 'react';
+import { type FC, useEffect } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 
 import MobileTabBar from './components/ios/MobileTabBar';
@@ -22,6 +22,9 @@ import Accounts from './pages/Accounts';
 import { PairScreen } from './pages/ios/PairScreen';
 import Settings from './pages/Settings';
 import { listProfiles } from './services/transport/profileStore';
+import { createTransportManager } from './services/transport/TransportManager';
+import { setActiveCoreTransport } from './services/coreRpcClient';
+import { BACKEND_URL } from './utils/config';
 
 const log = debug('mobile:routes');
 
@@ -50,9 +53,43 @@ const RequirePairing: FC<{ children: React.ReactNode }> = ({ children }) => {
   return <MobileShell>{children}</MobileShell>;
 };
 
+/** Bind a persisted mobile profile before paired screens issue core RPCs. */
+const MobileTransportBootstrap: FC<{ children: React.ReactNode }> = ({ children }) => {
+  useEffect(() => {
+    const profile = listProfiles()[0];
+    if (!profile) {
+      setActiveCoreTransport(null);
+      return;
+    }
+
+    let disposed = false;
+    const manager = createTransportManager(profile, { backendSocketUrl: BACKEND_URL });
+    void manager
+      .getTransport()
+      .then(transport => {
+        if (!disposed) {
+          setActiveCoreTransport(transport);
+          log('[mobile] bound persisted transport kind=%s', transport.kind);
+        }
+      })
+      .catch(error => {
+        log('[mobile] persisted transport binding failed: %o', error);
+      });
+
+    return () => {
+      disposed = true;
+      void manager.close();
+      setActiveCoreTransport(null);
+    };
+  }, []);
+
+  return <>{children}</>;
+};
+
 const AppRoutesIOS: FC = () => {
   return (
-    <Routes>
+    <MobileTransportBootstrap>
+      <Routes>
       {/* Unpaired entry — QR scan handshake. */}
       <Route path="/pair" element={<PairScreen />} />
 
@@ -83,7 +120,8 @@ const AppRoutesIOS: FC = () => {
       />
 
       <Route path="*" element={<IOSDefaultRedirect />} />
-    </Routes>
+      </Routes>
+    </MobileTransportBootstrap>
   );
 };
 
