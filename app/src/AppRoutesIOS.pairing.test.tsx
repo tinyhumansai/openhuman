@@ -95,7 +95,7 @@ describe('AppRoutesIOS — re-pairing escape hatch', () => {
   afterEach(() => vi.clearAllMocks());
 
   it('serves /pair to an already-paired phone rather than bouncing it to /human', () => {
-    listProfiles.mockReturnValue(SAVED_PROFILE);
+    listProfiles.mockReturnValue([TUNNEL_PROFILE]);
 
     renderAt('/pair');
 
