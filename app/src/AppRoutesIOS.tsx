@@ -93,8 +93,6 @@ const MobileTransportBootstrap: FC<{ children: React.ReactNode }> = ({ children 
     // the profile created by the latest pairing attempt.
     const profile = listProfiles().at(-1) ?? null;
     if (getActiveCoreTransport()) {
-      setBindingFailed(false);
-      setReady(true);
       return;
     }
     if (!profile?.kind) {
@@ -121,7 +119,7 @@ const MobileTransportBootstrap: FC<{ children: React.ReactNode }> = ({ children 
         });
       })
       .catch(error => {
-        if (!disposed) {
+        if (!disposedRef.current) {
           setActiveCoreTransport(null);
           setBindingFailed(true);
           setReady(false);
@@ -143,8 +141,8 @@ const MobileTransportBootstrap: FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   if (location.pathname === '/pair') return <>{children}</>;
-  if (bindingFailed) return <TransportBootstrapError />;
-  return ready ? <>{children}</> : null;
+  if (bindingFailed && !getActiveCoreTransport()) return <TransportBootstrapError />;
+  return ready || Boolean(getActiveCoreTransport()) ? <>{children}</> : null;
 };
 
 const AppRoutesIOS: FC = () => {
