@@ -280,7 +280,7 @@ jobs:
           key: tinycortex-full
 
       - name: Run TinyCortex engine and Composio sync tests
-        run: bash scripts/ci-cancel-aware.sh cargo test --manifest-path vendor/tinymemory/vendor/tinycortex/Cargo.toml --features git-diff,sync
+        run: bash scripts/ci-cancel-aware.sh cargo test --manifest-path vendor/tinymemory/vendor/tinycortex/Cargo.toml --features git-diff,sync,persona
 
   rust-core-tests-windows:
     if: inputs.run_rust_core
