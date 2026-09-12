@@ -66,6 +66,7 @@ const baseState: RegistryInspectionState = {
           lastObservedAt: '2026-09-02T04:05:00Z',
           successGeneration: 1,
           restartGeneration: null,
+          restartAttemptedGeneration: null,
         },
       },
     },
@@ -111,6 +112,7 @@ const baseState: RegistryInspectionState = {
           lastObservedAt: '2026-09-02T04:06:00Z',
           successGeneration: 1,
           restartGeneration: null,
+          restartAttemptedGeneration: null,
         },
         toolEnablements: {
           items: [
@@ -130,6 +132,7 @@ const baseState: RegistryInspectionState = {
           lastObservedAt: '2026-09-02T04:06:00Z',
           successGeneration: 1,
           restartGeneration: null,
+          restartAttemptedGeneration: null,
         },
       },
     },
@@ -156,6 +159,7 @@ const baseState: RegistryInspectionState = {
           lastObservedAt: '2026-09-02T04:07:00Z',
           successGeneration: 1,
           restartGeneration: null,
+          restartAttemptedGeneration: null,
         },
         connectorBindings: {
           items: [
@@ -176,6 +180,7 @@ const baseState: RegistryInspectionState = {
           lastObservedAt: '2026-09-02T04:07:00Z',
           successGeneration: 1,
           restartGeneration: null,
+          restartAttemptedGeneration: null,
         },
       },
     },
@@ -828,6 +833,7 @@ describe('RegistryDetailPane', () => {
               lastObservedAt: null,
               successGeneration: null,
               restartGeneration: null,
+              restartAttemptedGeneration: null,
             },
           },
         },
