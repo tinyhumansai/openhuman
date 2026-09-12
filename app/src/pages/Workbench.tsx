@@ -106,8 +106,8 @@ function writeIdempotencyStore(store: Record<string, string>) {
   }
 }
 
-function makeIdempotencyStorageId(alertId: string, action: AlertAction) {
-  return `${action}:${alertId}`;
+function makeIdempotencyStorageId(alertId: string, action: AlertAction, intent: string) {
+  return `${action}:${alertId}:${intent}`;
 }
 
 function generateIdempotencyKey(alertId: string, action: AlertAction) {
@@ -115,7 +115,7 @@ function generateIdempotencyKey(alertId: string, action: AlertAction) {
   return `youpet-workbench:${action}:${alertId}:${random}`;
 }
 
-function getOrCreateIdempotencyKey(alertId: string, action: AlertAction) {
+function getOrCreateIdempotencyKey(alertId: string, action: AlertAction, intent: string) {
   if (!resolveWorkbenchActiveUserScope()) {
     return { key: '', persisted: false };
   }
@@ -125,20 +125,20 @@ function getOrCreateIdempotencyKey(alertId: string, action: AlertAction) {
   } catch {
     return { key: '', persisted: false };
   }
-  const id = makeIdempotencyStorageId(alertId, action);
+  const id = makeIdempotencyStorageId(alertId, action, intent);
   if (store[id]) return { key: store[id], persisted: true };
   const key = generateIdempotencyKey(alertId, action);
   return { key, persisted: writeIdempotencyStore({ ...store, [id]: key }) };
 }
 
-function clearIdempotencyKey(alertId: string, action: AlertAction) {
+function clearIdempotencyKey(alertId: string, action: AlertAction, intent: string) {
   let store: Record<string, string>;
   try {
     store = readIdempotencyStore();
   } catch {
     return false;
   }
-  delete store[makeIdempotencyStorageId(alertId, action)];
+  delete store[makeIdempotencyStorageId(alertId, action, intent)];
   return writeIdempotencyStore(store);
 }
 
@@ -868,7 +868,9 @@ const Workbench = () => {
       );
       return;
     }
-    const { key: idempotencyKey, persisted } = getOrCreateIdempotencyKey(alert.id, action);
+    const intent =
+      action === 'ack' ? notes[alert.id]?.trim() || '' : resolutions[alert.id]?.trim() || '';
+    const { key: idempotencyKey, persisted } = getOrCreateIdempotencyKey(alert.id, action, intent);
     if (!persisted || !idempotencyKey) {
       setActionError(
         t(
@@ -891,7 +893,7 @@ const Workbench = () => {
               resolution: resolutions[alert.id]?.trim() || undefined,
               idempotencyKey,
             });
-      clearIdempotencyKey(alert.id, action);
+      clearIdempotencyKey(alert.id, action, intent);
       setAlerts(current =>
         current.map(item =>
           item.id === updated.id ? { ...updated, context: updated.context ?? item.context } : item
