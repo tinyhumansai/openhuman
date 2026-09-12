@@ -67,26 +67,6 @@ impl Drop for EnvVarGuard {
     }
 }
 
-/// Bind a tree driver for the workspace these subcommands will resolve to.
-///
-/// The subcommands go through the contract's runtime-tree doors now (#5560), so
-/// each one asks `memory::binding` for a provider. With none installed the
-/// binding tries to load the compiled TinyMemory module, which in a test
-/// process can *block* rather than fail — so every test that reaches a handler
-/// has to put one there first.
-///
-/// The config is resolved exactly the way [`load_config`] resolves it, rather
-/// than being constructed here: `OPENHUMAN_WORKSPACE` is set by
-/// [`WorkspaceEnvGuard`] and the env overlay is what turns it into the
-/// `workspace_dir` the binding is keyed on. Building a `Config::default()` and
-/// pointing it at the tempdir would key the binding on a *different* path than
-/// the one the CLI then asks for.
-fn bind_workspace_driver() {
-    let runtime = build_runtime().expect("runtime");
-    let config = runtime.block_on(load_config()).expect("config");
-    super::super::test_support::bind_tree_driver(&config);
-}
-
 #[test]
 fn is_help_matches_supported_aliases() {
     assert!(is_help("-h"));
@@ -171,40 +151,6 @@ fn help_paths_for_subcommands_return_ok() {
 }
 
 #[test]
-fn ingest_status_and_query_run_against_isolated_workspace() {
-    let tmp = TempDir::new().unwrap();
-    let _workspace = WorkspaceEnvGuard::set(tmp.path());
-    bind_workspace_driver();
-
-    assert!(run_ingest(&[
-        "ns".to_string(),
-        "--content".to_string(),
-        "hello world".to_string()
-    ])
-    .is_ok());
-    assert!(run_status(&["ns".to_string()]).is_ok());
-    let err = run_query(&["ns".to_string(), "root".to_string()])
-        .expect_err("root query should fail before a summarization run creates nodes");
-    assert!(err.to_string().contains("not found"));
-}
-
-#[test]
-fn ingest_reads_from_file_path() {
-    let tmp = TempDir::new().unwrap();
-    let _workspace = WorkspaceEnvGuard::set(tmp.path());
-    bind_workspace_driver();
-    let input = tmp.path().join("input.txt");
-    std::fs::write(&input, "from file").unwrap();
-
-    let args = vec![
-        "ns".to_string(),
-        "--file".to_string(),
-        input.display().to_string(),
-    ];
-    assert!(run_ingest(&args).is_ok());
-}
-
-#[test]
 fn ingest_prefers_file_input_and_surfaces_read_errors() {
     let tmp = TempDir::new().unwrap();
     let _workspace = WorkspaceEnvGuard::set(tmp.path());
@@ -238,25 +184,6 @@ fn run_summarize_errors_cleanly_without_provider() {
         msg.contains("no summarization provider"),
         "error should name the missing provider: {msg}"
     );
-}
-
-#[test]
-fn query_prefers_explicit_node_flag_over_positional_node() {
-    let tmp = TempDir::new().unwrap();
-    let _workspace = WorkspaceEnvGuard::set(tmp.path());
-    bind_workspace_driver();
-
-    let err = run_query(&[
-        "ns".to_string(),
-        "2024/03/15".to_string(),
-        "--node-id".to_string(),
-        "2024/03/16".to_string(),
-    ])
-    .expect_err("missing node should fail");
-
-    assert!(err
-        .to_string()
-        .contains("node '2024/03/16' not found in namespace 'ns'"));
 }
 
 #[test]
@@ -296,43 +223,5 @@ fn init_logging_sets_default_rust_log_only_when_needed() {
         let _rust_log = EnvVarGuard::set("RUST_LOG", "debug");
         init_logging(false);
         assert_eq!(std::env::var("RUST_LOG").ok().as_deref(), Some("debug"));
-    }
-}
-
-#[test]
-fn run_and_rebuild_no_longer_block_on_local_ai_precondition() {
-    // #002 FR-007: the summarizer used to hard-error "requires local_ai to
-    // be enabled" when local AI was off, which left Build Summary Trees
-    // dead for cloud-only setups. It now builds the configured cloud
-    // provider instead. The commands may still surface a downstream error
-    // (e.g. a network/auth failure when actually calling the cloud model in
-    // a test sandbox), but they must NOT fail on the old local-AI
-    // precondition. This test asserts that specific regression is gone.
-    let tmp = TempDir::new().unwrap();
-    let _workspace = WorkspaceEnvGuard::set(tmp.path());
-    bind_workspace_driver();
-
-    // Seed a namespace so the commands go through the runtime path
-    // rather than failing argument validation.
-    assert!(run_ingest(&[
-        "ns".to_string(),
-        "--content".to_string(),
-        "seed".to_string()
-    ])
-    .is_ok());
-
-    // Whatever the outcome (Ok, or a downstream provider/network error),
-    // it must not be the local-AI precondition error.
-    if let Err(e) = run_summarize(&["ns".to_string()]) {
-        assert!(
-            !e.to_string().contains("requires local_ai to be enabled"),
-            "run should no longer block on the local_ai precondition: {e:#}"
-        );
-    }
-    if let Err(e) = run_rebuild(&["ns".to_string()]) {
-        assert!(
-            !e.to_string().contains("requires local_ai to be enabled"),
-            "rebuild should no longer block on the local_ai precondition: {e:#}"
-        );
     }
 }

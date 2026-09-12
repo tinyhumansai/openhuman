@@ -1593,11 +1593,29 @@ async fn domain_events_handler(headers: axum::http::HeaderMap) -> Response {
 
     log::debug!("[events/domain] client connected, streaming domain events");
 
+    // The active workspace, resolved once here so a client that connects
+    // mid-life starts out knowing which rows are its own rather than
+    // waiting for the next event to tell it (#5966). This is the one place
+    // in this handler that can afford the authoritative read — it happens
+    // per connection, not per event — and it refills the cache the row
+    // stamping below relies on.
+    let active_workspace = crate::openhuman::config::active_workspace_dir()
+        .await
+        .map(|dir| crate::openhuman::config::workspace_handle(&dir))
+        .map_err(|error| {
+            log::warn!(
+                "[events/domain] could not resolve the active workspace ({error}); \
+                 the client will scope the log once an event says which workspace is active"
+            );
+        })
+        .ok();
+
     // Send config as first SSE event so frontend can apply settings.
     let config_event = Event::default().event("config").data(
         serde_json::to_string(&json!({
             "max_entries": es_cfg.max_entries,
             "new_entries": es_cfg.new_entries,
+            "active_workspace": active_workspace,
         }))
         .unwrap_or_default(),
     );
@@ -1619,10 +1637,39 @@ async fn domain_events_handler(headers: axum::http::HeaderMap) -> Response {
         let domain = event.domain().to_string();
         let event_name = event.variant_name();
         let agent = event.agent_hint().unwrap_or("").to_string();
+        // Most variants say everything in their name; the ones whose point is
+        // a failure *reason* would otherwise reach the log with the reason
+        // discarded, so they opt into one already-redacted line (#5931). It is
+        // `null` for every other variant, which renders as no change.
+        let detail = event.log_detail();
+        // Which workspace this row belongs to, and which one is current
+        // (#5966). One process serves more than one workspace over its life,
+        // so without these two a row left over from a workspace the user has
+        // switched away from is indistinguishable from one belonging to the
+        // workspace they are in.
+        //
+        // Both are *handles*, never `workspace_dir` itself: this envelope
+        // feeds a settings panel and its NDJSON download, and the path is
+        // under the user's home directory.
+        //
+        // `active` is read from the cache rather than resolved. This closure
+        // is synchronous — `tokio_stream`'s `filter_map` — so it could not
+        // await a resolve, and it runs for every domain event the process
+        // publishes, so it should not want to. `None` means "not resolved
+        // since the last workspace marker write", which the client treats as
+        // unknown rather than as a mismatch.
+        let workspace = event
+            .workspace_dir()
+            .map(crate::openhuman::config::workspace_handle);
+        let active = crate::openhuman::config::active_workspace_dir_cached()
+            .map(|dir| crate::openhuman::config::workspace_handle(&dir));
         let data = json!({
             "domain": domain,
             "event": event_name,
             "agent": agent,
+            "detail": detail,
+            "workspace": workspace,
+            "active_workspace": active,
             "timestamp": chrono::Utc::now().format("%H:%M:%S").to_string(),
         });
         let data_str = serde_json::to_string(&data).ok()?;
@@ -1892,12 +1939,72 @@ impl DomainSubscriberPlan {
     }
 }
 
+/// Consume a domain's registration token only when the global event bus is
+/// ready. An early bus-unavailable attempt therefore remains retryable.
+fn group_first_time_when_bus_ready(
+    completed: &std::sync::Mutex<std::collections::HashSet<crate::core::all::DomainGroup>>,
+    group: crate::core::all::DomainGroup,
+    bus_ready: bool,
+) -> bool {
+    if !bus_ready {
+        log::warn!("[event_bus] deferred {group:?} subscriber registration - bus not initialized");
+        return false;
+    }
+
+    completed
+        .lock()
+        .expect("domain-subscriber registry lock poisoned")
+        .insert(group)
+}
+
+fn group_first_time(group: crate::core::all::DomainGroup) -> bool {
+    use std::collections::HashSet;
+    use std::sync::{Mutex, OnceLock};
+
+    static DONE: OnceLock<Mutex<HashSet<crate::core::all::DomainGroup>>> = OnceLock::new();
+    group_first_time_when_bus_ready(
+        DONE.get_or_init(|| Mutex::new(HashSet::new())),
+        group,
+        crate::core::bus::BUS.get().is_some(),
+    )
+}
+
+/// Consume the learning-subscriber token only when the global event bus is
+/// ready. Learning has a separate token from the Agent group because both
+/// registration blocks must run exactly once.
+fn learning_first_time_when_bus_ready(completed: &std::sync::Mutex<bool>, bus_ready: bool) -> bool {
+    if !bus_ready {
+        log::warn!(
+            "[event_bus] deferred Agent learning subscriber registration - bus not initialized"
+        );
+        return false;
+    }
+
+    let mut completed = completed
+        .lock()
+        .expect("learning-subscriber registry lock poisoned");
+    if *completed {
+        false
+    } else {
+        *completed = true;
+        true
+    }
+}
+
+fn learning_first_time() -> bool {
+    static DONE: std::sync::OnceLock<std::sync::Mutex<bool>> = std::sync::OnceLock::new();
+    learning_first_time_when_bus_ready(
+        DONE.get_or_init(|| std::sync::Mutex::new(false)),
+        crate::core::bus::BUS.get().is_some(),
+    )
+}
+
 /// Registers all long-lived domain event-bus subscribers, each group at most
 /// once per process.
 ///
 /// Ungated core/platform infra runs exactly once behind `INFRA: Once`; each
 /// gated [`DomainGroup`](crate::core::all::DomainGroup) installs the first time
-/// it is enabled (tracked by `group_first_time`), so widening the ambient
+/// it is enabled after the event bus is ready, so widening the ambient
 /// `DomainSet` on a later call (`harness()` → `full()`) still installs the
 /// newly-enabled groups without double-subscribing the ones already registered.
 fn register_domain_subscribers(
@@ -1907,60 +2014,16 @@ fn register_domain_subscribers(
     domains: crate::core::runtime::DomainSet,
 ) {
     use crate::core::all::DomainGroup;
-    use std::collections::HashSet;
-    use std::sync::{Arc, Mutex, Once, OnceLock};
+    use std::sync::{Arc, Once};
 
     let plan = DomainSubscriberPlan::for_domains(domains);
     log::debug!("[event_bus] register_domain_subscribers: domains={domains:?} plan={plan:?}");
 
-    // Per-group idempotency (#4808 review): the previous single process-wide
-    // `Once` fixed the subscriber set to the FIRST caller's DomainSet — an
-    // embedder or test that built `harness()`/`none()` first and later widened
-    // to `full()` would never install the subscribers skipped on that first
-    // call, even though those domains' controllers are now exposed. Tracking the
-    // set of already-registered groups lets a later, wider DomainSet install
-    // exactly the newly-enabled groups (and no group twice). `insert` returns
-    // `true` only the first time a group is seen.
-    //
-    // **Known limitation (issue #5265, CodeRabbit "Major" on the dedup engine
-    // PR):** this marks a group "done" the moment its `if group_first_time(…)`
-    // block is entered, not once every `subscribe_global` call inside it
-    // actually returns `Some`. A transient `subscribe_global` failure (the
-    // global bus not yet initialized) inside one of those blocks — e.g. the
-    // Flows block's `FlowTriggerSubscriber` / `FlowRunDigestSubscriber` /
-    // `DedupCommitSubscriber` registrations — only logs a warning; the group
-    // is still marked done, so no later call ever retries it, leaving that
-    // subscriber permanently absent for the process's lifetime. This is a
-    // pre-existing pattern shared by every `group_first_time(DomainGroup::…)`
-    // call site in this function, not something introduced by (or specific
-    // to) the dedup subscriber — reworking it (e.g. marking the group done
-    // only after every registration in its block succeeds, or making
-    // individual registrations retryable) is out of scope for the dedup PR
-    // and is reported as a separate follow-up issue instead of fixed here.
-    fn group_first_time(group: DomainGroup) -> bool {
-        static DONE: OnceLock<Mutex<HashSet<DomainGroup>>> = OnceLock::new();
-        DONE.get_or_init(|| Mutex::new(HashSet::new()))
-            .lock()
-            .expect("domain-subscriber registry lock poisoned")
-            .insert(group)
-    }
-
-    /// Learning subscribers need their own idempotency token rather than
-    /// `group_first_time(DomainGroup::Agent)`: the Agent block below already
-    /// consumes that token, and whichever ran second would silently skip.
-    fn learning_first_time() -> bool {
-        static DONE: OnceLock<Mutex<bool>> = OnceLock::new();
-        let mut done = DONE
-            .get_or_init(|| Mutex::new(false))
-            .lock()
-            .expect("learning-subscriber registry lock poisoned");
-        if *done {
-            false
-        } else {
-            *done = true;
-            true
-        }
-    }
+    // `subscribe_global` returns `None` only before the process-global bus is
+    // initialized. Because that bus is a monotonic `OnceLock`, checking it here
+    // guarantees the registrations in the guarded block cannot later lose bus
+    // availability. A premature call leaves the group absent from `DONE`, so a
+    // later bootstrap retries it instead of permanently skipping subscribers.
 
     // Seed the live tool-execution timeout from the persisted `[agent]` config
     // so a user-configured value (Settings → Agent OS access → Action timeout)
@@ -2536,6 +2599,7 @@ pub async fn bootstrap_core_runtime(
                 crate::core::types::HostKind::TauriShell => "tauri-shell",
                 crate::core::types::HostKind::Cli => "cli",
                 crate::core::types::HostKind::Docker => "docker",
+                crate::core::types::HostKind::Library => "library",
             },
         },
     );

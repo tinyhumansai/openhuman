@@ -1,3 +1,4 @@
+// ── Chunks ───────────────────────────────────────────────────────────────────
 
 // ── Retrieval ────────────────────────────────────────────────────────────────
 
@@ -295,6 +296,23 @@ impl MemoryEpisodic for GuardedEpisodic {
         self.family()?
             .set_segment_summary(segment_id, summary, now)
             .await
+    }
+
+    /// A read: it selects rows, it changes none. Admitted as one so a
+    /// read-only policy can still drive the re-summarisation pass (#6186) —
+    /// the write it leads to is `set_segment_summary`, which is admitted
+    /// separately on its own terms.
+    async fn segments_pending_summary(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<ConversationSegment>, MemoryError> {
+        self.policy.admit_read(
+            Capability::Episodic,
+            "episodic.segments_pending_summary",
+            NO_NAMESPACE,
+            false,
+        )?;
+        self.family()?.segments_pending_summary(limit).await
     }
 
     async fn upsert_segment_embedding(

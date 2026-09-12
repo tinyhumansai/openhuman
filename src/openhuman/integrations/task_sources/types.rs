@@ -44,6 +44,30 @@ impl ProviderSlug {
             )),
         }
     }
+
+    /// Whether this provider has a working task-fetch path today.
+    ///
+    /// **This is the single place that answers the question**, so the
+    /// periodic scheduler and the RPC surface cannot drift apart on it.
+    ///
+    /// Every provider returns `false` right now: the pipeline's fetch step
+    /// (`pipeline::fetch_tasks_unavailable`) is an unconditional `Err` for
+    /// every toolkit, because tinymemory v1.13.4 deleted
+    /// `ComposioProvider::fetch_tasks` with no replacement. Nothing
+    /// downstream of the fetch is broken — dedup, enrichment, routing and
+    /// reconciliation all still work — so the moment a provider grows a real
+    /// fetch again this flips to `true` for that variant and the scheduler
+    /// starts polling it, with no other change.
+    ///
+    /// It is deliberately a per-variant `match` rather than a blanket
+    /// `false`: the restoration lands one toolkit at a time, and a
+    /// wholesale constant would have to be redesigned on the first one
+    /// instead of edited.
+    pub fn can_fetch(self) -> bool {
+        match self {
+            Self::Github | Self::Notion | Self::Linear | Self::Clickup => false,
+        }
+    }
 }
 
 /// Per-provider, user-configured filter. Tagged by `provider` on the

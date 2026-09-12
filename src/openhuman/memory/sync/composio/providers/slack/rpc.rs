@@ -19,9 +19,11 @@
 //! not hold. `sync_trigger_rpc` below reads through the connector module and
 //! writes into the bound memory driver via `MemorySourceSink::accept_source_items`
 //! instead — the same `run_sync_pass` helper
-//! `integrations::composio::ops::composio_sync` uses, called synchronously
-//! here rather than fired into a background task, because this RPC's
-//! contract is "return the outcome", not "return that a run started".
+//! `integrations::composio::ops::composio_sync` uses (through
+//! `run_sync_within_budget`, which repeats it within one call's item budget),
+//! called synchronously here rather than fired into a background task,
+//! because this RPC's contract is "return the outcome", not "return that a
+//! run started".
 //!
 //! `sync_status_rpc` genuinely lost capability it cannot honestly recover:
 //! the module keeps its sync cursor and daily-request budget internally and
@@ -37,7 +39,7 @@ use crate::openhuman::config::Config;
 use crate::openhuman::integrations::composio::client::{
     create_composio_client, direct_list_connections, ComposioClientKind,
 };
-use crate::openhuman::integrations::composio::ops::run_sync_pass;
+use crate::openhuman::integrations::composio::ops::run_sync_within_budget;
 use crate::openhuman::integrations::composio::providers::SyncOutcome;
 use crate::openhuman::integrations::composio::types::ComposioConnectionsResponse;
 use crate::rpc::RpcOutcome;
@@ -118,15 +120,9 @@ pub async fn sync_trigger_rpc(
         // Reads through the `tinyconnectors` module and ingests through the
         // bound driver's `MemorySourceSink` — see the module doc comment for
         // why this no longer goes through `MemorySourceSync::run_connection_sync`.
-        match run_sync_pass(
-            config,
-            "slack",
-            &conn.id,
-            "manual",
-            crate::openhuman::integrations::composio::ops::SYNC_PASS_MAX_ITEMS,
-        )
-        .await
-        .map_err(|error| error.to_string())
+        match run_sync_within_budget(config, "slack", &conn.id, "manual")
+            .await
+            .map_err(|error| error.to_string())
         {
             Ok(pass) => outcomes.push(SyncOutcome {
                 toolkit: "slack".to_string(),

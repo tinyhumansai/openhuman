@@ -16,6 +16,7 @@ mod schemas;
 pub mod settings_cli;
 pub mod tools;
 pub mod workspace;
+pub mod workspace_handle;
 
 #[allow(unused_imports)]
 pub use daemon::DaemonConfig;
@@ -25,12 +26,20 @@ pub use ops as rpc;
 pub use ops::*;
 
 pub use schema::{
-    action_dir_env_override, active_user_marker_path, clear_active_user, default_action_dir,
+    action_dir_env_override, active_user_marker_path, active_workspace_dir,
+    active_workspace_dir_cached, active_workspace_snapshot, clear_active_user, default_action_dir,
     default_projects_dir, default_root_openhuman_dir, pre_login_user_dir, read_active_user_id,
     resolve_action_dir, user_openhuman_dir, write_active_user_id, PRE_LOGIN_USER_ID,
 };
+pub use workspace_handle::workspace_handle;
 // Crate-internal: workspace→config-dir resolver reused by the cloud embedder.
 pub(crate) use schema::resolve_config_dir_for_workspace;
+// Test-only: the `.openhuman` (or `.openhuman-staging`) root dir name the modern
+// layout keys on. The `desktop::app_state` resolver tests build tempdir
+// workspaces named after it so the modern-layout arm fires regardless of the
+// ambient `OPENHUMAN_APP_ENV`.
+#[cfg(test)]
+pub(crate) use schema::default_root_dir_name;
 pub(crate) use schema::set_cli_inference_overrides;
 #[allow(unused_imports)]
 pub use schema::{
@@ -57,7 +66,7 @@ pub use schema::{
     MODEL_AGENTIC_V1, MODEL_BURST_V1, MODEL_CHAT_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1,
     MODEL_REASONING_V1, MODEL_SUMMARIZATION_V1, MODEL_VISION_V1, SEARCH_ENGINE_BRAVE,
     SEARCH_ENGINE_DISABLED, SEARCH_ENGINE_EXA, SEARCH_ENGINE_MANAGED, SEARCH_ENGINE_PARALLEL,
-    SEARCH_ENGINE_QUERIT,
+    SEARCH_ENGINE_QUERIT, SEARCH_ENGINE_TAVILY,
 };
 // Kept as a separate re-export (issue #4117) so the large alphabetized group
 // above stays byte-identical and rustfmt-stable.

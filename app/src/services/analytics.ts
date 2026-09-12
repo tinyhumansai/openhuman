@@ -33,6 +33,7 @@ import {
   SENTRY_RELEASE,
   SENTRY_SMOKE_TEST,
   SUPPORT_URL,
+  SUPPORT_URL_ACCEPTS_REF,
   TAURI_CARGO_VERSION,
 } from '../utils/config';
 import { startInteractionTracking } from './analyticsInteractions';
@@ -103,6 +104,7 @@ const ALLOWED_EVENT_NAMES = [
   'automation_run_started',
   'automation_run_resumed',
   'automation_run_cancelled',
+  'memory_repair_succeeded',
   'memory_tree_retry_succeeded',
   'skill_install',
   'skill_uninstall',
@@ -229,7 +231,12 @@ export function initSentry(): void {
       // event id is known here and tags survive. The URL carries only the
       // event's own id + a static base (no PII). Mirrors the id the user
       // sees + copies on `ErrorFallbackScreen`.
-      if (event.event_id) {
+      // Only a configured support endpoint can consume the ref. The default
+      // destination is a Discord invite that ignores the query, and this tag
+      // exists to carry the correlation — without one it degrades to the same
+      // constant string on every event, which is noise rather than a deep
+      // link, so it is omitted instead (#5953).
+      if (event.event_id && SUPPORT_URL_ACCEPTS_REF) {
         const sep = SUPPORT_URL.includes('?') ? '&' : '?';
         event.tags.support_url = `${SUPPORT_URL}${sep}ref=${event.event_id}`;
       }

@@ -282,12 +282,20 @@ fn now_ms() -> u64 {
 /// per-node HITL gate's notification) but is a distinct surface: this one
 /// fires from the *tool-call* `ApprovalGate`, not the graph's own
 /// `require_approval` gate node.
+/// `workspace` is the handle and revision of the workspace the flow parked in.
+/// This publisher bypasses the notification bridge that stamps workspace
+/// identity, and the approval gate itself is process-wide — so without the
+/// binding, the banner stays actionable after a workspace switch and approves
+/// another workspace's pending call from inside the one the user moved to
+/// (#5966). `None` only when the workspace could not be resolved; the caller
+/// says why that fails open.
 fn publish_flow_gate_notification(
     request_id: &str,
     flow_id: &str,
     run_id: &str,
     tool_name: &str,
     summary: &str,
+    workspace: Option<(String, u64)>,
 ) {
     use crate::openhuman::desktop::notifications::bus::publish_core_notification;
     use crate::openhuman::desktop::notifications::types::{
@@ -331,6 +339,8 @@ fn publish_flow_gate_notification(
                 payload: Some(base_payload(ApprovalDecision::Deny)),
             },
         ]),
+        workspace: workspace.as_ref().map(|(handle, _)| handle.clone()),
+        workspace_revision: workspace.map(|(_, revision)| revision),
     });
 }
 

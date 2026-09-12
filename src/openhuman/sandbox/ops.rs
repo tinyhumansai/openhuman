@@ -86,6 +86,25 @@ pub fn resolve_sandbox_policy(
 
 /// Create a backend handle for the resolved policy. For Docker this
 /// checks availability; for Local it checks the OS backend.
+/// The status a `Local` sandbox handle reports, given the backend `pick_backend`
+/// actually chose.
+///
+/// Extracted as a free function so the decision is testable on **any** host.
+/// Asserting it through `create_sandbox_backend` cannot work: which branch runs
+/// depends on whether the machine has an OS jail, so on a host with Seatbelt or
+/// Landlock the noop path is never reached and a regression to "always Ready"
+/// passes unnoticed. That is exactly how the original defect survived.
+pub(crate) fn local_status_for_backend(backend_name: &str) -> SandboxStatus {
+    if backend_name == cwd_jail::NOOP_BACKEND_NAME {
+        // The noop backend enforces nothing — it spawns the command as-is. It is
+        // a documented passthrough rather than a failure, so `Inactive`
+        // ("backend not initialized") is the honest report, not `Error`.
+        SandboxStatus::Inactive
+    } else {
+        SandboxStatus::Ready
+    }
+}
+
 pub async fn create_sandbox_backend(policy: &SandboxPolicy) -> SandboxBackendHandle {
     match policy.backend {
         SandboxBackendKind::None => SandboxBackendHandle {
@@ -95,18 +114,36 @@ pub async fn create_sandbox_backend(policy: &SandboxPolicy) -> SandboxBackendHan
         },
         SandboxBackendKind::Local => {
             let os_backend = cwd_jail::default_backend();
+            let backend_name = os_backend.name();
+            // Derive the status from WHICH backend was chosen, not from
+            // `is_available()`.
+            //
+            // `default_backend()` is `cwd_jail::detect::pick_backend`, which
+            // already performs the availability check and substitutes
+            // `NoopBackend` when no OS jail is usable. `NoopBackend::is_available()`
+            // is unconditionally `true` — pinned as a contract by the #3235
+            // regression test — so asking it here always answered `true` and the
+            // `else` arm was unreachable. The handle therefore reported `Ready`
+            // on a host with no confinement at all, which is the one direction a
+            // sandbox status must never be wrong in: a caller that trusts it
+            // believes commands are jailed when they run unconfined.
+            //
+            // The noop backend is a documented passthrough, not a failure, so
+            // `Inactive` ("backend not initialized") is the honest report rather
+            // than `Error`. `backend_id` still carries the name for a caller that
+            // wants the specific backend.
+            let status = local_status_for_backend(backend_name);
+            if status == SandboxStatus::Inactive {
+                tracing::warn!(
+                    backend = backend_name,
+                    "[sandbox:local] no OS jail available; commands run UNCONFINED and \
+                     the handle reports inactive"
+                );
+            }
             SandboxBackendHandle {
                 kind: SandboxBackendKind::Local,
-                status: if os_backend.is_available() {
-                    SandboxStatus::Ready
-                } else {
-                    tracing::warn!(
-                        backend = os_backend.name(),
-                        "[sandbox:local] OS jail backend not available, falling back to noop"
-                    );
-                    SandboxStatus::Ready
-                },
-                backend_id: Some(os_backend.name().to_string()),
+                status,
+                backend_id: Some(backend_name.to_string()),
             }
         }
         SandboxBackendKind::Docker => docker::docker_backend_handle().await,

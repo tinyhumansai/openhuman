@@ -51,7 +51,16 @@ export type UserErrorKind =
    * rebuilt tree repopulates by re-syncing sources, which is why the action
    * deep-links to Brain's sync tab rather than any settings screen.
    */
-  | 'memory_store_corrupt';
+  | 'memory_store_corrupt'
+  /**
+   * A reply the agent finished could not be shown: neither the core's write
+   * nor the client's append left a row, and re-reading the thread did not
+   * find one (#6034). Distinct from every entry above because nothing is
+   * misconfigured — the turn ran and was paid for, and the only useful next
+   * step is to ask again, so the action is `dismiss` rather than a settings
+   * deep link.
+   */
+  | 'reply_delivery_failed';
 
 /** Where the failure originated, for grouping/labelling (privacy-safe). */
 export type UserErrorScope =

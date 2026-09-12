@@ -193,6 +193,18 @@ impl Tool for ContinueSubagentTool {
                 "continue_subagent: `task_id` is required",
             ));
         }
+        // `task_id` is model-authored and is about to be joined into a
+        // filesystem path twice: once to read the pause checkpoint below, and
+        // again — via `SubagentRunOptions::task_id` — to write one if the
+        // resumed child pauses a second time. `../../../../tmp/pwn` would walk
+        // both clean out of the checkpoint directory, so it is rejected at the
+        // boundary rather than only at the sink.
+        if !crate::openhuman::agent::harness::subagent_runner::is_safe_task_id(&task_id) {
+            return Ok(ToolResult::error(format!(
+                "continue_subagent: `task_id` must be a plain identifier \
+                 (letters, digits, `-`, `_`); got '{task_id}'"
+            )));
+        }
         if agent_id.is_empty() {
             return Ok(ToolResult::error(
                 "continue_subagent: `agent_id` is required",
@@ -220,12 +232,30 @@ impl Tool for ContinueSubagentTool {
         let checkpoint_json = match std::fs::read_to_string(&checkpoint_path) {
             Ok(json) => json,
             Err(e) => {
-                tracing::info!(
-                    task_id = %task_id,
-                    path = %checkpoint_path.display(),
-                    error = %e,
-                    "[continue_subagent] no pause checkpoint — trying durable session store"
-                );
+                // A missing file is the *expected* case, not a failure: a
+                // `subsess-…` id from the `[active_subagents]` roster is a
+                // durable-session id, which never has a pause checkpoint (those
+                // are keyed by task id and only written when a child exits on
+                // `ask_user_clarification`). Logging it at INFO with
+                // `error=No such file or directory` made the designed happy
+                // path read as a broken one — which is what #5928 was filed on.
+                // Any other IO error here really is one, so it stays loud.
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    tracing::debug!(
+                        task_id = %task_id,
+                        path = %checkpoint_path.display(),
+                        "[continue_subagent] no pause checkpoint (expected for a durable session \
+                         id) — resolving via the durable session store"
+                    );
+                } else {
+                    tracing::warn!(
+                        task_id = %task_id,
+                        path = %checkpoint_path.display(),
+                        error = %e,
+                        "[continue_subagent] pause checkpoint could not be read — falling back to \
+                         the durable session store"
+                    );
+                }
                 // Durable-session fallback: the sub-agent did not pause on a
                 // clarification (no checkpoint), but it may be a durable
                 // worker from this or an earlier turn — resumable with its
@@ -355,6 +385,7 @@ impl Tool for ContinueSubagentTool {
                     SubagentRunStatus::AwaitingUser {
                         question,
                         options: _,
+                        checkpoint: pause_checkpoint,
                     } => {
                         // Another round of clarification
                         crate::openhuman::agent::orchestration::subagent_events::publish_subagent_awaiting_user(
@@ -370,22 +401,28 @@ impl Tool for ContinueSubagentTool {
                                     task_id: outcome.task_id.clone(),
                                     question: question.clone(),
                                     worker_thread_id: checkpoint.worker_thread_id.clone(),
+                                    checkpoint_path: pause_checkpoint
+                                        .as_ref()
+                                        .map(|p| p.to_string_lossy().to_string()),
                                 })
                                 .await;
                         }
-                        let wt_display = checkpoint.worker_thread_id.as_deref().unwrap_or("(none)");
-                        let envelope = format!(
-                            "[SUBAGENT_AWAITING_USER]\n\
-                             task_id: {}\n\
-                             agent_id: {}\n\
-                             worker_thread_id: {}\n\
-                             question: {}\n\
-                             [/SUBAGENT_AWAITING_USER]\n\n\
-                             The sub-agent needs further clarification. \
-                             Surface the above question to the user. When the user responds, \
-                             call continue_subagent again with the same task_id, agent_id, \
-                             and the user's new answer.",
-                            outcome.task_id, outcome.agent_id, wt_display, question,
+                        // Built by the shared helper, not hand-rolled here.
+                        // This path used to `format!` its own copy with the
+                        // question interpolated RAW — the exact hole
+                        // `awaiting_user_envelope` exists to close: a
+                        // sub-agent-authored question containing a newline and
+                        // a literal `[/SUBAGENT_AWAITING_USER]` closed the
+                        // block early and injected resume instructions the
+                        // orchestrator then trusted. The helper JSON-encodes
+                        // it. The hand-rolled copy also omitted the "do NOT
+                        // re-spawn" instruction that the #4291 fix added.
+                        let envelope = super::awaiting_user::awaiting_user_envelope(
+                            &outcome.task_id,
+                            &outcome.agent_id,
+                            checkpoint.worker_thread_id.as_deref(),
+                            question,
+                            pause_checkpoint.is_some(),
                         );
                         Ok(ToolResult::success(envelope))
                     }

@@ -186,6 +186,50 @@ impl ApprovalGate {
         self.thread_to_request.lock().get(thread_id).cloned()
     }
 
+    /// The full pending row parked on `thread_id`, if any.
+    ///
+    /// [`Self::pending_for_thread`] answers *which* request is parked; this
+    /// answers *what it is*, which is what a UI needs to rebuild the approval
+    /// card from scratch.
+    ///
+    /// The card reaches the UI as ONE fire-and-forget socket emit. If that emit
+    /// misses — the addressed client's room is empty because the page reloaded,
+    /// a rejoining socket was not yet in the thread room, or the bridge dropped
+    /// the frame on broadcast lag — nothing re-sends it. The request stays
+    /// parked server-side and the user is left with no card and no way to act,
+    /// which is the whole failure: durable state delivered as an ephemeral
+    /// event, with no way to reconcile the two. This lookup is that
+    /// reconciliation, so a socket (re)joining a thread can be handed whatever
+    /// is parked on it.
+    ///
+    /// Reads the routing map first and the durable rows second, so a request
+    /// decided between the two reads simply falls out as `None` rather than
+    /// replaying a card the user has already answered.
+    pub fn parked_request_for_thread(&self, thread_id: &str) -> Option<PendingApproval> {
+        let request_id = self.pending_for_thread(thread_id)?;
+        let row = self
+            .list_pending()
+            .ok()?
+            .into_iter()
+            .find(|row| row.request_id == request_id)?;
+        // Re-read the route before answering. `list_pending` is a store read and
+        // runs without the route lock held, so between the two the mapping can
+        // be cleared by a caller-bound abandon or overwritten by a replacement
+        // turn parking a new approval on the same thread (#4774's scenario).
+        // Either leaves this row pending while it is no longer the thread's, and
+        // the only caller replays what it gets straight onto the user's screen —
+        // so a stale row here is a stale approval card, not a harmless read.
+        //
+        // Narrowing, not closing: the row itself could still be decided after
+        // this check. That is the pre-existing fire-and-forget property of the
+        // replay path, and `request_id` idempotency on the client is what covers
+        // it; this only stops the lookup from *starting* with a row it can
+        // already tell is not the thread's (#6212 review).
+        self.pending_for_thread(thread_id)
+            .is_some_and(|current| current == request_id)
+            .then_some(row)
+    }
+
     /// Drop the thread → request mapping when it still belongs to this request.
     fn clear_thread(&self, thread_id: &Option<String>, request_id: &str) {
         if let Some(t) = thread_id {

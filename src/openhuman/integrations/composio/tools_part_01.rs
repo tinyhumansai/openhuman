@@ -47,6 +47,11 @@ enum ToolDecision {
 /// blocking rather than letting a potentially-mutating action slip
 /// through uncategorised.
 pub(super) async fn resolve_action_scope(slug: &str) -> ToolScope {
+    resolve_action_scope_sync(slug)
+}
+
+/// Synchronous core used by policy hooks that cannot await.
+fn resolve_action_scope_sync(slug: &str) -> ToolScope {
     let Some(toolkit) = toolkit_from_slug(slug) else {
         return ToolScope::Write;
     };
@@ -57,6 +62,14 @@ pub(super) async fn resolve_action_scope(slug: &str) -> ToolScope {
         }
     }
     classify_unknown(slug)
+}
+
+/// Whether an action must pass through the human approval gate.
+pub(super) fn action_mutates_external_state(slug: &str) -> bool {
+    matches!(
+        resolve_action_scope_sync(slug),
+        ToolScope::Write | ToolScope::Admin
+    )
 }
 
 /// Decide whether a Composio action slug should be visible / executable

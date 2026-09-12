@@ -55,6 +55,7 @@ mod types;
 pub use autonomous::{
     autonomous_iter_cap, subagent_iter_cap_with_autonomous_lift, with_autonomous_iter_cap,
 };
+pub(crate) use ops::is_safe_task_id;
 pub use ops::run_subagent;
 pub use types::{
     SubagentCheckpointData, SubagentMode, SubagentRunError, SubagentRunOptions, SubagentRunOutcome,

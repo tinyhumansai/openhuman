@@ -55,7 +55,8 @@ pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
                 FieldSchema {
                     name: "already_trusted",
                     ty: TypeSchema::Array(Box::new(TypeSchema::String)),
-                    comment: "Approvable trust keys already granted to this flow.",
+                    comment: "Approvable trust keys already granted to this flow. Empty when \
+                              gate_installed is false — no gate means no grant was ever made.",
                     required: true,
                 },
                 FieldSchema {

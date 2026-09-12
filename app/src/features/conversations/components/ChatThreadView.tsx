@@ -13,6 +13,7 @@ import {
 
 import { Conversation, ConversationContent } from '../../../components/ai-elements';
 import { useStickToBottom } from '../../../hooks/useStickToBottom';
+import { useCoreTranscriptProjection } from '../../../providers/useOpenHumanExternalStore';
 import type { ProcessingTranscriptItem, ToolTimelineEntry } from '../../../store/chatRuntimeSlice';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import { persistReaction } from '../../../store/threadSlice';
@@ -196,10 +197,6 @@ export const ChatThreadView = forwardRef<ChatThreadViewHandle, ChatThreadViewPro
       threadId ? (state.thread.messagesByThreadId[threadId] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES
     );
     const toolTimelineByThread = useAppSelector(state => state.chatRuntime.toolTimelineByThread);
-    const turnTimelinesByThread = useAppSelector(state => state.chatRuntime.turnTimelinesByThread);
-    const turnTranscriptsByThread = useAppSelector(
-      state => state.chatRuntime.turnTranscriptsByThread
-    );
     const interruptedAssistantByThread = useAppSelector(
       state => state.chatRuntime.interruptedAssistantByThread
     );
@@ -347,14 +344,16 @@ export const ChatThreadView = forwardRef<ChatThreadViewHandle, ChatThreadViewPro
     // own collapsed process trail above it. The latest turn is excluded upstream
     // (it renders as the live "agent insights" anchor), so there is no double
     // render. Empty for legacy messages without a `requestId`.
-    const selectedThreadTurnTimelines = threadId
-      ? (turnTimelinesByThread[threadId] ?? EMPTY_TURN_TIMELINES)
-      : EMPTY_TURN_TIMELINES;
+    const settledRevision = `${messages.at(-1)?.id ?? ''}:${messages.at(-1)?.content?.length ?? 0}`;
+    const coreTranscript = useCoreTranscriptProjection(
+      threadId,
+      settledRevision,
+      threadId ? streamingAssistantByThread[threadId]?.requestId : undefined
+    );
+    const selectedThreadTurnTimelines = coreTranscript.timelines ?? EMPTY_TURN_TIMELINES;
     // Sibling map: each past turn's persisted reasoning/narration trail, so a
     // reopened turn replays its thoughts, not just its tool cards (fix 1).
-    const selectedThreadTurnTranscripts = threadId
-      ? (turnTranscriptsByThread[threadId] ?? EMPTY_TURN_TRANSCRIPTS)
-      : EMPTY_TURN_TRANSCRIPTS;
+    const selectedThreadTurnTranscripts = coreTranscript.transcripts ?? EMPTY_TURN_TRANSCRIPTS;
     const pastTurnAnchors = useMemo(() => {
       const anchors: Record<string, PastTurnAnchor> = {};
       const seen = new Set<string>();

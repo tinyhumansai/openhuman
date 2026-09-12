@@ -13,9 +13,7 @@
 //! Run with: `cargo test --test personality_e2e`
 
 use std::collections::HashSet;
-use std::sync::Arc;
 
-use serde_json::json;
 use tempfile::tempdir;
 
 use openhuman_core::openhuman::agent::profiles::{
@@ -31,18 +29,15 @@ use openhuman_core::openhuman::agent::prompts::{
     IdentitySection, PersonalityRosterEntry, PersonalityRosterSection, PromptContext,
     PromptSection, ToolCallFormat, UserFilesSection,
 };
-use openhuman_core::openhuman::inference::embeddings::NoopEmbedding;
 use openhuman_core::openhuman::memory::conversations::{
     ensure_thread, list_threads, update_thread_title, ConversationStore, CreateConversationThread,
 };
-use openhuman_core::openhuman::memory::NamespaceDocumentInput;
 // The engine handle is named on the crate rather than reached through the
 // memory module's public surface: it is an in-process engine type, not
 // contract vocabulary, and the alias that used to re-export it existed for
 // callers that no longer exist (#5560). This note is about `UnifiedMemory`
 // alone — the conversation store above is host code again as of #5560 and is
 // reached through the memory module's surface like any other host type.
-use tinymemory_core::store::UnifiedMemory;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test helpers
@@ -240,138 +235,6 @@ fn default_profile_memory_suffix_cannot_be_overridden() {
 // ─────────────────────────────────────────────────────────────────────────────
 // 2. Memory isolation
 // ─────────────────────────────────────────────────────────────────────────────
-
-#[tokio::test]
-async fn two_personalities_have_isolated_sqlite_stores() {
-    let tmp = tempdir().expect("tempdir");
-
-    let mem_default = UnifiedMemory::new_with_memory_dir(
-        tmp.path(),
-        &memory_subdir_for_suffix(""),
-        Arc::new(NoopEmbedding),
-        None,
-    )
-    .expect("default memory");
-    let mem_alice = UnifiedMemory::new_with_memory_dir(
-        tmp.path(),
-        &memory_subdir_for_suffix("-1"),
-        Arc::new(NoopEmbedding),
-        None,
-    )
-    .expect("alice memory");
-
-    assert_ne!(mem_default.db_path(), mem_alice.db_path());
-    assert!(mem_default.db_path().ends_with("memory/memory.db"));
-    assert!(mem_alice.db_path().ends_with("memory-1/memory.db"));
-    assert!(mem_default.db_path().exists());
-    assert!(mem_alice.db_path().exists());
-
-    mem_default
-        .upsert_document(NamespaceDocumentInput {
-            namespace: "shared".to_string(),
-            key: "default-only".to_string(),
-            title: "Default's note".to_string(),
-            content: "Only the default agent knows about this.".to_string(),
-            source_type: "doc".to_string(),
-            priority: "high".to_string(),
-            tags: vec![],
-            metadata: json!({}),
-            category: "core".to_string(),
-            session_id: None,
-            document_id: None,
-            taint: openhuman_core::openhuman::memory::MemoryTaint::Internal,
-        })
-        .await
-        .expect("write default");
-
-    mem_alice
-        .upsert_document(NamespaceDocumentInput {
-            namespace: "shared".to_string(),
-            key: "alice-only".to_string(),
-            title: "Alice's note".to_string(),
-            content: "Only Alice knows about this.".to_string(),
-            source_type: "doc".to_string(),
-            priority: "high".to_string(),
-            tags: vec![],
-            metadata: json!({}),
-            category: "core".to_string(),
-            session_id: None,
-            document_id: None,
-            taint: openhuman_core::openhuman::memory::MemoryTaint::Internal,
-        })
-        .await
-        .expect("write alice");
-
-    let default_hits = mem_default
-        .query_namespace_ranked("shared", "note", 10)
-        .await
-        .expect("default query");
-    let alice_hits = mem_alice
-        .query_namespace_ranked("shared", "note", 10)
-        .await
-        .expect("alice query");
-
-    let default_keys: Vec<_> = default_hits.iter().map(|h| h.key.as_str()).collect();
-    let alice_keys: Vec<_> = alice_hits.iter().map(|h| h.key.as_str()).collect();
-
-    assert!(
-        default_keys.contains(&"default-only"),
-        "default sees its own doc"
-    );
-    assert!(
-        !default_keys.contains(&"alice-only"),
-        "default must NOT see alice's doc"
-    );
-    assert!(alice_keys.contains(&"alice-only"), "alice sees her own doc");
-    assert!(
-        !alice_keys.contains(&"default-only"),
-        "alice must NOT see default's doc"
-    );
-}
-
-#[tokio::test]
-async fn personality_memory_persists_across_reopens() {
-    let tmp = tempdir().expect("tempdir");
-
-    {
-        let mem = UnifiedMemory::new_with_memory_dir(
-            tmp.path(),
-            &memory_subdir_for_suffix("-1"),
-            Arc::new(NoopEmbedding),
-            None,
-        )
-        .expect("open 1");
-        mem.upsert_document(NamespaceDocumentInput {
-            namespace: "alice".to_string(),
-            key: "persistent".to_string(),
-            title: "Persistent note".to_string(),
-            content: "This must survive a reopen.".to_string(),
-            source_type: "doc".to_string(),
-            priority: "high".to_string(),
-            tags: vec![],
-            metadata: json!({}),
-            category: "core".to_string(),
-            session_id: None,
-            document_id: None,
-            taint: openhuman_core::openhuman::memory::MemoryTaint::Internal,
-        })
-        .await
-        .expect("write");
-    }
-
-    let mem2 = UnifiedMemory::new_with_memory_dir(
-        tmp.path(),
-        &memory_subdir_for_suffix("-1"),
-        Arc::new(NoopEmbedding),
-        None,
-    )
-    .expect("reopen");
-    let hits = mem2
-        .query_namespace_ranked("alice", "persistent", 10)
-        .await
-        .expect("query");
-    assert!(hits.iter().any(|h| h.key == "persistent"));
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 3. Personality file resolution

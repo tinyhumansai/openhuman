@@ -92,14 +92,12 @@ describe('AVATAR_MENU_ITEMS', () => {
     expect(cloudOnly).toEqual(['billing', 'invites']);
   });
 
-  it('billing uses openUrl; all others use navigate', () => {
+  it('keeps every account-menu destination inside the app', () => {
     const openUrlItems = AVATAR_MENU_ITEMS.filter(i => i.kind === 'openUrl').map(i => i.id);
-    expect(openUrlItems).toEqual(['billing']);
+    expect(openUrlItems).toEqual([]);
   });
 
-  it('opens billing on the authenticated dashboard', () => {
-    expect(AVATAR_MENU_ITEMS.find(i => i.id === 'billing')?.target).toBe(
-      'https://tinyhumans.ai/dashboard'
-    );
+  it('opens the billing summary before the user chooses a web action', () => {
+    expect(AVATAR_MENU_ITEMS.find(i => i.id === 'billing')?.target).toBe('/settings/billing');
   });
 });

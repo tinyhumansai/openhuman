@@ -834,6 +834,11 @@ export interface ApprovalManifest {
   entries: ApprovalManifestEntry[];
   /** Approvable trust keys the flow does not yet hold — what the card asks for. */
   missing: string[];
+  /**
+   * Approvable trust keys this flow already holds a grant for. Empty whenever
+   * `gate_installed` is false: with no gate no grant was ever made, so nothing
+   * can be reported as authorized.
+   */
   already_trusted: string[];
   /** False when the approval gate is disabled — nothing ever prompts. */
   gate_installed: boolean;

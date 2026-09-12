@@ -57,7 +57,7 @@ pub mod macos;
 pub mod windows;
 
 pub use jail::{Jail, JailBackend};
-pub use noop::NoopBackend;
+pub use noop::{NoopBackend, NOOP_BACKEND_NAME};
 pub use registry::{JailRecord, JailRegistry};
 
 use std::process::{Child, Command};

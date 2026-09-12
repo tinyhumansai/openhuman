@@ -90,6 +90,22 @@ impl ToolMiddleware<()> for ToolPolicyMiddleware {
             }));
         }
 
+        // `use_skill`'s disclosure half (a `skill` with no `tool`) renders its
+        // listing here, not in its own `execute`, because only the middleware
+        // holds the session — and a listing that disagrees with the session is
+        // a menu the model cannot order from. The execution half falls through:
+        // `render_skill_for_session` answers `None` for it.
+        //
+        // Placed AFTER both gates on purpose. Rendering before them would let a
+        // `use_skill` that the session forbids, or that the policy denies or
+        // holds for approval, still hand back a full pack listing — the gates
+        // would be advisory for this one tool.
+        if call.name == crate::openhuman::tools::toolpacks::USE_SKILL {
+            if let Some(result) = self.render_skill_for_session(&call) {
+                return Ok(MiddlewareToolOutcome::Result(result));
+            }
+        }
+
         next.run(ctx, state, call).await
     }
 }

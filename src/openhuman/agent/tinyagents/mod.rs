@@ -30,8 +30,20 @@ pub(crate) mod middleware;
 pub(crate) mod model;
 pub(crate) mod observability;
 pub(crate) mod orchestration;
-pub(crate) mod payload_summarizer;
+// `pub` since issue #6014, and the inconsistency it removes is the point:
+// `AgentBuilder::payload_summarizer` is a **public** setter taking
+// `Arc<dyn PayloadSummarizer>`, so the seam was already advertised to embedders
+// — while the trait itself, its outcome type and its reason enum were all
+// `pub(crate)`, which made the setter uncallable from outside this crate. An
+// embedder could therefore see the extension point, and could not use it.
+//
+// The default implementation dispatches a sub-agent, which is exactly what an
+// embedder may be unable to do (OpenCompany withholds spawn tools under
+// multi-tenancy), so "bring your own summarizer" is the case this seam exists
+// for rather than an exotic one.
+pub mod payload_summarizer;
 mod policy_denial;
+pub(crate) mod reaper;
 pub(crate) mod replay;
 pub mod resolved_route;
 pub(crate) mod retriever;

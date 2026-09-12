@@ -49,6 +49,11 @@ pub(crate) mod relay_runtime;
 mod routes;
 #[cfg(feature = "channels")]
 mod runtime;
+#[cfg(feature = "channels")]
+pub(crate) mod system_prompt;
+
+#[cfg(feature = "channels")]
+pub(crate) use system_prompt::ChannelSystemPrompt;
 
 #[cfg(all(feature = "channels", test))]
 mod tests;

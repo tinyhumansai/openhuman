@@ -189,10 +189,19 @@ async fn evaluate_inference_readiness(
         .collect();
 
     let first_node = *agent_nodes.first()?;
+    let needs_backend_session = agent_nodes.iter().any(|node| {
+        crate::openhuman::inference::provider::factory::resolves_to_managed_backend(
+            agent_node_role(config, node),
+            config,
+        )
+    });
+    let needs_session =
+        crate::openhuman::inference::provider::factory::current_host_requires_session()
+            || needs_backend_session;
 
     // Layer 1: signed-out is the cheapest, most decisive check. Session-wide
     // — checked once for the whole graph, not per node/role.
-    if crate::openhuman::cron::scheduler_gate::is_signed_out() {
+    if needs_session && crate::openhuman::cron::scheduler_gate::is_signed_out() {
         tracing::debug!(
             target: "flows",
             node = %first_node.id,
@@ -219,7 +228,13 @@ async fn evaluate_inference_readiness(
     // behavior for a real signed-out desktop user is unchanged — only the
     // (redundant, in that case) early rejection here is test-only skipped.
     #[cfg(not(test))]
-    if let Err(e) = crate::openhuman::inference::provider::factory::verify_session_active(config) {
+    let session_result = if needs_backend_session {
+        crate::openhuman::inference::provider::factory::verify_backend_session_active(config)
+    } else {
+        crate::openhuman::inference::provider::factory::verify_session_active(config)
+    };
+    #[cfg(not(test))]
+    if let Err(e) = session_result {
         tracing::debug!(
             target: "flows",
             node = %first_node.id,

@@ -104,7 +104,10 @@ pub struct DumpedPrompt {
     pub tool_specs: Vec<serde_json::Value>,
 }
 
-fn tool_specs_of<T: std::ops::Deref<Target = dyn crate::openhuman::tools::Tool>>(
+// The `+ 'a` is load-bearing: a bare `dyn Tool` here means `dyn Tool +
+// 'static`, which `Box<dyn Tool>` satisfies but a borrowed `&'a dyn Tool` (what
+// `Agent::all_tool_refs` yields) does not.
+fn tool_specs_of<'a, T: std::ops::Deref<Target = dyn crate::openhuman::tools::Tool + 'a>>(
     tools: &[T],
 ) -> Vec<serde_json::Value> {
     tools
@@ -257,18 +260,17 @@ async fn render_via_session(config: &Config, agent_id: &str) -> Result<DumpedPro
     agent.fetch_connected_integrations().await;
     // Mirror turn-1: synthesise `delegate_*` tools for connected
     // Composio toolkits now that we know what's actually authorised.
-    // The shared-Arc failure path is unreachable here (this is the
-    // debug dumper running against a freshly-built agent — no
-    // sub-agent has cloned the tool list), so ignore the bool return.
-    let _ = agent.refresh_delegation_tools();
+    agent.refresh_delegation_tools();
 
     let text = agent
         .build_system_prompt(LearnedContextData::default())
         .with_context(|| format!("rendering system prompt for `{agent_id}`"))?;
 
-    let tools = agent.tools();
+    // The whole callable surface, so the dump shows the `delegate_*` tools
+    // the refresh above just synthesised alongside the durable registry.
+    let tools = agent.all_tool_refs();
     let tool_names: Vec<String> = tools.iter().map(|t| t.name().to_string()).collect();
-    let tool_specs = tool_specs_of(tools);
+    let tool_specs = tool_specs_of(&tools);
     let skill_tool_count = tools
         .iter()
         .filter(|t| t.category() == ToolCategory::Workflow)

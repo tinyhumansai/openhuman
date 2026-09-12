@@ -9,9 +9,30 @@ use tinytools::ToolRunContext;
 
 pub struct ArchetypeDelegationTool {
     pub tool_name: String,
-    pub agent_id: String,
+    /// The agent this tool routes to, in the shape
+    /// [`crate::openhuman::tools::traits::delegation_target`] reads back off the
+    /// erased host-extension slot.
+    ///
+    /// A newtype rather than a bare `String` because that slot is one `Any` per
+    /// tool: a downcast to `String` would happily match any *other* tool that
+    /// parked a string there. It holds the id rather than deriving it because
+    /// [`Tool::host_extension`] hands out a borrow, so there must be something
+    /// to borrow from — and one field, not two, is what stops the exposed
+    /// target drifting from the routed one.
+    pub agent_id: DelegationTarget,
     pub tool_description: String,
 }
+
+/// The agent a synthesised `delegate_*` tool routes to.
+///
+/// Lets a caller that holds only `&dyn Tool` ask "which agent does this reach?"
+/// — the question the toolpack route hint needs answered, and the reason the
+/// hint does not need its own copy of every agent's `delegate_name`. The tool
+/// set a session was actually built with is the single source of truth: a
+/// delegate that is not in it cannot be named as a route, which is exactly the
+/// property we want.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DelegationTarget(pub String);
 
 #[async_trait]
 impl Tool for ArchetypeDelegationTool {
@@ -21,6 +42,13 @@ impl Tool for ArchetypeDelegationTool {
 
     fn description(&self) -> &str {
         &self.tool_description
+    }
+
+    /// Publishes the routing target on the erased host-extension slot, the same
+    /// way `UseSkillTool` publishes its pack handle. `traits::delegation_target`
+    /// reads it back; every other tool returns `None` and pays nothing.
+    fn host_extension(&self) -> Option<&(dyn std::any::Any + Send + Sync)> {
+        Some(&self.agent_id)
     }
 
     /// The delegation envelope — deliberately description-light.
@@ -160,7 +188,7 @@ impl Tool for ArchetypeDelegationTool {
         };
 
         super::dispatch_subagent(
-            &self.agent_id,
+            &self.agent_id.0,
             &self.tool_name,
             &prompt,
             None,

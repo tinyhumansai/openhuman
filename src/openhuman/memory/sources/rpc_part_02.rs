@@ -415,12 +415,17 @@ pub struct AllInResponse {
 /// Takes the trigger as a closure rather than the driver trait object so the
 /// aggregation is unit-testable without a full `MemorySourceSync` stub; the
 /// RPC owns config/binding resolution and the response shape.
+///
+/// The closure receives the whole entry, not just the id: since openhuman#6007
+/// the caller has to route each row by [`SyncDispatch`], which reads the kind,
+/// the connection and the per-source cap. Owned rather than borrowed so the
+/// returned future does not have to borrow from the sweep's loop body.
 async fn trigger_enabled_syncs<F, Fut>(
     sources: &[MemorySourceEntry],
     mut trigger: F,
 ) -> (u32, Vec<String>)
 where
-    F: FnMut(String) -> Fut,
+    F: FnMut(MemorySourceEntry) -> Fut,
     Fut: std::future::Future<Output = Result<(), String>>,
 {
     let mut sync_triggered: u32 = 0;
@@ -434,7 +439,7 @@ where
             kind = %source.kind.as_str(),
             "[memory_sources] apply_all_in_rpc: triggering sync"
         );
-        match trigger(source.id.clone()).await {
+        match trigger(source.clone()).await {
             Ok(()) => {
                 sync_triggered += 1;
             }
@@ -469,22 +474,51 @@ pub async fn apply_all_in_rpc() -> Result<RpcOutcome<AllInResponse>, String> {
     // Trigger a background sync for every enabled source.
     let config = config_rpc::load_config_with_timeout().await?;
 
-    // Resolved once for the whole sweep: a driver that serves no sync has
-    // nothing to say about any source, and refusing per source would turn one
-    // fact into a warning per row.
     let binding = crate::openhuman::memory::binding::for_config(&config)?;
-    let sync = binding.provider().as_source_sync().ok_or_else(|| {
-        format!(
-            "the bound memory driver '{}' does not serve source sync",
-            binding.driver_id()
-        )
-    })?;
+    // Resolved once for the whole sweep, but as an `Option` rather than a hard
+    // error. A driver that serves `as_sources` without `as_source_sync` can
+    // still sync every Composio row through the connector, and failing the whole
+    // sweep over a capability those rows never use is the review finding the
+    // row-level path already carries (#5932) — for a Composio-only user it
+    // turned "sync everything" into one flat refusal. A row that genuinely needs
+    // the family reports the refusal as its own per-source error, which is
+    // exactly what this sweep aggregates.
+    let source_sync = binding.provider().as_source_sync();
+    let config_ref = &config;
+    let driver_id = binding.driver_id();
 
-    let (sync_triggered, sync_errors) = trigger_enabled_syncs(&sources, |source_id| async move {
-        sync.run_source_sync(&source_id)
+    let (sync_triggered, sync_errors) = trigger_enabled_syncs(&sources, move |source| async move {
+        match sync_dispatch(&source)? {
+            // The connector-backed run IS the sync for this kind, so the sweep
+            // takes the same dispatch the per-row Sync button does. Before
+            // openhuman#6007 every Composio row came back "synced through the
+            // connector module, not this engine" here.
+            SyncDispatch::Connector {
+                connection_id,
+                max_items,
+            } => crate::openhuman::integrations::composio::ops::composio_sync_budgeted(
+                config_ref,
+                &connection_id,
+                // `manual`, not a sweep-specific reason: Apply-all is a user
+                // action, and `parse_sync_reason` accepts only `manual`,
+                // `periodic` and `connection_created` — an invented reason would
+                // fail every Composio row here with "unrecognized sync reason".
+                Some("manual".to_string()),
+                Some(source.id.clone()),
+                max_items,
+            )
             .await
-            .map(|_| ())
-            .map_err(|error| error.to_string())
+            .map(|_| ()),
+            SyncDispatch::Driver => {
+                let sync = source_sync.ok_or_else(|| {
+                    format!("the bound memory driver '{driver_id}' does not serve source sync")
+                })?;
+                sync.run_source_sync(&source.id)
+                    .await
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            }
+        }
     })
     .await;
 

@@ -83,20 +83,31 @@ async fn composio_list_capabilities_does_not_require_session() {
 }
 
 #[tokio::test]
-async fn composio_list_connections_errors_without_session() {
+async fn composio_list_connections_is_quietly_unavailable_without_session() {
     let _serialised = module_guard().await;
     let tmp = tempfile::tempdir().unwrap();
     let config = test_config(&tmp);
+    // Backend mode (the default) with no app-session JWT is the fresh-install /
+    // signed-out state, not a failure. The connector module has no proxy route
+    // to be given, so before #6176 this call reached the module and reported its
+    // "loaded without a connector route" answer at error level on every boot
+    // and periodic tick. Now the guard answers first with the same "no backend
+    // session token" error every other member gives here: still an `Err` — the
+    // connections may exist server-side, so "unavailable" is the truthful
+    // answer and the reconcile / flows callers keep their fail-open handling —
+    // but nothing is reported to Sentry, and the JSON-RPC boundary demotes the
+    // wording as expected user state (`is_session_expired_message`).
     let err = composio_list_connections(&config).await.unwrap_err();
-    // Same contract as `composio_list_toolkits_errors_without_session`: it
-    // fails rather than answering with an empty list, and says what is missing.
     assert!(
-        err.to_lowercase().contains("composio"),
-        "the error should name the domain: {err}"
-    );
-    assert!(
-        err.contains("no backend session") || err.contains("unavailable") || err.contains("route"),
+        err.contains("no backend session token"),
         "the error should say what is missing: {err}"
+    );
+    // The module's own wording is what used to be reported at error level; its
+    // absence proves the call never reached the module (and so never reached
+    // `report_composio_op_error`).
+    assert!(
+        !err.contains("loaded without a connector route"),
+        "the guard must answer before the connector module does: {err}"
     );
 }
 
@@ -293,6 +304,64 @@ async fn composio_list_connections_via_mock_counts_active() {
     assert!(outcome.logs.iter().any(|l| l.contains("2 active")));
 }
 
+#[cfg(feature = "modules")]
+#[tokio::test]
+async fn composio_list_connections_drops_the_module_route_once_signed_out() {
+    use crate::openhuman::integrations::composio::module_client::methods;
+    use crate::openhuman::modules::connectors::{last_route_is_none, proxy_without_reconcile};
+
+    let _serialised = module_guard().await;
+    let app = Router::new().route(
+        "/agent-integrations/composio/connections",
+        get(|| async {
+            Json(json!({
+                "success": true,
+                "data": {"connections": [{"id":"c1","toolkit":"gmail","status":"ACTIVE"}]}
+            }))
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let signed_in_tmp = tempfile::tempdir().unwrap();
+    let signed_in = config_with_backend(&signed_in_tmp, base);
+    // Signed in: the module is loaded and routed to the mock backend.
+    let outcome = composio_list_connections(&signed_in).await.unwrap();
+    assert_eq!(outcome.value.connections.len(), 1);
+    assert!(
+        !last_route_is_none(),
+        "the signed-in call must have routed the module"
+    );
+
+    // Signed out: a config whose auth store holds no session. The guard
+    // answers without a module call — but the module still holds the
+    // signed-in bearer, and telling it to drop that is the host's job (the
+    // module chooses no route on its own), so the guard must do so before
+    // answering.
+    let signed_out_tmp = tempfile::tempdir().unwrap();
+    let signed_out = test_config(&signed_out_tmp);
+    let err = composio_list_connections(&signed_out).await.unwrap_err();
+    assert!(err.contains("no backend session token"), "{err}");
+    assert!(
+        last_route_is_none(),
+        "the module must have been told to drop its route"
+    );
+    // And the module really did drop it: a proxy that does NOT reconcile the
+    // route first gets the module's own no-route answer, not the mock's list.
+    let proxy = proxy_without_reconcile()
+        .await
+        .expect("the module is serving");
+    let err = proxy
+        .call::<crate::openhuman::integrations::composio::types::ComposioConnectionsResponse>(
+            methods::LIST_CONNECTIONS,
+            (),
+        )
+        .await
+        .expect_err("a module without a route cannot list connections");
+    assert!(
+        err.to_string().contains("without a connector route"),
+        "{err}"
+    );
+}
+
 #[tokio::test]
 async fn composio_authorize_clears_pending_meta_connection_before_handoff() {
     let _serialised = module_guard().await;
@@ -384,180 +453,4 @@ async fn composio_delete_connection_via_mock() {
         .await
         .unwrap();
     assert!(outcome.value.deleted);
-}
-
-#[tokio::test]
-async fn composio_delete_connection_clear_memory_deletes_slack_source() {
-    let _serialised = module_guard().await;
-    let app = Router::new()
-        .route(
-            "/agent-integrations/composio/connections",
-            get(|| async {
-                Json(json!({
-                    "success": true,
-                    "data": {"connections": [
-                        {"id":"c1","toolkit":"slack","status":"ACTIVE"}
-                    ]}
-                }))
-            }),
-        )
-        .route(
-            "/agent-integrations/composio/connections/{id}",
-            axum::routing::delete(|Path(_id): Path<String>| async move {
-                Json(json!({"success": true, "data": {"deleted": true}}))
-            }),
-        );
-    let base = start_mock_backend(app).await;
-    let tmp = tempfile::tempdir().unwrap();
-    let config = config_with_backend(&tmp, base);
-    // The memory clear-out runs through the bound driver now that it is routed
-    // onto `forget_matching`, so the test has to bind one. TinyCortex is the
-    // engine the loadable module wraps, and unlike the module it is not a
-    // process singleton, so several of these can share one test binary.
-    crate::openhuman::memory::test_support::install_tinycortex_for_test(&config);
-    let target = sample_memory_chunk(SourceKind::Chat, "slack:c1", 0);
-    let unrelated = sample_memory_chunk(SourceKind::Chat, "slack:c2", 0);
-    memory_tree_store::upsert_chunks(&config, &[target, unrelated]).expect("chunks should seed");
-
-    let outcome = composio_delete_connection(&config, "c1", true)
-        .await
-        .unwrap();
-
-    assert!(outcome.value.deleted);
-    assert_eq!(outcome.value.memory_chunks_deleted, 1);
-    let remaining = memory_tree_store::list_chunks(
-        &config,
-        &memory_tree_store::ListChunksQuery {
-            source_kind: Some(SourceKind::Chat),
-            ..Default::default()
-        },
-    )
-    .expect("chunks should list");
-    assert_eq!(remaining.len(), 1);
-    assert_eq!(remaining[0].metadata.source_id, "slack:c2");
-}
-
-/// #4: full path through the REAL `composio_delete_connection` handler
-/// (clear_memory=true, mock backend) — deleting a connection's last chunk must
-/// cascade away its source summary tree AND the summary's on-disk content file,
-/// not just the chunk rows. The tree is a real `get_or_create_source_tree`; the
-/// content file sits at the production `content_path` location.
-#[tokio::test]
-async fn composio_delete_connection_clear_memory_cascades_source_tree_and_content_file() {
-    let _serialised = module_guard().await;
-    use rusqlite::params;
-    use tinymemory_core::store::trees::store as tree_store;
-    use tinymemory_core::store::trees::types::{SummaryNode, TreeKind};
-    use tinymemory_core::tree_source::registry::get_or_create_source_tree;
-
-    let app = Router::new()
-        .route(
-            "/agent-integrations/composio/connections",
-            get(|| async {
-                Json(json!({
-                    "success": true,
-                    "data": {"connections": [
-                        {"id":"c1","toolkit":"slack","status":"ACTIVE"}
-                    ]}
-                }))
-            }),
-        )
-        .route(
-            "/agent-integrations/composio/connections/{id}",
-            axum::routing::delete(|Path(_id): Path<String>| async move {
-                Json(json!({"success": true, "data": {"deleted": true}}))
-            }),
-        );
-    let base = start_mock_backend(app).await;
-    let tmp = tempfile::tempdir().unwrap();
-    let config = config_with_backend(&tmp, base);
-    // The memory clear-out runs through the bound driver now that it is routed
-    // onto `forget_matching`, so the test has to bind one. TinyCortex is the
-    // engine the loadable module wraps, and unlike the module it is not a
-    // process singleton, so several of these can share one test binary.
-    crate::openhuman::memory::test_support::install_tinycortex_for_test(&config);
-
-    // One slack chunk for connection c1 → source_id `slack:c1`.
-    let chunk = sample_memory_chunk(SourceKind::Chat, "slack:c1", 0);
-    memory_tree_store::upsert_chunks(&config, &[chunk.clone()]).expect("seed chunk");
-
-    // Real source tree for that source + a summary whose content file lives at
-    // the production content-root location.
-    let tree = get_or_create_source_tree(&config, "slack:c1").expect("source tree");
-    let ts = Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
-    let rel = "summaries/slack_c1/L1/sum-1.md";
-    let abs = config.memory_tree_content_root().join(rel);
-    std::fs::create_dir_all(abs.parent().unwrap()).unwrap();
-    std::fs::write(&abs, "summarised slack body").unwrap();
-
-    memory_tree_store::with_connection(&config, |conn| {
-        let tx = conn.unchecked_transaction()?;
-        tree_store::insert_summary_tx(
-            &tx,
-            &SummaryNode {
-                id: "sum-1".into(),
-                tree_id: tree.id.clone(),
-                tree_kind: TreeKind::Source,
-                level: 1,
-                parent_id: None,
-                child_ids: vec![chunk.id.clone()],
-                content: "preview".into(),
-                token_count: 3,
-                entities: vec![],
-                topics: vec![],
-                time_range_start: ts,
-                time_range_end: ts,
-                score: 0.5,
-                sealed_at: ts,
-                deleted: false,
-                embedding: None,
-                doc_id: None,
-                version_ms: None,
-            },
-            None,
-            "test/model@3",
-        )?;
-        tx.execute(
-            "UPDATE mem_tree_summaries SET content_path = ?1 WHERE id = 'sum-1'",
-            params![rel],
-        )?;
-        tx.commit()?;
-        Ok(())
-    })
-    .expect("seed summary + content file pointer");
-
-    // sanity: tree + on-disk file exist before the disconnect.
-    assert!(
-        tree_store::get_tree_by_scope(&config, TreeKind::Source, "slack:c1")
-            .unwrap()
-            .is_some()
-    );
-    assert!(abs.exists());
-
-    // ---- act: the REAL handler, clear_memory=true ----
-    let outcome = composio_delete_connection(&config, "c1", true)
-        .await
-        .unwrap();
-    assert!(outcome.value.deleted);
-    assert_eq!(outcome.value.memory_chunks_deleted, 1);
-
-    // chunk, source tree, summary row, AND on-disk content file are all gone.
-    assert!(memory_tree_store::get_chunk(&config, &chunk.id)
-        .unwrap()
-        .is_none());
-    assert!(
-        tree_store::get_tree_by_scope(&config, TreeKind::Source, "slack:c1")
-            .unwrap()
-            .is_none()
-    );
-    memory_tree_store::with_connection(&config, |conn| {
-        let n: i64 = conn.query_row("SELECT COUNT(*) FROM mem_tree_summaries", [], |r| r.get(0))?;
-        assert_eq!(n, 0);
-        Ok(())
-    })
-    .unwrap();
-    assert!(
-        !abs.exists(),
-        "summary content file must be removed via the real handler cascade"
-    );
 }

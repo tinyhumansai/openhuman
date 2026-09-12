@@ -20,15 +20,23 @@
 //! compatibility surface; it is a dependency edge that keeps the engine crate
 //! named in production for the benefit of no call site.
 //!
-//! **The `contacts` gate outlives it, and deliberately.** `address_book`'s
-//! macOS reader is `#[cfg(all(target_os = "macos", feature = "contacts"))]`
-//! *inside the engine*, and this crate's `contacts` feature has to forward
-//! there or the reader is compiled out while `refresh_address_book` reports
-//! success having seeded nothing — the exact bug the gate was written for. So
-//! `mod_contacts_gate_tests_tests.rs` still names the engine crate, from
-//! `#[cfg(test)]`, and asserts the forward end to end. A test reference does
-//! not link the crate into the shipped binary; that is the whole distinction
-//! this change is drawn along.
+//! **The `contacts` gate name outlives the forwarding it used to do.** The
+//! macOS `CNContactStore` reader is `#[cfg(all(target_os = "macos", feature =
+//! "contacts"))]` *inside the engine*, and this crate's `contacts` feature once
+//! had to forward there or the reader was compiled out while
+//! `refresh_address_book` reported success having seeded nothing. That reader
+//! now lives in the `tinymemory` module, whose own manifest enables
+//! `tinycortex/contacts`, and `refresh_address_book` reaches it through
+//! `MemoryPeople::seed_from_address_book` over the bus — so `contacts = []`
+//! here is correct rather than broken, and the name is kept only because the
+//! Feature Forwarding Gate asserts the product list and the shell's list are
+//! equal.
+//!
+//! `mod_contacts_gate_tests_tests.rs` asserted the old forward by naming the
+//! engine crate from `#[cfg(test)]`. It went with the engine
+//! (openhuman#6161), and its subject had already moved to the module before
+//! that: a test that links `tinycortex` directly proves nothing about what
+//! this crate forwards once this crate no longer depends on it.
 
 pub mod rpc;
 pub mod schemas;
@@ -42,7 +50,3 @@ pub use schemas::{
 
 #[cfg(test)]
 mod schemas_tests;
-
-#[cfg(test)]
-#[path = "mod_contacts_gate_tests_tests.rs"]
-mod contacts_gate_tests;

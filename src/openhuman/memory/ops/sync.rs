@@ -222,12 +222,11 @@ async fn spawn_manual_sync(requested_connection: Option<String>) -> Result<(), S
             // Through the tinyconnectors module and the bound driver's
             // `MemorySourceSink`, not the (now permanently refusing) engine
             // seam — see `memory::sync::composio`'s module docs.
-            let outcome = crate::openhuman::integrations::composio::ops::run_sync_pass(
+            let outcome = crate::openhuman::integrations::composio::ops::run_sync_within_budget(
                 &config,
                 &target.toolkit,
                 &target.connection_id,
                 "manual",
-                crate::openhuman::integrations::composio::ops::SYNC_PASS_MAX_ITEMS,
             )
             .await;
             match outcome {

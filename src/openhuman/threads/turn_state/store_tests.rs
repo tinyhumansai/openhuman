@@ -86,6 +86,7 @@ fn roundtrips_subagent_interleaved_transcript_with_full_fidelity() {
             output_chars: Some(6),
             display_name: Some("Searching".into()),
             detail: None,
+            args: Some(serde_json::json!({ "query": "rust serde" })),
             failure: None,
             output: Some("3 hits".into()),
         }],
@@ -151,6 +152,15 @@ fn roundtrips_subagent_interleaved_transcript_with_full_fidelity() {
         activity.transcript[2],
         SubagentTranscriptItem::Text { .. }
     ));
+    // The child call's arguments are what the reloaded row's "Input" block
+    // renders from. Spot-checked by value (like the interleaving above) so a
+    // regression names the field instead of failing as one opaque struct
+    // inequality (#5987).
+    assert_eq!(
+        activity.tool_calls[0].args,
+        Some(serde_json::json!({ "query": "rust serde" })),
+        "child tool arguments must survive the disk round-trip"
+    );
     assert_eq!(loaded.tool_timeline[0].seq, Some(3));
 }
 

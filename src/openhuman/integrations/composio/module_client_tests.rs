@@ -24,6 +24,30 @@ fn classified_errors_stay_at_byte_zero_after_tinybus_failure_wrapping() {
     );
 }
 
+/// The depth the previous single-peel-plus-fallback form could not reach.
+///
+/// That form peeled one `Error.<Kind>: ` layer and had one `Error.Failed: `
+/// fallback, so it topped out at **two** wire layers. This case carries three,
+/// which the old form passed through unnormalised — reaching the frontend as an
+/// unclassified outage ("the provider is down") instead of the classified
+/// reason ("reconnect your account"). Nesting depth belongs to the transport,
+/// not to a hardcoded guess here, so the peel now loops.
+///
+/// Three layers, not two, is deliberate: at two the old fallback still fired,
+/// so a two-layer case passes against the pre-change code and proves nothing.
+#[test]
+fn classification_survives_however_many_wire_layers_tinybus_adds() {
+    assert_eq!(
+        super::normalize_error(
+            methods::EXECUTE,
+            "Execute: ai.tinyhumans.tinybus.Error.A: ai.tinyhumans.tinybus.Error.B: \
+             ai.tinyhumans.tinybus.Error.Failed: [composio:error:rate_limited] Please retry later"
+                .to_string()
+        ),
+        "[composio:error:rate_limited] Please retry later"
+    );
+}
+
 #[test]
 fn unclassified_errors_keep_the_member_context() {
     assert_eq!(

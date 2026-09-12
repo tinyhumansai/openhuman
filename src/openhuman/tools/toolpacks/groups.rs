@@ -15,13 +15,13 @@
 //! it does not pay the orchestrator's budget. Neither is expressible by
 //! membership alone, which only ever answers "advertised or withheld".
 //!
-//! So the group id — the same string the model names in `load_skill` — becomes
+//! So the group id — the same string the model names in `use_skill` — becomes
 //! the unit an embedder selects on, with three states rather than two:
 //!
 //! | [`GroupMode`] | Schemas on the wire | Registered and callable |
 //! | --- | --- | --- |
 //! | `Advertised` | yes | yes |
-//! | `Withheld` | no (reached via `load_skill` / `use_skill`) | yes |
+//! | `Withheld` | no (reached via `use_skill`) | yes |
 //! | `Off` | no | **no** |
 //!
 //! `Off` is the state that could not be said before, and it is the one an
@@ -48,8 +48,8 @@ use super::registry::PACKS;
 pub enum GroupMode {
     /// Schemas are on the wire on every provider call.
     Advertised,
-    /// Registered and executable, but reached only through `load_skill` /
-    /// `use_skill`. The compiled-in default for every pack.
+    /// Registered and executable, but reached only through `use_skill`.
+    /// The compiled-in default for every pack.
     #[default]
     Withheld,
     /// Not registered at all — the tools do not exist for this core.

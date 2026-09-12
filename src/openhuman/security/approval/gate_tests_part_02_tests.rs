@@ -633,3 +633,83 @@ async fn intercept_with_workflow_require_approval_persists_and_ttl_denies() {
         other => panic!("expected deny, got {other:?}"),
     }
 }
+
+/// A parked approval must be recoverable from its thread alone.
+///
+/// The card is delivered to the UI as ONE fire-and-forget socket emit
+/// (`web_chat::event_bus` → `core::socketio::emit_web_channel_event`). If that
+/// emit misses — the addressed client's room is empty because it reloaded, the
+/// rejoining socket was not yet in the thread room, or the bridge dropped the
+/// frame on broadcast lag — nothing re-sends it, and the turn stays parked with
+/// no card and no way for the user to act. Recovering the full row from the
+/// thread is what lets a (re)joining socket rebuild the card, so the durable
+/// park stops depending on a single delivery.
+#[tokio::test]
+async fn a_parked_approval_is_recoverable_from_its_thread_for_replay() {
+    let (gate, _dir) = test_gate_with_ttl(Duration::from_secs(10));
+    let gate = Arc::new(gate);
+
+    let g = gate.clone();
+    let ctx = ApprovalChatContext {
+        thread_id: "thread-replay".into(),
+        client_id: "client-that-went-away".into(),
+    };
+    let origin = AgentTurnOrigin::WebChat {
+        thread_id: "thread-replay".into(),
+        client_id: "client-that-went-away".into(),
+        request_id: Some("req-replay".into()),
+    };
+    let handle = tokio::spawn(async move {
+        turn_origin::with_origin(
+            origin,
+            APPROVAL_CHAT_CONTEXT.scope(
+                ctx,
+                g.intercept(
+                    "create_workflow",
+                    "create a workflow",
+                    serde_json::json!({ "name": "nightly" }),
+                ),
+            ),
+        )
+        .await
+    });
+
+    let mut tries = 0;
+    loop {
+        if gate.pending_for_thread("thread-replay").is_some() {
+            break;
+        }
+        tries += 1;
+        assert!(tries < 50, "thread mapping never appeared");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    let row = gate.parked_request_for_thread("thread-replay").expect(
+        "a parked approval must be recoverable from its thread, or a client that missed the \
+         single live emit can never rebuild the card and the turn stays parked forever",
+    );
+    assert_eq!(
+        row.tool_name, "create_workflow",
+        "the recovered row must carry the payload the card renders"
+    );
+    assert_eq!(
+        gate.pending_for_thread("thread-replay").as_deref(),
+        Some(row.request_id.as_str()),
+        "the recovered row must be the one actually parked on this thread"
+    );
+
+    // Another thread must not inherit it — replay is thread-scoped.
+    assert!(
+        gate.parked_request_for_thread("thread-unrelated").is_none(),
+        "a thread with nothing parked must have nothing to replay"
+    );
+
+    gate.decide(&row.request_id, ApprovalDecision::Deny)
+        .unwrap();
+    let _ = handle.await.unwrap();
+
+    assert!(
+        gate.parked_request_for_thread("thread-replay").is_none(),
+        "a decided approval must not be replayed to the next socket that joins"
+    );
+}

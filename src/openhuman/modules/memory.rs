@@ -45,3 +45,4 @@ mod tests;
 include!("memory_part_01.rs");
 include!("memory_part_02.rs");
 include!("memory_part_03.rs");
+include!("memory_part_04.rs");

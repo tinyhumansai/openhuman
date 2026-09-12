@@ -193,6 +193,28 @@ pub struct PipelineStatusResponse {
     /// Convenience flag: scheduler-gate is in `off` mode, so all LLM-bound
     /// background work is paused cooperatively.
     pub is_paused: bool,
+    /// The scheduler gate's *live* verdict: `true` while its policy is
+    /// `Paused`, whichever mode is configured — in `auto` that is on battery
+    /// with `require_ac_power`, under CPU pressure, or while signed out — so
+    /// every LLM-bound worker, the embed backfill included, sits behind
+    /// `wait_for_capacity` right now. `is_paused` stays the configured `off`
+    /// mode (the panel's toggle). Additive: `#[serde(default)]` keeps older
+    /// clients deserialising the response (openhuman#6025 review).
+    #[serde(default)]
+    pub gate_paused: bool,
+    /// Why the gate is paused, when it is: `user_disabled`, `on_battery`,
+    /// `cpu_pressure`, `signed_out` or `unknown` — the module host's
+    /// `scheduler_policy` spells them the same way. `None` while running.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gate_pause_reason: Option<String>,
+    /// The #5324 stall verdict as a flag: eligible work has waited at least
+    /// six hours without any job settling. `status` already reads `degraded`
+    /// for it, but a stalled `reembed_backfill` row still keeps the backfill
+    /// snapshot `in_progress`, and a row must not promise vectors "shortly"
+    /// while the queue is provably not draining (openhuman#6025 review).
+    /// Additive: `#[serde(default)]` keeps older clients deserialising.
+    #[serde(default)]
+    pub queue_stalled: bool,
     /// #002 (FR-002/FR-004): "the pipeline ran but output quality is reduced"
     /// — `semantic_recall` true when embeddings were skipped (no usable
     /// provider, so recall falls back to recency), `structure` true when
@@ -275,6 +297,36 @@ fn latest_quarantine(
     })
 }
 
+/// The scheduler gate's live verdict, mapped for the wire.
+///
+/// `is_paused` is the configured `off` mode (the panel's toggle); this is
+/// what the workers see right now. In `auto` the gate also pauses on battery
+/// with `require_ac_power`, under CPU pressure, or while signed out, and an
+/// armed embed backfill then waits in `wait_for_capacity` with its
+/// `in_progress` flag still up — a row must not promise vectors "shortly" on
+/// that flag alone (openhuman#6025 review). Reason slugs match the module
+/// host's `scheduler_policy` so both surfaces spell a pause the same way.
+fn gate_pause_state(
+    policy: crate::openhuman::cron::scheduler_gate::Policy,
+) -> (bool, Option<String>) {
+    use crate::openhuman::cron::scheduler_gate::{PauseReason, Policy};
+    match policy {
+        Policy::Paused { reason } => (
+            true,
+            Some(
+                match reason {
+                    PauseReason::UserDisabled => "user_disabled",
+                    PauseReason::OnBattery => "on_battery",
+                    PauseReason::CpuPressure => "cpu_pressure",
+                    PauseReason::SignedOut => "signed_out",
+                    PauseReason::Unknown => "unknown",
+                }
+                .to_string(),
+            ),
+        ),
+        Policy::Aggressive | Policy::Normal | Policy::Throttled => (false, None),
+    }
+}
 /// Aggregates `list_sources` + `count_by_status` + a recursive disk-size
 /// probe into the [`PipelineStatusResponse`] the UI status panel renders.
 /// All blocking work is dispatched onto `spawn_blocking` so the async
@@ -323,6 +375,7 @@ pub async fn pipeline_status_rpc(
     };
     let failed_unrecoverable = queue.failed_unrecoverable;
     let queue_idle_ms = queue_idle_ms(&queue, now_ms);
+    let queue_stalled = queue_is_stalled(queue_idle_ms);
 
     // Disk size — best-effort. Permission errors etc. degrade to 0 with a
     // warn log rather than failing the whole RPC. Scoped to the `wiki/`
@@ -340,6 +393,8 @@ pub async fn pipeline_status_rpc(
         })?;
 
     let is_paused = config.scheduler_gate.mode == SchedulerGateMode::Off;
+    let (gate_paused, gate_pause_reason) =
+        gate_pause_state(crate::openhuman::cron::scheduler_gate::gate::current_policy());
     let is_syncing = pipeline_jobs.running > 0;
 
     // #002: read the degradation snapshot (set by the embed / extract stages)
@@ -436,6 +491,9 @@ pub async fn pipeline_status_rpc(
         pipeline_jobs,
         is_syncing,
         is_paused,
+        gate_paused,
+        gate_pause_reason,
+        queue_stalled,
         degraded,
         first_blocking_cause,
         extraction_coverage,

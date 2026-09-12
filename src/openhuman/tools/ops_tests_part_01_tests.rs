@@ -16,7 +16,6 @@ fn all_tools_includes_spawn_subagent() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
     // The embedding seam fails loudly when unwired.
-    crate::openhuman::memory::host_impls::install_for_tests();
     let _mem_cfg = MemoryConfig {
         backend: "markdown".into(),
         ..MemoryConfig::default()
@@ -95,7 +94,6 @@ fn all_tools_includes_spawn_async_subagent() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
     // The embedding seam fails loudly when unwired.
-    crate::openhuman::memory::host_impls::install_for_tests();
     let _mem_cfg = MemoryConfig {
         backend: "markdown".into(),
         ..MemoryConfig::default()
@@ -131,7 +129,6 @@ fn all_tools_includes_spawn_parallel_agents() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
     // The embedding seam fails loudly when unwired.
-    crate::openhuman::memory::host_impls::install_for_tests();
     let _mem_cfg = MemoryConfig {
         backend: "markdown".into(),
         ..MemoryConfig::default()
@@ -163,6 +160,116 @@ fn all_tools_includes_spawn_parallel_agents() {
 }
 
 #[test]
+fn every_packed_tool_name_resolves_to_a_registered_tool() {
+    // A pack advertises a menu. `render_pack_filtered` skips a name it cannot
+    // resolve (tools.rs "a pack may name a tool this build compiled out"), so a
+    // stale entry does not error — the listing is just quietly short, and any
+    // prompt that instructs the agent to call it describes a tool that will
+    // never appear in its schema. The `crypto` pack carried five such names
+    // (`wallet_balances`, `wallet_network_defaults`, `wallet_supported_assets`,
+    // `wallet_encode_erc20_transfer`, `wallet_execute_prepared`) whose backing
+    // functions exist only as `wallet.*` RPC methods, never as agent tools.
+    //
+    // Packs whose tools sit behind a non-default Cargo feature are skipped
+    // entirely — see `pack_is_assertable` below. Within an asserted pack every
+    // name must resolve.
+    let tmp = TempDir::new().unwrap();
+    let security = Arc::new(SecurityPolicy::default());
+    let browser = BrowserConfig {
+        enabled: false,
+        allowed_domains: vec![],
+        session_name: None,
+        ..BrowserConfig::default()
+    };
+    let http = crate::openhuman::config::HttpRequestConfig::default();
+    let cfg = test_config(&tmp);
+
+    let tools = all_tools(
+        Arc::new(Config::default()),
+        &security,
+        AuditLogger::disabled(),
+        &browser,
+        &http,
+        tmp.path(),
+        &HashMap::new(),
+        &cfg,
+    );
+    let registered: std::collections::HashSet<&str> = tools.iter().map(|t| t.name()).collect();
+
+    // Delegation tools are synthesised per-session from each agent's
+    // `delegate_name`, not built by `all_tools`, so they are legitimately
+    // absent here. `owners` holds agent ids (`crypto_agent`); the names that
+    // appear in `tools` are delegate names (`do_crypto`), so resolve them from
+    // the agent registry rather than from `owners`.
+    //
+    // `.expect`, not `.unwrap_or_default()`: an empty delegate set would make
+    // EVERY pack delegate (`do_crypto`, `build_workflow`, `run_skill`, …) report
+    // as missing, so a registry that failed to load would surface as a list of
+    // phantom names — the exact failure this test exists to report, raised for
+    // the wrong reason. `load_builtins` documents that built-in TOML is baked
+    // into the binary and must always parse, so an `Err` here is a broken
+    // invariant worth failing loudly on rather than absorbing.
+    let delegates: std::collections::HashSet<String> =
+        crate::openhuman::agent::registry::agents::load_builtins()
+            .expect("built-in agent registry must load; without it every pack delegate would be reported as a phantom name")
+            .into_iter()
+            .filter_map(|d| d.delegate_name)
+            .collect();
+
+    // `PACKS` is unconditional, but most packs' tools are behind Cargo features
+    // that are NOT in `default` — `flows`, `mcp`, `skills`, `web3`, `documents`,
+    // `voice`. Under a partial feature set "missing" means "compiled out", not
+    // "stale", and asserting there reports the pack's REAL tools as missing.
+    // That is what the `Rust Feature-Gate Smoke (gates off)` lane caught twice.
+    //
+    // A stale name is a property of the `PACKS` table, not of the build, so
+    // checking it in one fully-featured configuration is sufficient. The product
+    // lane runs with all of these on, which is where a stale entry is caught.
+    //
+    // Deliberately ONE condition rather than a per-pack feature map: a map has
+    // to be updated every time a pack becomes gated, and the failure mode of
+    // forgetting is a confusing red in an unrelated lane rather than a clear
+    // signal here.
+    if !cfg!(all(
+        feature = "flows",
+        feature = "mcp",
+        feature = "skills",
+        feature = "web3",
+        feature = "documents",
+        feature = "voice",
+    )) {
+        return;
+    }
+
+    let mut missing: Vec<String> = Vec::new();
+    for pack in crate::openhuman::tools::toolpacks::PACKS {
+        // Registered only once the user is signed in: `composio`'s tools come
+        // from `all_composio_agent_tools`, which returns an empty vec without
+        // a session (`integrations/composio/tools_part_03.rs:320-323`), and
+        // `storage` / `media` are built behind `integrations::build_client`,
+        // which needs a session token (`file_storage/tools_part_02.rs`,
+        // `media/generation/tools.rs`). Runtime auth state no unit test can
+        // satisfy, in any feature configuration. Every name in those three is
+        // a real tool in the source it is built from, verified by hand at the
+        // time each pack was added — that is the check this skip replaces.
+        if matches!(pack.id, "composio" | "storage" | "media") {
+            continue;
+        }
+        for name in pack.tools {
+            if registered.contains(name) || delegates.contains(*name) {
+                continue;
+            }
+            missing.push(format!("{}::{}", pack.id, name));
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "every tool named in a pack must resolve to a registered tool (or be a \
+         delegate name); these do not: {missing:?}"
+    );
+}
+
+#[test]
 fn all_tools_always_registers_curl() {
     // Regression guard: `curl` is always registered (gated only by
     // the shared `http_request.allowed_domains` allowlist at call
@@ -173,7 +280,6 @@ fn all_tools_always_registers_curl() {
     // The embedding seam fails loudly when unwired. This
     // test doesn't use that helper (it needs the `Arc<dyn Memory>` alongside
     // its own config setup below), so it installs the seams directly.
-    crate::openhuman::memory::host_impls::install_for_tests();
     let _mem_cfg = MemoryConfig {
         backend: "markdown".into(),
         ..MemoryConfig::default()
@@ -305,7 +411,6 @@ fn all_tools_registers_gitbooks_when_enabled() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
     // The embedding seam fails loudly when unwired.
-    crate::openhuman::memory::host_impls::install_for_tests();
     let _mem_cfg = MemoryConfig {
         backend: "markdown".into(),
         ..MemoryConfig::default()
@@ -420,7 +525,6 @@ fn all_tools_skips_gitbooks_when_disabled() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
     // The embedding seam fails loudly when unwired.
-    crate::openhuman::memory::host_impls::install_for_tests();
     let _mem_cfg = MemoryConfig {
         backend: "markdown".into(),
         ..MemoryConfig::default()
@@ -456,7 +560,6 @@ fn all_tools_includes_current_time() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
     // The embedding seam fails loudly when unwired.
-    crate::openhuman::memory::host_impls::install_for_tests();
     let _mem_cfg = MemoryConfig {
         backend: "markdown".into(),
         ..MemoryConfig::default()
@@ -595,7 +698,6 @@ fn all_tools_excludes_browser_when_disabled() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
     // The embedding seam fails loudly when unwired.
-    crate::openhuman::memory::host_impls::install_for_tests();
     let _mem_cfg = MemoryConfig {
         backend: "markdown".into(),
         ..MemoryConfig::default()

@@ -11,3 +11,4 @@
 
 include!("test_support_part_01.rs");
 include!("test_support_part_02.rs");
+include!("test_support_part_03.rs");

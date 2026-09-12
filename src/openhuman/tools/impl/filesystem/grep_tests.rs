@@ -141,3 +141,43 @@ async fn grep_respects_max_matches() {
 
     let _ = tokio::fs::remove_dir_all(&dir).await;
 }
+
+/// A file over `MAX_FILE_BYTES` is silently excluded rather than read — this
+/// pins that the exclusion is at least honest about it: the file does not
+/// count toward `scanned`, so the report never claims to have searched bytes
+/// it skipped. It does not surface the file was too large; a caller who
+/// expected a match in it sees only a lower `scanned` count with no reason.
+#[tokio::test]
+async fn grep_excludes_an_oversized_file_and_does_not_count_it_scanned() {
+    let dir = std::env::temp_dir().join("openhuman_test_grep_oversized");
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+    tokio::fs::create_dir_all(&dir).await.unwrap();
+
+    let small = format!("{}\nneedle\n", "line ".repeat(10));
+    tokio::fs::write(dir.join("small.txt"), &small)
+        .await
+        .unwrap();
+    let huge = "needle\n".repeat(1_000_000);
+    tokio::fs::write(dir.join("huge.txt"), &huge).await.unwrap();
+
+    let tool = GrepTool::new(test_security(dir.clone()));
+    let result = tool.execute(json!({"pattern": "needle"})).await.unwrap();
+    assert!(!result.is_error, "{}", result.output());
+    assert!(
+        result.output().contains("small.txt"),
+        "the small file's match must still be reported: {}",
+        result.output()
+    );
+    assert!(
+        !result.output().contains("huge.txt"),
+        "the oversized file must not be scanned at all: {}",
+        result.output()
+    );
+    assert!(
+        result.output().contains("scanned 1 file"),
+        "the scanned count must not include the file it skipped for size: {}",
+        result.output()
+    );
+
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+}

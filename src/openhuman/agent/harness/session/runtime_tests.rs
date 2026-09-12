@@ -102,16 +102,14 @@ impl ChatModel<()> for PersistentErrModel {
 fn make_agent(model: Arc<dyn ChatModel<()>>) -> Agent {
     // The embedding seam fails loudly when unwired; before the memory
     // extraction this was a direct call and needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
     let workspace = tempfile::TempDir::new().expect("temp workspace");
     let workspace_path = workspace.path().to_path_buf();
     std::mem::forget(workspace);
-    let memory_cfg = crate::openhuman::config::MemoryConfig {
+    let _memory_cfg = crate::openhuman::config::MemoryConfig {
         backend: "none".into(),
         ..crate::openhuman::config::MemoryConfig::default()
     };
-    let mem: Arc<dyn Memory> =
-        Arc::from(tinymemory_core::store::create_memory(&memory_cfg, &workspace_path).unwrap());
+    let mem: Arc<dyn Memory> = crate::openhuman::memory::test_support::noop_memory();
 
     Agent::builder()
         .chat_model(model)

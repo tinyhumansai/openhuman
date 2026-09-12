@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::openhuman::agent::learning::tool_tracker::ToolStats;
-use crate::openhuman::memory::ops::{ensure_shared_memory_client, GLOBAL_MEMORY_TEST_LOCK};
+use crate::openhuman::memory::ops::{shared_memory_test_workspace, GLOBAL_MEMORY_TEST_LOCK};
 use serde_json::json;
 
 fn make_tool() -> ToolStatsTool {
@@ -49,7 +49,7 @@ fn schema_is_object_type() {
 the tool resolves the bound driver rather than being handed a memory handle"]
 async fn returns_stats_for_a_recorded_tool() {
     let _serial = GLOBAL_MEMORY_TEST_LOCK.lock().await;
-    ensure_shared_memory_client();
+    shared_memory_test_workspace();
 
     record(
         "tool/shell",
@@ -75,7 +75,7 @@ async fn returns_stats_for_a_recorded_tool() {
 the tool resolves the bound driver rather than being handed a memory handle"]
 async fn filter_by_tool_name_reports_no_data_for_an_unrecorded_tool() {
     let _serial = GLOBAL_MEMORY_TEST_LOCK.lock().await;
-    ensure_shared_memory_client();
+    shared_memory_test_workspace();
 
     record(
         "tool/shell",

@@ -434,6 +434,30 @@ fn build_message_line(
         Some((failed, detail)) => (failed, detail),
         None => (false, None),
     };
+    let message_reasoning = (msg.role == "assistant")
+        .then(|| {
+            extra_metadata
+                .as_ref()
+                .and_then(|meta| {
+                    meta.get(crate::openhuman::agent::message_convert::REASONING_EXT_KEY)
+                })
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+        .flatten();
+    let native_envelope = (msg.role == "assistant")
+        .then(|| serde_json::from_str::<serde_json::Value>(&msg.content).ok())
+        .flatten();
+    let envelope_reasoning = native_envelope
+        .as_ref()
+        .and_then(|value| value.get("reasoning_content"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
+    let envelope_tool_calls = native_envelope
+        .as_ref()
+        .and_then(|value| value.get("tool_calls"))
+        .and_then(|value| serde_json::from_value::<Vec<ToolCall>>(value.clone()).ok())
+        .filter(|calls| !calls.is_empty());
     MessageLine {
         id: msg.id.clone(),
         role: msg.role.clone(),
@@ -442,13 +466,17 @@ fn build_message_line(
         provider: assistant_usage.map(|tu| tu.provider.clone()),
         model: assistant_usage.map(|tu| tu.model.clone()),
         usage: assistant_usage.map(|tu| tu.usage.clone()),
-        reasoning_content: assistant_usage.and_then(|tu| tu.reasoning_content.clone()),
-        tool_calls: assistant_usage.and_then(|tu| {
-            if tu.tool_calls.is_empty() {
-                None
-            } else {
-                Some(tu.tool_calls.clone())
-            }
+        reasoning_content: message_reasoning
+            .or(envelope_reasoning)
+            .or_else(|| assistant_usage.and_then(|tu| tu.reasoning_content.clone())),
+        tool_calls: envelope_tool_calls.or_else(|| {
+            assistant_usage.and_then(|tu| {
+                if tu.tool_calls.is_empty() {
+                    None
+                } else {
+                    Some(tu.tool_calls.clone())
+                }
+            })
         }),
         iteration: assistant_usage.map(|tu| tu.iteration),
         ts: assistant_usage.map(|tu| tu.ts.clone()),

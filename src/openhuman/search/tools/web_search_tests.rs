@@ -4,7 +4,7 @@ use serde_json::Value;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 fn tool() -> WebSearchTool {
-    WebSearchTool::new(None, 5, 15)
+    WebSearchTool::new(None, None, 5, 15)
 }
 
 async fn start_mock_backend(app: Router) -> String {
@@ -135,7 +135,7 @@ fn test_parse_parallel_results_with_data() {
 
 #[test]
 fn test_parse_parallel_results_respects_max_results() {
-    let tool = WebSearchTool::new(None, 2, 15);
+    let tool = WebSearchTool::new(None, None, 2, 15);
     let results = vec![
         SearchResultItem {
             title: "Result 1".into(),
@@ -259,7 +259,7 @@ async fn test_execute_posts_to_backend_and_renders_results() {
 
     let base_url = start_mock_backend(app).await;
     let client = Arc::new(IntegrationClient::new(base_url, "test-token".into()));
-    let result = WebSearchTool::new(Some(client), 5, 15)
+    let result = WebSearchTool::new(Some(client), None, 5, 15)
         .execute(json!({"query": "test success"}))
         .await
         .expect("execute() should return rendered backend results");
@@ -303,7 +303,7 @@ async fn test_execute_attributes_backend_reported_provider() {
 
     let base_url = start_mock_backend(app).await;
     let client = Arc::new(IntegrationClient::new(base_url, "test-token".into()));
-    let result = WebSearchTool::new(Some(client), 5, 15)
+    let result = WebSearchTool::new(Some(client), None, 5, 15)
         .execute(json!({"query": "anything"}))
         .await
         .expect("execute() should render backend results");
@@ -353,7 +353,7 @@ async fn test_execute_uses_direct_search_api_when_configured() {
             .with_state(state);
 
     let base_url = start_mock_backend(app).await;
-    let result = WebSearchTool::new(None, 5, 15)
+    let result = WebSearchTool::new(None, None, 5, 15)
         .with_direct_search(Some(SeltzSearchTool::new(
             Some("test-key".into()),
             Some(base_url),
@@ -368,4 +368,343 @@ async fn test_execute_uses_direct_search_api_when_configured() {
     assert!(result.output().contains("via Seltz"));
     assert!(result.output().contains("Direct Search Result"));
     assert!(result.output().contains("https://example.com/direct"));
+}
+
+/// Regression for #5873: a cached client whose JWT has been superseded must not
+/// be the one that talks to the backend — the token currently in the credential
+/// store is.
+///
+/// This is the assertion the fix lives or dies on. Point `resolve_client` back
+/// at `self.client` and the backend receives `stale-token`, so the recorded
+/// Authorization header below no longer matches.
+///
+/// Deliberately asserts on the header the *backend actually saw* rather than on
+/// a returned value: the whole failure mode is "the right result arrived over
+/// the wrong credential", which a result-shaped assertion cannot see.
+#[tokio::test]
+async fn test_refreshes_superseded_session_token_before_posting() {
+    use crate::openhuman::config::Config;
+    use crate::openhuman::security::credentials::profiles::{AuthProfile, AuthProfilesStore};
+    use crate::openhuman::security::credentials::APP_SESSION_PROVIDER;
+    use std::sync::Mutex;
+
+    #[derive(Clone, Default)]
+    struct SeenAuth(Arc<Mutex<Option<String>>>);
+
+    let seen = SeenAuth::default();
+    let app = Router::new()
+        .route(
+            "/agent-integrations/parallel/search",
+            post(
+                |State(seen): State<SeenAuth>, headers: HeaderMap, Json(_): Json<Value>| async move {
+                    *seen.0.lock().expect("auth header mutex") = headers
+                        .get("authorization")
+                        .and_then(|v| v.to_str().ok())
+                        .map(str::to_string);
+                    Json(json!({
+                        "success": true,
+                        "data": { "searchId": "s-1", "results": [], "costUsd": 0.0 }
+                    }))
+                },
+            ),
+        )
+        .with_state(seen.clone());
+
+    let base_url = start_mock_backend(app).await;
+
+    // Credential store holds the CURRENT session token.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    AuthProfilesStore::new(tmp.path(), false)
+        .upsert_profile(
+            AuthProfile::new_token(APP_SESSION_PROVIDER, "default", "fresh-token".to_string()),
+            true,
+        )
+        .expect("seed app-session profile");
+
+    let mut config = Config::default();
+    // Credentials resolve against `config_path`'s parent, so this is what points
+    // `build_client` at the seeded store rather than the operator's real one.
+    config.config_path = tmp.path().join("config.toml");
+    config.api_url = Some(base_url.clone());
+    config.secrets.encrypt = false;
+
+    // Cached client carries the token the tool was BUILT with — now superseded.
+    let stale = Arc::new(IntegrationClient::new(base_url, "stale-token".to_string()));
+
+    let _ = WebSearchTool::new(Some(stale), Some(Arc::new(config)), 5, 15)
+        .execute(json!({"query": "who holds the token"}))
+        .await;
+
+    let seen_auth = seen.0.lock().expect("auth header mutex").clone();
+    assert_eq!(
+        seen_auth.as_deref(),
+        Some("Bearer fresh-token"),
+        "the request must carry the token from the credential store, not the \
+         superseded one baked into the cached client"
+    );
+}
+
+/// The other half of the same branch: when the cached token is still current,
+/// no swap happens and the cached client is reused as-is.
+#[tokio::test]
+async fn test_keeps_cached_client_when_its_token_is_still_current() {
+    use crate::openhuman::config::Config;
+    use crate::openhuman::security::credentials::profiles::{AuthProfile, AuthProfilesStore};
+    use crate::openhuman::security::credentials::APP_SESSION_PROVIDER;
+    use std::sync::Mutex;
+
+    #[derive(Clone, Default)]
+    struct SeenAuth(Arc<Mutex<Option<String>>>);
+
+    let seen = SeenAuth::default();
+    let app = Router::new()
+        .route(
+            "/agent-integrations/parallel/search",
+            post(
+                |State(seen): State<SeenAuth>, headers: HeaderMap, Json(_): Json<Value>| async move {
+                    *seen.0.lock().expect("auth header mutex") = headers
+                        .get("authorization")
+                        .and_then(|v| v.to_str().ok())
+                        .map(str::to_string);
+                    Json(json!({
+                        "success": true,
+                        "data": { "searchId": "s-1", "results": [], "costUsd": 0.0 }
+                    }))
+                },
+            ),
+        )
+        .with_state(seen.clone());
+
+    let base_url = start_mock_backend(app).await;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    AuthProfilesStore::new(tmp.path(), false)
+        .upsert_profile(
+            AuthProfile::new_token(APP_SESSION_PROVIDER, "default", "same-token".to_string()),
+            true,
+        )
+        .expect("seed app-session profile");
+
+    let mut config = Config::default();
+    config.config_path = tmp.path().join("config.toml");
+    config.api_url = Some(base_url.clone());
+    config.secrets.encrypt = false;
+
+    // The cached client points at a SEPARATE backend from the one `config`
+    // would rebuild against. Both would carry `Bearer same-token`, so asserting
+    // on the header alone cannot tell which client was selected — the test
+    // would pass even if `resolve_client` rebuilt on every request. Routing
+    // them to different mock backends makes the choice observable: only the
+    // cached backend may see traffic.
+    let cached_seen = SeenAuth::default();
+    let cached_app = Router::new()
+        .route(
+            "/agent-integrations/parallel/search",
+            post(
+                |State(seen): State<SeenAuth>, headers: HeaderMap, Json(_): Json<Value>| async move {
+                    *seen.0.lock().expect("cached auth mutex") = headers
+                        .get("authorization")
+                        .and_then(|v| v.to_str().ok())
+                        .map(str::to_string);
+                    Json(json!({
+                        "success": true,
+                        "data": { "searchId": "s-cached", "results": [], "costUsd": 0.0 }
+                    }))
+                },
+            ),
+        )
+        .with_state(cached_seen.clone());
+    let cached_url = start_mock_backend(cached_app).await;
+
+    let cached = Arc::new(IntegrationClient::new(cached_url, "same-token".to_string()));
+
+    let _ = WebSearchTool::new(Some(cached), Some(Arc::new(config)), 5, 15)
+        .execute(json!({"query": "unchanged"}))
+        .await;
+
+    assert_eq!(
+        cached_seen.0.lock().expect("cached auth mutex").as_deref(),
+        Some("Bearer same-token"),
+        "a matching token must keep the CACHED client — its backend must serve the request"
+    );
+    assert!(
+        seen.0.lock().expect("auth header mutex").is_none(),
+        "the rebuilt client's backend must never be reached when the tokens match"
+    );
+}
+
+/// A tool that outlives a local sign-out must NOT keep posting the bearer token
+/// it was built with.
+///
+/// `build_client` answers `None` only when the store holds no usable
+/// app-session JWT — it logs that case as "user is not signed in". Before the
+/// `root_config.is_some()` guard in `resolve_client`, the `(None, Some(cached))`
+/// arm fell back to the cached client, so a `WebSearchTool` constructed while
+/// signed in would go on making authenticated backend requests with a
+/// credential the user had since revoked locally.
+///
+/// The mock backend here fails the test if it is reached at all: after
+/// sign-out the correct behaviour is to refuse locally, not to send a request
+/// that happens to be rejected remotely.
+#[tokio::test]
+async fn test_signed_out_store_does_not_reuse_the_cached_bearer_token() {
+    use crate::openhuman::config::Config;
+    use std::sync::Mutex;
+
+    #[derive(Clone, Default)]
+    struct Reached(Arc<Mutex<bool>>);
+
+    let reached = Reached::default();
+    let app = Router::new()
+        .route(
+            "/agent-integrations/parallel/search",
+            post(
+                |State(reached): State<Reached>, _headers: HeaderMap, Json(_): Json<Value>| async move {
+                    *reached.0.lock().expect("reached mutex") = true;
+                    Json(json!({
+                        "success": true,
+                        "data": { "searchId": "s-leak", "results": [], "costUsd": 0.0 }
+                    }))
+                },
+            ),
+        )
+        .with_state(reached.clone());
+    let base_url = start_mock_backend(app).await;
+
+    // A real config pointing at an EMPTY profile store: no app-session profile
+    // is seeded, which is exactly the post-sign-out shape.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = Config::default();
+    config.config_path = tmp.path().join("config.toml");
+    config.api_url = Some(base_url.clone());
+    config.secrets.encrypt = false;
+
+    // The tool still holds the client it was built with while signed in.
+    let cached = Arc::new(IntegrationClient::new(
+        base_url,
+        "revoked-token".to_string(),
+    ));
+
+    let result = WebSearchTool::new(Some(cached), Some(Arc::new(config)), 5, 15)
+        .execute(json!({"query": "after sign out"}))
+        .await;
+
+    assert!(
+        !*reached.0.lock().expect("reached mutex"),
+        "no request may be sent after sign-out — the cached bearer token must not be reused"
+    );
+    assert!(
+        result.is_err(),
+        "a signed-out tool must fail locally rather than appear to work: {result:?}"
+    );
+}
+
+// ── Managed-search quota faults (#5750) ─────────────────────────────────────
+//
+// The managed route resolves to a provider server-side, so an upstream 402/429
+// arrives wrapped in the backend's own 4xx. These cover the classifier that
+// turns that into something a user can act on, and the end-to-end wiring.
+
+#[test]
+fn managed_quota_classifier_matches_exa_credit_exhaustion() {
+    // The exact shape reported in #5750.
+    let message = concat!(
+        "Backend returned 400 Bad Request for POST ",
+        "https://api.tinyhumans.ai/agent-integrations/parallel/search: ",
+        r#"Exa API error (402): {"error":"You have exceeded your credits limit. "#,
+        r#"Please top up to keep using Exa at dashboard.exa.ai","tag":"NO_MORE_CREDITS"}"#
+    );
+
+    let classified = managed_search_quota_error(message).expect("402 credits fault must classify");
+    assert!(classified.contains("shared search credit pool is exhausted"));
+    assert!(classified.contains("Connections > Search engine"));
+}
+
+#[test]
+fn managed_quota_classifier_matches_the_tag_alone() {
+    // A provider that reports the tag without the numeric status still classifies.
+    let classified = managed_search_quota_error(r#"upstream said {"tag":"NO_MORE_CREDITS"}"#)
+        .expect("the credits tag alone must classify");
+    assert!(classified.contains("credit pool is exhausted"));
+}
+
+#[test]
+fn managed_quota_classifier_matches_rate_limits() {
+    for message in [
+        "Backend returned 429 Too Many Requests for POST /agent-integrations/parallel/search: slow down",
+        "Exa API error (429): {\"error\":\"temporarily unavailable\"}",
+    ] {
+        let classified =
+            managed_search_quota_error(message).expect("rate-limit fault must classify");
+        assert!(
+            classified.contains("rate limited upstream"),
+            "unexpected classification for {message:?}: {classified}"
+        );
+    }
+}
+
+#[test]
+fn managed_quota_classifier_leaves_unrelated_failures_alone() {
+    // Nothing here is a quota fault; each must fall through so the original
+    // error (and its detail) reaches the caller unchanged.
+    for message in [
+        "Backend returned 500 Internal Server Error for POST /x: upstream exploded",
+        "Backend returned 404 Not Found for POST /x: no such route",
+        // A bare status that happens to appear in a port or id must not match
+        // on its own — the classifier requires the word `credit` alongside it.
+        "POST http://127.0.0.1:40200/agent-integrations/parallel/search failed: timed out",
+        "Web search unavailable: no backend session token.",
+        // Quota-looking text in an echoed query must not replace the real
+        // failure classification.
+        "Backend returned 500 Internal Server Error for POST /x: query=NO_MORE_CREDITS",
+        "Backend returned 500 Internal Server Error for POST /x: query=what is HTTP 429",
+        "Backend returned 400 Bad Request for POST /x: {\"error\":\"query says rate limit\"}",
+    ] {
+        assert!(
+            managed_search_quota_error(message).is_none(),
+            "must not classify as a quota fault: {message:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_execute_surfaces_actionable_error_when_managed_credits_are_exhausted() {
+    // Replays the #5750 failure: the backend wraps Exa's 402 in a 400, so the
+    // tool previously failed with `Backend returned 400 Bad Request …` plus the
+    // raw provider JSON.
+    let app = Router::new().route(
+        "/agent-integrations/parallel/search",
+        post(|| async {
+            (
+                axum::http::StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "success": false,
+                    "error": concat!(
+                        r#"Exa API error (402): {"error":"You have exceeded your credits "#,
+                        r#"limit for query: private search","tag":"NO_MORE_CREDITS"}"#
+                    )
+                })),
+            )
+        }),
+    );
+
+    let base_url = start_mock_backend(app).await;
+    let client = Arc::new(IntegrationClient::new(base_url, "test-token".into()));
+    let error = WebSearchTool::new(Some(client), None, 5, 15)
+        .execute(json!({"query": "private search"}))
+        .await
+        .expect_err("an exhausted managed credit pool must fail with an actionable message");
+    let message = error.to_string();
+
+    assert!(
+        message.contains("shared search credit pool is exhausted"),
+        "expected the actionable message, got: {message}"
+    );
+    assert!(message.contains("Connections > Search engine"));
+    // The replacement carries none of the provider's body, which echoes the query.
+    assert!(
+        !message.contains("private search"),
+        "the submitted query must not reach the transcript: {message}"
+    );
+    assert!(!message.contains("Backend returned 400"));
 }

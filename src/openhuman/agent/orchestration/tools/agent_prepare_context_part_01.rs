@@ -572,16 +572,27 @@ impl AgentPrepareContextTool {
     /// advertises and will execute this turn), not the full registry —
     /// otherwise the scout could recommend hidden direct-exec/spawn tools
     /// the parent can't call, which the runtime would reject or which would
-    /// bypass specialist routing. Falls back to the full registry only when
-    /// the visible set is unknown (empty), to preserve behaviour in contexts
-    /// that don't populate it.
+    /// bypass specialist routing. Read from `visible_tool_specs`, the parent's
+    /// own advertised list, because `all_tool_specs` describes what a *child*
+    /// may inherit and deliberately carries none of the parent's synthesised
+    /// `delegate_*` tools — the very tools the scout most often recommends.
+    /// Falls back to that registry, name-filtered, when a context does not
+    /// carry the visible list, to preserve behaviour for builders that don't
+    /// populate it.
     fn render_parent_tool_catalog() -> String {
         let Some(parent) = current_parent() else {
             return String::new();
         };
         let visible = &parent.visible_tool_names;
+        let specs: &[std::sync::Arc<crate::openhuman::tools::ToolSpec>] =
+            if parent.visible_tool_specs.is_empty()
+        {
+            &parent.all_tool_specs
+        } else {
+            &parent.visible_tool_specs
+        };
         let mut out = String::with_capacity(2048);
-        for spec in parent.all_tool_specs.iter() {
+        for spec in specs.iter() {
             if spec.name == "agent_prepare_context" {
                 continue;
             }

@@ -1,7 +1,7 @@
 import createDebug from 'debug';
 import { type ReactNode, useEffect, useState } from 'react';
 
-import Badge from '../../../components/ui/Badge';
+import Badge, { type BadgeVariant } from '../../../components/ui/Badge';
 import Button from '../../../components/ui/Button';
 import { SheetContent, SheetRoot, SheetTitle } from '../../../components/ui/Sheet';
 import { useT } from '../../../lib/i18n/I18nContext';
@@ -14,14 +14,29 @@ import type {
 import type { ThreadMessage } from '../../../types/thread';
 import { stripToolCallEnvelopes } from '../../../utils/toolTimelineFormatting';
 import { BubbleMarkdown } from './AgentMessageBubble';
-import {
-  formatElapsed,
-  subagentStatusVariant,
-  SubagentToolCallRow,
-  useSubagentStatusLabel,
-} from './SubagentToolCallRow';
+import { AssistantUiToolCallCard } from './AssistantUiToolCall';
 
 const log = createDebug('app:conversations:subagent-drawer');
+
+function formatElapsed(ms: number): string {
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
+}
+
+function subagentStatusVariant(status: ToolTimelineEntryStatus | undefined): BadgeVariant {
+  if (status === 'success') return 'success';
+  if (status === 'error') return 'danger';
+  if (status === 'cancelled') return 'neutral';
+  return 'warning';
+}
+
+function useSubagentStatusLabel(status: ToolTimelineEntryStatus | undefined): string {
+  const { t } = useT();
+  if (status === 'success') return t('conversations.subagent.statusCompleted');
+  if (status === 'error') return t('conversations.subagent.statusFailed');
+  if (status === 'cancelled') return t('conversations.subagent.statusCancelled');
+  if (status === 'awaiting_user') return t('conversations.subagent.statusAwaitingUser');
+  return t('conversations.subagent.statusRunning');
+}
 
 /**
  * Rebuild a renderable transcript from a worker sub-thread's persisted
@@ -367,7 +382,16 @@ export function SubagentDrawer({
 
                 return (
                   <ItemWrapper key={`tl-${item.callId}`} divider={turnDivider}>
-                    <SubagentToolCallRow item={item} />
+                    <AssistantUiToolCallCard
+                      toolName={item.toolName}
+                      args={item.args}
+                      result={item.result}
+                      status={item.status}
+                      displayName={item.displayName}
+                      detail={item.detail}
+                      elapsedMs={item.elapsedMs}
+                      failure={item.failure}
+                    />
                   </ItemWrapper>
                 );
               })}

@@ -198,6 +198,32 @@ export function useAISettings() {
   return { saved, draft, setDraft, isDirty, save, persist, discard, loading, error, reload };
 }
 
+/**
+ * Translate a raw `LocalProviderSnapshot` into the `OllamaState` the panel
+ * UI expects. Extracted as a pure function so it can be unit-tested without
+ * rendering the hook.
+ *
+ * Priority order:
+ *  1. `disabled` — config master switch is off.
+ *  2. `degraded` — server alive but slow (ollama_status === 'degraded').
+ *  3. `running`  — normal healthy state (ollama_running true, not degraded).
+ *  4. `missing`  — daemon installed but not found on disk.
+ *  5. `starting` / `downloading` — daemon is coming up.
+ *  6. `error`    — daemon in error state.
+ *  7. `stopped`  — catch-all / no snapshot.
+ */
+export function deriveOllamaState(snapshot: LocalProviderSnapshot | null): OllamaState {
+  if (!snapshot) return 'stopped';
+  const stateStr = snapshot.status?.state ?? '';
+  if (stateStr === 'disabled') return 'disabled';
+  if (snapshot.diagnostics?.ollama_status === 'degraded') return 'degraded';
+  if (snapshot.diagnostics?.ollama_running) return 'running';
+  if (stateStr === 'missing') return 'missing';
+  if (stateStr === 'starting' || stateStr === 'downloading') return 'starting';
+  if (stateStr === 'error') return 'error';
+  return 'stopped';
+}
+
 export function useOllamaStatus() {
   const [snapshot, setSnapshot] = useState<LocalProviderSnapshot | null>(null);
   const lastPollRef = useRef<number>(0);
@@ -221,22 +247,7 @@ export function useOllamaStatus() {
     return () => window.clearInterval(id);
   }, [refresh]);
 
-  // Translate to the OllamaState the panel UI expects.
-  //
-  // `disabled` is the config-side master switch (user turned local AI off
-  // via the toggle). `missing` is "user wants local AI but the daemon
-  // isn't installed". Keep them distinct so the toggle's `checked` state
-  // and the Install/Retry button can render the right thing.
-  const state: OllamaState = useMemo(() => {
-    if (!snapshot) return 'stopped';
-    const stateStr = snapshot.status?.state ?? '';
-    if (stateStr === 'disabled') return 'disabled';
-    if (snapshot.diagnostics?.ollama_running) return 'running';
-    if (stateStr === 'missing') return 'missing';
-    if (stateStr === 'starting' || stateStr === 'downloading') return 'starting';
-    if (stateStr === 'error') return 'error';
-    return 'stopped';
-  }, [snapshot]);
+  const state: OllamaState = useMemo(() => deriveOllamaState(snapshot), [snapshot]);
 
   const version = snapshot?.diagnostics?.ollama_binary_path
     ? // Diagnostics doesn't surface a version string today; show the binary path tail.

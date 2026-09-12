@@ -308,7 +308,7 @@ async fn history_trims_after_max_messages() {
 
 #[tokio::test]
 async fn auto_save_stores_messages_in_memory() {
-    let (mem, _tmp) = make_sqlite_memory();
+    let (mem, _tmp) = make_retaining_memory();
     let provider = Arc::new(ScriptedProvider::new(vec![text_response(
         "I remember everything",
     )]));
@@ -320,7 +320,20 @@ async fn auto_save_stores_messages_in_memory() {
         true, // auto_save enabled
     );
 
-    let _ = agent.turn("Remember this fact").await.unwrap();
+    // Scoped like a real chat turn. The autosave only stores what a person sent
+    // (`turn_origin::current_is_user_authored`), and production entry points
+    // scope an origin — web chat `WebChat`, channels `ExternalChannel` — so a
+    // test that skipped it would be asserting a shape no caller produces.
+    let _ = crate::openhuman::agent::turn_origin::with_origin(
+        crate::openhuman::agent::turn_origin::AgentTurnOrigin::WebChat {
+            thread_id: "t-autosave".into(),
+            client_id: "c-autosave".into(),
+            request_id: None,
+        },
+        agent.turn("Remember this fact"),
+    )
+    .await
+    .unwrap();
 
     // Both user message and assistant response should be saved. The assistant
     // reply is persisted synchronously, but the user message is saved
@@ -343,7 +356,7 @@ async fn auto_save_stores_messages_in_memory() {
 
 #[tokio::test]
 async fn auto_save_disabled_does_not_store() {
-    let (mem, _tmp) = make_sqlite_memory();
+    let (mem, _tmp) = make_retaining_memory();
     let provider = Arc::new(ScriptedProvider::new(vec![text_response("hello")]));
 
     let (mut agent, _tmp2) = build_agent_with_memory(

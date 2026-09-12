@@ -351,6 +351,15 @@ pub fn create_embedding_provider_with_config(
                 dims,
             )))
         }
+        // Ollama must use the config-aware URL so a custom `local_ai.base_url`
+        // is honoured — the credential-store path calls `ollama_base_url()`
+        // (env-only) and diverges when the setting is set (#6032).
+        "ollama" => {
+            let base_url = crate::openhuman::inference::local::ollama_base_url_from_config(config);
+            Ok(TinyAgentsEmbeddingProvider::boxed(
+                OllamaEmbeddingModel::try_new(&base_url, model, dims)?,
+            ))
+        }
         // Every other provider is credential-store-agnostic (BYO key or local
         // endpoint), so the existing construction is correct unchanged.
         other => {

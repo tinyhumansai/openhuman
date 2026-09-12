@@ -26,7 +26,7 @@
 use std::path::PathBuf;
 
 use openhuman_core::core::runtime::{AGENT_WORKER_STACK_BYTES, MAX_BLOCKING_THREADS};
-use openhuman_core::{Access, Harness, Provider, Session, Workspace};
+use openhuman_core::{Access, Harness, Provider, Workspace};
 
 fn main() -> anyhow::Result<()> {
     // Library embedders own logging. `RUST_LOG=debug` shows the `[embed]` and
@@ -87,17 +87,13 @@ async fn run() -> anyhow::Result<()> {
             .workspace(Workspace::Ephemeral)
             .provider(Provider::openai_compatible(base_url, api_key).model(model))
             // Let the agent's file tools look at the current directory.
-            .action_dir(std::env::current_dir()?)
-            // Routing at a custom endpoint is gated on an active app session,
-            // even though we just supplied the endpoint and its key. A local
-            // session satisfies that gate and asserts nothing at the backend.
-            .session(Session::local("run-turn-example"));
+            .action_dir(std::env::current_dir()?);
 
         // The core still makes non-inference backend calls. Signed out of the
         // real one, those are rejected — and a rejection publishes
-        // `SessionExpired`, which fails the *next* turn's provider gate for
-        // reasons unrelated to the turn. Point them at your own backend if you
-        // have one.
+        // Point them at your own backend if you have one. Authenticated
+        // backend features additionally need a real Session::backend value;
+        // caller-supplied inference itself does not.
         if let Ok(url) = std::env::var("OPENHUMAN_EXAMPLE_BACKEND_URL") {
             builder = builder.backend_url(url);
         }
