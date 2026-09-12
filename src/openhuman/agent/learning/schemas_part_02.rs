@@ -168,7 +168,7 @@ fn handle_update_facet(params: Map<String, Value>) -> ControllerFuture {
 
 fn handle_pin_facet(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        use tinymemory_api::provider::{FacetState, UserState};
+        use tinymemory_api::provider::UserState;
 
         let class_str = params
             .get("class")
@@ -196,7 +196,7 @@ fn handle_pin_facet(params: Map<String, Value>) -> ControllerFuture {
             return Err(format!("facet not found: {fk}"));
         }
 
-        let mut facet = cache
+        let facet = cache
             .get(&fk)
             .await
             .map_err(|e| format!("re-read failed: {e:#}"))?
