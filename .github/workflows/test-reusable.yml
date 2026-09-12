@@ -270,17 +270,17 @@ jobs:
       - name: Init tinycortex and tinymemory submodules
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          git submodule update --init --recursive vendor/tinycortex vendor/tinymemory
+          git submodule update --init --recursive vendor/tinymemory
 
       - name: Cache TinyCortex build artifacts
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@359a70e43cd0c8d88e2846bc1e6ff0ae7d9d04e6
         with:
-          workspaces: vendor/tinycortex -> vendor/tinycortex/target
+          workspaces: vendor/tinymemory/vendor/tinycortex -> vendor/tinymemory/vendor/tinycortex/target
           cache-on-failure: true
           key: tinycortex-full
 
       - name: Run TinyCortex engine and Composio sync tests
-        run: bash scripts/ci-cancel-aware.sh cargo test --manifest-path vendor/tinycortex/Cargo.toml --features git-diff,sync
+        run: bash scripts/ci-cancel-aware.sh cargo test --manifest-path vendor/tinymemory/vendor/tinycortex/Cargo.toml --features git-diff,sync
 
   rust-core-tests-windows:
     if: inputs.run_rust_core

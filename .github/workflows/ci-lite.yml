@@ -208,7 +208,7 @@ jobs:
               - '.github/workflows/test-reusable.yml'
               - '.gitmodules'
               - 'scripts/ci-cancel-aware.sh'
-              - 'vendor/tinycortex'
+              - 'vendor/tinymemory/vendor/tinycortex'
             rust-tauri:
               - '.github/workflows/ci-lite.yml'
               - 'Cargo.lock'
@@ -796,8 +796,8 @@ jobs:
           # and leave a stale digest that only fails after the download. Both values
           # are the ubuntu-22.04-x86_64 row of `src/openhuman/modules/registry.rs`,
           # which is the authoritative pin — copy them from there, never recompute.
-          memory_version="1.13.7"
-          memory_sha256="e87fa05256c4a5571defa6f566ae9c8fc87d3233af112acfa631f84e3041af65"
+          memory_version="1.16.0"
+          memory_sha256="f3ba06867ec89b8374a405f8a8569f5cecf88490609354ae4a6c1faa6e55b425"
           module_root="/opt/openhuman-test-modules/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           memory_dir="$module_root/tinymemory"
           juice_dir="$module_root/tinyjuice"
@@ -1181,17 +1181,17 @@ jobs:
       - name: Init tinycortex and tinymemory submodules
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          git submodule update --init --recursive vendor/tinycortex vendor/tinymemory
+          git submodule update --init --recursive vendor/tinymemory
 
       - name: Cache TinyCortex build artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: vendor/tinycortex -> vendor/tinycortex/target
+          workspaces: vendor/tinymemory/vendor/tinycortex -> vendor/tinymemory/vendor/tinycortex/target
           cache-on-failure: true
           key: tinycortex
 
       - name: Run TinyCortex engine and Composio sync tests
-        run: bash scripts/ci-cancel-aware.sh cargo test --manifest-path vendor/tinycortex/Cargo.toml --features git-diff,sync,persona
+        run: bash scripts/ci-cancel-aware.sh cargo test --manifest-path vendor/tinymemory/vendor/tinycortex/Cargo.toml --features git-diff,sync,persona
 
   pr-ci-gate:
     name: PR CI Gate
