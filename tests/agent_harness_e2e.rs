@@ -793,7 +793,7 @@ async fn scripted_stack_smoke_inner() {
 
     let mut events =
         spawn_sse_collector(format!("{}/events?client_id=harness-smoke", stack.rpc_base));
-    let second_request_id = send_web_chat(
+    send_web_chat(
         &stack.rpc_base,
         100,
         "harness-smoke",
@@ -871,7 +871,7 @@ async fn multi_turn_state_persistence_inner() {
         stack.rpc_base
     ));
 
-    send_web_chat(
+    let second_request_id = send_web_chat(
         &stack.rpc_base,
         200,
         "harness-multiturn",
