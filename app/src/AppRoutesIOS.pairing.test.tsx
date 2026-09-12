@@ -65,8 +65,12 @@ vi.mock('./services/coreRpcClient', () => ({
 
 const mockGetTransport = vi.fn();
 const mockClose = vi.fn(() => Promise.resolve());
+const mockCreateTransportManager = vi.fn(() => ({
+  getTransport: mockGetTransport,
+  close: mockClose,
+}));
 vi.mock('./services/transport/TransportManager', () => ({
-  createTransportManager: vi.fn(() => ({ getTransport: mockGetTransport, close: mockClose })),
+  createTransportManager: mockCreateTransportManager,
 }));
 
 const AppRoutesIOS = (await import('./AppRoutesIOS')).default;
@@ -85,7 +89,7 @@ const TUNNEL_PROFILE = {
   label: 'Desk',
   kind: 'tunnel',
   channelId: 'channel-1',
-  pairingToken: 'pairing-token',
+  sessionToken: 'reconnect-token',
   corePubkey: 'core-key',
   devicePrivkey: 'device-key',
 } as const;
@@ -134,6 +138,7 @@ describe('AppRoutesIOS — persisted transport bootstrap', () => {
     activeTransport = null;
     mockGetTransport.mockReset();
     mockClose.mockClear();
+    mockCreateTransportManager.mockReset();
     mockSetActiveCoreTransport.mockReset();
   });
 
@@ -146,6 +151,10 @@ describe('AppRoutesIOS — persisted transport bootstrap', () => {
     renderAt('/human');
 
     await waitFor(() => expect(screen.getByTestId('page-human')).toBeInTheDocument());
+    expect(mockCreateTransportManager).toHaveBeenCalledWith(
+      newestProfile,
+      expect.objectContaining({ backendSocketUrl: expect.any(String) })
+    );
     expect(mockGetTransport).toHaveBeenCalledOnce();
     expect(mockSetActiveCoreTransport).toHaveBeenCalledOnce();
     expect(mockSetActiveCoreTransport).toHaveBeenCalledWith(transport);
