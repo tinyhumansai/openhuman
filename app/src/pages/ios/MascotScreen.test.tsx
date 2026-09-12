@@ -34,7 +34,8 @@ const mockSubscribeChatEvents = vi.fn((listeners: typeof chatListeners) => {
 });
 vi.mock('../../services/chatService', () => ({
   chatSend: (args: unknown) => mockChatSend(args),
-  subscribeChatEvents: (listeners: unknown) => mockSubscribeChatEvents(listeners),
+  subscribeChatEvents: (listeners: unknown) =>
+    mockSubscribeChatEvents(listeners as typeof chatListeners),
 }));
 
 const mockListProfiles = vi.fn();
