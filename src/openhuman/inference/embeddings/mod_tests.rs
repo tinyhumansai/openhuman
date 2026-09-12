@@ -65,8 +65,11 @@ fn factory_custom_url() {
 
 #[test]
 fn factory_custom_empty_url() {
-    let p = create_embedding_provider("custom:", "model", 768).unwrap();
-    assert_eq!(p.name(), "openai");
+    let error = match create_embedding_provider("custom:", "model", 768) {
+        Ok(_) => panic!("an empty custom endpoint must be rejected before construction"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("must not be empty"));
 }
 
 #[test]

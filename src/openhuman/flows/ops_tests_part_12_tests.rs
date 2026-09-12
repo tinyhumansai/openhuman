@@ -631,3 +631,60 @@ async fn boot_sweep_skips_a_run_started_after_the_process_floor() {
         "only the prior-process orphan may be reconciled, got {swept}"
     );
 }
+
+#[tokio::test]
+async fn boot_sweep_handles_schema_init_failure_gracefully() {
+    let tmp = TempDir::new().unwrap();
+    let file_path = tmp.path().join("not_a_dir");
+    std::fs::write(&file_path, b"blocking file").unwrap();
+
+    let config = Config {
+        workspace_dir: file_path.clone(),
+        action_dir: file_path.clone(),
+        config_path: tmp.path().join("config.toml"),
+        ..Config::default()
+    };
+
+    #[derive(Clone, Default)]
+    struct Capture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Capture {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Capture {
+        type Writer = Self;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    let capture = Capture::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(capture.clone())
+        .with_ansi(false)
+        .finish();
+    let _subscriber_guard = tracing::subscriber::set_default(subscriber);
+
+    // Execute the failing sweep path to exercise the real warning branch.
+    let swept = sweep_orphaned_running_runs_on_boot(&config).await;
+    assert_eq!(swept, 0);
+
+    let warning = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
+    assert!(
+        warning.contains("Failed to create flows directory"),
+        "the sweep warning must preserve the operation context, got {warning:?}"
+    );
+    assert!(
+        warning.contains(&file_path.join("flows").display().to_string()),
+        "the sweep warning must preserve the filesystem root cause, got {warning:?}"
+    );
+}

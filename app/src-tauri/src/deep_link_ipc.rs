@@ -16,7 +16,7 @@
 use std::{
     io::{BufRead, BufReader, Write},
     os::unix::net::{UnixListener, UnixStream},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock},
     time::Duration,
 };
@@ -61,8 +61,30 @@ pub(crate) enum ForwardResult {
     Forwarded,
     /// Deep-link URL found in argv but no primary socket is listening.
     NoPrimary,
+    /// The primary accepted the connection, but forwarding was not confirmed.
+    /// The caller must not exit because the deep-link may have been lost.
+    ForwardFailed,
     /// No deep-link URLs in argv; this is a normal launch.
     NoUrls,
+}
+
+/// Write all deep-link URLs to an IPC stream and ensure buffered data is sent.
+/// A successful socket connection alone does not guarantee that the primary
+/// received the payload, so every write and the final flush must succeed.
+fn write_urls<W: Write>(writer: &mut W, urls: &[String]) -> std::io::Result<()> {
+    let payload = urls.join("\n") + "\n";
+    writer.write_all(payload.as_bytes())?;
+    writer.flush()
+}
+
+fn forward_connected_stream<W: Write>(writer: &mut W, urls: &[String]) -> ForwardResult {
+    match write_urls(writer, urls) {
+        Ok(()) => ForwardResult::Forwarded,
+        Err(e) => {
+            log::warn!("[deep-link-ipc] secondary: failed to write URL(s): {e}");
+            ForwardResult::ForwardFailed
+        }
+    }
 }
 
 /// Try to forward any `openhuman://` URLs in argv to the primary instance.
@@ -73,26 +95,27 @@ pub(crate) fn try_forward_deep_links() -> ForwardResult {
         return ForwardResult::NoUrls;
     }
 
-    let path = socket_path();
+    try_forward_urls(&urls, &socket_path())
+}
+
+fn try_forward_urls(urls: &[String], path: &Path) -> ForwardResult {
     log::info!(
         "[deep-link-ipc] secondary: found {} deep-link URL(s), trying socket at {}",
         urls.len(),
         path.display()
     );
 
-    match UnixStream::connect(&path) {
+    match UnixStream::connect(path) {
         Ok(mut stream) => {
             stream.set_write_timeout(Some(Duration::from_secs(2))).ok();
-            for url in &urls {
-                if let Err(e) = writeln!(stream, "{url}") {
-                    log::warn!("[deep-link-ipc] secondary: failed to write URL: {e}");
-                }
+            let result = forward_connected_stream(&mut stream, urls);
+            if matches!(result, ForwardResult::Forwarded) {
+                log::info!(
+                    "[deep-link-ipc] secondary: {} URL(s) forwarded to primary",
+                    urls.len()
+                );
             }
-            log::info!(
-                "[deep-link-ipc] secondary: {} URL(s) forwarded to primary",
-                urls.len()
-            );
-            ForwardResult::Forwarded
+            result
         }
         Err(e) => {
             log::info!(
@@ -315,7 +338,30 @@ pub(crate) fn drain_pending_urls<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
+    use std::io::{self, Write};
+
+    struct FailingWriter {
+        remaining: usize,
+    }
+
+    impl Write for FailingWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            if self.remaining == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "test broken pipe",
+                ));
+            }
+
+            let written = buf.len().min(self.remaining);
+            self.remaining -= written;
+            Ok(written)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn socket_path_uses_xdg_runtime_dir() {
@@ -362,9 +408,55 @@ mod tests {
     }
 
     #[test]
+    fn write_urls_reports_broken_pipe_after_partial_write() {
+        let urls = vec!["openhuman://auth?token=test".to_string()];
+        let mut writer = FailingWriter { remaining: 5 };
+
+        let result = write_urls(&mut writer, &urls);
+
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::BrokenPipe);
+    }
+
+    #[test]
+    fn write_urls_writes_all_urls_with_newlines() {
+        let urls = vec![
+            "openhuman://auth?token=first".to_string(),
+            "openhuman://auth?token=second".to_string(),
+        ];
+        let mut writer = Vec::new();
+
+        write_urls(&mut writer, &urls).unwrap();
+
+        assert_eq!(
+            writer,
+            b"openhuman://auth?token=first\nopenhuman://auth?token=second\n"
+        );
+    }
+
+    #[test]
+    fn failed_forward_is_not_reported_as_forwarded() {
+        let urls = vec!["openhuman://auth?token=test".to_string()];
+        let mut writer = FailingWriter { remaining: 5 };
+
+        let result = forward_connected_stream(&mut writer, &urls);
+
+        assert!(matches!(result, ForwardResult::ForwardFailed));
+    }
+
+    #[test]
+    fn no_primary_returns_no_primary() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let sock_path = tmp.path().join("missing-deeplink.sock");
+        let urls = vec!["openhuman://auth?token=test".to_string()];
+
+        let result = try_forward_urls(&urls, &sock_path);
+
+        assert!(matches!(result, ForwardResult::NoPrimary));
+    }
+
+    #[test]
     fn round_trip_bind_connect_forward() {
         use std::io::BufRead;
-        use std::os::unix::net::UnixStream;
 
         // Use a temp path for this test to avoid collisions.
         let tmp = tempfile::TempDir::new().unwrap();
@@ -386,21 +478,13 @@ mod tests {
             }
         });
 
-        // Give listener thread time to start.
-        std::thread::sleep(Duration::from_millis(50));
-
-        let mut stream = UnixStream::connect(&sock_path).unwrap();
-        writeln!(stream, "openhuman://auth?token=testtoken123").unwrap();
-        drop(stream);
+        let urls = vec!["openhuman://auth?token=testtoken123".to_string()];
+        let result = try_forward_urls(&urls, &sock_path);
+        assert!(matches!(result, ForwardResult::Forwarded));
 
         std::thread::sleep(Duration::from_millis(100));
         let got = received.lock().unwrap();
         assert_eq!(got.len(), 1);
         assert_eq!(got[0], "openhuman://auth?token=testtoken123");
     }
-
-    // NOTE: `no_primary_returns_appropriate_result` removed (plan.md §2.1) —
-    // its own comment admitted it couldn't reach the production NoPrimary
-    // branch and instead asserted that stdlib `UnixStream::connect` errors on
-    // a bogus path, which verifies nothing about our code.
 }

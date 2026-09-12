@@ -210,6 +210,79 @@ fn config_aware_factory_delegates_non_managed() {
     );
 }
 
+#[test]
+fn default_embedder_falls_back_to_cloud_when_configured_provider_fails() {
+    let tmp = TempDir::new().unwrap();
+    let mut config = test_config(&tmp);
+    config.memory.embedding_provider = "not-a-provider".into();
+
+    let provider = default_embedding_provider_with_config(&config);
+    assert_eq!(
+        provider.name(),
+        "cloud",
+        "a provider construction failure must fall back to the managed cloud embedder"
+    );
+}
+
+#[test]
+fn custom_endpoint_validation_rejects_blank_and_credentialed_remote_http() {
+    assert!(validate_custom_endpoint("   ", false).is_err());
+    assert!(validate_custom_endpoint("not-a-url", false).is_err());
+    assert!(validate_custom_endpoint("ftp://embedding.example", false).is_err());
+    assert!(validate_custom_endpoint("http://embedding.example", false).is_ok());
+    assert!(validate_custom_endpoint("http://embedding.example", true).is_err());
+    assert!(validate_custom_endpoint("http://localhost:1234/", true).is_ok());
+    assert_eq!(
+        validate_custom_endpoint(" https://embedding.example/v1/ ", true).unwrap(),
+        "https://embedding.example/v1"
+    );
+}
+
+#[tokio::test]
+async fn default_embedder_honors_configured_local_provider() {
+    use std::sync::{Arc, Mutex};
+
+    use axum::{extract::State, routing::post, Json, Router};
+
+    #[derive(Clone, Default)]
+    struct Hit {
+        count: Arc<Mutex<usize>>,
+    }
+    let hit = Hit::default();
+    let app = Router::new()
+        .route(
+            "/api/embed",
+            post(
+                |State(h): State<Hit>, Json(_body): Json<serde_json::Value>| async move {
+                    *h.count.lock().unwrap() += 1;
+                    Json(serde_json::json!({ "embeddings": [[0.1_f32, 0.2, 0.3]] }))
+                },
+            ),
+        )
+        .with_state(hit.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let tmp = TempDir::new().unwrap();
+    let mut config = test_config(&tmp);
+    config.memory.embedding_provider = "ollama".into();
+    config.memory.embedding_model = "bge-m3".into();
+    config.memory.embedding_dimensions = 3;
+    config.local_ai.base_url = Some(base);
+
+    let provider = default_embedding_provider_with_config(&config);
+    assert_eq!(provider.name(), "ollama");
+    assert_eq!(provider.model_id(), "bge-m3");
+    assert_eq!(provider.dimensions(), 3);
+    let vectors = provider
+        .embed(&["default factory endpoint probe"])
+        .await
+        .expect("default factory must reach the configured Ollama endpoint");
+    assert_eq!(vectors.first().map(|v| v.len()), Some(3));
+    assert_eq!(*hit.count.lock().unwrap(), 1);
+}
+
 /// End-to-end binding proof (#5356): a provider built **through
 /// `create_embedding_provider_with_config`** must authenticate with the
 /// `app-session` token stored under the *config* credential scope. A local

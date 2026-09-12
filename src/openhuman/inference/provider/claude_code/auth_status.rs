@@ -163,6 +163,7 @@ fn probe_via_cli() -> AuthSource {
     let bin_str = bin.display().to_string();
     let mut child = match Command::new(&bin)
         .args(["auth", "status", "--json"])
+        .env("PATH", super::driver::child_path_with_user_bins(&bin))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

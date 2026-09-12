@@ -4734,6 +4734,7 @@ const messages: TranslationMap = {
   'settings.composio.routingMode': 'Mode routing',
   'settings.composio.saveErrorNoKey':
     'Gagal menyimpan. Mode Direct memerlukan API key yang tidak kosong.',
+  'settings.composio.invalidApiKey': 'Composio API key tidak valid.',
   'settings.composio.saving': 'Menyimpan...',
   'settings.composio.switching': 'Mengalihkan…',
   'settings.cron.jobs.commandRequired': 'Perintah wajib diisi untuk tugas shell',

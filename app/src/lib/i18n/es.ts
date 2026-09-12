@@ -4795,6 +4795,7 @@ const messages: TranslationMap = {
   'settings.composio.routingMode': 'Modo de enrutamiento',
   'settings.composio.saveErrorNoKey':
     'Error al guardar. El modo Directo requiere una clave API no vacía.',
+  'settings.composio.invalidApiKey': 'La clave API de Composio no es válida.',
   'settings.composio.saving': 'Guardando…',
   'settings.composio.switching': 'Cambiando…',
   'settings.cron.jobs.commandRequired': 'El comando es obligatorio para los trabajos de shell',

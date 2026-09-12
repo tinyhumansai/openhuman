@@ -8,9 +8,12 @@ cd "$APP_DIR"
 
 # Load .env first so project env vars are available, but before we compute
 # Windows-specific paths so tailored values (CEF_PATH, PATH, etc.) are set
-# after .env is applied and cannot be clobbered by it.
-# shellcheck source=../scripts/load-dotenv.sh
-source "$REPO_ROOT/scripts/load-dotenv.sh"
+# after .env is applied and cannot be clobbered by it. A missing .env is
+# fine on a fresh clone, matching the macOS dev script.
+if [[ -f "$REPO_ROOT/.env" ]]; then
+  # shellcheck source=../scripts/load-dotenv.sh
+  source "$REPO_ROOT/scripts/load-dotenv.sh" "$REPO_ROOT/.env"
+fi
 
 # When pnpm/PowerShell/cmd launch `bash.exe` directly, the spawned shell
 # inherits the parent PATH and the MSYS utility directory (`Git\usr\bin`)
@@ -273,7 +276,7 @@ echo "[run-dev-win] linker pinned: $msvc_link_win"
 export CMAKE_GENERATOR=Ninja
 
 # CEF runtime lives under LOCALAPPDATA on Windows.
-# ensure-tauri-cli.sh stages it here; fall back to a default if unset.
+# The Tauri/CEF setup stages it here; fall back to a default if unset.
 CEF_PATH="${CEF_PATH:-$(cygpath -u "$LOCALAPPDATA")/tauri-cef}"
 export CEF_PATH
 
@@ -441,8 +444,7 @@ echo "[run-dev-win] nodejs dir prepended to PATH: $NODEJS_DIR"
 # Same trick for cargo. Git Bash's /etc/profile.d scripts wipe the parent
 # Windows PATH and re-install a MSYS-default one; rustup's
 # `~/.cargo/bin` (or `$CARGO_HOME/bin`) doesn't survive that. We need
-# cargo for the vendored tauri-cli install (`ensure-tauri-cli.sh`),
-# `core:stage`, and `cargo tauri dev` itself.
+# cargo for `core:stage` and the Rust/Tauri build itself.
 find_cargo_dir() {
   if command -v cargo >/dev/null 2>&1 || command -v cargo.exe >/dev/null 2>&1; then
     dirname "$(command -v cargo 2>/dev/null || command -v cargo.exe)"
@@ -550,7 +552,8 @@ fi
 
 export PATH="$PATH_PREFIX:$PATH"
 
-"$PNPM_EXE" tauri:ensure
+# `tauri:ensure` is not present in this checkout; the local @tauri-apps/cli
+# is used directly below. `core:stage` remains a no-op in this version.
 "$PNPM_EXE" core:stage
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -627,24 +630,17 @@ fi
 # `pnpm.exe` does not, so the script body `tauri "dev"` then fails with
 # "'tauri' is not recognized" inside cmd.
 #
-# `ensure-tauri-cli.sh` already installed the vendored CEF-aware
-# cargo-tauri at `$REPO_ROOT/.cache/cargo-install/bin/cargo-tauri.exe`,
-# so we can invoke that binary directly and skip the wrapper layer.
+# The local @tauri-apps/cli (`pnpm tauri`) is used below; the old
+# `ensure-tauri-cli.sh` / vendored `cargo-tauri.exe` path is not present
+# in this checkout.
 #
 # Historical note: a previous version of this script ran a PATH
 # deduplication loop (collapsing repeated entries that MSYS→Windows
 # conversion stacked during vcvars / Git-Bash re-runs / pnpm layering).
 # That loop was needed because the overflowing env block left child
 # processes with an EMPTY PATH — even `where.exe` was gone, causing
-# "'pnpm' is not recognized". Direct cargo-tauri.exe invocation with
-# absolute paths in the .bat wrapper makes the env block size irrelevant:
-# beforeDevCommand no longer needs PATH at all.
-CARGO_TAURI_EXE="$REPO_ROOT/.cache/cargo-install/bin/cargo-tauri.exe"
-if [[ ! -x "$CARGO_TAURI_EXE" ]]; then
-  echo "[run-dev-win] cargo-tauri.exe not found at $CARGO_TAURI_EXE" >&2
-  echo "[run-dev-win] tauri:ensure should have installed it. Aborting." >&2
-  exit 1
-fi
+# "'pnpm' is not recognized". The wrapper below keeps beforeDevCommand
+# independent of PATH, so the env block size no longer matters.
 
 # Build a tauri.conf.json `-c` JSON merge that:
 #  - pins `beforeDevCommand` to the absolute pnpm path so cargo-tauri's
@@ -711,4 +707,4 @@ fi
 CONFIG_OVERRIDE+="}}"
 
 echo "[run-dev-win] tauri config override: $CONFIG_OVERRIDE"
-"$CARGO_TAURI_EXE" dev -c "$CONFIG_OVERRIDE"
+"$NODE_EXE_UNIX" "$APP_DIR/node_modules/@tauri-apps/cli/tauri.js" dev -c "$CONFIG_OVERRIDE"

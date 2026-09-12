@@ -4787,6 +4787,7 @@ const messages: TranslationMap = {
   'settings.composio.routingMode': 'Tryb trasowania',
   'settings.composio.saveErrorNoKey':
     'Nie udało się zapisać. Tryb bezpośredni wymaga niepustego klucza API.',
+  'settings.composio.invalidApiKey': 'Klucz API Composio jest nieprawidłowy.',
   'settings.composio.saving': 'Zapisywanie…',
   'settings.composio.switching': 'Przełączanie…',
   'settings.cron.jobs.commandRequired': 'Polecenie jest wymagane dla zadań typu shell',

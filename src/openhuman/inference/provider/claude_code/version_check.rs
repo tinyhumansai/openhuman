@@ -10,10 +10,19 @@ use std::process::Command;
 
 use super::types::{CliStatus, MIN_CLI_VERSION};
 
-/// Locate the `claude` CLI binary on `PATH`.
+/// Locate the `claude` CLI binary.
 ///
-/// Honors `OPENHUMAN_CLAUDE_CLI` env override so tests and power users can
-/// point at a specific binary.
+/// Resolution order:
+/// 1. `OPENHUMAN_CLAUDE_CLI` env override (tests / power users / a fixed path).
+/// 2. `PATH` search.
+/// 3. Well-known absolute install locations ([`well_known_candidates`]).
+///
+/// Step 3 exists because a macOS app launched from Finder/Dock inherits only
+/// the stripped launchd `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`), which never
+/// contains the native installer's `~/.local/bin` — so a PATH-only lookup
+/// reports the CLI "not installed" even though it is present. (Terminal
+/// launches inherit the shell `PATH` and hit step 2, so this only bites GUI
+/// launches.)
 pub fn resolve_binary() -> Option<PathBuf> {
     if let Ok(explicit) = std::env::var("OPENHUMAN_CLAUDE_CLI") {
         let p = PathBuf::from(explicit);
@@ -21,7 +30,61 @@ pub fn resolve_binary() -> Option<PathBuf> {
             return Some(p);
         }
     }
-    which_on_path("claude")
+    if let Some(p) = which_on_path("claude") {
+        return Some(p);
+    }
+    // PATH miss — fall back to well-known install locations. This is the
+    // Finder/Dock-launch case where `~/.local/bin` is absent from `PATH`.
+    let found = first_existing(&well_known_candidates());
+    if let Some(p) = found.as_ref() {
+        log::debug!(
+            "[claude-code][version] `claude` not on PATH; resolved via well-known location {}",
+            p.display()
+        );
+    }
+    found
+}
+
+/// Absolute paths the `claude` CLI is commonly installed at, tried in order
+/// when it is not found on `PATH`. Ordered by how the native installer and the
+/// common package managers lay it down; the native installer's `~/.local/bin`
+/// is first because that is the default and the one a stripped launchd `PATH`
+/// omits.
+fn well_known_candidates() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Some(home) = dirs::home_dir() {
+        out.push(home.join(".local/bin/claude")); // native installer default
+        out.push(home.join(".claude/local/claude")); // legacy local install
+        out.push(home.join(".bun/bin/claude")); // bun global
+        out.push(home.join(".npm-global/bin/claude")); // npm global (custom prefix)
+        out.push(home.join("bin/claude"));
+    }
+    out.push(PathBuf::from("/opt/homebrew/bin/claude")); // Homebrew (Apple Silicon)
+    out.push(PathBuf::from("/usr/local/bin/claude")); // Homebrew (Intel) / npm default
+    out
+}
+
+/// First candidate that resolves to a file (follows symlinks — the native
+/// installer's `~/.local/bin/claude` is a symlink into a versioned dir).
+fn first_existing(candidates: &[PathBuf]) -> Option<PathBuf> {
+    candidates
+        .iter()
+        .find(|p| p.is_file() && is_executable(p))
+        .cloned()
+}
+
+#[cfg(unix)]
+fn is_executable(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    path.metadata()
+        .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable(path: &std::path::Path) -> bool {
+    path.is_file()
 }
 
 fn which_on_path(name: &str) -> Option<PathBuf> {
@@ -62,7 +125,11 @@ pub fn probe() -> CliStatus {
     };
     let path_str = path.display().to_string();
 
-    let output = match Command::new(&path).arg("--version").output() {
+    let output = match Command::new(&path)
+        .arg("--version")
+        .env("PATH", super::driver::child_path_with_user_bins(&path))
+        .output()
+    {
         Ok(o) => o,
         Err(e) => {
             log::warn!("[claude-code][version] spawn failed path={path_str} err={e}");

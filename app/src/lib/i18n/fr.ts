@@ -4823,6 +4823,7 @@ const messages: TranslationMap = {
   'settings.composio.routingMode': 'Mode de routage',
   'settings.composio.saveErrorNoKey':
     "Échec de l'enregistrement. Le mode Direct nécessite une clé API non vide.",
+  'settings.composio.invalidApiKey': "La clé API Composio n'est pas valide.",
   'settings.composio.saving': 'Enregistrement…',
   'settings.composio.switching': 'Bascule en cours…',
   'settings.cron.jobs.commandRequired': 'La commande est requise pour les tâches shell',

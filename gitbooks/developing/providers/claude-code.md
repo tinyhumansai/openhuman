@@ -6,7 +6,9 @@ OpenHuman can route any chat workload through **Anthropic's `claude` CLI** inste
 
 ## Requirements
 
-- Claude Code CLI **≥ 2.0.0** on `PATH` (or `OPENHUMAN_CLAUDE_CLI=/abs/path/to/claude`).
+- Claude Code CLI **≥ 2.0.0**, either on `PATH`, at one of the supported
+  well-known install locations, or selected with
+  `OPENHUMAN_CLAUDE_CLI=/abs/path/to/claude`.
 - An Anthropic API key in `ANTHROPIC_API_KEY`, **or** a pre-existing `~/.claude/.credentials.json` from `claude login`.
 - The `openhuman-core` binary on disk: OpenHuman spawns `openhuman-core mcp` as a stdio MCP server so the CLI can call OpenHuman tools. The path is discovered via `std::env::current_exe()`.
 
@@ -39,9 +41,17 @@ openhuman-core rpc openhuman.inference_claude_code_status
 Returns one of (`CliStatus` in [`src/openhuman/inference/provider/claude_code/types.rs`](../../../src/openhuman/inference/provider/claude_code/types.rs)):
 
 - `{"status":"ok","version":"2.0.4","path":"/usr/local/bin/claude"}`: ready
-- `{"status":"not_installed"}`: `claude` not on `PATH`
+- `{"status":"not_installed"}`: no usable `claude` was found through the
+  configured override, `PATH`, or the supported fallback locations
 - `{"status":"outdated","version":"1.9.0","min_required":"2.0.0","path":"…"}`: bump CLI
 - `{"status":"unusable","path":"…","reason":"…"}`: binary present but the version probe failed
+
+Binary lookup uses this precedence: `OPENHUMAN_CLAUDE_CLI` first, then the
+`PATH` search, then the ordered fallback locations. The fallback list covers
+the native installer and common user-local, Bun, npm-global, and Homebrew
+installations. When the CLI is found through a fallback, its directory and
+user bin directories are prepended to the child process `PATH`, while the
+inherited entries remain available.
 
 The same status is rendered in the settings panel via `ClaudeCodeStatusCard` ([`app/src/components/settings/panels/ai/ClaudeCodeStatusCard.tsx`](../../../app/src/components/settings/panels/ai/ClaudeCodeStatusCard.tsx)).
 

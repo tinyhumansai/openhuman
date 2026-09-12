@@ -33,14 +33,17 @@ fn custom_openai_provider(
     api_key: &str,
     model: &str,
     dims: usize,
-) -> Box<dyn EmbeddingProvider> {
+) -> anyhow::Result<Box<dyn EmbeddingProvider>> {
+    let base_url = validate_custom_endpoint(base_url, !api_key.is_empty())?;
     if dims == 0 {
-        Box::new(DimensionAgnosticOpenAiProbe::new(
-            openai_model(base_url, api_key, model, 0, false),
+        Ok(Box::new(DimensionAgnosticOpenAiProbe::new(
+            openai_model(&base_url, api_key, model, 0, false),
             api_key,
-        ))
+        )))
     } else {
-        TinyAgentsEmbeddingProvider::boxed(openai_model(base_url, api_key, model, dims, false))
+        Ok(TinyAgentsEmbeddingProvider::boxed(openai_model(
+            &base_url, api_key, model, dims, false,
+        )))
     }
 }
 
@@ -170,6 +173,38 @@ fn openai_model(
         .with_required_api_key(required_key)
 }
 
+/// Validate a custom endpoint before a provider can send credentials to it.
+fn validate_custom_endpoint(endpoint: &str, has_credentials: bool) -> anyhow::Result<String> {
+    let endpoint = endpoint.trim().trim_end_matches('/');
+    if endpoint.is_empty() {
+        anyhow::bail!("custom embedding provider endpoint must not be empty");
+    }
+
+    let parsed = reqwest::Url::parse(endpoint)
+        .map_err(|_| anyhow::anyhow!("custom embedding provider endpoint is invalid"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        anyhow::bail!("custom embedding provider endpoint must use HTTP or HTTPS");
+    }
+
+    if has_credentials {
+        let loopback = parsed
+            .host()
+            .map(|host| match host {
+                url::Host::Domain(domain) => domain.eq_ignore_ascii_case("localhost"),
+                url::Host::Ipv4(address) => address.is_loopback(),
+                url::Host::Ipv6(address) => address.is_loopback(),
+            })
+            .unwrap_or(false);
+        if parsed.scheme() != "https" && !(parsed.scheme() == "http" && loopback) {
+            anyhow::bail!(
+                "credentialed custom embedding provider endpoints must use HTTPS or loopback HTTP"
+            );
+        }
+    }
+
+    Ok(endpoint.to_owned())
+}
+
 /// Whether to send the OpenAI `dimensions` request-body parameter for this
 /// model. Only the `text-embedding-3-*` family honors it (it's how 3-large is
 /// pinned to 1024 = `EMBEDDING_DIM`). Sending it to other models or to
@@ -242,7 +277,7 @@ pub fn create_embedding_provider(
         )),
         name if name.starts_with("custom:") => {
             let base_url = name.strip_prefix("custom:").unwrap_or("");
-            Ok(custom_openai_provider(base_url, "", model, dims))
+            custom_openai_provider(base_url, "", model, dims)
         }
         "none" => Ok(TinyAgentsEmbeddingProvider::boxed(NoopEmbeddingModel)),
         unknown => Err(anyhow::anyhow!(
@@ -296,11 +331,11 @@ pub fn create_embedding_provider_with_credentials(
         )),
         "custom" => {
             let url = custom_endpoint.unwrap_or("");
-            Ok(custom_openai_provider(url, api_key, model, dims))
+            custom_openai_provider(url, api_key, model, dims)
         }
         name if name.starts_with("custom:") => {
             let url = custom_endpoint.unwrap_or_else(|| name.strip_prefix("custom:").unwrap_or(""));
-            Ok(custom_openai_provider(url, api_key, model, dims))
+            custom_openai_provider(url, api_key, model, dims)
         }
         "none" => Ok(TinyAgentsEmbeddingProvider::boxed(NoopEmbeddingModel)),
         unknown => Err(anyhow::anyhow!(
@@ -399,6 +434,64 @@ fn managed_credential_scope(config: &Config) -> (Option<PathBuf>, bool) {
 /// connection" passed (config-scoped) while the embed batch silently failed
 /// (keyless scope) — #5501.
 pub fn default_embedding_provider_with_config(config: &Config) -> Arc<dyn EmbeddingProvider> {
+    // Keep the stored value for credential lookup. Credentials are keyed by
+    // the provider value that settings persisted; trimming before lookup can
+    // select a different credential. Normalize only the construction input.
+    let stored_provider = config.memory.embedding_provider.as_str();
+    let provider = stored_provider.trim();
+    if !provider.is_empty()
+        && !provider.eq_ignore_ascii_case("cloud")
+        && !provider.eq_ignore_ascii_case("managed")
+    {
+        let (provider_slug, raw_custom_endpoint) = match provider.strip_prefix("custom:") {
+            Some(endpoint) => ("custom", Some(endpoint)),
+            None if provider == "custom" => ("custom", None),
+            None => (provider, None),
+        };
+        let api_key = super::rpc::resolve_api_key(config, provider_slug);
+        let custom_endpoint = match raw_custom_endpoint {
+            Some(endpoint) => validate_custom_endpoint(endpoint, !api_key.is_empty()).map(Some),
+            None if provider_slug == "custom" => Err(anyhow::anyhow!(
+                "custom embedding provider endpoint is missing"
+            )),
+            None => Ok(None),
+        };
+        let requires_key = matches!(provider_slug, "voyage" | "openai" | "cohere")
+            || (provider_slug == "custom" && raw_custom_endpoint.is_none());
+        if let Ok(custom_endpoint) = custom_endpoint {
+            match create_embedding_provider_with_config(
+                config,
+                provider_slug,
+                &config.memory.embedding_model,
+                config.memory.embedding_dimensions,
+                &api_key,
+                custom_endpoint.as_deref(),
+            ) {
+                Ok(provider) => {
+                    if !requires_key || !api_key.is_empty() {
+                        return Arc::from(provider);
+                    }
+                    log::warn!(
+                        "[embeddings::factory] configured embedding provider has no stored credential (kind={provider_slug}); falling back to managed cloud embedder"
+                    );
+                }
+                Err(_) => {
+                    let kind = match provider {
+                        "voyage" | "openai" | "cohere" | "ollama" | "none" => provider,
+                        _ if provider.starts_with("custom") => "custom",
+                        _ => "unknown",
+                    };
+                    log::warn!(
+                        "[embeddings::factory] configured embedding provider failed to build (kind={kind}); falling back to managed cloud embedder"
+                    );
+                }
+            }
+        } else {
+            log::warn!(
+                "[embeddings::factory] configured custom embedding provider has no valid endpoint; falling back to managed cloud embedder"
+            );
+        }
+    }
     let (state_dir, encrypt_secrets) = managed_credential_scope(config);
     // Never log `state_dir`: the user-scoped path embeds the OS username and/or
     // `users/<uid>` (PII). Log only the non-identifying flag.

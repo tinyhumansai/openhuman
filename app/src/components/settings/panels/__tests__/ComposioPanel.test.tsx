@@ -272,7 +272,7 @@ describe('ComposioPanel', () => {
     expect(hoisted.clearApiKey).toHaveBeenCalledTimes(1);
   });
 
-  test('shows error status when RPC throws', async () => {
+  test('shows a localized fallback when RPC throws an unknown error', async () => {
     hoisted.setApiKey.mockRejectedValue(new Error('rpc error'));
     const Panel = await importPanel();
     renderWithProviders(<Panel />);
@@ -287,9 +287,47 @@ describe('ComposioPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: /I understand, switch to Direct/i }));
 
     await waitFor(() => {
+      expect(screen.getByText('Failed to save. Try again.')).toBeInTheDocument();
       expect(
-        screen.getByText('Failed to save. Direct mode requires a non-empty API key.')
-      ).toBeInTheDocument();
+        screen.queryByText('Failed to save. Direct mode requires a non-empty API key.')
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  test('localizes the known invalid API key error', async () => {
+    hoisted.setApiKey.mockRejectedValue(new Error('Invalid Composio API key. Re-enter your key.'));
+    const Panel = await importPanel();
+    renderWithProviders(<Panel />);
+    await waitFor(() => expect(screen.queryByText('Loading…')).toBeNull());
+
+    fireEvent.click(screen.getByLabelText('Direct (bring your own API key)'));
+    fireEvent.change(screen.getByLabelText('Composio API key'), {
+      target: { value: 'ck_secret_redacted' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: /I understand, switch to Direct/i }));
+
+    await waitFor(() => expect(screen.getByText('Invalid Composio API key.')).toBeInTheDocument());
+  });
+
+  test('shows fallback error status when RPC throws without a message', async () => {
+    hoisted.setApiKey.mockRejectedValue(new Error(''));
+    const Panel = await importPanel();
+    renderWithProviders(<Panel />);
+    await waitFor(() => expect(screen.queryByText('Loading…')).toBeNull());
+
+    fireEvent.click(screen.getByLabelText('Direct (bring your own API key)'));
+    fireEvent.change(screen.getByLabelText('Composio API key'), {
+      target: { value: 'ck_secret_redacted' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: /I understand, switch to Direct/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Failed to save. Try again.')).toBeInTheDocument();
+      expect(
+        screen.queryByText('Failed to save. Direct mode requires a non-empty API key.')
+      ).not.toBeInTheDocument();
     });
   });
 

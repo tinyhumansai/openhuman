@@ -70,7 +70,7 @@ async fn an_expired_current_user_is_served_while_it_refreshes() {
     });
 
     let started = Instant::now();
-    let served = fetch_current_user_cached(&config, "tok", true)
+    let served = fetch_current_user_cached(&config, "tok", true, current_user_generation())
         .await
         .expect("an expired entry is still an answer");
     let waited = started.elapsed();
@@ -225,6 +225,7 @@ async fn a_background_refresh_does_not_overwrite_a_newer_identity() {
     refresh_current_user_now(
         &stale_config,
         "token-for-the-user-who-signed-out",
+        current_user_generation(),
         RefreshOrigin::Background,
     )
     .await
@@ -246,6 +247,7 @@ async fn a_background_refresh_does_not_overwrite_a_newer_identity() {
     refresh_current_user_now(
         &stale_config,
         "token-for-the-user-who-signed-out",
+        current_user_generation(),
         RefreshOrigin::Blocking,
     )
     .await
@@ -304,9 +306,14 @@ async fn the_refresh_ttl_clock_starts_when_the_request_goes_out() {
         api_url: Some(format!("http://{addr}")),
         ..Config::default()
     };
-    refresh_current_user_now(&config, "tok", RefreshOrigin::Blocking)
-        .await
-        .expect("the stub answers /auth/me");
+    refresh_current_user_now(
+        &config,
+        "tok",
+        current_user_generation(),
+        RefreshOrigin::Blocking,
+    )
+    .await
+    .expect("the stub answers /auth/me");
 
     let age = CURRENT_USER_CACHE
         .lock()

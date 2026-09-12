@@ -4711,6 +4711,7 @@ const messages: TranslationMap = {
   'settings.composio.routingMode': 'रूटिंग मोड',
   'settings.composio.saveErrorNoKey':
     'सहेजने में विफल। डायरेक्ट मोड के लिए गैर-रिक्त API कुंजी आवश्यक है।',
+  'settings.composio.invalidApiKey': 'Composio API कुंजी अमान्य है।',
   'settings.composio.saving': 'सेव हो रहा है…',
   'settings.composio.switching': 'स्विच हो रहा है…',
   'settings.cron.jobs.commandRequired': 'शेल जॉब के लिए कमांड आवश्यक है',

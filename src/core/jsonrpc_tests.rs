@@ -178,7 +178,7 @@ fn learning_subscriber_registration_is_idempotent_after_success() {
 }
 
 #[test]
-fn domain_subscriber_registration_defers_until_the_bus_is_ready() {
+fn domain_subscriber_registration_readiness_helper_is_idempotent() {
     use crate::core::all::DomainGroup;
     use std::collections::HashSet;
     use std::sync::Mutex;
@@ -191,6 +191,17 @@ fn domain_subscriber_registration_defers_until_the_bus_is_ready() {
         false,
     ));
     assert!(completed.lock().expect("registry lock").is_empty());
+
+    assert!(group_first_time_when_bus_ready(
+        &completed,
+        DomainGroup::Media,
+        true,
+    ));
+    assert!(!group_first_time_when_bus_ready(
+        &completed,
+        DomainGroup::Media,
+        true,
+    ));
 }
 
 /// #5027 — the tool-execution timeout must be seeded on the always-on core boot

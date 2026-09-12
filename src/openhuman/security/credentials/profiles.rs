@@ -541,6 +541,13 @@ pub fn profile_id(provider: &str, profile_name: &str) -> String {
     format!("{}:{}", provider.trim(), profile_name.trim())
 }
 
+pub fn normalize_profile_id_provider(id: &str) -> String {
+    id.rsplit_once(':').map_or_else(
+        || id.to_ascii_lowercase(),
+        |(provider, name)| format!("{}:{name}", provider.to_ascii_lowercase()),
+    )
+}
+
 fn quarantine_corrupt_store(path: &Path) -> Result<PathBuf> {
     let stem = path
         .file_stem()

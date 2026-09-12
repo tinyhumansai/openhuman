@@ -122,6 +122,7 @@ fn fetch_tasks_unavailable(
     ))
 }
 
+/// Fetch, process, and reconcile one source pass.
 async fn run_inner(
     config: &Config,
     source: &TaskSource,
@@ -131,6 +132,11 @@ async fn run_inner(
     let fetch_filter = filter::to_fetch_filter(&source.filter, source.max_tasks_per_fetch);
     let tasks = fetch_tasks_unavailable(source, &fetch_filter)?;
     outcome.fetched = tasks.len();
+    // A fetch returns at most `fetch_filter.effective_max()` tasks (a hard
+    // per-fetch cap). When the provider returns a full page we cannot tell
+    // "these are all the currently-open tasks" from "the rest were truncated
+    // out of this window", so `current_external_ids` below is NOT a reliable
+    // authority on what still exists upstream — and must not drive deletions.
     let current_external_ids: HashSet<String> =
         tasks.iter().map(|task| task.external_id.clone()).collect();
 
@@ -212,9 +218,45 @@ async fn run_inner(
         outcome.routed += 1;
     }
 
-    outcome.pruned = reconcile_missing_tasks(config, source, &current_external_ids).await?;
+    // Only reconcile deletions against a fetch we know is complete. Pruning on
+    // a truncated (full-page) fetch would remove the board card AND the dedup
+    // ledger row for every task that merely fell outside the top-N window,
+    // thrashing them every poll: deleted now, then re-created as brand-new
+    // (fresh ledger row, new card id) the next time they re-enter the window.
+    outcome.pruned = reconcile_if_complete(
+        config,
+        source,
+        &current_external_ids,
+        outcome.fetched,
+        fetch_filter.effective_max(),
+    )
+    .await?;
 
     Ok(())
+}
+
+/// Reconcile only when the fetched page is known not to be capped.
+async fn reconcile_if_complete(
+    config: &Config,
+    source: &TaskSource,
+    current_external_ids: &HashSet<String>,
+    fetched: usize,
+    cap: usize,
+) -> Result<usize, String> {
+    if fetched >= cap {
+        // The exactly-at-cap case is conservatively treated as truncated too;
+        // pruning resumes once a later fetch falls below the cap.
+        tracing::warn!(
+            source_id = %source.id,
+            provider = %source.provider.as_str(),
+            fetched,
+            cap,
+            "[task_sources:pipeline] fetch hit the per-fetch cap; skipping prune so tasks truncated out of this window are not deleted"
+        );
+        Ok(0)
+    } else {
+        reconcile_missing_tasks(config, source, current_external_ids).await
+    }
 }
 
 async fn reconcile_missing_tasks(

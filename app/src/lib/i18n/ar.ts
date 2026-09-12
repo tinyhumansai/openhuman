@@ -4599,6 +4599,7 @@ const messages: TranslationMap = {
     'يقوم OpenHuman بتمرير استدعاءات الأدوات عبر خادمنا الخلفي (موصى به). تتم وساطة المصادقة؛ لن تلصق مفتاح Composio API. الـ webhooks مُوجَّهة بالكامل.',
   'settings.composio.routingMode': 'وضع التوجيه',
   'settings.composio.saveErrorNoKey': 'فشل الحفظ. الوضع المباشر يتطلب مفتاح API غير فارغ.',
+  'settings.composio.invalidApiKey': 'مفتاح Composio API غير صالح.',
   'settings.composio.saving': 'جارٍ الحفظ…',
   'settings.composio.switching': 'جارٍ التبديل…',
   'settings.cron.jobs.commandRequired': 'الأمر مطلوب لمهام shell',
