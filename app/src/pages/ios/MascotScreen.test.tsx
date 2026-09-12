@@ -251,7 +251,9 @@ describe('MascotScreen', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText(/Claude Code setup issue: Claude Code CLI is not installed\./)).toBeInTheDocument();
+      expect(
+        screen.getByText(/Claude Code setup issue: Claude Code CLI is not installed\./)
+      ).toBeInTheDocument();
     });
   });
 
