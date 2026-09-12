@@ -150,16 +150,16 @@ fn bounded_child_output(
     let mut child = command.spawn()?;
     let (stdout_tx, stdout_rx) = mpsc::channel();
     let (stderr_tx, stderr_rx) = mpsc::channel();
-    let stdout = child.stdout.take().expect("stdout was piped");
-    let stderr = child.stderr.take().expect("stderr was piped");
+    let mut stdout = child.stdout.take().expect("stdout was piped");
+    let mut stderr = child.stderr.take().expect("stderr was piped");
     std::thread::spawn(move || {
         let mut bytes = Vec::new();
-        let _ = stdout.take(usize::MAX as u64).read_to_end(&mut bytes);
+        let _ = stdout.read_to_end(&mut bytes);
         let _ = stdout_tx.send(bytes);
     });
     std::thread::spawn(move || {
         let mut bytes = Vec::new();
-        let _ = stderr.take(usize::MAX as u64).read_to_end(&mut bytes);
+        let _ = stderr.read_to_end(&mut bytes);
         let _ = stderr_tx.send(bytes);
     });
 
