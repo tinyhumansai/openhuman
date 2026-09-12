@@ -156,7 +156,6 @@ fn bounded_child_output(
     budget: Duration,
     path: &Path,
 ) -> std::io::Result<Option<std::process::Output>> {
-    use std::io::Read;
     use std::sync::mpsc;
 
     let mut child = command.spawn()?;
