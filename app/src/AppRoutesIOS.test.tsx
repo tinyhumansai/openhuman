@@ -18,6 +18,16 @@ vi.mock('./components/ios/MobileTabBar', () => ({
   default: () => <nav data-testid="mobile-tab-bar">tabs</nav>,
 }));
 
+// Paired routes are only available after the persisted transport has been
+// bound. Keep these route-shape tests focused by supplying an already-bound
+// healthy transport; bootstrap failure and retry behaviour is covered by
+// AppRoutesIOS.pairing.test.tsx.
+const activeTransport = { kind: 'tunnel' };
+vi.mock('./services/coreRpcClient', () => ({
+  getActiveCoreTransport: () => activeTransport,
+  setActiveCoreTransport: vi.fn(),
+}));
+
 const listProfiles = vi.fn();
 vi.mock('./services/transport/profileStore', () => ({ listProfiles: () => listProfiles() }));
 
@@ -55,7 +65,7 @@ describe('AppRoutesIOS', () => {
   });
 
   describe('paired (profile exists)', () => {
-    beforeEach(() => listProfiles.mockReturnValue([{ id: 'p1' }]));
+    beforeEach(() => listProfiles.mockReturnValue([{ id: 'p1', kind: 'tunnel' }]));
 
     it('renders HumanPage with the mobile tab bar', () => {
       renderAt('/human');
