@@ -45,12 +45,13 @@ fn get_or_create_is_atomic_for_concurrent_first_turns() {
 }
 
 #[test]
-fn a_returning_prompt_starts_a_new_epoch() {
+fn alternating_prompt_keys_resume_their_original_sessions() {
     let dir = tempdir().unwrap();
     let store = SessionStore::open(dir.path());
     let (first, _) = store.get_or_create("conversation", "conversation:prompt-a");
-    let (_, _) = store.get_or_create("conversation", "conversation:prompt-b");
+    let (second, _) = store.get_or_create("conversation", "conversation:prompt-b");
     let (returned, is_new) = store.get_or_create("conversation", "conversation:prompt-a");
-    assert!(is_new);
-    assert_ne!(first, returned);
+    assert!(!is_new);
+    assert_eq!(first, returned);
+    assert_ne!(first, second);
 }

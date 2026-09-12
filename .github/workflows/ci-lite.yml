@@ -208,7 +208,7 @@ jobs:
               - '.github/workflows/test-reusable.yml'
               - '.gitmodules'
               - 'scripts/ci-cancel-aware.sh'
-              - 'vendor/tinymemory/vendor/tinycortex'
+              - 'vendor/tinymemory'
             rust-tauri:
               - '.github/workflows/ci-lite.yml'
               - 'Cargo.lock'
@@ -511,17 +511,25 @@ jobs:
         run: bash scripts/ci-cancel-aware.sh cargo check --manifest-path Cargo.toml --no-default-features
 
       - name: Check the gates that are in NEITHER the contributor nor the product set
-        # `tui` is the one gate that is default-OFF *and* deliberately not
-        # forwarded to the desktop shell (it is a terminal front-end; the app
-        # ships its own UI). That combination means nothing else in CI compiles
-        # it: the product lanes do not select it, the contributor lanes no
-        # longer default it on, and the gates-off check above turns it off.
+        # Two gates are default-OFF *and* absent from the product set, so
+        # nothing else in CI compiles them: the product lanes do not select
+        # them, the contributor lanes no longer default them on, and the
+        # gates-off check above turns them off.
         #
-        # Without this step the ratatui front-end would rot silently — which is
-        # the same shape of failure as #4901, just pointed at a gate instead of
-        # at the shipped app. If a future gate lands in this same
-        # neither-set position, add it here.
-        run: bash scripts/ci-cancel-aware.sh cargo check --manifest-path Cargo.toml --no-default-features --features tui
+        #   tui               — a terminal front-end; the app ships its own UI.
+        #   e2e-test-support  — the `test`/`test_support` RPC family, turned on
+        #                       only by app/scripts/e2e-build.sh for the packaged
+        #                       desktop E2E binary. It includes
+        #                       `openhuman.test_reset`, a destructive in-place
+        #                       wipe, which is exactly why it must stay out of
+        #                       every product lane — so a compile-only smoke
+        #                       check here is the right shape.
+        #
+        # Checked in SEPARATE invocations so one gate cannot make the other
+        # compile only because it pulled in a shared dependency.
+        run: |
+          bash scripts/ci-cancel-aware.sh cargo check --manifest-path Cargo.toml --no-default-features --features tui
+          bash scripts/ci-cancel-aware.sh cargo check --manifest-path Cargo.toml --no-default-features --features e2e-test-support
 
       - name: Run the gate-contract tests with the default domain gates disabled
         # `cargo check` (even --all-targets) never RUNS tests, so a gated family that
@@ -549,6 +557,9 @@ jobs:
           bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml \
             --no-default-features --features mcp --lib -- \
             mcp::server::resources::
+          bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml \
+            --no-default-features --features e2e-test-support --lib -- \
+            test_support::introspect::
 
       - name: Guard — the kernel dependency floor may not grow
         # The `--no-default-features --features flows` profile is the surface a

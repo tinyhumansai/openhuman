@@ -15,9 +15,6 @@ use serde::{Deserialize, Serialize};
 struct StoreFile {
     /// thread_id → CC session uuid (v4)
     sessions: HashMap<String, String>,
-    /// conversation scope → the session key currently active for that scope.
-    #[serde(default)]
-    active_keys: HashMap<String, String>,
 }
 
 /// Disk-backed session store. Cheap to clone — it's `Arc`-shareable via
@@ -63,24 +60,18 @@ impl SessionStore {
 
     /// Atomically reuse or create the session for a key. The lock is held
     /// across the lookup, generation, and persistence so concurrent first
-    /// turns cannot mint competing sessions. A changed key in the same
-    /// conversation scope starts a new prompt epoch; an old key is never
-    /// resurrected when the prompt later returns to it.
+    /// turns cannot mint competing sessions. Each session key retains its
+    /// own UUID, so switching keys does not discard continuity for either
+    /// key.
     pub fn get_or_create(&self, scope: &str, key: &str) -> (String, bool) {
+        let _ = scope;
         let mut guard = self.inner.lock().expect("session store mutex poisoned");
-        let is_current = guard
-            .active_keys
-            .get(scope)
-            .is_none_or(|active| active == key);
-        if is_current {
-            if let Some(existing) = guard.sessions.get(key).filter(|id| is_uuid_v4(id)) {
-                return (existing.clone(), false);
-            }
+        if let Some(existing) = guard.sessions.get(key).filter(|id| is_uuid_v4(id)) {
+            return (existing.clone(), false);
         }
 
         let id = generate_uuid_v4();
         guard.sessions.insert(key.to_string(), id.clone());
-        guard.active_keys.insert(scope.to_string(), key.to_string());
         if let Err(e) = self.persist(&guard) {
             log::warn!("[claude-code][session-store] failed to persist session: {e}");
         }
