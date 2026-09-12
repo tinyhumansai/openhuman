@@ -1230,6 +1230,7 @@ fn definition(
         omit_identity: true,
         omit_memory_context: false,
         omit_safety_preamble: true,
+        omit_skills_catalog: true,
         omit_profile: true,
         omit_memory_md: true,
         model: ModelSpec::Inherit,

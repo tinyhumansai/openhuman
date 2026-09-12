@@ -246,6 +246,7 @@ fn definition(prompt: PromptSource) -> AgentDefinition {
         omit_identity: true,
         omit_memory_context: false,
         omit_safety_preamble: false,
+        omit_skills_catalog: true,
         omit_profile: false,
         omit_memory_md: false,
         model: ModelSpec::Inherit,
