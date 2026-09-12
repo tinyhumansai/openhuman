@@ -407,7 +407,10 @@ llvm_cov clean --workspace
 if [ "${#lib_filters[@]}" -gt 0 ]; then
   log "running scoped lib unit tests with filters: ${lib_filters[*]}"
   # libtest ORs multiple positional filters — one run covers all domains.
-  run_counted llvm_cov --no-report --no-fail-fast -p openhuman --lib -- "${lib_filters[@]}"
+  # The scoped domains can include tests that share process-global registries
+  # and configuration. Keep them isolated just like the full coverage lane;
+  # parallel execution lets one fixture's setup leak into another.
+  run_counted llvm_cov --no-report --no-fail-fast -p openhuman --lib -- "${lib_filters[@]}" --test-threads=1
 fi
 
 if [ "${#test_targets[@]}" -gt 0 ]; then
