@@ -91,7 +91,11 @@ const MobileTransportBootstrap: FC<{ children: React.ReactNode }> = ({ children 
         );
       });
       setActiveCoreTransport(null);
+      // Reset the recoverable error when the user explicitly returns to pair.
+      // This is an external-navigation state transition, not render-derived state.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setBindingFailed(false);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setReady(false);
       return;
     }
