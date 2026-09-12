@@ -27,7 +27,7 @@ const messages: TranslationMap = {
   'share.copiedCaption': 'कैप्शन कॉपी हो गया',
   'brain.header.graph': 'आपके एजेंट का ज्ञान कैसे जुड़ता है: लोग, विषय और यादें।',
   'brain.header.goals': 'आपका एजेंट किस दिशा में काम कर रहा है, और क्यों।',
-  'brain.header.profile': 'Preferences your agent has learned, and what stays in every reply.',
+  'brain.header.profile': 'आपके एजेंट ने जो सीखा है, और हर उत्तर में क्या बना रहता है।',
   'brain.header.sources': 'वह डेटा जिससे आपका एजेंट सीखता है।',
   'brain.header.sync': 'अपनी मेमोरी को ताज़ा रखें और देखें कि क्या बदला।',
   'brain.welcome.nav': 'स्वागत है',
@@ -1303,7 +1303,7 @@ const messages: TranslationMap = {
   'privacy.leavesDevice': 'डिवाइस से बाहर जाता है',
   'privacy.staysLocal': 'लोकल रहता है',
   'privacy.selfLearning': 'स्व-शिक्षण',
-  'privacy.selfLearningLabel': 'Learn standing preferences from chat',
+  'privacy.selfLearningLabel': 'चैट से स्थायी प्राथमिकताएँ सीखें',
   'privacy.selfLearningDesc':
     'चालू होने पर OpenHuman आपके काम करने के तरीके का अनुमान लगाकर नई बातचीत में सक्रिय प्राथमिकताएँ शामिल कर सकता है। डिफ़ॉल्ट रूप से बंद है। तथ्य ब्रेन → प्रोफ़ाइल में प्रबंधित करें।',
   'privacy.anonymizedAnalytics': 'प्रोडक्ट एनालिटिक्स',

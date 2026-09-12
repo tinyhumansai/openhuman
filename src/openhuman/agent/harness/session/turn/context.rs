@@ -352,12 +352,19 @@ impl Agent {
         // prompt-building call-site — main agent, sub-agent runner,
         // channel runtimes — shares one builder configuration.
         let mut prompt = self.context.build_system_prompt(&ctx)?;
-        if let Some(boundary) = render_tool_policy_boundary(&self.tool_policy_session, 2048) {
-            // Keep the stable persona/instruction prefix intact for inference prefix caching;
-            // the per-session tool-policy boundary belongs after the assembled prompt (#5704).
-            prompt.push_str("\n\n");
-            prompt.push_str(&boundary);
-        }
-        Ok(prompt)
+        let boundary = render_tool_policy_boundary(&self.tool_policy_session, 2048);
+        Ok(append_tool_policy_boundary(prompt, boundary))
     }
 }
+
+/// Place the tool-policy boundary after the assembled prompt.
+fn append_tool_policy_boundary(prompt: String, boundary: Option<String>) -> String {
+    match boundary {
+        Some(boundary) => format!("{prompt}\n\n{boundary}"),
+        None => prompt,
+    }
+}
+
+#[cfg(test)]
+#[path = "context_tests.rs"]
+mod tool_policy_boundary_placement_tests;
