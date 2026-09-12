@@ -183,8 +183,13 @@ fn login_shell_lookup_with(shell: &Path) -> Option<PathBuf> {
         Ok(Some(status)) if status.success() => {
             let mut stdout = Vec::new();
             child.stdout.take()?.read_to_end(&mut stdout).ok()?;
-            let path = PathBuf::from(String::from_utf8_lossy(&stdout).trim());
-            path.is_file().then(|| {
+            let path = String::from_utf8_lossy(&stdout)
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(PathBuf::from)
+                .find(|path| path.is_file())?;
+            Some({
                 log::debug!(
                     "[claude-code][version] resolved via login shell path={}",
                     path.display()

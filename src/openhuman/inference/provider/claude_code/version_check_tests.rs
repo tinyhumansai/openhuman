@@ -34,7 +34,10 @@ fn well_known_candidates_cover_the_native_installer_and_homebrew() {
     let home = Path::new("/Users/someone");
     let candidates = super::well_known_candidates(Some(home));
 
+    #[cfg(not(windows))]
     assert_eq!(candidates.first(), Some(&home.join(".local/bin/claude")));
+    #[cfg(windows)]
+    assert_eq!(candidates.first(), Some(&home.join(".local/bin/claude.exe")));
     assert!(candidates.contains(&PathBuf::from("/opt/homebrew/bin/claude")));
     assert!(candidates.contains(&PathBuf::from("/usr/local/bin/claude")));
 }
