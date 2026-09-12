@@ -259,7 +259,10 @@ export const MascotScreen: FC = () => {
           {
             id: `err-${Date.now()}`,
             role: 'assistant' as const,
-            text: t('iosMascot.error.generic'),
+            text:
+              e.error_type === 'provider_setup' && e.message.trim()
+                ? e.message
+                : t('iosMascot.error.generic'),
             streaming: false,
           },
         ]);

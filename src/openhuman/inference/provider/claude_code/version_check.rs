@@ -61,6 +61,7 @@ fn well_known_candidates(home: Option<&Path>) -> Vec<PathBuf> {
     if let Some(home) = home {
         for suffix in [
             ".local/bin/claude",
+            "bin/claude",
             ".claude/local/claude",
             ".bun/bin/claude",
             ".volta/bin/claude",
@@ -218,6 +219,13 @@ fn login_shell_lookup_with(shell: &Path) -> Option<PathBuf> {
 /// alone is insufficient when a desktop app inherited a minimal PATH.
 pub(crate) fn path_with_binary_dir(binary: &Path) -> OsString {
     let mut paths: Vec<PathBuf> = binary.parent().into_iter().map(PathBuf::from).collect();
+    if let Some(home) = dirs::home_dir() {
+        paths.push(home.join(".local/bin"));
+        paths.push(home.join("bin"));
+    }
+    #[cfg(target_os = "macos")]
+    paths.push(PathBuf::from("/opt/homebrew/bin"));
+    paths.push(PathBuf::from("/usr/local/bin"));
     if let Some(path) = std::env::var_os("PATH") {
         paths.extend(std::env::split_paths(&path));
     }
