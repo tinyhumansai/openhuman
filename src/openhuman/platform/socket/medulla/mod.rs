@@ -636,6 +636,14 @@ fn emit<T: serde::Serialize>(event: &str, payload: T) {
         log::debug!("[medulla] no socket manager — dropping {event}");
         return;
     };
+    // Some synchronous unit tests exercise event routing after another test
+    // has installed the process-global socket manager. There is no executor
+    // in those tests, so spawning here would panic instead of treating the
+    // best-effort notification as dropped.
+    if tokio::runtime::Handle::try_current().is_err() {
+        log::debug!("[medulla] no Tokio runtime — dropping {event}");
+        return;
+    }
     let mgr = Arc::clone(mgr);
     let event = event.to_string();
     tokio::spawn(async move {

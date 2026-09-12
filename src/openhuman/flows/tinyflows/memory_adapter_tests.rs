@@ -1,4 +1,5 @@
 use super::*;
+use crate::openhuman::agent::turn_origin::{with_origin, AgentTurnOrigin};
 use crate::openhuman::security::{AutonomyLevel, POLICY_BLOCKED_MARKER};
 use tempfile::TempDir;
 
@@ -99,7 +100,10 @@ async fn recall_rejects_unknown_scope() {
 async fn remember_flow_scope_without_trusted_origin_errs() {
     // No `turn_origin::current()` scoped — not running inside a flow.
     let (_tmp, adapter) = adapter(AutonomyLevel::Full);
-    let err = adapter.remember("flow", "k", json!("v")).await.unwrap_err();
+    let err = with_origin(AgentTurnOrigin::Cli, async {
+        adapter.remember("flow", "k", json!("v")).await.unwrap_err()
+    })
+    .await;
     assert!(err.to_string().contains("trusted Workflow-scoped origin"));
 }
 
