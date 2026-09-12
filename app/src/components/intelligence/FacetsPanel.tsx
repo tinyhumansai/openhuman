@@ -196,7 +196,7 @@ export default function FacetsPanel() {
               variant="secondary"
               size="sm"
               onClick={() => void handleRebuild()}
-              disabled={rebuilding}
+              disabled={learningEnabled === false || rebuilding}
               data-testid="facets-rebuild">
               <LuRefreshCw className={`mr-1.5 h-3.5 w-3.5 ${rebuilding ? 'animate-spin' : ''}`} />
               {rebuilding ? t('brain.profile.rebuilding') : t('brain.profile.rebuild')}

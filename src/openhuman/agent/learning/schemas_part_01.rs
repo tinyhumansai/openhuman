@@ -537,7 +537,7 @@ fn handle_rebuild_cache(_params: Map<String, Value>) -> ControllerFuture {
         if !config.learning.enabled {
             tracing::info!("[learning.rebuild_cache] skipped because learning.enabled=false");
             return RpcOutcome::new(
-                serde_json::json!({"added": 0, "evicted": 0, "kept": 0, "total": 0}),
+                serde_json::json!({"added": 0, "evicted": 0, "kept": 0, "total_size": 0}),
                 vec!["learning.rebuild_cache: skipped (learning.enabled=false)".to_string()],
             )
             .into_cli_compatible_json();

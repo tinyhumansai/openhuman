@@ -122,8 +122,18 @@ describe('<FacetsPanel />', () => {
     await waitFor(() => expect(unpinFacet).toHaveBeenCalledWith('identity/name'));
     fireEvent.click(screen.getByTestId('facet-forget-identity/name'));
     await waitFor(() => expect(forgetFacet).toHaveBeenCalledWith('identity/name'));
+    fireEvent.click(screen.getByTestId('learning-enabled-toggle'));
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledWith(true));
     fireEvent.click(screen.getByTestId('facets-rebuild'));
     await waitFor(() => expect(rebuildCache).toHaveBeenCalled());
+  });
+
+  it('disables rebuild while learning is off', async () => {
+    render(<FacetsPanel />);
+    const rebuild = await screen.findByTestId('facets-rebuild');
+    expect(rebuild).toBeDisabled();
+    fireEvent.click(rebuild);
+    expect(rebuildCache).not.toHaveBeenCalled();
   });
 
   it('shows action errors and load errors', async () => {
@@ -150,6 +160,8 @@ describe('<FacetsPanel />', () => {
     fireEvent.click(screen.getByTestId('facet-pin-other/value'));
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('refresh failed'));
 
+    fireEvent.click(screen.getByTestId('learning-enabled-toggle'));
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledWith(true));
     rebuildCache.mockRejectedValueOnce(new Error('rebuild failed'));
     fireEvent.click(screen.getByTestId('facets-rebuild'));
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('rebuild failed'));
