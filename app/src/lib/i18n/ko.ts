@@ -667,7 +667,8 @@ const messages: TranslationMap = {
   'home.youpetWorkbench': 'YouPet Workbench',
   'home.youpetWorkbenchDescription': 'Core 알림과 운영자 작업을 검토합니다.',
   'home.youpetActionRequests': 'Action Request Inbox',
-  'home.youpetActionRequestsDescription': '운영자로서 보류 중인 Core 작업 요청을 승인하거나 거부합니다.',
+  'home.youpetActionRequestsDescription':
+    '운영자로서 보류 중인 Core 작업 요청을 승인하거나 거부합니다.',
   'actionRequest.eyebrow': 'YouPet Core',
   'actionRequest.title': 'Action Request Inbox',
   'actionRequest.subtitle':

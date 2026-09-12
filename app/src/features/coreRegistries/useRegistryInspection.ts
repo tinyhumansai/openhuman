@@ -124,7 +124,7 @@ function pushUrlState(
 ): void {
   const serialized = serializeRegistryUrlState(urlState);
   const search = serialized.length > 0 ? `?${serialized}` : '';
-  const hashRoute = (window.location.hash.split('?')[0] || '#/registries');
+  const hashRoute = window.location.hash.split('?')[0] || '#/registries';
   const nextUrl = `${window.location.pathname}${hashRoute}${search}`;
 
   if (mode === 'replace') {
@@ -160,9 +160,11 @@ function relevantCollectionKeysForTab(tab: RegistryTab): RegistryCollectionKey[]
 }
 
 function browserSelectsDetail(tab: RegistryTab, detail: RegistryDetailRef): boolean {
-  const current = parseRegistryUrlState(window.location.hash.includes('?')
-    ? window.location.hash.slice(window.location.hash.indexOf('?'))
-    : window.location.search);
+  const current = parseRegistryUrlState(
+    window.location.hash.includes('?')
+      ? window.location.hash.slice(window.location.hash.indexOf('?'))
+      : window.location.search
+  );
   return (
     current.tab === tab &&
     current.detail?.kind === detail.kind &&
@@ -215,9 +217,13 @@ export function useRegistryInspection(
 ): UseRegistryInspectionResult {
   const client = options.client ?? coreRegistriesClient;
   const [state, setState] = useState<RegistryInspectionState>(() =>
-      createRegistryInspectionState(parseRegistryUrlState(window.location.hash.includes('?')
-        ? window.location.hash.slice(window.location.hash.indexOf('?'))
-        : window.location.search))
+    createRegistryInspectionState(
+      parseRegistryUrlState(
+        window.location.hash.includes('?')
+          ? window.location.hash.slice(window.location.hash.indexOf('?'))
+          : window.location.search
+      )
+    )
   );
   const stateRef = useRef(state);
   const visitedTabsRef = useRef(new Set<RegistryTab>());
@@ -562,10 +568,12 @@ export function useRegistryInspection(
         return;
       }
 
-      await runCollectionRequest(tab, collection, collectionState.restartGeneration ?? current.tabs[tab].generation, {
-        append: true,
-        cursor: collectionState.nextCursor,
-      });
+      await runCollectionRequest(
+        tab,
+        collection,
+        collectionState.restartGeneration ?? current.tabs[tab].generation,
+        { append: true, cursor: collectionState.nextCursor }
+      );
     },
     [runCollectionRequest]
   );

@@ -133,7 +133,10 @@ function FingerprintRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function summarizeSchema(t: TranslateFn, value: Record<string, unknown> | null | undefined): string {
+function summarizeSchema(
+  t: TranslateFn,
+  value: Record<string, unknown> | null | undefined
+): string {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return t('registries.detail.emptySchemaObject');
   }

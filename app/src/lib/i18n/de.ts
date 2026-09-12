@@ -704,7 +704,8 @@ const messages: TranslationMap = {
   'home.youpetWorkbench': 'YouPet Workbench',
   'home.youpetWorkbenchDescription': 'Core-Warnungen und Bedieneraktionen prüfen.',
   'home.youpetActionRequests': 'Action Request Inbox',
-  'home.youpetActionRequestsDescription': 'Ausstehende Core-Aktionsanfragen als Bediener genehmigen oder ablehnen.',
+  'home.youpetActionRequestsDescription':
+    'Ausstehende Core-Aktionsanfragen als Bediener genehmigen oder ablehnen.',
   'actionRequest.eyebrow': 'YouPet Core',
   'actionRequest.title': 'Action Request Inbox',
   'actionRequest.subtitle':
