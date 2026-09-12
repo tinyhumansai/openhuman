@@ -74,7 +74,7 @@ fn parse_error_log_line(ev: &ClaudeCodeEvent) -> Option<String> {
 
 use super::event_mapper::EventMapper;
 use super::input_builder::build_stdin;
-use super::session_store::{is_uuid_v4, SessionStore};
+use super::session_store::SessionStore;
 use super::stream_parser::{ClaudeCodeEvent, StreamJsonParser};
 use crate::openhuman::agent::messages::ChatMessage;
 use crate::openhuman::inference::provider::types::{ChatResponse, ProviderDelta};
