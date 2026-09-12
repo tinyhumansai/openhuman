@@ -133,7 +133,6 @@ const MobileTransportBootstrap: FC<{ children: React.ReactNode }> = ({ children 
           error instanceof Error ? error.message : 'unknown transport error'
         );
       });
-
   }, [location.pathname]);
 
   useEffect(() => {
