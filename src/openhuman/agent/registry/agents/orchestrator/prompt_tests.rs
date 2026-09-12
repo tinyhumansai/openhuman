@@ -418,7 +418,6 @@ fn connected_mcp_block_quarantines_server_prioritization_override() {
     );
     assert!(block.contains("0 tools available"));
 }
-
 #[test]
 fn connected_mcp_block_bounds_long_instructions() {
     use crate::openhuman::mcp::registry::connections::ConnectedServerOverview;
@@ -452,7 +451,6 @@ fn connected_mcp_block_bounds_long_instructions() {
         line.len()
     );
 }
-
 #[test]
 fn build_includes_datetime() {
     let body = build(&ctx_with(&[])).unwrap();
