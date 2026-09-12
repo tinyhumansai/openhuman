@@ -122,7 +122,7 @@ describe('PairScreen', () => {
     mockGetTransport.mockResolvedValue({
       kind: 'tunnel',
       isHealthy: mockIsHealthy,
-      call: mockCall,
+      getReconnectToken: () => 'reconnect-token',
       close: vi.fn().mockResolvedValue(undefined),
     });
 
@@ -145,7 +145,7 @@ describe('PairScreen', () => {
     await waitFor(() => {
       expect(mockNavigate).toHaveBeenCalledWith('/human', { replace: true });
     });
-    expect(mockCall).toHaveBeenCalledWith('openhuman.app_state_snapshot', {});
+    expect(mockCall).not.toHaveBeenCalled();
     expect(mockSetActiveCoreTransport).toHaveBeenCalledOnce();
     expect(mockSetActiveCoreTransport).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'tunnel' })
