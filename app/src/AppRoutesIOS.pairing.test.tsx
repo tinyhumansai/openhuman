@@ -141,7 +141,8 @@ describe('AppRoutesIOS — persisted transport bootstrap', () => {
 
     await waitFor(() => expect(screen.getByTestId('page-human')).toBeInTheDocument());
     expect(mockGetTransport).toHaveBeenCalledOnce();
-    expect(mockSetActiveCoreTransport).toHaveBeenCalledOnceWith(transport);
+    expect(mockSetActiveCoreTransport).toHaveBeenCalledOnce();
+    expect(mockSetActiveCoreTransport).toHaveBeenCalledWith(transport);
   });
 
   it('keeps a failed bootstrap recoverable through the pairing route', async () => {

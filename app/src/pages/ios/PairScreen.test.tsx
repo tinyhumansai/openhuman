@@ -140,7 +140,8 @@ describe('PairScreen', () => {
     await waitFor(() => {
       expect(mockNavigate).toHaveBeenCalledWith('/human', { replace: true });
     });
-    expect(mockSetActiveCoreTransport).toHaveBeenCalledOnceWith(
+    expect(mockSetActiveCoreTransport).toHaveBeenCalledOnce();
+    expect(mockSetActiveCoreTransport).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'tunnel' })
     );
   });
