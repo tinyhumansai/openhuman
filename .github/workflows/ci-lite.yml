@@ -178,10 +178,7 @@ jobs:
             # Changes here invalidate per-module test scoping → full suite.
             rust-core-full:
               - '.github/workflows/ci-lite.yml'
-              # The coverage runner itself is tested by the Rust lane, but
-              # changing its dispatch logic does not invalidate the source
-              # module scoping. Forcing the non-hermetic full library suite
-              # here makes unrelated process-global tests block coverage.
+              - 'scripts/ci/rust-coverage-changed.sh'
               # Same reason as in `rust-core` above: a feature-set change
               # changes what compiles, which invalidates per-module scoping
               # exactly as a `Cargo.toml` change does.
