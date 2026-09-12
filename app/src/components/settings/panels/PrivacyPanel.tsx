@@ -84,7 +84,7 @@ const PrivacyPanel = () => {
     return () => {
       cancelled = true;
     };
-  }, [snapshot.auth.userId]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -104,7 +104,7 @@ const PrivacyPanel = () => {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [snapshot.auth.userId]);
 
   const handleToggleAnalytics = async () => {
     const newValue = !analyticsEnabled;
