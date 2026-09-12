@@ -447,6 +447,7 @@ pub fn all_tools_with_runtime(
         // previously surfaced to the agent loop.
         Box::new(MemoryFlavourTool::new(config.clone())),
         Box::new(MemoryQueryTool),
+        Box::new(MemoryTreeListSourcesTool::new(config.clone())),
         // memory_search tools — vector search, chunk context, hybrid search,
         // and previously unregistered raw store tools.
         Box::new(MemoryVectorSearchTool),

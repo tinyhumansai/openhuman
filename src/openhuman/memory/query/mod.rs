@@ -12,6 +12,7 @@ mod drill_down;
 mod fast_walk;
 mod fetch_leaves;
 mod ingest_document;
+mod list_sources;
 mod query_source;
 mod search_entities;
 #[cfg(test)]
@@ -23,6 +24,7 @@ pub use cover_window::MemoryTreeCoverWindowTool;
 pub use drill_down::MemoryTreeDrillDownTool;
 pub use fetch_leaves::MemoryTreeFetchLeavesTool;
 pub use ingest_document::MemoryTreeIngestDocumentTool;
+pub use list_sources::MemoryTreeListSourcesTool;
 pub use query_source::MemoryTreeQuerySourceTool;
 pub use search_entities::MemoryTreeSearchEntitiesTool;
 pub use MemoryTreeTool as MemoryQueryTool;

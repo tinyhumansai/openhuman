@@ -10,7 +10,7 @@ impl Tool for BrowserTool {
             "Web/browser automation with pluggable backends (playwright, agent-browser, rust-native, computer_use). ",
             "Supports DOM actions plus optional OS-level actions (mouse_move, mouse_click, mouse_drag, ",
             "key_type, key_press) through a computer-use sidecar. Use 'snapshot' to map ",
-            "interactive elements to refs (@e1, @e2). Enforces browser.allowed_domains for open actions."
+            "interactive elements to runtime-issued refs copied from the latest page snapshot. Enforces browser.allowed_domains for open actions."
         )
     }
 
@@ -33,7 +33,7 @@ impl Tool for BrowserTool {
                 },
                 "selector": {
                     "type": "string",
-                    "description": "Element selector: @ref (e.g. @e1), CSS (#id, .class), or text=..."
+                    "description": "Element selector: an @ref copied from the latest page snapshot, CSS (#id, .class), or text=..."
                 },
                 "value": {
                     "type": "string",

@@ -1,5 +1,45 @@
 use super::*;
 
+/// The defect this text exists to prevent: shown a sample handle, two live
+/// runs called the tool with `res_1` against a cache that had never issued
+/// one. Nothing model-facing here may contain a handle-shaped literal — a
+/// description is a prompt, and an example in it is an instruction.
+#[test]
+fn no_model_facing_text_shows_a_fabricated_handle() {
+    let corpus = format!("{} {}", description_text(), parameters_schema_json());
+
+    for fabricated in ["res_1", "res_0", "res_123", "\"res_", "result_1"] {
+        assert!(
+            !corpus.contains(fabricated),
+            "model-facing text must not show `{fabricated}` — the model sends what it is shown"
+        );
+    }
+}
+
+/// The other half of the same contract: having removed the example, the
+/// text must still say where a real handle comes from, and that it can stop
+/// working. Without the second part an evicted handle reads to the model as
+/// "wrong handle" and invites a guess, which is where the fabrication came
+/// from in the first place.
+#[test]
+fn the_handle_argument_says_where_a_handle_comes_from_and_that_it_expires() {
+    let schema = parameters_schema_json();
+    let desc = schema["properties"]["result_id"]["description"]
+        .as_str()
+        .expect("result_id documents itself");
+
+    assert!(
+        desc.contains("appeared in an earlier result"),
+        "the only valid source of a handle must be stated: {desc}"
+    );
+    for expiry_term in ["evicted", "re-run the original tool"] {
+        assert!(
+            desc.to_lowercase().contains(&expiry_term.to_lowercase()),
+            "handle expiry must be documented (`{expiry_term}` missing): {desc}"
+        );
+    }
+}
+
 // The chunk budget tracks the resolved context window, so a small local
 // window yields a much smaller budget than a long-context cloud tier — this
 // is what forces chunking instead of an oversized single-shot prompt.

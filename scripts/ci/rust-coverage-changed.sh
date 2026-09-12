@@ -242,7 +242,14 @@ compile_raw_coverage_target() {
 run_full() {
   log "running FULL instrumented suite (reason: $1)"
   llvm_cov clean --workspace
-  llvm_cov --no-report --no-fail-fast -p openhuman --lib
+  # The full lib suite contains tests that share process-global registries and
+  # configuration. Keep libtest serial so one fixture cannot leak into another.
+  # A build-only CoreRuntime test also installs a process-wide harness context;
+  # run that test separately so its narrowed DomainSet cannot affect the rest
+  # of the registry suite. It is still instrumented below and contributes to
+  # the merged report.
+  llvm_cov --no-report --no-fail-fast -p openhuman --lib -- --skip a_build_only_runtime_is_swept_before_it_can_be_invoked --test-threads=1
+  llvm_cov --no-report --no-fail-fast -p openhuman --lib -- a_build_only_runtime_is_swept_before_it_can_be_invoked --test-threads=1
   llvm_cov --no-report --no-fail-fast -p openhuman --bins
   while IFS= read -r target; do
     [ -n "${target}" ] || continue
@@ -406,8 +413,15 @@ llvm_cov clean --workspace
 
 if [ "${#lib_filters[@]}" -gt 0 ]; then
   log "running scoped lib unit tests with filters: ${lib_filters[*]}"
-  # libtest ORs multiple positional filters — one run covers all domains.
-  run_counted llvm_cov --no-report --no-fail-fast -p openhuman --lib -- "${lib_filters[@]}"
+  # Run each domain in its own process. The scoped domains can include tests
+  # that share process-global registries and configuration; combining filters
+  # lets one domain's fixture setup leak into another even with one test
+  # thread. Separate processes preserve the isolation expected by those tests
+  # while the coverage reports are still merged below.
+  for filter in "${lib_filters[@]}"; do
+    log "running scoped lib filter: ${filter}"
+    run_counted llvm_cov --no-report --no-fail-fast -p openhuman --lib -- "${filter}" --test-threads=1 || exit
+  done
 fi
 
 if [ "${#test_targets[@]}" -gt 0 ]; then

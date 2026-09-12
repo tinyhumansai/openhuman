@@ -184,15 +184,23 @@ fn domain_subscriber_registration_readiness_helper_is_idempotent() {
     use std::sync::Mutex;
 
     let completed = Mutex::new(HashSet::new());
+
+    assert!(!group_first_time_when_bus_ready(
+        &completed,
+        DomainGroup::Media,
+        false,
+    ));
+    assert!(completed.lock().expect("registry lock").is_empty());
+
     assert!(group_first_time_when_bus_ready(
         &completed,
         DomainGroup::Media,
-        true
+        true,
     ));
     assert!(!group_first_time_when_bus_ready(
         &completed,
         DomainGroup::Media,
-        true
+        true,
     ));
 }
 
