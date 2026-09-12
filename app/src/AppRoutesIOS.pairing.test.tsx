@@ -138,7 +138,7 @@ describe('AppRoutesIOS — persisted transport bootstrap', () => {
     activeTransport = null;
     mockGetTransport.mockReset();
     mockClose.mockClear();
-    mockCreateTransportManager.mockReset();
+    mockCreateTransportManager.mockClear();
     mockSetActiveCoreTransport.mockReset();
   });
 
