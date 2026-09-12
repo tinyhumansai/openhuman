@@ -33,18 +33,25 @@ pub(crate) fn classify_inference_error(err: &str) -> ClassifiedError {
     // before the generic provider-429 branch — otherwise users see
     // a confusing "your AI provider is rate-limiting you" message
     // for limits OpenHuman itself enforced (issue #2364).
-    // Codex-specific sentinel emitted by `openai_oauth::store` on refresh
-    // failure. Checked before `is_session_expired_message` because the sentinel
-    // contains "authentication token is expired", which would also match the
-    // broader "session expired" substring test and route to the wrong sign-in
-    // flow. We require "codex" in the message so generic provider errors that
-    // happen to contain "token_expired" or "please try signing in again" are
-    // not misclassified as Codex OAuth failures. (#5869)
     const CODEX_SENTINEL: &str = "codex authentication token is expired";
-    let classified = if err.to_ascii_lowercase().contains(CODEX_SENTINEL) {
-        // The Codex OAuth token has expired and the refresh failed. This is a
-        // provider-specific re-auth — the user must reconnect Codex in
-        // Settings → Integrations, NOT sign into OpenHuman.
+    let classified = if let Some(detail) = local_cli_provider_setup_detail(err) {
+        // A local-CLI provider (`claude-code`) refused before any network call:
+        // the binary is missing, too old, or unusable. The message it raises is
+        // already the fix ("install …", "upgrade to >= X"), and it is the user's
+        // own machine to repair — so surface it verbatim instead of the generic
+        // "something went wrong, report it on Discord", which sends the user to
+        // support for a problem no maintainer can see or act on. Non-retryable:
+        // retrying the same turn re-probes the same absent binary.
+        ClassifiedError {
+            error_type: "provider_setup",
+            message: detail,
+            source: "provider",
+            retryable: false,
+            retry_after_ms: None,
+            provider,
+            fallback_available,
+        }
+    } else if err.to_ascii_lowercase().contains(CODEX_SENTINEL) {
         ClassifiedError {
             error_type: "provider_error",
             message: "Your Codex session has expired. Please reconnect it in \
@@ -671,4 +678,43 @@ pub(crate) fn is_transient_unavailability_text(lower: &str) -> bool {
     TRANSIENT_MARKERS
         .iter()
         .any(|marker| lower.contains(marker))
+}
+
+/// Detect a local-CLI provider setup failure and return its message.
+///
+/// These errors are raised by [`crate::openhuman::inference::provider`] before
+/// any request leaves the machine, and every one of them is already phrased as
+/// an instruction to the user.
+///
+/// The marker is the exact prefix the provider stamps on its three `CliStatus`
+/// failures (not installed, outdated, unusable) **and** on a failed spawn at
+/// turn time. That last one belongs in the set: the CLI can pass the version
+/// probe at provider construction and still be gone — deleted, or stripped of
+/// its execute bit — by the time a turn spawns it, which is the same "fix your
+/// install" problem arriving later, not a provider outage.
+fn local_cli_provider_setup_detail(err: &str) -> Option<String> {
+    const MARKER: &str = "[claude-code] `claude` CLI";
+    /// The one wrapper the provider puts in front of its own errors
+    /// (`ClaudeCodeProvider::map_model_error`).
+    const WRAPPER: &str = "claude-code model call failed: ";
+    const HARNESS_WRAPPER: &str = "tinyagents harness run failed: ";
+
+    // Anchored, not a substring search. `err.find(MARKER)` would classify any
+    // error that merely *quotes* the marker — a model echoing it back, a tool
+    // result carrying it — as a local setup failure, which is the wrong advice
+    // and non-retryable to boot. The marker is only meaningful where the
+    // provider actually put it: at the front, or right behind its own wrapper.
+    let rest = err.trim();
+    let detail = rest
+        .strip_prefix(HARNESS_WRAPPER)
+        .map(str::trim_start)
+        .unwrap_or(rest);
+    let detail = detail
+        .strip_prefix(WRAPPER)
+        .map(str::trim_start)
+        .unwrap_or(detail);
+    if !detail.starts_with(MARKER) {
+        return None;
+    }
+    (!detail.is_empty()).then(|| detail.to_string())
 }
