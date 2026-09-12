@@ -168,17 +168,21 @@ describe('AppRoutesIOS — deep links a paired phone must honour', () => {
   beforeEach(() => listProfiles.mockReset());
   afterEach(() => vi.clearAllMocks());
 
-  it('opens a specific thread at /chat/:threadId', () => {
+  it('opens a specific thread at /chat/:threadId', async () => {
     // The bare /chat form is covered by AppRoutesIOS.test.tsx; the optional
     // `:threadId` segment is what a notification deep link actually carries,
     // and a mismatch there lands the user on the catch-all instead.
     listProfiles.mockReturnValue(SAVED_PROFILE);
+    const transport = { kind: 'tunnel', isHealthy: vi.fn().mockResolvedValue(true) };
+    mockGetTransport.mockResolvedValue(transport);
 
     renderAt('/chat/thread-abc');
 
     // The segment must survive to the page, not merely match the route: this is
     // the half a notification deep link depends on.
-    expect(screen.getByTestId('page-chat')).toHaveTextContent('chat:thread-abc');
+    await waitFor(() =>
+      expect(screen.getByTestId('page-chat')).toHaveTextContent('chat:thread-abc')
+    );
     expect(screen.getByTestId('mobile-tab-bar')).toBeInTheDocument();
     expect(screen.queryByTestId('page-human')).not.toBeInTheDocument();
   });

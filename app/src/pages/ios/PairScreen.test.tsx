@@ -136,7 +136,8 @@ describe('PairScreen', () => {
     const savedProfile = mockSaveProfile.mock.calls[0][0];
     expect(savedProfile.kind).toBe('tunnel');
     expect(savedProfile.channelId).toBe('ABCDEFGHIJKLMNOPQRSTUVWXYZ234567');
-    expect(savedProfile.pairingToken).toBeTruthy();
+    expect(savedProfile.pairingToken).toBeUndefined();
+    expect(savedProfile.sessionToken).toBe('reconnect-token');
     // Sensitive fields: just check they exist, not the value.
     expect(typeof savedProfile.devicePrivkey).toBe('string');
     expect(savedProfile.devicePrivkey.length).toBeGreaterThan(0);
@@ -144,6 +145,7 @@ describe('PairScreen', () => {
     await waitFor(() => {
       expect(mockNavigate).toHaveBeenCalledWith('/human', { replace: true });
     });
+    expect(mockCall).toHaveBeenCalledWith('openhuman.app_state_snapshot', {});
     expect(mockSetActiveCoreTransport).toHaveBeenCalledOnce();
     expect(mockSetActiveCoreTransport).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'tunnel' })
