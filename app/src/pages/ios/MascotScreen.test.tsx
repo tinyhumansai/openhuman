@@ -27,7 +27,11 @@ vi.mock('react-router-dom', async () => {
 
 const mockChatSend = vi.fn();
 const mockUnsubscribe = vi.fn();
-const mockSubscribeChatEvents = vi.fn((_listeners: unknown) => mockUnsubscribe);
+let chatListeners: { onError?: (event: { error_type: string; message: string }) => void } = {};
+const mockSubscribeChatEvents = vi.fn((listeners: typeof chatListeners) => {
+  chatListeners = listeners;
+  return mockUnsubscribe;
+});
 vi.mock('../../services/chatService', () => ({
   chatSend: (args: unknown) => mockChatSend(args),
   subscribeChatEvents: (listeners: unknown) => mockSubscribeChatEvents(listeners),
@@ -113,6 +117,7 @@ beforeEach(() => {
   mockNavigate.mockReset();
   mockChatSend.mockReset();
   mockSubscribeChatEvents.mockClear();
+  chatListeners = {};
   mockUnsubscribe.mockReset();
   mockStartListening.mockResolvedValue(undefined);
   mockStopListening.mockResolvedValue({ text: '', isFinal: true });
@@ -233,6 +238,19 @@ describe('MascotScreen', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/failed to send/i)).toBeInTheDocument();
+    });
+  });
+
+  it('shows provider setup error details in the transcript', async () => {
+    renderMascotScreen();
+
+    chatListeners.onError?.({
+      error_type: 'provider_setup',
+      message: 'Claude Code CLI is not installed.',
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Claude Code CLI is not installed.')).toBeInTheDocument();
     });
   });
 

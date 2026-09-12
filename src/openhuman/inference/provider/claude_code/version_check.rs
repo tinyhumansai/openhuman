@@ -61,12 +61,12 @@ fn well_known_candidates(home: Option<&Path>) -> Vec<PathBuf> {
     if let Some(home) = home {
         for suffix in [
             ".local/bin/claude",
-            "bin/claude",
             ".claude/local/claude",
             ".bun/bin/claude",
             ".volta/bin/claude",
             "Library/pnpm/claude",
             ".npm-global/bin/claude",
+            "bin/claude",
         ] {
             push_candidate_variants(&mut candidates, home.join(suffix));
         }
