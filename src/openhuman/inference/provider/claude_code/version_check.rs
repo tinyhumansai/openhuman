@@ -71,10 +71,12 @@ fn well_known_install() -> Option<PathBuf> {
 /// only lets resolution continue to later candidates when this one cannot
 /// answer `--version` at all.
 fn version_probe_succeeds(path: &Path) -> bool {
-    match bounded_version_probe(path, VERSION_PROBE_TIMEOUT) {
+    let path_env = super::driver::child_path_with_user_bins(path);
+    match bounded_version_probe_with_path(path, VERSION_PROBE_TIMEOUT, Some(&path_env)) {
         Ok(Some(output)) => {
             output.status.success()
-                && parse_version(&String::from_utf8_lossy(&output.stdout)).is_some()
+                && parse_version(&String::from_utf8_lossy(&output.stdout))
+                    .is_some_and(|version| !version_lt(&version, MIN_CLI_VERSION))
         }
         Ok(None) => false,
         Err(err) => {
@@ -96,11 +98,35 @@ fn bounded_version_probe(
     path: &Path,
     budget: Duration,
 ) -> std::io::Result<Option<std::process::Output>> {
-    let mut child = Command::new(path)
+    bounded_version_probe_with_path(path, budget, None)
+}
+
+fn bounded_version_probe_with_path(
+    path: &Path,
+    budget: Duration,
+    path_env: Option<&std::ffi::OsStr>,
+) -> std::io::Result<Option<std::process::Output>> {
+    #[cfg(unix)]
+    use std::os::unix::process::CommandExt;
+
+    let mut command = Command::new(path);
+    command
         .arg("--version")
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()?;
+        .stderr(std::process::Stdio::piped());
+    if let Some(path_env) = path_env {
+        command.env("PATH", path_env);
+    }
+    #[cfg(unix)]
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setpgid(0, 0) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut child = command.spawn()?;
     let deadline = std::time::Instant::now() + budget;
 
     loop {
@@ -110,6 +136,8 @@ fn bounded_version_probe(
                 std::thread::sleep(Duration::from_millis(10));
             }
             None => {
+                #[cfg(unix)]
+                let _ = unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
                 let _ = child.kill();
                 let _ = child.wait();
                 log::debug!(
@@ -186,12 +214,24 @@ fn login_shell_lookup() -> Option<PathBuf> {
 /// the bound exists. Reading `SHELL` inside would have forced an env-mutating
 /// test that races every other test in the binary.
 fn login_shell_lookup_with(shell: &str, budget: Duration) -> Option<PathBuf> {
-    let mut child = match Command::new(shell)
+    #[cfg(unix)]
+    use std::os::unix::process::CommandExt;
+
+    let mut command = Command::new(shell);
+    command
         .args(["-lc", "command -v claude"])
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-    {
+        .stderr(std::process::Stdio::null());
+    #[cfg(unix)]
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setpgid(0, 0) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut child = match command.spawn() {
         Ok(child) => child,
         Err(err) => {
             log::debug!("[claude-code][version] login shell probe failed err={err}");
@@ -207,6 +247,8 @@ fn login_shell_lookup_with(shell: &str, budget: Duration) -> Option<PathBuf> {
                 std::thread::sleep(Duration::from_millis(10));
             }
             Ok(None) => {
+                #[cfg(unix)]
+                let _ = unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
                 let _ = child.kill();
                 let _ = child.wait();
                 log::warn!(
@@ -216,6 +258,8 @@ fn login_shell_lookup_with(shell: &str, budget: Duration) -> Option<PathBuf> {
                 return None;
             }
             Err(err) => {
+                #[cfg(unix)]
+                let _ = unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
                 let _ = child.kill();
                 let _ = child.wait();
                 log::debug!("[claude-code][version] login shell probe wait failed err={err}");
@@ -252,6 +296,7 @@ fn well_known_candidates(home: Option<&Path>) -> Vec<PathBuf> {
     if let Some(home) = home {
         for suffix in [
             ".local/bin/claude",
+            "bin/claude",
             ".claude/local/claude",
             ".bun/bin/claude",
             ".volta/bin/claude",
