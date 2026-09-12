@@ -87,6 +87,35 @@ fn a_blocking_login_shell_is_abandoned_rather_than_waited_on() {
 
 #[cfg(unix)]
 #[test]
+fn login_shell_lookup_uses_the_last_nonempty_output_line() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let shell = dir.path().join("banner-shell");
+    let claude = dir.path().join("claude");
+    std::fs::write(&claude, "#!/bin/sh\n").expect("write claude");
+    std::fs::write(
+        &shell,
+        format!(
+            "#!/bin/sh\nprintf 'Welcome to the shell\\n\\n{}\\n'\n",
+            claude.display()
+        ),
+    )
+    .expect("write shell");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod shell");
+        std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod claude");
+    }
+
+    assert_eq!(
+        super::login_shell_lookup_with(shell.to_str().expect("utf8 path"), Duration::from_secs(1)),
+        Some(claude),
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn a_blocking_version_probe_is_killed_and_reaped() {
     let dir = tempfile::tempdir().expect("tempdir");
     let binary = dir.path().join("blocking-claude");

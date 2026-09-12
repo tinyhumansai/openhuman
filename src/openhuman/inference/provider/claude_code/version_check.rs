@@ -168,14 +168,19 @@ fn bounded_child_output(
     let (stderr_tx, stderr_rx) = mpsc::channel();
     let mut stdout = child.stdout.take().expect("stdout was piped");
     let mut stderr = child.stderr.take().expect("stderr was piped");
-    std::thread::spawn(move || {
+    let stdout_reader = std::thread::spawn(move || {
         let bytes = read_bounded(&mut stdout, PROBE_OUTPUT_CAP);
         let _ = stdout_tx.send(bytes);
     });
-    std::thread::spawn(move || {
+    let stderr_reader = std::thread::spawn(move || {
         let bytes = read_bounded(&mut stderr, PROBE_OUTPUT_CAP);
         let _ = stderr_tx.send(bytes);
     });
+
+    let join_readers = |stdout_reader, stderr_reader| {
+        let _ = stdout_reader.join();
+        let _ = stderr_reader.join();
+    };
 
     let deadline = std::time::Instant::now() + budget;
     let mut status = None;
@@ -192,6 +197,7 @@ fn bounded_child_output(
             stderr = stderr_rx.try_recv().ok();
         }
         if status.is_some() && stdout.is_some() && stderr.is_some() {
+            join_readers(stdout_reader, stderr_reader);
             return Ok(Some(std::process::Output {
                 status: status.take().expect("status checked above"),
                 stdout: stdout.take().expect("stdout checked above"),
@@ -201,8 +207,11 @@ fn bounded_child_output(
         if std::time::Instant::now() >= deadline {
             #[cfg(unix)]
             let _ = unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
+            #[cfg(windows)]
+            terminate_process_tree(child.id());
             let _ = child.kill();
             let _ = child.wait();
+            join_readers(stdout_reader, stderr_reader);
             log::debug!(
                 "[claude-code][version] fallback version probe timed out path={} after {:?}",
                 path.display(),
@@ -212,6 +221,13 @@ fn bounded_child_output(
         }
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+#[cfg(windows)]
+fn terminate_process_tree(pid: u32) {
+    let _ = Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .status();
 }
 
 /// Drain a probe pipe without allowing a broken executable to exhaust memory.
@@ -333,7 +349,13 @@ fn login_shell_lookup_with(shell: &str, budget: Duration) -> Option<PathBuf> {
     if !output.status.success() {
         return None;
     }
-    let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    let path = output
+        .stdout
+        .split(|byte| *byte == b'\n' || *byte == b'\r')
+        .map(|line| String::from_utf8_lossy(line).trim().to_owned())
+        .filter(|line| !line.is_empty())
+        .next_back()
+        .map(PathBuf::from)?;
     path.is_file().then(|| {
         log::debug!(
             "[claude-code][version] resolved via login shell path={}",
