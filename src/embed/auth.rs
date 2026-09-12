@@ -1,14 +1,12 @@
 //! Auth sub-facade — the session a turn runs under.
 //!
-//! # Why an embedder needs this at all
+//! # When an embedder needs this
 //!
-//! A custom provider — anything other than the account's managed backend — is
-//! gated on an active app-session JWT (`verify_session_active`,
-//! `inference/provider/factory.rs`). The gate is there to stop an unregistered
-//! desktop user from configuring every workload at a custom endpoint and
-//! bypassing registration entirely; it is not aimed at a library host that was
-//! handed an endpoint and a key by its own operator. But the check has no way to
-//! tell those apart, so an embedder has to present a session like anyone else.
+//! [`HostKind::Library`](crate::core::types::HostKind::Library) accepts a
+//! caller-supplied provider without an OpenHuman app login. An embedder needs a
+//! real session only when it also calls authenticated TinyHumans backend
+//! services, or when it deliberately selects a desktop/standalone host mode
+//! whose custom-provider policy still requires an active session.
 //!
 //! Before this existed, every embedder reached for `Core::raw()` and hand-wrote
 //! `openhuman.auth_store_session` — which is how an unrelated host ends up
@@ -19,10 +17,10 @@
 //!
 //! [`Session::backend`] is a real JWT: it is validated against `GET /auth/me`
 //! before anything is persisted, and a failure means nothing is stored.
-//! [`Session::local`] is the offline form — a token ending in `.local`, carrying
-//! its own user payload, which the core recognizes and does not try to validate.
-//! It authorizes nothing at the backend; it exists so a host with its own
-//! credentials can satisfy a gate that was written about a different situation.
+//! [`Session::local`] is the compatibility/offline form — a token ending in
+//! `.local`, carrying its own user payload, which the core recognizes and does
+//! not try to validate. It authorizes nothing at the backend and is not needed
+//! by the default library harness.
 
 use std::sync::Arc;
 
@@ -55,8 +53,8 @@ impl Session {
     /// wrong and be told only that validation failed.
     ///
     /// Grants nothing at the backend. Managed inference, billing and team calls
-    /// all still fail without a real session; what it unblocks is the
-    /// custom-provider gate.
+    /// all still fail without a real session. The default library harness does
+    /// not need this to use caller-supplied inference.
     pub fn local(user_id: impl Into<String>) -> Self {
         let user_id = user_id.into();
         Self {

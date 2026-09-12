@@ -10,7 +10,7 @@ use tinyagents_harness::context::RunContext;
 use tinyagents_harness::events::AgentEvent;
 use tinyinference::message::{ContentBlock, Message as TaMessage};
 use tinyagents_harness::middleware::{
-    AgentRun, BudgetTracker, ContextualToolSelectionMiddleware, MicrocompactMiddleware, Middleware,
+    AgentRun, BudgetTracker, ContextualToolSelectionMiddleware, Middleware,
     MiddlewareToolOutcome, ToolAllowlistMiddleware, ToolHandler, ToolMiddleware,
 };
 use tinyinference::model::{ModelRequest, ModelResponse, PromptSegment, SegmentRole};
@@ -290,16 +290,14 @@ impl TurnContextMiddleware {
         if let Some(sink) = self.transcript_snapshot {
             harness.push_middleware(Arc::new(TranscriptSnapshotMiddleware { sink }));
         }
-        if self.microcompact_keep_recent > 0 {
-            // Crate middleware (upstreamed from the in-house copy). Constructed
-            // with OpenHuman's model-facing placeholder so behavior is
-            // byte-identical to the deleted local version. Events stay off (the
-            // default) to preserve the prior silent-rewrite behavior.
-            harness.push_middleware(Arc::new(MicrocompactMiddleware::new(
-                self.microcompact_keep_recent,
-                CLEARED_PLACEHOLDER,
-            )));
-        }
+        // Microcompact is NOT registered here any more (issue #6014). It used to
+        // be, which put its `before_model` ahead of the summarization step the
+        // caller installs later — so by the time the task-aware summarizer ran,
+        // every tool body past `keep_recent` had already been replaced with
+        // `CLEARED_PLACEHOLDER` and it was summarizing placeholders. The one
+        // component able to preserve those results in condensed form never saw
+        // them. The caller now sites it AFTER compression, so the ladder reads
+        // summarize → blank → evict. See `assemble_turn_harness`.
         // REVERSE-ORDER RULE (issue #4464): the crate runs `after_tool` hooks in
         // REVERSE registration order (`MiddlewareStack::run_after_tool` iterates
         // `self.middlewares.iter().rev()`, tinyagents src/harness/middleware/mod.rs).

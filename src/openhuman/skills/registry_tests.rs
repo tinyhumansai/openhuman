@@ -318,3 +318,47 @@ fn skill_github_config_serializes_lowercase() {
         "lowercase serialization: got {s}"
     );
 }
+
+/// One workflow lookup must run at most one full on-disk discovery pass.
+///
+/// `get_workflow_with_profile` used to discover twice when the id was not an
+/// exact runnable slug: once inside `load_workflows_with_profile`, then again
+/// to resolve a profile display name back to its slug. Discovery re-reads and
+/// re-parses every bundle under every root, so the second pass doubled the cost
+/// — and doubled every per-parse deprecation warning with it (#6166, #6155).
+#[test]
+fn workflow_lookup_discovers_once() {
+    use super::super::ops_discover::DISCOVERY_CALLS;
+
+    let ws = tempfile::TempDir::new().unwrap();
+    let profile_root = tempfile::TempDir::new().unwrap();
+    seed_runnable_with_name(
+        profile_root.path(),
+        "zzcount6166",
+        "Counted Assistant",
+        "COUNT_BODY",
+    );
+
+    // Resolution by display name — the path that took the second pass.
+    DISCOVERY_CALLS.with(|c| c.set(0));
+    let resolved =
+        get_workflow_with_profile(ws.path(), "Counted Assistant", Some(profile_root.path()))
+            .expect("display name must still resolve");
+    assert_eq!(resolved.definition.id, "zzcount6166");
+    assert_eq!(
+        DISCOVERY_CALLS.with(|c| c.get()),
+        1,
+        "display-name lookup must discover the skills tree once, not twice"
+    );
+
+    // A miss walks the same fallback and must not discover twice either.
+    DISCOVERY_CALLS.with(|c| c.set(0));
+    assert!(
+        get_workflow_with_profile(ws.path(), "zznosuch6166", Some(profile_root.path())).is_none()
+    );
+    assert_eq!(
+        DISCOVERY_CALLS.with(|c| c.get()),
+        1,
+        "an unresolvable id must discover the skills tree once, not twice"
+    );
+}

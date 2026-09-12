@@ -10,7 +10,23 @@ use crate::openhuman::agent::context::prompt::{
 };
 use anyhow::Result;
 
-const ARCHETYPE: &str = include_str!("prompt.md");
+/// The summarizer archetype, verbatim.
+///
+/// `pub` since issue #6014, for the same reason
+/// [`payload_summarizer`](crate::openhuman::agent::tinyagents::payload_summarizer)
+/// is: the trait invites an embedder to supply its own summarizer — the default
+/// implementation dispatches a sub-agent, which an embedder may be unable to do
+/// — and the archetype is where the extraction contract is actually written
+/// down. Without it, anyone taking that invitation has to reinvent the prompt,
+/// and will reinvent it worse: the identifier rule, the structural hints that
+/// let a caller decide whether to re-fetch, the error-payload and
+/// binary-payload edge cases, and the "do not solve the parent task" boundary
+/// are all easy to omit and expensive to discover missing.
+///
+/// [`build`] remains the entry point for the sub-agent path, which additionally
+/// wants the user-files, tools and workspace sections. A caller running one
+/// tool-less model call wants this and nothing else.
+pub const ARCHETYPE: &str = include_str!("prompt.md");
 
 pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
     let mut out = String::with_capacity(4096);

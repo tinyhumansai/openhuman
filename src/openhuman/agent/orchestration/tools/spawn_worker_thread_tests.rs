@@ -81,6 +81,7 @@ fn test_parent_ctx(workspace_dir: PathBuf) -> ParentExecutionContext {
         channel: "test".into(),
         all_tools: Arc::new(vec![]),
         all_tool_specs: Arc::new(vec![]),
+        visible_tool_specs: Arc::new(Vec::new()),
         visible_tool_names: std::collections::HashSet::new(),
         subagent_tool_ceiling_names: std::collections::HashSet::new(),
         workflows: Arc::new(vec![]),

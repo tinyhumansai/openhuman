@@ -17,7 +17,7 @@
  * this product's real transcript surfaces and deleted rather than force-fitted:
  *
  * - `Reasoning` / `ChainOfThought` — this product renders the agent's thinking
- *   INLINE at the position it streamed (`ToolTimelineBlock`'s `ThoughtBlock`,
+ *   INLINE at the position it streamed (the assistant-ui delegation transcript,
  *   explicitly "no heading, no collapse"; `ProcessingTranscriptView`'s
  *   interleaved narration). Both upstream components are whole-panel
  *   collapsibles that hide that trail behind one "Thought for N seconds"

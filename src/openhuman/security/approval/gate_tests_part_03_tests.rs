@@ -55,6 +55,31 @@ async fn intercept_with_cli_origin_allows_without_prompt() {
     assert!(matches!(outcome, GateOutcome::Allow));
 }
 
+#[tokio::test]
+async fn intercept_with_direct_chat_origin_allows_without_prompt() {
+    // `DirectChat` shares the CLI arm: both are a local operator invoking
+    // the core directly, and this gate decides on trust, not on whether the
+    // turn's text was person-written. The arm is only sound while both
+    // origins are covered — pinning `Cli` alone would let a future split
+    // send `DirectChat` down the park-and-prompt path (or the TTL-deny one)
+    // with nothing failing.
+    let (gate, _dir) = test_gate();
+    let outcome = turn_origin::with_origin(
+        AgentTurnOrigin::DirectChat,
+        gate.intercept("shell", "run ls", serde_json::json!({})),
+    )
+    .await;
+    assert!(
+        matches!(outcome, GateOutcome::Allow),
+        "DirectChat must allow unprompted, got {outcome:?}"
+    );
+    // Allowed without prompting means nothing was parked for a decision.
+    assert!(
+        gate.list_pending().unwrap().is_empty(),
+        "an allow-without-prompt must not persist a pending approval"
+    );
+}
+
 /// Regression for #5508 / #5499: an external-effect scheduling tool
 /// (`cron_add`) that runs on a freshly-spawned, turn-less task — the exact
 /// shape of a hosted effect executor, which
@@ -501,6 +526,22 @@ async fn flow_origin_park_publishes_flow_approval_request_and_notification() {
     .await
     .expect("timed out waiting for the flow-gate-approval notification");
     assert_eq!(notif.id, format!("flow-gate-approval:{request_id}"));
+    // Bound to the workspace the flow parked in (#5966): this publisher
+    // bypasses the bridge that stamps workspace identity, and the gate is
+    // process-wide, so an unbound banner would stay actionable after a
+    // workspace switch and approve this call from another workspace.
+    let workspace = notif
+        .workspace
+        .as_deref()
+        .expect("a flow approval names the workspace it parked in");
+    assert!(
+        workspace.starts_with("ws_"),
+        "the binding is an opaque handle, never a path: {workspace}"
+    );
+    assert!(
+        notif.workspace_revision.is_some(),
+        "the binding carries the revision the workspace was current under"
+    );
     let actions = notif.actions.expect("notification must declare actions");
     let action_ids: Vec<_> = actions.iter().map(|a| a.action_id.as_str()).collect();
     assert_eq!(

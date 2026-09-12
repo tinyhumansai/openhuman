@@ -1,6 +1,6 @@
 [package]
 name = "OpenHuman"
-version = "0.63.19"
+version = "0.63.25"
 description = "OpenHuman - AI-powered Super Assistant"
 authors = ["OpenHuman"]
 edition = "2021"
@@ -79,6 +79,47 @@ hex = "0.4"
 # the ring provider at startup in `lib.rs::run()`.
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 log = "0.4"
+
+# Native directory chooser for the folder memory-source (#5831). A directory
+# picked in the renderer carries no filesystem path — `File.path` is an
+# Electron extension that neither Wry's WKWebView/WebView2/WebKitGTK nor
+# plain Chromium implements — so the only way to learn where a chosen folder
+# lives is to ask the OS from the host process.
+#
+# `default-features = false` is what makes this a different proposition from
+# the `rfd` that `artifact_commands` shed in #5541. That removal counted 13
+# packages: `ashpd`, `zbus`, and the `async-io`/`polling` executor stack.
+# Every one of those arrives through `rfd`'s **default** `xdg-portal` feature
+# (`xdg-portal = ["ashpd", "urlencoding", "pollster"]`), which is not enabled
+# here. `gtk3` binds the GTK that Wry already links on Linux instead —
+# `gtk-sys` is in that graph via `tray-icon` -> `tauri` whether or not this
+# entry exists — and on macOS/Windows `rfd` compiles against `objc2-app-kit`
+# / `windows-sys`, both already present. The marginal cost is `rfd` itself.
+#
+# `Cargo.lock` will nonetheless gain `ashpd` and a wayland cluster, and that
+# is expected: the lockfile records the **maximal** resolution graph,
+# including optional and target-gated edges nothing enables. Read the real
+# graph, not the lock —
+#
+#     cargo tree --target x86_64-unknown-linux-gnu -e normal -i ashpd
+#     # -> warning: nothing to print.
+#
+# Prefer this over `tauri-plugin-dialog`: that plugin depends on the same
+# `rfd` AND drags `tauri-plugin-fs` in behind it, for one command that needs
+# no filesystem permission surface at all.
+#
+# The feature list is `tauri-plugin-dialog`'s own, verbatim — that plugin is
+# the reference integration of `rfd` into a Tauri app, and each of the three
+# matters here. `gtk3` is the right Linux backend precisely *because* the host
+# is GTK-based (rfd steers non-GTK apps to the portal instead), `tokio` drives
+# the async dialog on the runtime a `#[tauri::command]` already runs on, and
+# `common-controls-v6` mirrors the feature `tauri` itself enables above, so
+# the Windows dialog matches the rest of the app's chrome.
+rfd = { version = "0.15", default-features = false, features = [
+    "gtk3",
+    "tokio",
+    "common-controls-v6",
+] }
 
 # Sentry for the Tauri shell (desktop host) process — separate Sentry project
 # from the React frontend and the Rust core sidecar. DSN is baked at compile
@@ -253,7 +294,7 @@ sandbox-bubblewrap = []
 # e2e-test-support`. See app/scripts/e2e-build.sh.
 e2e-test-support = ["openhuman_core/e2e-test-support"]
 
-# The tinycortex vendored above takes `tinymemory-api` by git (it re-exports
+# The root world's tinycortex takes `tinymemory-api` by git (it re-exports
 # the TinyMemory contract instead of duplicating it, tinymemory#18 §A1).
 # Without this entry cargo resolves that git copy *and* the path copy under
 # vendor/tinymemory as two distinct crates, and `tinymemory_api::MemoryCategory`
@@ -264,8 +305,8 @@ e2e-test-support = ["openhuman_core/e2e-test-support"]
 tinymemory-api = { path = "../../vendor/tinymemory/crates/tinymemory-api" }
 
 [patch."https://github.com/tinyhumansai/tinyinference"]
-# tinycortex depends on tinyinference by git rev; without this the shell world
-# resolves TWO copies of the same types. Mirrors root Cargo.toml:1345.
+# Crates in this world name tinyinference by git rev; without this the shell
+# world resolves TWO copies of the same types. Mirrors the root Cargo.toml.
 tinyinference = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference" }
 
 [patch.crates-io]
@@ -283,16 +324,14 @@ tinytools = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinytools"
 # tinymemory-core declares `tinyinference = "0.2"` (crates-io-shaped, unpublished),
 # so this world must patch it exactly as the root manifest does.
 tinyinference = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference" }
-# TinyFlows, TinyCortex, and TinyChannels are vendored beside
-# TinyAgents so integration work can test crate changes against OpenHuman before
-# publishing.
+# TinyFlows and TinyChannels are vendored beside TinyAgents so integration
+# work can test crate changes against OpenHuman before publishing.
 tinyflows = { path = "../../vendor/tinyflows/crates/tinyflows" }
-tinycortex = { path = "../../vendor/tinycortex" }
-# `tinymemory-core` (pulled in transitively through `openhuman_core`) names
-# `tinycortex-api` by version requirement, same as the root Cargo world —
-# patch it onto the same checkout here too, or this independent Cargo world
-# tries to resolve it from crates.io and fails (it was never published).
-tinycortex-api = { path = "../../vendor/tinycortex/api" }
+# No `tinycortex` / `tinycortex-api` patch here. Since openhuman#5560 the
+# engine is a [dev-dependencies] and `rss-bench`-only concern of the core
+# crate, and neither reaches this world — `Cargo.lock` carried both entries
+# under `[[patch.unused]]`. The shipped app reaches memory through the prebuilt
+# `tinymemory` module over `tinymemory-api`.
 tinychannels = { path = "../../vendor/tinychannels" }
 
 

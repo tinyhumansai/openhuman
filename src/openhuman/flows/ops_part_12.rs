@@ -367,12 +367,49 @@ pub async fn compute_approval_manifest(config: &Config, graph: &WorkflowGraph) -
     entries
 }
 
+/// Splits a manifest's approvable entries into the trust keys a run will have to
+/// ask for and the ones the flow already holds a grant for.
+///
+/// With no gate installed both lists are empty: nothing ever parks, so nothing
+/// is `missing` — and nothing was ever granted, so nothing is `already_trusted`
+/// either. Naming the approvable keys there would tell the save+enable card that
+/// permissions are authorized on a host that holds no grant for them.
+/// `gate_installed: false` is the caller's single signal, which is exactly what
+/// the sibling `approval_preauthorize_flow` reports for the same condition.
+fn split_manifest_trust(
+    entries: &[Value],
+    gate_installed: bool,
+    trusted: &HashSet<String>,
+) -> (Vec<String>, Vec<String>) {
+    let mut missing: Vec<String> = Vec::new();
+    let mut already_trusted: Vec<String> = Vec::new();
+    if !gate_installed {
+        return (missing, already_trusted);
+    }
+    for entry in entries {
+        if entry.get("kind").and_then(Value::as_str) != Some("approvable") {
+            continue;
+        }
+        let Some(tool_name) = entry.get("tool_name").and_then(Value::as_str) else {
+            continue;
+        };
+        if trusted.contains(tool_name) {
+            already_trusted.push(tool_name.to_string());
+        } else {
+            missing.push(tool_name.to_string());
+        }
+    }
+    (missing, already_trusted)
+}
+
 /// RPC: the approval manifest for a saved flow (by `id`) or a candidate
 /// `graph`, joined against the flow's existing `flow_tool_trust` grants so
 /// the save+enable card can ask only for what's missing.
 ///
 /// With the approval gate uninstalled (`OPENHUMAN_APPROVAL_GATE=0`) nothing
-/// ever parks, so `missing` is empty by definition and the card never shows.
+/// ever parks and nothing was ever granted, so `missing` and `already_trusted`
+/// are both empty by definition and the card never shows — `gate_installed:
+/// false` is the only signal in that case.
 pub async fn flows_approval_manifest(
     config: &Config,
     id: Option<&str>,
@@ -404,24 +441,7 @@ pub async fn flows_approval_manifest(
         _ => HashSet::new(),
     };
 
-    let mut missing: Vec<String> = Vec::new();
-    let mut already_trusted: Vec<String> = Vec::new();
-    for entry in &entries {
-        if entry.get("kind").and_then(Value::as_str) != Some("approvable") {
-            continue;
-        }
-        let Some(tool_name) = entry.get("tool_name").and_then(Value::as_str) else {
-            continue;
-        };
-        if !gate_installed {
-            // Nothing parks without a gate; report nothing as missing.
-            already_trusted.push(tool_name.to_string());
-        } else if trusted.contains(tool_name) {
-            already_trusted.push(tool_name.to_string());
-        } else {
-            missing.push(tool_name.to_string());
-        }
-    }
+    let (missing, already_trusted) = split_manifest_trust(&entries, gate_installed, &trusted);
 
     let log = format!(
         "[flows] approval manifest: {} entr{}, {} missing grant(s)",
@@ -464,6 +484,33 @@ pub async fn flows_search_tool_catalog(
     ))
 }
 
+/// Resolves the toolkit for a *single action* slug, rejecting anything that is
+/// not shaped `<TOOLKIT>_<ACTION>`.
+///
+/// [`tinymemory_api::composio::toolkit_from_slug`] falls back to the whole
+/// string when there is no `_`, so it answers `Some` for every non-empty input
+/// — `toolkit_from_slug("nodashhere") == Some("nodashhere")`. That permissive
+/// fall-back is load-bearing for `compute_required_connections`, which maps
+/// toolkit-ish tokens and legitimately wants the whole string back, so the
+/// stricter rule belongs to this caller rather than to the shared helper.
+///
+/// A contract fetch returns *one action*, so a slug with no action segment
+/// cannot name anything it could return; rejecting it here also spares the
+/// caller a pointless catalog round trip (which takes a per-toolkit fetch lock)
+/// before failing with an unrelated "could not fetch the catalog" message.
+///
+/// The multi-segment toolkit prefixes (`MICROSOFT_TEAMS_`, `ONE_DRIVE_`,
+/// `ZOHO_MAIL_`) all end in `_`, so a real action under one of them always has
+/// non-empty segments either side of its first `_` and passes unchanged.
+pub(super) fn toolkit_for_contract_slug(slug: &str) -> Option<String> {
+    let trimmed = slug.trim();
+    let (toolkit_segment, action_segment) = trimmed.split_once('_')?;
+    if toolkit_segment.is_empty() || action_segment.is_empty() {
+        return None;
+    }
+    tinymemory_api::composio::toolkit_from_slug(trimmed)
+}
+
 /// Fetches one Composio action's full contract (secret-free) — the RPC the
 /// canvas tool browser calls to fill in an action's arg schema, reusing the same
 /// core as the agent's `get_tool_contract` tool.
@@ -471,14 +518,19 @@ pub async fn flows_get_tool_contract(
     config: &Config,
     slug: &str,
 ) -> Result<RpcOutcome<Value>, String> {
-    let slug = slug.trim();
-    let Some(toolkit) = tinymemory_api::composio::toolkit_from_slug(slug) else {
+    let trimmed = slug.trim();
+    // Shape-check before `toolkit_from_slug`, and before any I/O: the shared
+    // helper is deliberately permissive, so an unshaped slug would otherwise
+    // fall through to a catalog round trip and fail with an unrelated message.
+    // The message quotes the caller's own slug, not `trimmed` — reporting the
+    // trimmed form named an empty string back at whoever sent whitespace.
+    let Some(toolkit) = toolkit_for_contract_slug(trimmed) else {
         return Err(format!(
             "Could not extract a toolkit from slug '{slug}' — it must look like \
              '<TOOLKIT>_<ACTION>' (e.g. 'GMAIL_SEND_EMAIL')."
         ));
     };
-    tracing::debug!(target: "flows", %slug, %toolkit, "[flows] flows_get_tool_contract: fetching contract");
+    tracing::debug!(target: "flows", slug = %trimmed, %toolkit, "[flows] flows_get_tool_contract: fetching contract");
     let Some(catalog) =
         crate::openhuman::flows::tinyflows::caps::fetch_live_toolkit_catalog(config, &toolkit)
             .await
@@ -487,7 +539,10 @@ pub async fn flows_get_tool_contract(
             "Could not fetch the live Composio catalog for toolkit '{toolkit}'."
         ));
     };
-    match catalog.iter().find(|c| c.slug.eq_ignore_ascii_case(slug)) {
+    match catalog
+        .iter()
+        .find(|c| c.slug.eq_ignore_ascii_case(trimmed))
+    {
         Some(contract) => {
             let contract =
                 crate::openhuman::flows::tinyflows::caps::apply_probe_override(contract.clone());
@@ -498,7 +553,7 @@ pub async fn flows_get_tool_contract(
             ))
         }
         None => Err(format!(
-            "'{slug}' is not a real action in the '{toolkit}' toolkit's live catalog."
+            "'{trimmed}' is not a real action in the '{toolkit}' toolkit's live catalog."
         )),
     }
 }

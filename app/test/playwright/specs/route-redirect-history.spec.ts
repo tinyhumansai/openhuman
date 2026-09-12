@@ -111,20 +111,25 @@ test.describe('The /channels redirect carries its tab selector through a real na
     await expect.poll(() => hash(page)).toContain('tab=messaging');
   });
 
-  test('/skills?tab=… currently DROPS the query — pinned, see W5 BUG-1', async ({ page }) => {
-    // `AppRoutes.tsx` claims twice that this redirect "preserves ?tab= deep
-    // links". It does not: `<Navigate to="/connections" replace />` takes a
-    // bare path string with no search component. The knock-on is that the
-    // legacy alias table in `pages/Skills.tsx` — written, per its own comment,
-    // so `/skills?tab=composio` keeps working after the redirect — is
-    // unreachable from this route.
+  test('/skills?tab=… carries the deep link through the redirect', async ({ page }) => {
+    // `AppRoutes.tsx` says this redirect "preserves ?tab= deep links", and as of
+    // `d434f1e0f` it does: `/skills` is `<ForwardSearch to="/connections" />`,
+    // which copies `search` and `hash` onto the target rather than dropping them
+    // the way a bare `<Navigate to="/connections" />` did.
     //
-    // Pinned as CURRENT behaviour so it cannot deepen unnoticed. When it is
-    // fixed, flip this to expect `tab=messaging` and delete the note.
+    // This assertion used to be inverted — it pinned the pre-fix behaviour
+    // (`not.toContain('tab=messaging')`) and was written 94 minutes AFTER the
+    // fix landed, so it passed only while the bug was present and would have
+    // gone green through the exact regression it names. Asserting the shipped
+    // behaviour is what makes it a regression test.
+    //
+    // `messaging` is a legacy alias that `Skills.tsx` maps to the `channels`
+    // tab, so the URL keeping the raw value is the contract under test here;
+    // `connections-tab-aliases.spec.ts` covers what it then resolves to.
     await page.goto('/#/skills?tab=messaging');
     await waitForAppReady(page);
 
     await expect.poll(() => hash(page)).toMatch(/^#\/connections/);
-    await expect.poll(() => hash(page)).not.toContain('tab=messaging');
+    await expect.poll(() => hash(page)).toContain('tab=messaging');
   });
 });

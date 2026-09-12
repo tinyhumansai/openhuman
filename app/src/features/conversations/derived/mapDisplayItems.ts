@@ -4,7 +4,7 @@
  * models, keyed by producing `requestId` — the exact shapes
  * `fetchAndHydrateTurnHistory` produces from the legacy `turn_state_history`
  * snapshot ring, so `PastTurnInsights` / `ProcessingTranscriptView` /
- * `ToolTimelineBlock` / `SubagentActivityBlock` are reused unchanged.
+ * assistant-ui tool and delegation cards are reused unchanged.
  *
  * Division of labour (matches how `turnTimelinesByThread` / `PastTurnInsights`
  * anchor today):
@@ -136,7 +136,7 @@ function stringifyArgs(args: unknown): string | undefined {
  * Build a {@link SubagentActivity} from a `subagent` display item's nested
  * items. The nested vocabulary (reasoning / assistantMessage / toolCall)
  * projects onto the sub-agent transcript (`thinking` / `text` / `tool`) plus a
- * flat `toolCalls` list — exactly what `SubagentActivityBlock` reads.
+ * flat `toolCalls` list — exactly what the assistant-ui delegation card reads.
  */
 function buildSubagentActivity(id: string, items: DerivedDisplayItem[]): SubagentActivity {
   const toolCalls: SubagentToolCallEntry[] = [];

@@ -74,15 +74,24 @@ fn default_scope_falls_back_to_the_pre_login_user_dir() {
 /// reintroduce "No backend session" for that deployment.
 #[test]
 fn env_workspace_scope_is_the_config_dir_not_the_raw_workspace() {
-    // A path that does not exist on disk, so the resolver's `config.toml`
-    // probes both miss and the `"workspace"` basename rule decides.
-    let workspace = std::path::Path::new("/nonexistent-openhuman-test-root/workspace");
+    // Legacy sibling layout: `<X>/workspace` with credentials in `<X>/.openhuman`.
+    // A `workspace`-basename override whose parent is not the `.openhuman` config
+    // dir maps to the sibling `<X>/.openhuman` (where `auth-profiles.json` lives).
+    // The modern-layout arm intercepts the `~/.openhuman/workspace` shape before
+    // this one, so this arm can no longer produce a doubled path (#6079). A real
+    // temp dir is used because `default_state_dir` operates on real filesystem
+    // layouts; the sibling need not pre-exist for resolution to pick it.
+    let root = tempfile::tempdir().unwrap();
+    let base = root.path();
+    let workspace = base.join("workspace");
+    let sibling_config = base.join(".openhuman");
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::create_dir_all(&sibling_config).unwrap();
 
-    let resolved = env_workspace_state_dir(workspace);
+    let resolved = env_workspace_state_dir(&workspace);
 
     assert_eq!(
-        resolved,
-        std::path::Path::new("/nonexistent-openhuman-test-root/.openhuman"),
+        resolved, sibling_config,
         "a `.../workspace` override must resolve to its sibling .openhuman config dir"
     );
     assert_ne!(

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Provider } from 'react-redux';
 import { describe, expect, it, vi } from 'vitest';
@@ -9,6 +9,10 @@ import { AgentProcessSourcePanel } from '../AgentProcessSourcePanel';
 
 function renderPanel(ui: React.ReactNode) {
   return render(<Provider store={store}>{ui}</Provider>);
+}
+
+function openFirstSubagent(): void {
+  fireEvent.click(screen.getAllByTestId('assistant-ui-subagent-call')[0].querySelector('button')!);
 }
 
 const fetchEntry = (id: string, url: string): ToolTimelineEntry => ({
@@ -129,7 +133,8 @@ describe('AgentProcessSourcePanel', () => {
         onClose={() => {}}
       />
     );
-    // The subagent activity renders, but with no onView → no button.
+    // The assistant-ui delegation is collapsed until the reviewer opens it.
+    openFirstSubagent();
     expect(screen.getByTestId('subagent-activity')).toBeInTheDocument();
     expect(screen.queryByTestId('subagent-view-processing')).toBeNull();
   });
@@ -187,6 +192,7 @@ describe('AgentProcessSourcePanel', () => {
     // …and the sub-agent's full activity (its thoughts) shows in the deep-dive,
     // with no redundant "view full processing" button (no onView).
     expect(screen.getByTestId('agent-source-subagent')).toBeInTheDocument();
+    openFirstSubagent();
     const activity = screen.getByTestId('subagent-activity');
     expect(activity.textContent).toContain('planning the search');
     expect(screen.queryByTestId('subagent-view-processing')).toBeNull();
@@ -222,6 +228,7 @@ describe('AgentProcessSourcePanel', () => {
     // Header shows the step's label, not the generic title.
     expect(screen.getByText('Researching')).toBeInTheDocument();
     // Only the scoped step's activity renders…
+    openFirstSubagent();
     expect(screen.getByTestId('subagent-activity').textContent).toContain('scoped thought');
     // …and the whole-run transcript / other steps do NOT.
     expect(screen.queryByTestId('processing-transcript')).toBeNull();

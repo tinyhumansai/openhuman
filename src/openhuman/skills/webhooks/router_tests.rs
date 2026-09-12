@@ -291,8 +291,116 @@ fn persist_and_load_roundtrip() {
 #[test]
 fn unregister_nonexistent_tunnel_is_noop() {
     let router = WebhookRouter::new(None);
-    // Should not error even though tunnel doesn't exist
-    router.unregister("no-such", "any-skill").unwrap();
+    // Should not error even though tunnel doesn't exist, and must report that
+    // it removed nothing rather than being indistinguishable from a real
+    // removal (#6091).
+    assert!(!router.unregister("no-such", "any-skill").unwrap());
+}
+
+/// #6091 — unregistering a tunnel that was never registered must not announce a
+/// state change.
+///
+/// `publish_event`, `persist` and the `WebhookUnregistered` bus publish used to
+/// run unconditionally after the not-found branch, so a caller with a typo'd
+/// UUID made every subscriber believe a registration had been torn down. The
+/// `registration_changed` debug event is the observable one from a sync test
+/// (the bus needs an async `bus::init`), and all three sit on the same branch,
+/// so gating is proven by any one of them.
+///
+/// `WEBHOOK_DEBUG_EVENTS` is a **process-global** `broadcast::Sender` shared by
+/// every `WebhookRouter`, not a per-instance channel, so a sibling test running
+/// concurrently also lands events in this receiver. The assertions therefore
+/// filter on this test's own tunnel UUIDs rather than on the channel being
+/// empty, which would be flaky.
+#[test]
+fn unregister_of_an_absent_tunnel_announces_nothing() {
+    const ABSENT: &str = "uuid-6091-never-registered";
+    const PRESENT: &str = "uuid-6091-present";
+
+    let router = WebhookRouter::new(None);
+    router.register(PRESENT, "gmail", None, None).unwrap();
+
+    /// Drain everything queued and report which of our two UUIDs were announced.
+    fn drain(rx: &mut broadcast::Receiver<WebhookDebugEvent>) -> Vec<String> {
+        let mut seen = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            if event.event_type != "registration_changed" {
+                continue;
+            }
+            match event.tunnel_uuid.as_deref() {
+                Some(uuid) if uuid == ABSENT || uuid == PRESENT => seen.push(uuid.to_string()),
+                _ => {}
+            }
+        }
+        seen
+    }
+
+    // Subscribe *after* the register so the setup's own event is not counted.
+    let mut rx = router.subscribe_debug_events();
+
+    assert!(
+        !router.unregister(ABSENT, "echo").unwrap(),
+        "unregistering an absent tunnel must report that nothing was removed"
+    );
+    assert_eq!(
+        drain(&mut rx),
+        Vec::<String>::new(),
+        "an absent tunnel must publish no registration_changed event"
+    );
+    assert_eq!(
+        router.list_all().len(),
+        1,
+        "the unrelated registration must be untouched"
+    );
+
+    // A real removal still announces, so the gate is not simply switched off.
+    assert!(
+        router.unregister(PRESENT, "gmail").unwrap(),
+        "removing a real registration must report true"
+    );
+    assert_eq!(
+        drain(&mut rx),
+        vec![PRESENT.to_string()],
+        "a real removal must publish exactly one registration_changed for it"
+    );
+    assert!(router.list_all().is_empty());
+}
+
+/// #6090 — `limit` is a maximum, so an explicit zero returns nothing.
+///
+/// `list_logs` used to clamp with `.max(1)`, which could only ever rewrite a
+/// caller-supplied `0` into a `1`; `limit: 0` and `limit: 1` were
+/// indistinguishable while every other value was honoured exactly.
+#[test]
+fn list_logs_limit_zero_returns_no_entries() {
+    let router = WebhookRouter::new(None);
+    for i in 0..3 {
+        router.record_request(
+            &WebhookRequest {
+                correlation_id: format!("corr-limit-{i}"),
+                tunnel_id: "tunnel-limit".to_string(),
+                tunnel_uuid: "uuid-limit".to_string(),
+                tunnel_name: "Limit".to_string(),
+                method: "POST".to_string(),
+                path: "/hooks/limit".to_string(),
+                headers: HashMap::new(),
+                query: HashMap::new(),
+                body: String::new(),
+            },
+            None,
+        );
+    }
+
+    assert!(
+        router.list_logs(Some(0)).is_empty(),
+        "limit 0 is a maximum of zero: {:?}",
+        router.list_logs(Some(0)).len()
+    );
+    // The neighbouring values must keep working — the clamp's removal must not
+    // have shifted anything else.
+    assert_eq!(router.list_logs(Some(1)).len(), 1);
+    assert_eq!(router.list_logs(Some(2)).len(), 2);
+    assert_eq!(router.list_logs(None).len(), 3);
 }
 
 #[test]

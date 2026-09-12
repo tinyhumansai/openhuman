@@ -20,14 +20,13 @@ fn crypto_agent_has_narrow_wallet_market_tools_and_safety_on() {
     match &def.tools {
         ToolScope::Named(tools) => {
             // Wallet read surface.
-            for required in [
-                "wallet_status",
-                "wallet_balances",
-                "wallet_network_defaults",
-                "wallet_supported_assets",
-                "wallet_chain_status",
-                "wallet_encode_erc20_transfer",
-            ] {
+            // Only names with a registered agent Tool. `wallet_balances`,
+            // `wallet_network_defaults`, `wallet_supported_assets` and
+            // `wallet_encode_erc20_transfer` are `wallet.*` RPC methods with no
+            // Tool wrapper — asserting them here pinned an allowlist entry the
+            // spawn filter drops, so the assertion passed while the capability
+            // did not exist.
+            for required in ["wallet_status", "wallet_chain_status"] {
                 assert!(
                     tools.iter().any(|t| t == required),
                     "crypto_agent needs read tool `{required}`"
@@ -53,12 +52,26 @@ fn crypto_agent_has_narrow_wallet_market_tools_and_safety_on() {
                     "crypto_agent needs tx-read tool `{required}`"
                 );
             }
-            // Execute surface — gated by the prepared blob from a
-            // matching prepare_* call in the same turn.
+            // Execute surface. There is no `wallet_execute_prepared` TOOL —
+            // it is a `wallet.*` RPC only — so a plain transfer is prepare-only
+            // for this agent. The executable surface is the web3 quote/execute
+            // family, and THAT is what the prompt's confirm-before-execute rule
+            // now gates on.
             assert!(
-                tools.iter().any(|t| t == "wallet_execute_prepared"),
-                "crypto_agent needs wallet_execute_prepared"
+                !tools.iter().any(|t| t == "wallet_execute_prepared"),
+                "wallet_execute_prepared has no Tool wrapper; listing it puts a \
+                 call in the prompt that can never resolve"
             );
+            for required in [
+                "web3_swap_execute",
+                "web3_bridge_execute",
+                "web3_dapp_execute",
+            ] {
+                assert!(
+                    tools.iter().any(|t| t == required),
+                    "crypto_agent needs {required} for the confirm-before-execute flow"
+                );
+            }
             // Confirmation gate — MUST be present so the prompt's
             // "confirm before execute" rule is mechanically enforceable.
             assert!(

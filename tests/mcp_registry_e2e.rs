@@ -755,3 +755,208 @@ async fn per_config_lookups_see_a_per_config_connection() {
     assert!(connections::disconnect_for_config(&cfg_a, &server.server_id).await);
     assert!(!connections::is_connected_for_config(&cfg_a, &server.server_id).await);
 }
+
+// ── Probe outcomes (#5772) ────────────────────────────────────────────────────
+
+/// `probe_alive` returns a four-variant `ProbeOutcome` instead of a bool, and
+/// `probe_alive_reflects_transport_liveness` above only ever asks
+/// `.is_alive()` — which is `false` for `Missing`, `Broken` and `TimedOut`
+/// alike, so nothing pinned which one comes back.
+///
+/// This pins the two that are reachable in a hermetic test: an entry that was
+/// never connected, and one that has been disconnected, must both report
+/// `Missing` — "there was nothing to probe" — rather than a transport failure
+/// nobody observed. That distinction is what the old bool could not express and
+/// is the half of #5636 this harness can actually demonstrate.
+#[tokio::test]
+async fn probe_alive_distinguishes_a_missing_entry_from_a_timed_out_one() {
+    let (_tmp, cfg) = fresh_workspace_config();
+    let h = host(&cfg);
+    let server = make_installed_server();
+    h.dynamic()
+        .store()
+        .insert_server(&server)
+        .expect("insert installed server");
+
+    // Installed but never connected: there is no live entry, so there is
+    // nothing to probe.
+    assert_eq!(
+        h.dynamic()
+            .connections()
+            .probe_alive(&server.server_id, std::time::Duration::from_secs(8))
+            .await,
+        tinymcp::ProbeOutcome::Missing,
+        "a server that was never connected has no entry to probe"
+    );
+
+    h.dynamic()
+        .connect(&server.server_id)
+        .await
+        .expect("connect")
+        .tools;
+
+    // Connected and answering: a real round trip inside a real window.
+    match h
+        .dynamic()
+        .connections()
+        .probe_alive(&server.server_id, std::time::Duration::from_secs(8))
+        .await
+    {
+        tinymcp::ProbeOutcome::Alive { .. } => {}
+        other => panic!("a live stub must probe Alive, got {other:?}"),
+    }
+
+    // NOT asserted here: `TimedOut`. It is the variant this enum most exists
+    // for, and it is unreachable against this stub — a probe with a
+    // `Duration::ZERO` window still came back `Alive { elapsed: 42.708µs }`,
+    // because `tokio::time::timeout` polls the inner future before it checks
+    // the deadline and `list_tools` on an established connection answers inside
+    // that first poll. Producing a real timeout needs a server that stalls on
+    // `tools/list`, which `test-mcp-stub` cannot be asked to do. Asserting it
+    // by contriving the window would have pinned nothing; see
+    // ~/tinyhuman/bugs/W6-test-findings.md.
+
+    // Disconnecting removes the entry, so the outcome goes back to Missing
+    // rather than to a transport error.
+    h.dynamic()
+        .connections()
+        .disconnect(&server.server_id)
+        .await;
+    assert_eq!(
+        h.dynamic()
+            .connections()
+            .probe_alive(&server.server_id, std::time::Duration::from_secs(8))
+            .await,
+        tinymcp::ProbeOutcome::Missing,
+        "a disconnected server has no entry, so nothing was observed to fail"
+    );
+}
+
+/// The supervisor's default probe window is 8s.
+///
+/// tinymcp#5 widened it to 30s and paired that with `MissedTickBehavior::Delay`
+/// in `Supervisor::run` — which this host never calls: `mcp/registry/mod.rs`
+/// builds its own interval and calls `Supervisor::tick` directly, once per open
+/// workspace. openhuman would have inherited the wider window with none of the
+/// protection, so `b44b958d` put the default back. Nothing pinned it, and the
+/// value is only reachable through `SupervisorConfig::default()` — exactly what
+/// `supervise_once` above uses.
+#[test]
+fn supervisor_default_probe_window_stays_eight_seconds() {
+    assert_eq!(
+        tinymcp::SupervisorConfig::default().probe_timeout,
+        std::time::Duration::from_secs(8),
+        "widening this default without a missed-tick policy in the host's own loop is the \
+         regression b44b958d reverted"
+    );
+}
+
+/// An HTTP-remote install pointed at `url`.
+///
+/// The stdio fixture above cannot reach the auth path at all: a 401 is an HTTP
+/// fact, so the credential hints only exist for this transport.
+fn make_http_remote_server(url: &str) -> InstalledServer {
+    InstalledServer {
+        server_id: format!("test-http-{}", uuid::Uuid::new_v4()),
+        qualified_name: "@openhuman-test/remote".to_string(),
+        display_name: "Test Remote".to_string(),
+        description: Some("Stub HTTP-remote MCP server used by mcp_registry_e2e tests.".into()),
+        icon_url: None,
+        // Carried but unread for this transport — callers route off `transport`.
+        command_kind: CommandKind::Binary,
+        command: String::new(),
+        args: Vec::new(),
+        env_keys: Vec::new(),
+        config: None,
+        installed_at: 0,
+        last_connected_at: None,
+        transport: Transport::HttpRemote {
+            url: url.to_string(),
+        },
+        enabled: true,
+    }
+}
+
+/// The failure side of the per-config lookups (#5701).
+///
+/// `per_config_lookups_see_a_per_config_connection` covers the success side and
+/// asserts `last_error_for_config` is `None` after a clean connect. That leaves
+/// the half that matters for diagnosis untested: `auth_hint_for_config` had no
+/// reference in any e2e lane at all, and nothing anywhere asserted that a real
+/// failure is actually *surfaced* rather than folded into the same `None` a
+/// missing workspace returns.
+///
+/// The two-workspace precondition is what makes this discriminate. With two
+/// hosts open and no default, `host::try_service()` refuses to guess, so the
+/// ambient forms answer `None` for a server that genuinely has both a hint and
+/// an error recorded — which is exactly the confusion #5701 was filed about.
+#[tokio::test]
+async fn per_config_failure_lookups_surface_the_reason() {
+    use openhuman_core::openhuman::mcp::host;
+    use openhuman_core::openhuman::mcp::registry::connections;
+    use wiremock::matchers::any;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    // A server that refuses everything for want of credentials.
+    let upstream = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(401))
+        .mount(&upstream)
+        .await;
+
+    let (_tmp_a, cfg_a) = fresh_workspace_config();
+    let (_tmp_b, cfg_b) = fresh_workspace_config();
+    let _host_b = host(&cfg_b);
+
+    let h = host(&cfg_a);
+    let server = make_http_remote_server(&upstream.uri());
+    h.dynamic()
+        .store()
+        .insert_server(&server)
+        .expect("insert installed server");
+
+    let outcome = connections::connect(&cfg_a, &server).await;
+    assert!(
+        outcome.is_err(),
+        "a 401 from the endpoint must fail the connect, not report success"
+    );
+
+    assert!(
+        host::try_service().is_none(),
+        "two workspaces open and no default: the ambient service must refuse to guess, \
+         which is what makes the per-config forms the only correct ones here"
+    );
+
+    let hint = connections::auth_hint_for_config(&cfg_a, &server.server_id).await;
+    assert_eq!(
+        hint,
+        Some("credential_required"),
+        "the workspace that attempted the connect must see why its 401 happened"
+    );
+
+    let last_error = connections::last_error_for_config(&cfg_a, &server.server_id).await;
+    // Non-empty after trimming, not merely `Some`: the contract this pins is a
+    // *readable* reason, and `Some(String::new())` satisfies `is_some()` while
+    // telling a caller polling status precisely nothing.
+    assert!(
+        last_error
+            .as_deref()
+            .is_some_and(|error| !error.trim().is_empty()),
+        "a failed attempt must leave a readable reason behind — `connect`'s own contract \
+         is that a caller polling status sees it without re-attempting; got {last_error:?}"
+    );
+
+    // A failure belongs to the workspace that hit it, not to every workspace.
+    assert!(
+        connections::auth_hint_for_config(&cfg_b, &server.server_id)
+            .await
+            .is_none(),
+        "an auth hint must not leak across workspaces"
+    );
+    assert!(
+        connections::last_error_for_config(&cfg_b, &server.server_id)
+            .await
+            .is_none(),
+        "a failure must not leak across workspaces"
+    );
+}

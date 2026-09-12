@@ -379,6 +379,41 @@ async fn preflight_skips_when_no_schema_is_available() {
 }
 
 #[tokio::test]
+async fn preflight_applies_static_arg_rules_without_a_catalog() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    // No catalog seeding for this slug — `GMAIL_ADD_LABEL_TO_EMAIL` is never
+    // seeded anywhere, so `composio_required_args` returns `None` whether or
+    // not another test has cached the `gmail` toolkit. That used to make the
+    // whole preflight inert (#6154): the node sailed through and only failed
+    // at dispatch, inside `prepare_execute_arguments`.
+    //
+    // Those dispatch-time rules are static — no catalog, no network, no key —
+    // so the preflight must apply them regardless of catalog availability.
+    let err = super::super::caps::preflight_composio_args(
+        &config,
+        "GMAIL_ADD_LABEL_TO_EMAIL",
+        &json!({ "add_label_ids": ["INBOX"] }),
+    )
+    .await
+    .expect_err("a statically-known missing required arg must fail preflight");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("message_id"),
+        "error must name the missing field: {msg}"
+    );
+
+    // Args that satisfy the static rules still pass (no catalog needed).
+    super::super::caps::preflight_composio_args(
+        &config,
+        "GMAIL_ADD_LABEL_TO_EMAIL",
+        &json!({ "message_id": "abc123", "add_label_ids": ["INBOX"] }),
+    )
+    .await
+    .expect("statically-valid args must pass preflight");
+}
+
+#[tokio::test]
 async fn preflight_invoker_gates_the_mock_tool_path() {
     use tinyflows::caps::ToolInvoker as _;
 

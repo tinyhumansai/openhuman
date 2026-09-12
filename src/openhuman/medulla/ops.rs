@@ -11,8 +11,8 @@ use crate::openhuman::config::Config;
 use crate::rpc::{RpcOutcome, StructuredRpcError};
 
 use super::client::{
-    AbortResult, ClientError, EventEnvelope, MedullaClient, Message, RosterWorker, SendResult,
-    SessionCreated, SessionDetail, SessionSummary,
+    AbortResult, ClientError, MedullaClient, Message, RosterWorker, SendResult, SessionCreated,
+    SessionDetail, SessionSummary, WireEventEnvelope,
 };
 use super::resolve::{self, NotConfigured};
 
@@ -163,7 +163,7 @@ pub async fn list_events(
     config: &Config,
     session_id: &str,
     after: Option<i64>,
-) -> Result<RpcOutcome<Vec<EventEnvelope>>, String> {
+) -> Result<RpcOutcome<Vec<WireEventEnvelope>>, String> {
     let client = resolved(config)?;
     let events = call(
         client.list_events(session_id, after).await,

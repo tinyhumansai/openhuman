@@ -5,6 +5,8 @@ fn storage_mode_serialization_roundtrip() {
     let modes = [
         StorageMode::OsKeyring,
         StorageMode::LocalEncrypted,
+        StorageMode::LocalEncryptedFile,
+        StorageMode::LocalPlaintextFile,
         StorageMode::ConsentPending,
         StorageMode::Declined,
     ];
@@ -15,10 +17,28 @@ fn storage_mode_serialization_roundtrip() {
     }
 }
 
+/// `Display` and the serde representation must agree: `activeMode` reaches the
+/// frontend as the serialized string, while logs and `RpcOutcome` messages use
+/// `Display`, and `SecurityPanel` keys its badge variant + i18n lookup off the
+/// serialized form. A variant whose two spellings diverge renders as an unstyled
+/// unknown mode.
 #[test]
-fn storage_mode_display() {
-    assert_eq!(StorageMode::OsKeyring.to_string(), "os_keyring");
-    assert_eq!(StorageMode::ConsentPending.to_string(), "consent_pending");
+fn storage_mode_display_matches_serde() {
+    for (mode, wire) in [
+        (StorageMode::OsKeyring, "os_keyring"),
+        (StorageMode::LocalEncrypted, "local_encrypted"),
+        (StorageMode::LocalEncryptedFile, "local_encrypted_file"),
+        (StorageMode::LocalPlaintextFile, "local_plaintext_file"),
+        (StorageMode::ConsentPending, "consent_pending"),
+        (StorageMode::Declined, "declined"),
+    ] {
+        assert_eq!(mode.to_string(), wire, "Display for {mode:?}");
+        assert_eq!(
+            serde_json::to_value(mode).unwrap(),
+            serde_json::Value::String(wire.to_string()),
+            "serde for {mode:?}"
+        );
+    }
 }
 
 #[test]

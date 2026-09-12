@@ -3,6 +3,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { agentRegistryApi, type AgentRegistryEntry } from '../../../services/api/agentRegistryApi';
+import { listProviderModels } from '../../../services/api/aiSettingsApi';
 import AgentEditorPage from './AgentEditorPage';
 
 vi.mock('../../../services/api/agentRegistryApi', () => ({
@@ -17,6 +18,8 @@ vi.mock('../../../services/api/agentRegistryApi', () => ({
   },
 }));
 
+vi.mock('../../../services/api/aiSettingsApi', () => ({ listProviderModels: vi.fn() }));
+
 const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async importOriginal => {
   const actual = await importOriginal<typeof import('react-router-dom')>();
@@ -27,6 +30,7 @@ const mockGet = vi.mocked(agentRegistryApi.get);
 const mockAvailableTools = vi.mocked(agentRegistryApi.availableTools);
 const mockCreate = vi.mocked(agentRegistryApi.createCustom);
 const mockUpdate = vi.mocked(agentRegistryApi.update);
+const mockListProviderModels = vi.mocked(listProviderModels);
 
 function agent(overrides: Partial<AgentRegistryEntry> = {}): AgentRegistryEntry {
   return {
@@ -56,6 +60,7 @@ function renderAt(path: string) {
 describe('AgentEditorPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockListProviderModels.mockResolvedValue([]);
     mockAvailableTools.mockResolvedValue([
       { name: 'web_search', description: 'Search the web for information.' },
       { name: 'memory.search', description: 'Search the user memory store.' },
@@ -240,5 +245,64 @@ describe('AgentEditorPage', () => {
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: 'Remove web_search' })).not.toBeInTheDocument();
     });
+  });
+
+  /**
+   * The agent's model is the persistent default for its chats, unlike the
+   * composer picker which only overrides the current conversation. Managed
+   * catalog models must therefore be selectable here, labelled by name and
+   * charged price rather than a bare slug.
+   */
+  it('offers managed catalog models and saves one as the agent default', async () => {
+    mockListProviderModels.mockResolvedValue([
+      {
+        id: 'openrouter/deepseek/deepseek-v4-flash',
+        owned_by: 'openrouter',
+        display_name: 'DeepSeek V4 Flash',
+        input_per_1m: 0.44,
+        output_per_1m: 1.32,
+      },
+    ]);
+    mockCreate.mockResolvedValue(agent({ id: 'helper', name: 'Helper' }));
+    renderAt('/settings/agents/new');
+
+    // Fetched with the managed slug, not a BYOK provider id.
+    await waitFor(() => expect(mockListProviderModels).toHaveBeenCalledWith('openhuman'));
+
+    const option = await screen.findByRole('option', {
+      name: /DeepSeek V4 Flash — \$0.44\/\$1.32 per 1M/,
+    });
+    expect(option).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Helper' } });
+    fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'Helps out.' } });
+    fireEvent.change(screen.getByRole('combobox'), {
+      target: { value: 'openrouter/deepseek/deepseek-v4-flash' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Create agent/ }));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(1));
+    expect(mockCreate.mock.calls[0][0].model).toBe('openrouter/deepseek/deepseek-v4-flash');
+  });
+
+  /**
+   * A saved catalog id is not in KNOWN_MODELS, so the initial load flips the
+   * editor into free-text "custom" mode. The catalog arrives after that load, so
+   * without a re-check the user sees a raw id in a text box instead of the
+   * entry selected in the dropdown.
+   */
+  it('selects a saved managed model in the dropdown rather than the custom text box', async () => {
+    mockGet.mockResolvedValue(agent({ model: 'openrouter/deepseek/deepseek-v4-flash' }));
+    mockListProviderModels.mockResolvedValue([
+      { id: 'openrouter/deepseek/deepseek-v4-flash', owned_by: 'openrouter' },
+    ]);
+    renderAt('/settings/agents/edit/finance');
+
+    await waitFor(() =>
+      expect(screen.getByRole('combobox')).toHaveValue('openrouter/deepseek/deepseek-v4-flash')
+    );
+    // The custom free-text box is the fallback for an id the catalog lacks; it
+    // must not be showing for a model we can offer properly.
+    expect(screen.queryByLabelText(/Custom model id/i)).toBeNull();
   });
 });

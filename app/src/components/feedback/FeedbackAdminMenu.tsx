@@ -3,6 +3,7 @@ import { useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { feedbackApi } from '../../services/api/feedbackApi';
+import { messageForApiError } from '../../services/apiError';
 import type { FeedbackItem, FeedbackStatus } from '../../types/feedback';
 import { NativeSelect } from '../ui';
 
@@ -40,7 +41,7 @@ export default function FeedbackAdminMenu({ item, onUpdated }: FeedbackAdminMenu
       onUpdated(updated);
     } catch (err) {
       log('updateStatus failed id=%s status=%s error=%O', item.id, status, err);
-      setError(err instanceof Error ? err.message : t('feedback.admin.updateFailed'));
+      setError(messageForApiError(err, t('feedback.admin.updateFailed')));
     } finally {
       setPending(false);
     }

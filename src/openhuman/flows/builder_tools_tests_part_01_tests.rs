@@ -353,6 +353,26 @@ async fn get_tool_contract_missing_slug_is_error() {
 }
 
 #[tokio::test]
+async fn get_tool_contract_rejects_a_slug_with_no_action_segment() {
+    let tmp = TempDir::new().unwrap();
+    let tool = GetToolContractTool::new(test_config(&tmp));
+
+    // A bare toolkit-ish token names no action, so this endpoint cannot return
+    // anything for it. Before the shape guard, `toolkit_from_slug` fell back to
+    // the whole string and the model got the catalog error instead — which tells
+    // it to retry a fetch that can never succeed.
+    for slug in ["nodashhere", "_LEADING_UNDERSCORE", "GMAIL_"] {
+        let result = tool.execute(json!({ "slug": slug })).await.unwrap();
+        assert!(result.is_error, "slug {slug:?} must be rejected");
+        assert!(
+            result.output().contains("'<TOOLKIT>_<ACTION>'"),
+            "slug {slug:?} must get the malformed-slug message, got: {}",
+            result.output()
+        );
+    }
+}
+
+#[tokio::test]
 async fn get_tool_contract_rejects_a_hallucinated_slug() {
     seed_live_catalog_cache("gmail", vec![seeded_gmail_send_contract()]);
     let tmp = TempDir::new().unwrap();

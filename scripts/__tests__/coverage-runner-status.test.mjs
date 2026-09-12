@@ -245,3 +245,36 @@ test("required-features matching is exact, not substring — a superset name doe
   assert.doesNotMatch(res.output, /RAN-THE-TARGET/, res.output);
   assert.match(res.output, /rc=0/, res.output);
 });
+
+test("source changes compile the aggregate raw coverage target", () => {
+  const res = withRunnerFunctions(
+    ["compile_raw_coverage_target"],
+    [
+      "PRODUCT_FEATURES='voice web3'",
+      "log() { printf '%s\\n' \"$*\"; }",
+      "bash() { printf 'BASH_ARGS'; printf ' <%s>' \"$@\"; printf '\\n'; }",
+    ].join("\n"),
+    "compile_raw_coverage_target",
+  );
+
+  assert.equal(res.status, 0, res.output);
+  assert.match(
+    res.output,
+    /BASH_ARGS <scripts\/ci-cancel-aware\.sh> <cargo> <test> <--features> <voice web3> <--test> <raw_coverage_all> <--no-run>/,
+  );
+});
+
+test("raw coverage compile failures fail the source-change guard", () => {
+  const res = withRunnerFunctions(
+    ["compile_raw_coverage_target"],
+    [
+      "PRODUCT_FEATURES='voice web3'",
+      "log() { :; }",
+      "bash() { return 17; }",
+    ].join("\n"),
+    "compile_raw_coverage_target && exit 1; rc=$?; echo \"rc=${rc}\"",
+  );
+
+  assert.equal(res.status, 0, res.output);
+  assert.match(res.output, /rc=17/);
+});

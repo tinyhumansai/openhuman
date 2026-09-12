@@ -991,6 +991,7 @@ pub(crate) fn spawn_progress_bridge(
                     task_id,
                     question,
                     worker_thread_id,
+                    checkpoint_path,
                 } => {
                     log::debug!(
                         "[web_channel][bridge] subagent_awaiting_user agent_id={} task_id={} client_id={} thread_id={} request_id={}",
@@ -1000,10 +1001,6 @@ pub(crate) fn spawn_progress_bridge(
                         thread_id,
                         request_id,
                     );
-                    let checkpoint_path = config
-                        .workspace_dir
-                        .join(".openhuman/subagent_checkpoints")
-                        .join(format!("{task_id}.json"));
                     ledger_upsert_agent_run(
                         &config,
                         AgentRunUpsert {
@@ -1021,13 +1018,17 @@ pub(crate) fn spawn_progress_bridge(
                             worker_thread_id: worker_thread_id.clone(),
                             task_board_id: Some(thread_id.clone()),
                             task_card_id: None,
-                            checkpoint_path: Some(checkpoint_path.to_string_lossy().to_string()),
+                            // What the runner actually wrote; the old rebuild
+                            // from `workspace_dir` asserted a checkpoint that
+                            // may never have been written (#5928).
+                            checkpoint_path: checkpoint_path.clone(),
                             checkpoint: Some(json!({
                                 "resumeTool": "continue_subagent",
                                 "taskId": task_id,
                                 "agentId": agent_id,
                                 "question": question,
-                                "workerThreadId": worker_thread_id
+                                "workerThreadId": worker_thread_id,
+                                "checkpointPersisted": checkpoint_path.is_some()
                             })),
                             summary: Some(question.clone()),
                             error: None,

@@ -555,6 +555,68 @@ export async function memoryTreeResetTree(): Promise<ResetTreeResponse> {
   return out;
 }
 
+/** Response shape for `memory_tree_backfill_connector_trees`. */
+export interface BackfillConnectorTreesResponse {
+  /** False for the dry-run preview: it counted and wrote nothing. */
+  executed: boolean;
+  /** Documents examined. */
+  scanned: number;
+  /** Documents that produced new memory-tree rows. */
+  ingested: number;
+  /** Documents the tree already held. */
+  already_present: number;
+  /** Documents left alone rather than filed under a guess. */
+  skipped: number;
+  /** The pass stopped on its limit with documents unexamined — run again. */
+  more_pending: boolean;
+  /** Bounded, human-readable reasons behind `skipped`. */
+  notes: string[];
+}
+
+/**
+ * A real pass reads and embeds up to the driver's per-call limit of documents
+ * (500) before it answers; the budget has to cover the whole pass.
+ */
+const BACKFILL_RPC_TIMEOUT_MS = 10 * 60 * 1_000;
+
+/**
+ * Re-file connector documents stored before the memory-tree routing fix
+ * (openhuman#6007) into the tree. Backed by
+ * `openhuman.memory_tree_backfill_connector_trees` (openhuman#6012).
+ *
+ * `dryRun: true` counts what a pass would examine and writes nothing; the real
+ * pass embeds every document it files, which spends credits, so the UI always
+ * previews first and asks. Idempotent: documents already in the tree come
+ * back as `already_present`, never filed twice.
+ */
+export async function memoryTreeBackfillConnectorTrees(opts: {
+  dryRun: boolean;
+  limit?: number;
+}): Promise<BackfillConnectorTreesResponse> {
+  console.debug(
+    '[memory-tree-rpc] memoryTreeBackfillConnectorTrees: entry dry_run=%s',
+    opts.dryRun
+  );
+  const resp = await callCoreRpc<
+    BackfillConnectorTreesResponse | ResultEnvelope<BackfillConnectorTreesResponse>
+  >({
+    method: 'openhuman.memory_tree_backfill_connector_trees',
+    params: { dry_run: opts.dryRun, ...(opts.limit ? { limit: opts.limit } : {}) },
+    timeoutMs: BACKFILL_RPC_TIMEOUT_MS,
+  });
+  const out = unwrapResult(resp);
+  console.debug(
+    '[memory-tree-rpc] memoryTreeBackfillConnectorTrees: exit executed=%s scanned=%d ingested=%d already=%d skipped=%d more=%s',
+    out.executed,
+    out.scanned,
+    out.ingested,
+    out.already_present,
+    out.skipped,
+    out.more_pending
+  );
+  return out;
+}
+
 /** Response shape for `memory_tree_flush_now`. */
 export interface FlushNowResponse {
   enqueued: boolean;
@@ -862,6 +924,25 @@ export interface MemoryTreePipelineStatus {
   is_syncing: boolean;
   /** Convenience flag: scheduler-gate mode is `off`. */
   is_paused: boolean;
+  /**
+   * The scheduler gate's live verdict (openhuman#6025 review): `true` while
+   * its policy is `paused` whichever mode is configured — in `auto` that is
+   * on battery with `require_ac_power`, under CPU pressure, or signed out —
+   * so every LLM-bound worker, the embed backfill included, is blocked right
+   * now. `is_paused` stays the configured `off` mode (the panel's toggle).
+   * Absent from a core that predates the field.
+   */
+  gate_paused?: boolean;
+  /** Why the gate is paused: `user_disabled` | `on_battery` | `cpu_pressure` | `signed_out` | `unknown`. */
+  gate_pause_reason?: string | null;
+  /**
+   * The #5324 stall verdict as a flag: eligible queue work has waited at
+   * least six hours without any job settling. `status` reads `degraded` for
+   * it; the flag tells that stall apart from the other degradations, because
+   * a stalled `reembed_backfill` row still keeps the backfill snapshot
+   * `in_progress` (openhuman#6025 review). Absent from an older core.
+   */
+  queue_stalled?: boolean;
   /**
    * #002 (FR-002/FR-005): degradation snapshot. Optional for back-compat with
    * older cores that don't emit it (the Rust field is `#[serde(default)]`);

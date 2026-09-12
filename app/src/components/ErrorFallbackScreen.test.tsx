@@ -10,6 +10,10 @@ const hoisted = vi.hoisted(() => ({
   openUrl: vi.fn(),
   safeInvoke: vi.fn().mockResolvedValue(undefined),
   isAnalyticsEnabled: vi.fn(() => true),
+  // Whether the configured support destination can consume `?ref=`. True in
+  // the default fixture because the mocked SUPPORT_URL models a real support
+  // endpoint (an env override); flipped false by the Discord-default test.
+  supportUrlAcceptsRef: { value: true },
 }));
 
 vi.mock('../utils/openUrl', () => ({ openUrl: hoisted.openUrl }));
@@ -18,6 +22,9 @@ vi.mock('../services/analytics', () => ({ isAnalyticsEnabled: hoisted.isAnalytic
 vi.mock('../utils/config', () => ({
   SUPPORT_URL: 'https://support.example/help',
   LATEST_APP_DOWNLOAD_URL: 'https://downloads.example/latest',
+  get SUPPORT_URL_ACCEPTS_REF() {
+    return hoisted.supportUrlAcceptsRef.value;
+  },
 }));
 
 const baseProps = {
@@ -27,6 +34,7 @@ const baseProps = {
 };
 
 afterEach(() => {
+  hoisted.supportUrlAcceptsRef.value = true;
   vi.clearAllMocks();
   hoisted.isAnalyticsEnabled.mockReturnValue(true);
 });
@@ -72,6 +80,18 @@ describe('ErrorFallbackScreen', () => {
     expect(hoisted.openUrl).toHaveBeenCalledWith(
       'https://support.example/help?ref=id%2Fwith%20space'
     );
+  });
+
+  test('does not append a ref when the destination cannot consume one', () => {
+    // The shipped default is a Discord invite: it renders a join page and
+    // drops the query, so a `?ref=` there would look like it carried the crash
+    // id while doing nothing (tinysweeper on #5953). The Error ID is still
+    // rendered above for the user to copy into the thread.
+    hoisted.supportUrlAcceptsRef.value = false;
+    render(<ErrorFallbackScreen {...baseProps} eventId="id/with space" />);
+    fireEvent.click(screen.getByText('app.errorFallback.contactSupport'));
+    expect(hoisted.openUrl).toHaveBeenCalledWith('https://support.example/help');
+    expect(hoisted.openUrl).not.toHaveBeenCalledWith(expect.stringContaining('ref='));
   });
 
   test('reveals the logs folder via the tauri command', () => {

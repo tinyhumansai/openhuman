@@ -407,15 +407,41 @@ pub struct OpenHumanTools {
 /// with a message that names the field and the likely fix — instead of letting
 /// the raw provider error surface from deep inside the call.
 ///
-/// Best-effort by design: when the action's schema cannot be looked up the
-/// check is skipped (never blocks on catalog availability).
+/// Two independent halves:
+///
+/// 1. The **static** rules `prepare_execute_arguments` already enforces at
+///    dispatch (`GMAIL_SEND_EMAIL` needs a recipient, `GOOGLECALENDAR_*` time
+///    bounds must be RFC 3339, …). These need no catalog, no network and no
+///    API key, so they always run.
+/// 2. The **catalog-driven** required-arg list, which is best-effort: when the
+///    action's schema cannot be looked up that half is skipped (never blocks
+///    on catalog availability).
+///
+/// Before #6154 only (2) existed, so a host with no reachable Composio
+/// catalog — the common case in a dry run, and any offline/unkeyed run — had
+/// a preflight that silently passed everything and left the failure to
+/// surface from inside the dispatch instead.
 pub(crate) async fn preflight_composio_args(
     config: &Config,
     slug: &str,
     args: &Value,
 ) -> Result<()> {
+    // (1) Static rules — the same validation the Composio dispatch runs, hoisted
+    // ahead of it. Only the `Err` matters here; the normalized arguments it
+    // returns are recomputed (and used) at dispatch.
+    if let Err(e) =
+        crate::openhuman::integrations::composio::execute_prepare::prepare_execute_arguments(
+            slug,
+            Some(args.clone()),
+        )
+    {
+        tracing::warn!(target: "flows", %slug, error = %e, "[flows] preflight: static arg rule rejected the call — failing before dispatch");
+        return Err(EngineError::Capability(format!("tool_call `{slug}`: {e}")));
+    }
+
+    // (2) Catalog-driven required args.
     let Some(required) = composio_required_args(config, slug).await else {
-        tracing::debug!(target: "flows", %slug, "[flows] preflight: no schema for action — skipping required-arg check");
+        tracing::info!(target: "flows", %slug, "[flows] preflight: no live catalog schema for action — required-arg check limited to static rules");
         return Ok(());
     };
     let missing = missing_required_args(&required, args);

@@ -2,7 +2,13 @@ use super::*;
 
 // compute_approval_manifest (save-time pre-authorization card)
 pub(super) fn manifest_graph() -> WorkflowGraph {
-    structurally_valid_graph(json!({
+    structurally_valid_graph(manifest_graph_json())
+}
+
+/// The same fixture in its wire form, for the RPCs that take a candidate
+/// `graph` payload rather than a deserialized [`WorkflowGraph`].
+pub(super) fn manifest_graph_json() -> Value {
+    json!({
         "name": "manifest-fixture",
         "nodes": [
             { "id": "t", "kind": "trigger", "name": "Trigger" },
@@ -21,7 +27,7 @@ pub(super) fn manifest_graph() -> WorkflowGraph {
             { "from_node": "c", "from_port": "main", "to_node": "w" },
             { "from_node": "w", "from_port": "main", "to_node": "r" }
         ]
-    }))
+    })
 }
 
 pub(super) fn entry_kinds_by_tool(entries: &[Value]) -> Vec<(String, String)> {

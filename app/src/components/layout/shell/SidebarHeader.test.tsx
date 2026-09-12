@@ -78,6 +78,21 @@ describe('SidebarHeader', () => {
     expect(screen.queryByRole('button', { name: 'nav.feedback' })).not.toBeInTheDocument();
   });
 
+  // The band is window chrome. `drag.js` drags a bare region only on a direct
+  // hit (`el === composedPath[0]`), so with the icon row nested inside, the
+  // row's own box did not drag; `"deep"` covers the subtree. Assert the value
+  // and the nesting — presence alone passed before the fix.
+  it('marks the header band as a deep drag region around the icon row', () => {
+    const { container } = renderWithProviders(<SidebarHeader />, { initialEntries: ['/home'] });
+    const region = container.querySelector('[data-tauri-drag-region]') as HTMLElement;
+    expect(region.getAttribute('data-tauri-drag-region')).toBe('deep');
+    // The icons sit inside the region and keep their clicks: `isDragRegion`
+    // short-circuits on a clickable element before it reaches `deep`, and
+    // resolving them by button role is what asserts they are still clickable.
+    expect(region).toContainElement(screen.getByRole('button', { name: 'nav.settings' }));
+    expect(region).toContainElement(screen.getByRole('button', { name: 'chat.hideSidebar' }));
+  });
+
   it('Collapse button calls hide()', () => {
     renderWithProviders(<SidebarHeader />, { initialEntries: ['/home'] });
     fireEvent.click(screen.getByRole('button', { name: 'chat.hideSidebar' }));

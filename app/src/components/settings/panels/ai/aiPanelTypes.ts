@@ -28,7 +28,14 @@ export type CloudProvider = {
   maskedKey: string;
 };
 
-export type OllamaState = 'disabled' | 'missing' | 'stopped' | 'starting' | 'running' | 'error';
+export type OllamaState =
+  | 'disabled'
+  | 'missing'
+  | 'stopped'
+  | 'starting'
+  | 'running'
+  | 'degraded'
+  | 'error';
 
 export type OllamaModel = { id: string; sizeBytes: number; family: string };
 

@@ -18,7 +18,8 @@ pub mod vault;
 
 // Re-export everything so consumers and the test file keep working with `use super::*;`
 pub use admin::{
-    delete_source_rpc, flush_now_rpc, flush_source_tree_rpc, reset_tree_rpc, wipe_all_rpc,
+    backfill_connector_trees_rpc, delete_source_rpc, flush_now_rpc, flush_source_tree_rpc,
+    reset_tree_rpc, wipe_all_rpc,
 };
 pub use chunks::{
     display_name_for_source, list_chunks_rpc, list_sources_rpc, read_chunk_row, recall_rpc,
@@ -32,10 +33,10 @@ pub use graph::{
     graph_export_rpc, sanitize_basename, GraphEdge, GraphExportResponse, GraphMode, GraphNode,
 };
 pub use types::{
-    ChunkFilter, ChunkRow, DeleteChunkResponse, DeleteSourceResponse, EntityRef, FlushNowResponse,
-    FlushSourceTreeResponse, ListChunksResponse, ObsidianVaultStatusResponse, RecallResponse,
-    ResetTreeResponse, ScoreBreakdown, ScoreSignal, Source, VaultHealthCheckResponse,
-    WipeAllResponse,
+    BackfillConnectorTreesResponse, ChunkFilter, ChunkRow, DeleteChunkResponse,
+    DeleteSourceResponse, EntityRef, FlushNowResponse, FlushSourceTreeResponse, ListChunksResponse,
+    ObsidianVaultStatusResponse, RecallResponse, ResetTreeResponse, ScoreBreakdown, ScoreSignal,
+    Source, VaultHealthCheckResponse, WipeAllResponse,
 };
 pub use vault::{obsidian_vault_status_rpc, vault_health_check_rpc};
 
@@ -60,11 +61,7 @@ pub(crate) fn parse_source_kind_str(s: &str) -> Option<tinymemory_api::chunks::S
 #[cfg(test)]
 pub(crate) use crate::openhuman::config::Config;
 #[cfg(test)]
-pub(crate) use admin::clear_composio_sync_state;
-#[cfg(test)]
 pub(crate) use tinymemory_api::chunks::SourceKind;
-#[cfg(test)]
-pub(crate) use tinymemory_core::store::chunks::store::with_connection;
 
 #[cfg(test)]
 #[path = "../read_rpc_tests.rs"]

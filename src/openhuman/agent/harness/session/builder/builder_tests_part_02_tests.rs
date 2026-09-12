@@ -4,7 +4,6 @@ use super::*;
 async fn build_session_agent_injects_default_profile_soul_into_prompt() {
     // Building a session agent constructs a memory store, which reaches
     // the embedding seam; before the extraction this needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::context::prompt::LearnedContextData;
     use crate::openhuman::agent::harness::session::types::Agent;
 
@@ -42,7 +41,6 @@ async fn build_session_agent_injects_default_profile_soul_into_prompt() {
 async fn build_session_agent_profile_less_prompt_has_no_personality_soul() {
     // Building a session agent constructs a memory store, which reaches
     // the embedding seam; before the extraction this needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::context::prompt::LearnedContextData;
     use crate::openhuman::agent::harness::session::types::Agent;
 
@@ -70,7 +68,6 @@ async fn build_session_agent_profile_less_prompt_has_no_personality_soul() {
 async fn from_config_for_agent_still_errors_for_a_genuinely_unknown_id() {
     // Building a session agent constructs a memory store, which reaches
     // the embedding seam; before the extraction this needed no setup.
-    crate::openhuman::memory::host_impls::install_for_tests();
     use crate::openhuman::agent::harness::session::types::Agent;
 
     let tmp = tempfile::TempDir::new().unwrap();

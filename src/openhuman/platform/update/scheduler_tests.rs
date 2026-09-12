@@ -28,9 +28,8 @@ async fn run_returns_immediately_when_disabled() {
 // `update_core::check_available()` which performs a real HTTPS request
 // to api.github.com — running that from the unit suite makes the test
 // flaky (offline CI runners, rate limits, DNS hiccups). Coverage of
-// the HTTP + JSON-parse path is better handled via an integration test
-// that uses an HTTP mock (e.g. `httpmock`) around a refactored
-// `check_available_with_url(base_url)`. For now the surrounding
-// properties are locked down by:
+// the HTTP + JSON-parse path now lives in `core_tests.rs`, which drives
+// `check_available_with_base_url(base_url)` against a wiremock server
+// (#6089). The surrounding scheduler properties are locked down here by:
 //   - `min_interval_is_at_least_ten_minutes` (rate-limit floor)
 //   - `run_returns_immediately_when_disabled` (disabled short-circuit)

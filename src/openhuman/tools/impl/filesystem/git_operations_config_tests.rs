@@ -9,7 +9,9 @@
 //! still resolves `GitOperationsTool` the way it did before the split, and so
 //! the fixtures in the sibling test module stay reachable.
 
-use super::super::git_operations_config::normalise_config_key;
+use super::super::git_operations_config::{
+    normalise_config_key, NEUTRALISED_CONFIG, SHELL_NEUTRALISED_CONFIG,
+};
 // The fixtures stay in `git_operations_tests.rs` and are shared rather than
 // duplicated: both modules are children of `git_operations`, so `pub(super)`
 // there makes them reachable here.
@@ -462,4 +464,124 @@ fn a_subsection_is_elided_so_one_entry_covers_every_remote() {
     );
     // A key with no dot at all is returned unchanged rather than panicking.
     assert_eq!(normalise_config_key("bare"), "bare");
+}
+
+// ── External diff suppression ─────────────────────────────────────────────
+
+/// An ordinary repository's `diff` must produce its patch.
+///
+/// That reads like it could not possibly regress, and it did. Suppression of
+/// an external diff was attempted with `-c diff.external=` in
+/// `NEUTRALISED_CONFIG`, and an empty value does not disable one — git tries
+/// to *execute* the empty string, so **every** diff died with
+/// `error: cannot run : No such file or directory` /
+/// `fatal: external diff died`, on every repository, hostile or not. The
+/// hardening removed the operation instead of hardening it. `--no-ext-diff`
+/// on the diff command is the real suppression.
+///
+/// This lives in the lib suite deliberately. The integration test that caught
+/// it sits in `raw_coverage_all`, and a change to `git_operations.rs` maps to
+/// the `openhuman::tools` libtest filter — which never selects that target. So
+/// the lane the change picks did not run the test covering the change, and the
+/// breakage sat until an unrelated PR happened to select the other filter.
+/// A test here runs whenever this file is touched.
+///
+/// A repository that *sets* `diff.external` is a separate matter and is
+/// already refused before reaching the invocation: the key is on neither
+/// allowlist, so `first_disallowed_repo_config_key` rejects the repository
+/// outright. `--no-ext-diff` is the second layer, covering the gap between
+/// that inspection and the command.
+#[tokio::test]
+async fn an_ordinary_repository_still_produces_a_diff() {
+    let tmp = TempDir::new().unwrap();
+    init_git_repo(tmp.path());
+
+    // A committer identity has to be set in the repository itself. `hermetic`
+    // closes the global and system config, which is the point of it — so on a
+    // CI container with no identity of its own `git commit` fails with
+    // "Author identity unknown". Both keys are on `ALLOWED_REPO_CONFIG`, so
+    // setting them does not trip the repository-config refusal.
+    set_config(tmp.path(), "user.email", "test@example.invalid");
+    set_config(tmp.path(), "user.name", "Test");
+
+    let tracked = tmp.path().join("tracked.txt");
+    std::fs::write(&tracked, "first\n").unwrap();
+    // `hermetic` closes the ambient git config the way the fixtures do —
+    // without it a developer's global `commit.gpgsign` or hooks path can fail
+    // this commit for reasons unrelated to the test.
+    // Slices, not arrays: `["add", "tracked.txt"]` and `["commit", "-m", "one"]`
+    // are `[&str; 2]` and `[&str; 3]`, which are different types and cannot
+    // share an array literal.
+    for args in [&["add", "tracked.txt"][..], &["commit", "-m", "one"][..]] {
+        let ok = hermetic(
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(tmp.path()),
+        )
+        .status()
+        .unwrap()
+        .success();
+        assert!(ok, "failed to run `git {}` in the test workspace", args[0]);
+    }
+    std::fs::write(&tracked, "first\nsecond\n").unwrap();
+
+    let tool = test_tool(tmp.path());
+    let result = tool
+        .execute(json!({"operation": "diff", "files": "tracked.txt"}))
+        .await
+        .expect("a diff on a plain repository must not error out");
+
+    assert!(!result.is_error, "got: {}", result.output());
+    assert!(
+        result.output().contains("second"),
+        "the added line must appear in the patch: {}",
+        result.output()
+    );
+    assert!(
+        !result.output().contains("external diff died"),
+        "git must not be handed an empty `diff.external` to execute: {}",
+        result.output()
+    );
+}
+
+/// The shell subset must stay a subset, so widening the policy is a decision.
+///
+/// `SHELL_NEUTRALISED_CONFIG` exists because the `shell` tool cannot use the
+/// `-c` layer `hardened_git` builds. The risk is drift in one direction:
+/// someone adds a newly-dangerous key to `NEUTRALISED_CONFIG`, the shell path
+/// silently keeps running without it, and the gap is invisible. This test
+/// cannot force the addition — some entries genuinely must not cross, and the
+/// doc comment says which and why — but it does force every shell entry to be
+/// one the main policy already recognises.
+#[test]
+fn the_shell_subset_never_invents_a_key_the_main_policy_does_not_have() {
+    for entry in SHELL_NEUTRALISED_CONFIG {
+        let known = NEUTRALISED_CONFIG.contains(entry)
+            // `hardened_git` adds this one as an argument rather than through
+            // the static list; it is still the same policy.
+            || *entry == "commit.gpgSign=false";
+        assert!(
+            known,
+            "`{entry}` is neutralised for the shell but is not part of the \
+             git_operations policy it is supposed to mirror"
+        );
+    }
+}
+
+/// The three deliberate exclusions must stay excluded, with their reasons.
+///
+/// Each would break ordinary work rather than harden it: an empty
+/// `core.sshCommand` is a command git tries to execute (the same trap the
+/// `diff.external` note records), and `core.hooksPath` belongs to the
+/// attribution shim. Re-adding any of them looks like tightening security and
+/// is actually an outage, so it should be a conscious edit here first.
+#[test]
+fn the_shell_subset_keeps_its_documented_exclusions() {
+    for excluded in ["core.sshCommand=", "diff.external=", "core.hooksPath="] {
+        assert!(
+            !SHELL_NEUTRALISED_CONFIG.contains(&excluded),
+            "`{excluded}` is excluded from the shell subset on purpose — see \
+             the doc comment before changing this"
+        );
+    }
 }

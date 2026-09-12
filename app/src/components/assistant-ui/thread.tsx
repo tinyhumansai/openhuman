@@ -100,6 +100,27 @@ export type ThreadComponents = {
   ComposerExtras?: ComponentType | undefined;
   /** Full-width host content immediately above the composer shell. */
   ComposerHeader?: ComponentType | undefined;
+  /**
+   * Host-owned progress line for the turn in flight, rendered under the last
+   * message while `thread.isRunning`.
+   *
+   * A seam rather than a fixed widget because `isRunning` is all this file
+   * knows: what the model is actually doing right now — reasoning round, active
+   * tool, delegated sub-agent — lives in the host's own transport state, and
+   * without somewhere to put it a long turn is an unlabelled spinner. The host
+   * component returns `null` when it has nothing to say.
+   */
+  RunningStatus?: ComponentType | undefined;
+  /**
+   * Host-owned one-line footer for a **settled** assistant message — the
+   * turn's process summary and the single door to its detail.
+   *
+   * A seam for the same reason `RunningStatus` is one: this file knows the
+   * message, not what the host recorded while producing it. The host component
+   * reads the message's own metadata and returns `null` when the turn has no
+   * process behind it, so a plain answer gets no footer.
+   */
+  TurnFooter?: ComponentType | undefined;
   /** Host-owned attachment previews rendered above the editor. */
   ComposerAttachments?: ComponentType | undefined;
   /** Host-owned attachment picker rendered in the action row. */
@@ -138,6 +159,31 @@ export type ThreadProps = {
    */
   slashCommands?: readonly Unstable_SlashCommand[] | undefined;
 };
+
+/**
+ * Whether Lexical's own `SyncPlugin` is driving the composer store, making the
+ * host's DOM→store bridge below not merely redundant but harmful.
+ *
+ * Lexical reconciles from `beforeinput` and needs `getTargetRanges()` to know
+ * what the event will change. jsdom implements neither, so there the plugin
+ * never commits editor state and the bridge is the ONLY path from a synthetic
+ * `input` to the store — which is exactly why #5763 gated that bridge rather
+ * than deleting it, and why 54 composer tests depend on it.
+ *
+ * In a real browser the plugin does commit, and then the bridge's write moves
+ * the store through the *external* path. `SyncPlugin`'s runtime subscription
+ * reads that as a foreign edit, calls `root.clear()` and rebuilds the editor —
+ * and the rebuild restores the caret to the offset captured from the editor
+ * state, which still lags the DOM by one keystroke. So the caret never
+ * advances: typing `hello` one key at a time produced `holle` with the caret
+ * stuck at 1 (#6163).
+ *
+ * Feature-detected rather than `import.meta.env` because the condition is a
+ * real capability, not a build mode: any environment that reconciles from
+ * `beforeinput` must not be bridged, and any that cannot must be.
+ */
+const lexicalDrivesTheStore = (): boolean =>
+  typeof InputEvent !== 'undefined' && 'getTargetRanges' in InputEvent.prototype;
 
 const EMPTY_COMPONENTS: ThreadComponents = {};
 
@@ -248,6 +294,7 @@ const ThreadRoot: FC<{
 
           <div data-slot="aui_message-group" className="mb-14 flex flex-col gap-y-6 empty:hidden">
             <ThreadPrimitive.Messages>{() => <ThreadMessage />}</ThreadPrimitive.Messages>
+            <RunningStatusSlot />
           </div>
 
           <ThreadPrimitive.ViewportFooter
@@ -265,6 +312,22 @@ const ThreadRoot: FC<{
         </div>
       </ThreadPrimitive.Viewport>
     </ThreadPrimitive.Root>
+  );
+};
+
+/**
+ * The host's `RunningStatus`, gated on the thread actually running.
+ *
+ * Kept inside the message group so the line sits under the last message —
+ * where the answer is about to appear — rather than pinned to the composer.
+ */
+const RunningStatusSlot: FC = () => {
+  const { RunningStatus } = useContext(ThreadComponentsContext);
+  if (!RunningStatus) return null;
+  return (
+    <AuiIf condition={s => s.thread.isRunning}>
+      <RunningStatus />
+    </AuiIf>
   );
 };
 
@@ -474,6 +537,7 @@ const Composer: FC<{
                 if ('isComposing' in event.nativeEvent && event.nativeEvent.isComposing) {
                   return;
                 }
+                if (lexicalDrivesTheStore()) return;
                 syncComposerFromDom(event.target);
               }}
               onCompositionEndCapture={event => {
@@ -496,6 +560,7 @@ const Composer: FC<{
                 }
                 const native = event.nativeEvent;
                 if (
+                  isComposingTextRef.current ||
                   native.isComposing ||
                   native.keyCode === 229 ||
                   ('which' in native && native.which === 229)
@@ -651,7 +716,7 @@ const ComposerAction: FC<{
               type="button"
               variant="default"
               size="icon"
-              className="aui-composer-cancel size-7 rounded-full"
+              className="aui-composer-cancel size-7 rounded-full bg-primary-500 text-content-inverted hover:bg-primary-600"
               data-testid="stop-generation-button"
               aria-label="Stop generating">
               <SquareIcon className="aui-composer-cancel-icon size-3.5 fill-current" />
@@ -678,6 +743,7 @@ const AssistantMessage: FC = () => {
     ToolFallback: ToolFallbackComponent = ToolFallback,
     ToolGroup,
     ReasoningGroup,
+    TurnFooter,
   } = useContext(ThreadComponentsContext);
 
   const ACTION_BAR_PT = 'pt-1.5';
@@ -706,7 +772,7 @@ const AssistantMessage: FC = () => {
       data-slot="aui_assistant-message-root"
       data-role="assistant"
       data-testid="agent-message"
-      className="fade-in slide-in-from-bottom-1 animate-in relative -mb-7.5 pb-7.5 duration-150 [contain-intrinsic-size:auto_200px] [content-visibility:auto]">
+      className="fade-in slide-in-from-bottom-1 animate-in relative -mb-7.5 pb-7.5 duration-150">
       {/*
        * One vertical rhythm for the whole message, rather than each part
        * bringing its own margin. Measured before this change the gaps ran
@@ -810,6 +876,7 @@ const AssistantMessage: FC = () => {
             Stopped
           </span>
         </AuiIf>
+        {TurnFooter ? <TurnFooter /> : null}
         <BranchPicker />
         <AssistantActionBar />
       </div>
@@ -877,7 +944,7 @@ const UserMessage: FC = () => {
   return (
     <MessagePrimitive.Root
       data-slot="aui_user-message-root"
-      className="fade-in slide-in-from-bottom-1 animate-in grid auto-rows-auto grid-cols-[minmax(72px,1fr)_auto] content-start gap-y-2 px-2 duration-150 [contain-intrinsic-size:auto_200px] [content-visibility:auto] [&:where(>*)]:col-start-2"
+      className="fade-in slide-in-from-bottom-1 animate-in grid auto-rows-auto grid-cols-[minmax(72px,1fr)_auto] content-start gap-y-2 px-2 duration-150 [&:where(>*)]:col-start-2"
       data-role="user">
       <UserMessageAttachments />
 
@@ -939,9 +1006,7 @@ const UserActionBar: FC = () => {
 
 const EditComposer: FC = () => {
   return (
-    <MessagePrimitive.Root
-      data-slot="aui_edit-composer-wrapper"
-      className="flex flex-col px-2 [contain-intrinsic-size:auto_200px] [content-visibility:auto]">
+    <MessagePrimitive.Root data-slot="aui_edit-composer-wrapper" className="flex flex-col px-2">
       <ComposerPrimitive.Root className="aui-edit-composer-root border-border/60 dark:border-muted-foreground/15 ms-auto flex w-full max-w-[85%] cursor-text flex-col rounded-(--composer-radius) border bg-(--composer-bg)">
         <ComposerPrimitive.Input
           className="aui-edit-composer-input text-foreground min-h-14 w-full resize-none bg-transparent px-4 pt-3 pb-1 text-base outline-hidden"

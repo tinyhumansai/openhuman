@@ -20,7 +20,7 @@ use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 use crate::openhuman::agent::harness::fork_context::{with_parent_context, ParentExecutionContext};
 use crate::openhuman::config::{AgentConfig, Config};
 use crate::openhuman::memory::{Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts};
-use crate::openhuman::tools::{Tool, ToolSpec};
+use crate::openhuman::tools::Tool;
 use tinyagents_session::run_ledger::{
     self, AgentTeamMemberStatus, AgentTeamMemberUpsert, AgentTeamStatus, AgentTeamTaskStatus,
     AgentTeamTaskUpsert, AgentTeamUpsert,
@@ -114,7 +114,8 @@ fn mock_parent(model: Arc<dyn ChatModel<()>>) -> ParentExecutionContext {
         allowed_subagent_ids: HashSet::new(),
         turn_model_source: crate::openhuman::agent::tinyagents::TurnModelSource::from_model(model),
         all_tools: Arc::new(Vec::<Box<dyn Tool>>::new()),
-        all_tool_specs: Arc::new(Vec::<ToolSpec>::new()),
+        all_tool_specs: Arc::new(Vec::new()),
+        visible_tool_specs: Arc::new(Vec::new()),
         visible_tool_names: std::collections::HashSet::new(),
         subagent_tool_ceiling_names: std::collections::HashSet::new(),
         model_name: "test-model".to_string(),

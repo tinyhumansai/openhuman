@@ -17,3 +17,4 @@ export * from './service';
 export * from './voice';
 export * from './aboutApp';
 export * from './workspacePaths';
+export * from './directoryPicker';

@@ -554,13 +554,81 @@ async fn missing_env_workspace_uses_pre_login_default() {
 
 #[test]
 fn resolve_config_dir_for_workspace_returns_parent_and_workspace() {
+    // `default_root_dir_name()` reads `OPENHUMAN_APP_ENV`; hold the shared env
+    // lock so a concurrent staging-flip test can't turn the root into
+    // `.openhuman-staging` mid-assertion.
+    let _g = env_lock();
     let ws = PathBuf::from("/home/test/.openhuman/workspace");
     let (config_dir, workspace_dir) = resolve_config_dir_for_workspace(&ws);
-    // Config dir is the parent of workspace.
-    assert!(
-        config_dir.ends_with(".openhuman") || config_dir == PathBuf::from("/home/test/.openhuman")
+    // Modern default layout: the config dir IS the `.openhuman` parent, resolved
+    // by pure path structure (no filesystem probe), so the fake path resolves
+    // even though it doesn't exist. The old, buggy code returned the doubled
+    // `/home/test/.openhuman/.openhuman` here — which `Path::ends_with` still
+    // matched against `".openhuman"` (whole-component match), making the old
+    // assertion vacuous. `assert_eq!` against the exact parent catches that.
+    assert_eq!(config_dir, PathBuf::from("/home/test/.openhuman"));
+    assert_eq!(workspace_dir, ws);
+}
+
+#[test]
+fn resolve_config_dir_for_workspace_modern_layout_does_not_double_openhuman() {
+    // The #6079 repro: `OPENHUMAN_WORKSPACE=~/.openhuman/workspace` must resolve
+    // to `~/.openhuman` (where `config.toml` lives), NOT the doubled
+    // `~/.openhuman/.openhuman`, which never exists and silently reverts every
+    // setting to schema defaults. This is a pure path-structure decision, so it
+    // holds for a non-existent path.
+    let _g = env_lock();
+    let ws = PathBuf::from("/home/test/.openhuman/workspace");
+    let (config_dir, workspace_dir) = resolve_config_dir_for_workspace(&ws);
+    assert_eq!(config_dir, PathBuf::from("/home/test/.openhuman"));
+    assert_ne!(
+        config_dir,
+        PathBuf::from("/home/test/.openhuman/.openhuman"),
+        "must never return the doubled .openhuman/.openhuman path"
     );
-    assert!(workspace_dir.ends_with("workspace"));
+    assert_eq!(workspace_dir, ws);
+}
+
+#[test]
+fn resolve_config_dir_for_workspace_legacy_sibling_layout_is_preserved() {
+    // Legacy layout: `<tmp>/project/workspace` with a real sibling
+    // `<tmp>/project/.openhuman/config.toml` still resolves to the sibling
+    // `.openhuman`. This arm probes the filesystem, so use a real temp dir.
+    let tmp = tempfile::tempdir().unwrap();
+    let project = tmp.path().join("project");
+    let legacy = project.join(".openhuman");
+    let ws = project.join("workspace");
+    std::fs::create_dir_all(&legacy).unwrap();
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::write(legacy.join("config.toml"), "").unwrap();
+
+    let (config_dir, workspace_dir) = resolve_config_dir_for_workspace(&ws);
+    assert_eq!(config_dir, legacy);
+    assert_eq!(workspace_dir, ws);
+}
+
+#[test]
+fn resolve_config_dir_for_workspace_workspace_basename_resolves_to_fresh_legacy_sibling() {
+    // Legacy layout on a fresh volume: basename is `workspace`, the parent is
+    // NOT the `.openhuman` config dir (so the modern arm does not fire), and the
+    // sibling `.openhuman` does not exist yet. This must resolve to the sibling
+    // `<proj>/.openhuman` — where `config::load` writes config for this layout —
+    // NOT nest the workspace inside itself as `ws/workspace`. Regression guard
+    // for the over-corrected `.exists()` gate (Codex P2).
+    let _g = env_lock();
+    let ws = PathBuf::from("/home/test/some-project/workspace");
+    let (config_dir, workspace_dir) = resolve_config_dir_for_workspace(&ws);
+    assert_eq!(
+        config_dir,
+        PathBuf::from("/home/test/some-project/.openhuman"),
+        "a fresh legacy workspace must resolve to its sibling .openhuman, not nest itself"
+    );
+    assert_eq!(workspace_dir, ws);
+    assert_ne!(
+        config_dir,
+        PathBuf::from("/home/test/some-project/.openhuman/.openhuman"),
+        "must never return the doubled .openhuman/.openhuman path"
+    );
 }
 
 #[test]

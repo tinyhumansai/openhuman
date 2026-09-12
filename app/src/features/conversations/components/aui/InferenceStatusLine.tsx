@@ -30,7 +30,9 @@ export function InferenceStatusLine({
 }: InferenceStatusLineProps) {
   const { t } = useT();
   return (
-    <div className="flex items-center gap-2 px-1 py-1.5 text-xs text-content-muted">
+    <div
+      data-testid="inference-status-line"
+      className="flex items-center gap-2 px-1 py-1.5 text-xs text-content-muted">
       <span className="inline-block w-2 h-2 rounded-full bg-primary-400 animate-pulse" />
       <span>
         {status.phase === 'thinking' &&

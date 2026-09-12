@@ -250,7 +250,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "fetch" => ControllerSchema {
             namespace: "task_sources",
             function: "fetch",
-            description: "Fetch one source immediately, route new tasks, and prune tasks no longer returned by the source.",
+            description: "UNAVAILABLE: the task-fetch path was removed with \
+                          `ComposioProvider::fetch_tasks` (tinymemory v1.13.4), so this call \
+                          always fails. When it works again it fetches one source immediately, \
+                          routes new tasks, and prunes tasks no longer returned by the source.",
             inputs: vec![source_id_input(
                 "Identifier of the task source to fetch now.",
             )],
@@ -264,7 +267,11 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "sync" => ControllerSchema {
             namespace: "task_sources",
             function: "sync",
-            description: "Fetch every enabled source immediately, route new tasks, and prune tasks no longer returned by their source.",
+            description: "UNAVAILABLE: the task-fetch path was removed with \
+                          `ComposioProvider::fetch_tasks` (tinymemory v1.13.4), so every source \
+                          in the sweep fails. When it works again it fetches every enabled \
+                          source immediately, routes new tasks, and prunes tasks no longer \
+                          returned by their source.",
             inputs: vec![],
             outputs: vec![FieldSchema {
                 name: "outcomes",
@@ -296,7 +303,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "preview_filter" => ControllerSchema {
             namespace: "task_sources",
             function: "preview_filter",
-            description: "Dry-run a filter and return matching tasks WITHOUT routing them.",
+            description: "UNAVAILABLE: the task-fetch path was removed with \
+                          `ComposioProvider::fetch_tasks` (tinymemory v1.13.4), so this call \
+                          always fails. When it works again it dry-runs a filter and returns \
+                          matching tasks WITHOUT routing them.",
             inputs: vec![
                 provider_input(),
                 filter_input(),
@@ -323,7 +333,11 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "list_databases" => ControllerSchema {
             namespace: "task_sources",
             function: "list_databases",
-            description: "List selectable containers (e.g. Notion databases) for a provider/connection so the UI can offer a picker.",
+            description: "UNAVAILABLE: the container-listing path was removed with \
+                          `ComposioProvider::list_databases` (tinymemory v1.13.4), so this call \
+                          always fails. It only ever had a Notion implementation. When it works \
+                          again it lists selectable containers (e.g. Notion databases) for a \
+                          provider/connection so the UI can offer a picker.",
             inputs: vec![
                 provider_input(),
                 FieldSchema {

@@ -52,3 +52,26 @@ async fn list_missing_dir() {
     assert!(result.output().contains("Failed to resolve"));
     let _ = tokio::fs::remove_dir_all(&dir).await;
 }
+
+#[tokio::test]
+async fn list_a_plain_file_reports_the_read_dir_failure() {
+    // Distinct from `list_missing_dir`: the path resolves (the file exists),
+    // so `validate_path` succeeds; the failure is `read_dir` itself refusing
+    // a non-directory (ENOTDIR), one step later in the same function.
+    let dir = std::env::temp_dir().join("openhuman_test_list_not_a_dir");
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+    tokio::fs::create_dir_all(&dir).await.unwrap();
+    tokio::fs::write(dir.join("plain.txt"), "not a directory")
+        .await
+        .unwrap();
+
+    let tool = ListFilesTool::new(test_security(dir.clone()));
+    let result = tool.execute(json!({"path": "plain.txt"})).await.unwrap();
+    assert!(
+        result.is_error,
+        "listing a plain file must be a refusal, not an empty-looking success"
+    );
+    assert!(result.output().contains("Failed to read directory"));
+
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+}

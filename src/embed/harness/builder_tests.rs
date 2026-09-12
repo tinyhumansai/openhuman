@@ -21,6 +21,27 @@ use crate::openhuman::config::Config;
 static GUARD: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[test]
+fn a_harness_identifies_as_a_library_host_by_default() {
+    assert_eq!(HarnessBuilder::new().host_kind, HostKind::Library);
+}
+
+#[test]
+fn inherited_workspace_and_provider_keep_installed_session_policy() {
+    assert_eq!(
+        effective_host_kind(HostKind::Library, true, false),
+        HostKind::Cli
+    );
+    assert_eq!(
+        effective_host_kind(HostKind::Library, true, true),
+        HostKind::Library
+    );
+    assert_eq!(
+        effective_host_kind(HostKind::Library, false, false),
+        HostKind::Library
+    );
+}
+
+#[test]
 fn default_services_start_no_background_writers() {
     // cron, heartbeat and the memory queue each write to the workspace on their
     // own schedule. A library call that started them would become a background

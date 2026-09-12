@@ -11,6 +11,27 @@ describe('ModelQualityPill', () => {
     expect(screen.getByText('OpenHuman')).toBeInTheDocument();
   });
 
+  /**
+   * Managed passthrough ids are encoded bare (no `providerSlug:` prefix). The
+   * label must not split them on `:` — doing so rendered
+   * `openrouter/nex-agi/nex-n2.5-mini:free` as just "free".
+   */
+  it('labels a managed passthrough model without stripping at the colon', () => {
+    render(<ModelQualityPill value="openrouter/nex-agi/nex-n2.5-mini:free" />);
+    expect(screen.getByText('nex-n2.5-mini:free')).toBeInTheDocument();
+  });
+
+  it('labels a managed passthrough model with no variant tag', () => {
+    render(<ModelQualityPill value="openrouter/deepseek/deepseek-v4-flash" />);
+    expect(screen.getByText('deepseek-v4-flash')).toBeInTheDocument();
+  });
+
+  /** A BYOK value still shows just the model, as before. */
+  it('still strips the provider prefix from a BYOK value', () => {
+    render(<ModelQualityPill value="openai:gpt-4o-mini" />);
+    expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+  });
+
   it('has chevron icon', () => {
     const { container } = render(<ModelQualityPill />);
     const svg = container.querySelector('svg');

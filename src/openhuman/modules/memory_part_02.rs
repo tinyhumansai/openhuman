@@ -146,8 +146,12 @@ impl MemoryTree for ModuleMemoryProvider {
     /// so it is also the one whose bus deadline could bind. It rides the
     /// default: the module clamps the fold to the `token_budget` this caller
     /// supplied, and a summariser that outruns the deadline is the same failure
-    /// a caller must already handle — `summarise` documents a deterministic
-    /// fallback as the expected response to a model that errors or times out.
+    /// a caller must already handle — the contract puts the deterministic
+    /// fallback on the *caller* and states that the driver never substitutes
+    /// one, precisely so a fallback cannot be mistaken for a model's own work
+    /// once it is in the tree. An `Ok` here is therefore always the model's
+    /// text, or empty when there was nothing to fold; a model that errors,
+    /// times out or refuses arrives as `Err`, never as a filled-in summary.
     async fn summarise(
         &self,
         inputs: &[SummaryInput],
@@ -551,6 +555,22 @@ impl MemoryMaintenance for ModuleMemoryProvider {
     async fn flush_pending(&self) -> Result<FlushOutcome, MemoryError> {
         module_call!(self, "flush_pending", methods::FLUSH_PENDING, ())
     }
+    /// Long-running by nature — a pass reads and re-embeds up to its whole
+    /// limit of documents — so this takes the bulk deadline rather than the
+    /// default 30s one. `AcceptSourceItems` is here for the same reason: a call
+    /// that outruns the deadline while the module goes on working is the
+    /// pathology that made the connector sync retry a finished handoff forever.
+    async fn backfill_connector_trees(
+        &self,
+        request: BackfillTreesRequest,
+    ) -> Result<BackfillTreesOutcome, MemoryError> {
+        module_call_slow!(
+            self,
+            "backfill_connector_trees",
+            methods::BACKFILL_CONNECTOR_TREES,
+            (request,)
+        )
+    }
     async fn reset_derived_index(&self) -> Result<ResetOutcome, MemoryError> {
         module_call!(
             self,
@@ -572,127 +592,6 @@ impl MemoryMaintenance for ModuleMemoryProvider {
     /// table.
     async fn degraded_state(&self) -> Result<DegradedCapabilities, MemoryError> {
         module_call!(self, "degraded_state", methods::DEGRADED_STATE, ())
-    }
-}
-
-/// Bus deadline for the three calls that run a whole source sync inside the
-/// module: `RunConnectionSync`, `RunSourceSync` and `BootstrapConnection`.
-///
-/// tinybus gives every call a 30 s default deadline if nobody sets one, and a
-/// sync is routinely longer than that: one Gmail page is ~31 s end to end, an
-/// initial bootstrap of a connection is minutes. With the default, the caller
-/// was released with "call to `RunSourceSync` timed out after 30000ms" while
-/// the module kept fetching and ingesting, and finished; the UI reported a
-/// failure for work that succeeded (openhuman#5820). Same failure class, same
-/// fix as `IngestCodingSessions` above: the deadline here is the wedged-forever
-/// backstop tinybus requires, not a ceiling anyone is meant to hit.
-///
-/// Sized from the frontend's clamp, `PER_CALL_TIMEOUT_MAX_MS = 600 s`
-/// (`app/src/services/coreRpcClient.ts`): that is the longest wait any RPC
-/// caller can observe, so the bus must outlast it, plus [`INGEST_BUS_GRACE`]
-/// so the client's own abort, with its clean message, is the one that fires
-/// first when a run really does wedge.
-const SOURCE_SYNC_BUS_TIMEOUT: std::time::Duration =
-    std::time::Duration::from_secs(600).saturating_add(INGEST_BUS_GRACE);
-
-#[async_trait]
-impl MemorySourceSync for ModuleMemoryProvider {
-    async fn run_connection_sync(
-        &self,
-        toolkit: &str,
-        connection_id: &str,
-    ) -> Result<SyncRunOutcome, MemoryError> {
-        self.proxy("run_connection_sync")
-            .await?
-            .with_timeout(SOURCE_SYNC_BUS_TIMEOUT)
-            .call(methods::RUN_CONNECTION_SYNC, (toolkit, connection_id))
-            .await
-            .map_err(|error| from_bus(&error))
-    }
-    async fn run_source_sync(&self, source_id: &str) -> Result<SyncRunOutcome, MemoryError> {
-        self.proxy("run_source_sync")
-            .await?
-            .with_timeout(SOURCE_SYNC_BUS_TIMEOUT)
-            .call(methods::RUN_SOURCE_SYNC, (source_id,))
-            .await
-            .map_err(|error| from_bus(&error))
-    }
-    async fn bootstrap_connection(
-        &self,
-        toolkit: &str,
-        connection_id: &str,
-    ) -> Result<(), MemoryError> {
-        self.proxy("bootstrap_connection")
-            .await?
-            .with_timeout(SOURCE_SYNC_BUS_TIMEOUT)
-            .call(methods::BOOTSTRAP_CONNECTION, (toolkit, connection_id))
-            .await
-            .map_err(|error| from_bus(&error))
-    }
-    async fn is_toolkit_syncable(&self, toolkit: &str) -> Result<bool, MemoryError> {
-        module_call!(
-            self,
-            "is_toolkit_syncable",
-            methods::IS_TOOLKIT_SYNCABLE,
-            (toolkit,)
-        )
-    }
-    async fn source_sync_state(
-        &self,
-        toolkit: &str,
-        connection_id: &str,
-    ) -> Result<Option<SourceSyncState>, MemoryError> {
-        module_call!(
-            self,
-            "source_sync_state",
-            methods::SOURCE_SYNC_STATE,
-            (toolkit, connection_id)
-        )
-    }
-    async fn sync_audit_log(
-        &self,
-        limit: Option<usize>,
-    ) -> Result<Vec<SyncAuditEntry>, MemoryError> {
-        module_call!(self, "sync_audit_log", methods::SYNC_AUDIT_LOG, (limit,))
-    }
-    async fn estimate_sync_cost_usd(
-        &self,
-        input_tokens: u64,
-        output_tokens: u64,
-    ) -> Result<f64, MemoryError> {
-        module_call!(
-            self,
-            "estimate_sync_cost_usd",
-            methods::ESTIMATE_SYNC_COST_USD,
-            (input_tokens, output_tokens)
-        )
-    }
-    async fn sync_statuses(&self) -> Result<Vec<SourceSyncStatus>, MemoryError> {
-        module_call!(self, "sync_statuses", methods::SYNC_STATUSES, ())
-    }
-    async fn raw_archive_coverage(
-        &self,
-        tree_scope: &str,
-        archive_source_id: &str,
-    ) -> Result<RawArchiveCoverage, MemoryError> {
-        module_call!(
-            self,
-            "raw_archive_coverage",
-            methods::RAW_ARCHIVE_COVERAGE,
-            (tree_scope, archive_source_id)
-        )
-    }
-    async fn rebuild_from_raw_archive(
-        &self,
-        tree_scope: &str,
-        archive_source_id: &str,
-    ) -> Result<RawRebuildOutcome, MemoryError> {
-        module_call!(
-            self,
-            "rebuild_from_raw_archive",
-            methods::REBUILD_FROM_RAW_ARCHIVE,
-            (tree_scope, archive_source_id)
-        )
     }
 }
 

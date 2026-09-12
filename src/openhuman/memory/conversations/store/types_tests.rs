@@ -63,3 +63,24 @@ fn create_thread_optional_fields_roundtrip() {
     );
     assert!(decoded.parent_thread_id.is_none());
 }
+
+#[test]
+fn run_reply_id_is_deterministic_and_recognised_as_such() {
+    // The producer (`task_session::append_final`) and the predicate the store
+    // gates its idempotency lookup on must agree, or the two writers of an
+    // autonomous reply stop collapsing onto one row (#5933).
+    assert_eq!(run_reply_message_id("run-7"), "agent:run-7");
+    assert!(is_deterministic_message_id(&run_reply_message_id("run-7")));
+}
+
+#[test]
+fn client_generated_ids_are_not_deterministic() {
+    // These are UUID-fresh per message, so they can never be re-presented and
+    // must keep the constant-time append path.
+    assert!(!is_deterministic_message_id(
+        "user:5f1d0c3e-1f8b-4c1a-9c2e-2a7b6d4e8f90"
+    ));
+    assert!(!is_deterministic_message_id(
+        "assistant:5f1d0c3e-1f8b-4c1a-9c2e-2a7b6d4e8f90"
+    ));
+}

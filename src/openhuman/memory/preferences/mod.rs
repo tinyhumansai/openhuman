@@ -37,7 +37,8 @@
 //! degradations, whereas an error would fail a chat turn or a preference write
 //! over a capability the operator chose not to have.
 
-use crate::openhuman::memory::api::provider::{MemoryCore as _, MemoryProvider as _};
+use crate::openhuman::memory::api::error::MemoryError;
+use crate::openhuman::memory::api::provider::{MemoryCore as _, MemoryProvider};
 use crate::openhuman::memory::guard::MemoryGuard;
 
 /// Always-on preferences — injected into the system prompt every thread.
@@ -66,7 +67,8 @@ pub const SITUATIONAL_MIN_SIMILARITY: f64 = 0.35;
 pub const CONTRADICTION_SIMILARITY: f64 = 0.6;
 
 /// Recall entries in `namespace` whose **vector** similarity alone clears
-/// `min_vector_similarity`, as `(key, content)` pairs, most-relevant first.
+/// `min_vector_similarity`, as `(key, content)` pairs, most-relevant first —
+/// over any [`MemoryProvider`], guarded or not.
 ///
 /// Reproduces what the engine's `recall_relevant_by_vector` did: ask for the
 /// scored hits, keep those whose `vector_similarity` component clears the
@@ -74,6 +76,59 @@ pub const CONTRADICTION_SIMILARITY: f64 = 0.6;
 /// final score is the point — the combined score folds in keyword, graph and
 /// freshness signals, so a lexically-similar but semantically-unrelated
 /// preference would otherwise clear the bar.
+///
+/// This is the one body behind both doors into Lane B: the guard path
+/// ([`recall_by_vector`], used by the contradiction check) and the session's
+/// `Memory` handle (`DriverMemory::recall_relevant_by_vector`, #6041). A driver
+/// without the retrieval family answers empty — the documented degradation —
+/// while a driver that has it and fails answers `Err`, so each caller decides
+/// what an error means for its turn.
+pub(crate) async fn recall_by_vector_over(
+    provider: &dyn MemoryProvider,
+    namespace: &str,
+    query: &str,
+    limit: usize,
+    min_vector_similarity: f64,
+) -> Result<Vec<(String, String)>, MemoryError> {
+    let Some(retrieval) = provider.as_retrieval() else {
+        return Ok(Vec::new());
+    };
+    let started = std::time::Instant::now();
+    let hits = retrieval
+        .recall_namespace_scored(namespace, query, limit, None)
+        .await?;
+    // The floor is "tunable against live data", and this line is that data:
+    // how close the best candidate came, whether or not it cleared. Keys and
+    // scores only — never the preference text or the message.
+    let top = hits
+        .iter()
+        .map(|h| h.score_breakdown.vector_similarity)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let kept: Vec<(String, String)> = hits
+        .into_iter()
+        .filter(|h| h.score_breakdown.vector_similarity >= min_vector_similarity)
+        .filter(|h| !h.content.trim().is_empty())
+        .map(|h| (h.key, h.content))
+        .collect();
+    if top.is_finite() {
+        log::info!(
+            "[pref_recall] namespace={namespace} kept={} top_similarity={top:.3} floor={min_vector_similarity} elapsed_ms={}",
+            kept.len(),
+            started.elapsed().as_millis()
+        );
+    } else {
+        log::debug!(
+            "[pref_recall] namespace={namespace} no candidates elapsed_ms={}",
+            started.elapsed().as_millis()
+        );
+    }
+    Ok(kept)
+}
+
+/// [`recall_by_vector_over`] through the guard, with a failed lookup read as
+/// "nothing to inject": an absent Lane-B block or an absent contradiction check
+/// is a degradation, whereas an error here would fail a chat turn or a
+/// preference write.
 async fn recall_by_vector(
     memory: &MemoryGuard,
     namespace: &str,
@@ -81,20 +136,17 @@ async fn recall_by_vector(
     limit: usize,
     min_vector_similarity: f64,
 ) -> Vec<(String, String)> {
-    let Some(retrieval) = memory.as_retrieval() else {
-        return Vec::new();
-    };
-    let Ok(hits) = retrieval
-        .recall_namespace_scored(namespace, query, limit, None)
-        .await
-    else {
-        return Vec::new();
-    };
-    hits.into_iter()
-        .filter(|h| h.score_breakdown.vector_similarity >= min_vector_similarity)
-        .filter(|h| !h.content.trim().is_empty())
-        .map(|h| (h.key, h.content))
-        .collect()
+    match recall_by_vector_over(memory, namespace, query, limit, min_vector_similarity).await {
+        Ok(hits) => hits,
+        Err(err) => {
+            // Degrade, but say so: a driver that has retrieval and fails is an
+            // infrastructure signal, not the documented "no vectors" opt-out.
+            log::warn!(
+                "[pref_recall] vector recall failed namespace={namespace}; continuing without it: {err}"
+            );
+            Vec::new()
+        }
+    }
 }
 
 /// Load the latest-`limit` general preferences as plain-language strings,
@@ -167,6 +219,9 @@ pub async fn load_general_preferences_on(
 /// `recall_relevant_by_vector` is a contract-trait method, so this stays
 /// engine-neutral; a backend without vectors answers empty, which is the
 /// documented degradation for Lane B — an absent block, never a failed turn.
+/// The session handle is a `DriverMemory` on every module-backed install, and
+/// that adapter answers through [`recall_by_vector_over`] (#6041) — it used to
+/// sit on the trait's empty default, which made this lane a silent no-op.
 pub async fn recall_situational_preferences_on(
     memory: &std::sync::Arc<dyn crate::openhuman::memory::Memory>,
     query: &str,
@@ -174,7 +229,29 @@ pub async fn recall_situational_preferences_on(
     if query.trim().is_empty() {
         return Vec::new();
     }
-    memory
+    // The vector recall embeds the message — a round trip to the embedder,
+    // measured at 0.8–3 s on the desktop — and it runs on every turn. Most
+    // users have never saved a topic-scoped preference, so ask the store the
+    // cheap question first and only pay for the embed when there is something
+    // to match. The question is a namespace *count*, not a listing: a user
+    // with hundreds of preferences must not ship every row over the bus on
+    // every turn just to learn that the namespace is non-empty. A failed
+    // count falls through to the recall rather than silently disabling the
+    // lane.
+    let has_candidates = memory
+        .namespace_summaries()
+        .await
+        .map(|summaries| {
+            summaries
+                .iter()
+                .any(|s| s.namespace == USER_PREF_SITUATIONAL_NAMESPACE && s.count > 0)
+        })
+        .unwrap_or(true);
+    if !has_candidates {
+        log::debug!("[pref_recall] no situational preferences stored; skipping the vector recall");
+        return Vec::new();
+    }
+    let recalled = match memory
         .recall_relevant_by_vector(
             USER_PREF_SITUATIONAL_NAMESPACE,
             query,
@@ -182,7 +259,18 @@ pub async fn recall_situational_preferences_on(
             SITUATIONAL_MIN_SIMILARITY,
         )
         .await
-        .unwrap_or_default()
+    {
+        Ok(recalled) => recalled,
+        Err(err) => {
+            // An absent block, never a failed turn — but a failed lookup is
+            // worth one line, or a broken driver reads as "no preferences".
+            log::warn!(
+                "[pref_recall] situational recall failed; continuing without a preference block: {err}"
+            );
+            Vec::new()
+        }
+    };
+    recalled
         .into_iter()
         .map(|(_topic, value)| value)
         .filter(|value| !value.trim().is_empty())

@@ -49,15 +49,26 @@ pub struct ParentExecutionContext {
     /// per-archetype before handing it to the sub-agent's tool loop.
     pub all_tools: Arc<Vec<Box<dyn Tool>>>,
 
-    /// Pre-serialised tool specs matching `all_tools`. Captured at
-    /// turn-start so sub-agents can pass byte-identical schemas to the
-    /// provider for prefix-cache reuse.
-    pub all_tool_specs: Arc<Vec<ToolSpec>>,
+    /// Pre-serialised tool specs matching `all_tools` index for index.
+    /// Captured at turn-start so sub-agents can pass byte-identical schemas to
+    /// the provider for prefix-cache reuse. The parent's synthesised
+    /// delegation specs are deliberately absent: a sub-agent is never handed a
+    /// `delegate_*` tool (#4452), so there is no instance here for one.
+    pub all_tool_specs: Arc<Vec<Arc<ToolSpec>>>,
 
     /// Names of the tools the parent actually advertises and will execute this
     /// turn. Consumers that recommend or directly invoke parent tools consult
     /// this role-specific surface.
     pub visible_tool_names: std::collections::HashSet<String>,
+
+    /// The specs behind [`Self::visible_tool_names`]: the parent's own
+    /// provider-facing list this turn — policy-filtered, de-duplicated, and
+    /// including its synthesised `delegate_*` tools. For consumers that
+    /// describe what the *parent* can call (the scout's catalogue), never for
+    /// building a child's tool set — that is [`Self::all_tools`] +
+    /// [`Self::all_tool_specs`], which carry no delegate. Empty when the
+    /// builder does not know the parent's surface.
+    pub visible_tool_specs: Arc<Vec<Arc<ToolSpec>>>,
 
     /// Explicit profile/channel ceiling inherited by child agents. This is not
     /// the parent's role-specific visible surface: an orchestrator may delegate
