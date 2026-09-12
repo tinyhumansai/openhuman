@@ -1197,6 +1197,7 @@ async fn subagent_clarification_flow_inner() {
     .await;
     let second =
         wait_for_terminal_request(&mut events, &second_request_id, Duration::from_secs(120)).await;
+    eprintln!("CLARIFY DEBUG REQUESTS: {}", serde_json::to_string_pretty(&with_captured(|c| c.clone())).unwrap_or_default());
     assert_eq!(
         second.get("event").and_then(Value::as_str),
         Some("chat_done"),
