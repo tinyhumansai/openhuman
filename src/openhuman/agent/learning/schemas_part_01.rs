@@ -528,6 +528,21 @@ fn handle_rebuild_cache(_params: Map<String, Value>) -> ControllerFuture {
 
         tracing::debug!("[learning.rebuild_cache] manual rebuild requested via RPC");
 
+        let config = config_rpc::load_config_with_timeout()
+            .await
+            .map_err(|e| {
+                tracing::warn!("[learning.rebuild_cache] config load failed: {e}");
+                e.to_string()
+            })?;
+        if !config.learning.enabled {
+            tracing::info!("[learning.rebuild_cache] skipped because learning.enabled=false");
+            return RpcOutcome::new(
+                serde_json::json!({"added": 0, "evicted": 0, "kept": 0, "total": 0}),
+                vec!["learning.rebuild_cache: skipped (learning.enabled=false)".to_string()],
+            )
+            .into_cli_compatible_json();
+        }
+
         let cache = FacetCache::new(
             crate::openhuman::memory::ops::guard::active_memory_guard()
                 .await

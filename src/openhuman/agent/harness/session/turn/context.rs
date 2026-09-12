@@ -213,9 +213,13 @@ impl Agent {
             crate::openhuman::memory::preferences::STANDING_PREFS_LIMIT,
         )
         .await;
-        let facets =
-            crate::openhuman::agent::learning::load_learned_from_global_cache(&self.workspace_dir)
-                .await;
+        let facets = crate::openhuman::agent::learning::load_learned_from_global_cache(
+            &self.workspace_dir,
+            self.runtime_config
+                .as_ref()
+                .map(|config| &config.subsystems.memory),
+        )
+        .await;
         let standing =
             crate::openhuman::agent::learning::merge_standing_preferences(general, facets);
         tracing::debug!(
@@ -350,7 +354,10 @@ impl Agent {
         // channel runtimes — shares one builder configuration.
         let mut prompt = self.context.build_system_prompt(&ctx)?;
         if let Some(boundary) = render_tool_policy_boundary(&self.tool_policy_session, 2048) {
-            prompt = format!("{boundary}\n\n{prompt}");
+            // Keep the stable persona/instruction prefix intact for inference prefix caching;
+            // the per-session tool-policy boundary belongs after the assembled prompt (#5704).
+            prompt.push_str("\n\n");
+            prompt.push_str(&boundary);
         }
         Ok(prompt)
     }

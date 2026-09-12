@@ -314,9 +314,18 @@ pub const CACHE_PROMPT_CAP: usize = 25;
 ///
 /// Returns an empty vec when the global client is not ready (startup race or
 /// tests that never called [`crate::openhuman::memory::global::init`]).
-pub async fn load_learned_from_global_cache(workspace_dir: &std::path::Path) -> Vec<String> {
-    let config = crate::openhuman::config::schema::MemorySubsystemConfig::default();
-    let binding = match crate::openhuman::memory::binding::for_workspace(workspace_dir, &config) {
+pub async fn load_learned_from_global_cache(
+    workspace_dir: &std::path::Path,
+    configured_memory: Option<&crate::openhuman::config::schema::MemorySubsystemConfig>,
+) -> Vec<String> {
+    let default_config;
+    let config = if let Some(config) = configured_memory {
+        config
+    } else {
+        default_config = crate::openhuman::config::schema::MemorySubsystemConfig::default();
+        &default_config
+    };
+    let binding = match crate::openhuman::memory::binding::for_workspace(workspace_dir, config) {
         Ok(binding) => binding,
         Err(error) => {
             tracing::debug!(
@@ -340,7 +349,7 @@ pub fn merge_standing_preferences(explicit: Vec<String>, facets: Vec<String>) ->
     let mut seen = HashSet::new();
     let mut out = Vec::with_capacity(CACHE_PROMPT_CAP.min(explicit.len() + facets.len()));
     for entry in explicit.into_iter().chain(facets) {
-        let key = entry.trim().to_lowercase();
+        let key = preference_value_key(&entry);
         if key.is_empty() || !seen.insert(key) {
             continue;
         }
@@ -350,6 +359,22 @@ pub fn merge_standing_preferences(explicit: Vec<String>, facets: Vec<String>) ->
         }
     }
     out
+}
+
+/// Return the preference value represented by either a plain Lane-A entry or
+/// a formatted facet entry. Facet class/key decoration is presentation-only;
+/// deduplication must compare the underlying value.
+fn preference_value_key(entry: &str) -> String {
+    let mut value = entry.trim();
+    if let Some(rest) = value.strip_suffix(" *(pinned)*") {
+        value = rest.trim_end();
+    }
+    if value.starts_with("**") {
+        if let Some((_, rest)) = value[2..].split_once("**:") {
+            value = rest.trim();
+        }
+    }
+    value.to_lowercase()
 }
 
 /// Load Active facets from the `FacetCache` and format them for prompt injection.
