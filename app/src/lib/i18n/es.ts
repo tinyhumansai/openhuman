@@ -369,6 +369,8 @@ const messages: TranslationMap = {
     'El autoaprendizaje está desactivado. Las sesiones nuevas no capturarán ni inyectarán preferencias deducidas hasta que lo actives.',
   'brain.profile.actionError': 'Algo salió mal. Inténtalo de nuevo.',
   'brain.profile.meta': '{state} · estabilidad {stability}',
+  'brain.profile.state.active': 'Activo',
+  'brain.profile.state.provisional': 'Provisional',
   'brain.profile.class.style': 'Estilo',
   'brain.profile.class.identity': 'Identidad',
   'brain.profile.class.tooling': 'Herramientas',

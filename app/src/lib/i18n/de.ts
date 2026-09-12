@@ -379,6 +379,8 @@ const messages: TranslationMap = {
     'Selbstlernen ist deaktiviert. Neue Sitzungen erfassen oder injizieren keine abgeleiteten Präferenzen, bis du es aktivierst.',
   'brain.profile.actionError': 'Etwas ist schiefgelaufen. Bitte versuche es erneut.',
   'brain.profile.meta': '{state} · Stabilität {stability}',
+  'brain.profile.state.active': 'Aktiv',
+  'brain.profile.state.provisional': 'Vorläufig',
   'brain.profile.class.style': 'Stil',
   'brain.profile.class.identity': 'Identität',
   'brain.profile.class.tooling': 'Werkzeuge',

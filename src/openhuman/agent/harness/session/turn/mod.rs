@@ -451,9 +451,12 @@ pub(super) fn sanitize_learned_entry(content: &str) -> String {
     if trimmed.is_empty() {
         return String::new();
     }
+    // Learned values may originate in document content. Collapse whitespace so
+    // an injected value cannot introduce prompt-shaped lines or hidden blocks.
+    let normalized = trimmed.split_whitespace().collect::<Vec<_>>().join(" ");
     // Truncate to a safe length
     let max_len = 200;
-    let sanitized: String = trimmed.chars().take(max_len).collect();
+    let sanitized: String = normalized.chars().take(max_len).collect();
     // Strip anything that looks like a secret/token
     if sanitized.contains("Bearer ")
         || sanitized.contains("sk-")

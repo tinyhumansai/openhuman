@@ -366,6 +366,8 @@ const messages: TranslationMap = {
     'Самообучение отключено. Новые сеансы не будут собирать или добавлять выведенные предпочтения, пока вы его не включите.',
   'brain.profile.actionError': 'Что-то пошло не так. Повторите попытку.',
   'brain.profile.meta': '{state} · стабильность {stability}',
+  'brain.profile.state.active': 'Активный',
+  'brain.profile.state.provisional': 'Предварительный',
   'brain.profile.class.style': 'Стиль',
   'brain.profile.class.identity': 'Идентичность',
   'brain.profile.class.tooling': 'Инструменты',

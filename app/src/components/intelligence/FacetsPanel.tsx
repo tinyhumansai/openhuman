@@ -231,6 +231,7 @@ export default function FacetsPanel() {
               {items.map(facet => {
                 const pinned = facet.user_state === 'pinned';
                 const busy = busyKey === facet.key;
+                const stateLabel = t(`brain.profile.state.${facet.state}`, facet.state);
                 return (
                   <li
                     key={facet.key}
@@ -250,7 +251,7 @@ export default function FacetsPanel() {
                       </div>
                       <div className="mt-0.5 text-[11px] text-content-muted">
                         {t('brain.profile.meta')
-                          .replace('{state}', facet.state)
+                          .replace('{state}', stateLabel)
                           .replace('{stability}', facet.stability.toFixed(2))}
                       </div>
                     </div>

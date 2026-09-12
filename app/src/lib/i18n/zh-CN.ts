@@ -331,6 +331,8 @@ const messages: TranslationMap = {
   'brain.profile.learningOffHint': '自我学习已关闭。打开之前，新会话不会采集或注入推断偏好。',
   'brain.profile.actionError': '出了点问题，请重试。',
   'brain.profile.meta': '{state} · 稳定性 {stability}',
+  'brain.profile.state.active': '活跃',
+  'brain.profile.state.provisional': '临时',
   'brain.profile.class.style': '风格',
   'brain.profile.class.identity': '身份',
   'brain.profile.class.tooling': '工具链',

@@ -367,6 +367,8 @@ const messages: TranslationMap = {
     'Self-learning is off. New sessions will not capture or inject inferred preferences until you turn it on.',
   'brain.profile.actionError': 'Something went wrong. Please try again.',
   'brain.profile.meta': '{state} · stability {stability}',
+  'brain.profile.state.active': 'Aktif',
+  'brain.profile.state.provisional': 'Sementara',
   'brain.profile.class.style': 'Style',
   'brain.profile.class.identity': 'Identity',
   'brain.profile.class.tooling': 'Tooling',

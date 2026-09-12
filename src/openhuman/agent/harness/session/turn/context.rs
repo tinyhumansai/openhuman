@@ -222,7 +222,12 @@ impl Agent {
                 None,
             )
             .await;
-        let user_profile = merge_standing_preferences(general, facets);
+        let sanitized_facets = facets
+            .iter()
+            .map(|facet| sanitize_learned_entry(facet))
+            .filter(|facet| !facet.is_empty())
+            .collect();
+        let user_profile = merge_standing_preferences(general, sanitized_facets);
         tracing::debug!(
             "[learning] fetch_learned_context: merged {} standing preference(s) with Active facets",
             user_profile.len()

@@ -363,6 +363,8 @@ const messages: TranslationMap = {
     'स्व-शिक्षण बंद है। इसे चालू करने तक नए सत्र सीखी हुई प्राथमिकताओं को कैप्चर या शामिल नहीं करेंगे।',
   'brain.profile.actionError': 'कुछ गलत हुआ। कृपया फिर से प्रयास करें।',
   'brain.profile.meta': '{state} · stability {stability}',
+  'brain.profile.state.active': 'सक्रिय',
+  'brain.profile.state.provisional': 'अस्थायी',
   'brain.profile.class.style': 'शैली',
   'brain.profile.class.identity': 'पहचान',
   'brain.profile.class.tooling': 'उपकरण',

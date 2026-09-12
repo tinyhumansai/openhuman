@@ -371,6 +371,8 @@ const messages: TranslationMap = {
     'Samouczenie jest wyłączone. Nowe sesje nie będą zbierać ani wstrzykiwać wywnioskowanych preferencji, dopóki go nie włączysz.',
   'brain.profile.actionError': 'Coś poszło nie tak. Spróbuj ponownie.',
   'brain.profile.meta': '{state} · stabilność {stability}',
+  'brain.profile.state.active': 'Aktywny',
+  'brain.profile.state.provisional': 'Tymczasowy',
   'brain.profile.class.style': 'Styl',
   'brain.profile.class.identity': 'Tożsamość',
   'brain.profile.class.tooling': 'Narzędzia',
