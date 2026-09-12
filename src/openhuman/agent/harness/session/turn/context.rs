@@ -3,6 +3,7 @@
 use super::super::turn_checkpoint::assistant_message_has_tool_calls;
 use super::super::types::Agent;
 use super::{collect_tree_root_summaries, sanitize_learned_entry};
+use crate::openhuman::agent::learning::prompt_sections::merge_standing_preferences;
 use crate::openhuman::agent::context::prompt::{LearnedContextData, PromptContext, PromptTool};
 use crate::openhuman::agent::messages::{ChatMessage, ConversationMessage};
 use crate::openhuman::memory::MemoryCategory;
@@ -216,6 +217,14 @@ impl Agent {
             "[learning] fetch_learned_context: loaded {} explicit standing preference(s)",
             general.len()
         );
+        let facets = crate::openhuman::agent::learning::prompt_sections::
+            load_learned_from_global_cache(&self.workspace_dir, None)
+            .await;
+        let user_profile = merge_standing_preferences(general, facets);
+        tracing::debug!(
+            "[learning] fetch_learned_context: merged {} standing preference(s) with Active facets",
+            user_profile.len()
+        );
 
         // Explicit user reflections — privileged memory class. Pulled
         // separately from observations/patterns so the prompt assembly
@@ -263,7 +272,7 @@ impl Agent {
                 .take(3)
                 .map(|e| sanitize_learned_entry(&e.content))
                 .collect(),
-            user_profile: general,
+            user_profile,
             // Cap reflections at 10 to keep the privileged section
             // bounded — the issue requires reflections improve context
             // rather than flood it. Newest first.

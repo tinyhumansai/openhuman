@@ -110,6 +110,7 @@ impl Tool for LearningListFacetsTool {
         let facets: Vec<serde_json::Value> = all
             .iter()
             .filter(|f| f.state == FacetState::Active || f.state == FacetState::Provisional)
+            .filter(|f| crate::openhuman::agent::learning::cache::class_from_key(&f.key).is_some())
             // Match on the class column when it is set — that stays
             // authoritative, so a row explicitly tagged with another class can
             // never match `cls` via its key prefix (the #6077 leak stays

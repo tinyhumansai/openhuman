@@ -398,7 +398,7 @@ export default function Brain() {
 
                   {activeTab === 'goals' && <GoalsPanel />}
 
-                  {activeTab === 'profile' && <FacetsPanel />}
+                  {activeTab === 'profile' && <FacetsPanel key={authUserId ?? 'signed-out'} />}
 
                   {activeTab === 'sources' && (
                     <div className="space-y-5 animate-fade-up">

@@ -29,6 +29,12 @@ fn handle_list_facets(params: Map<String, Value>) -> ControllerFuture {
         let facets: Vec<serde_json::Value> = all
             .iter()
             .filter(|f| {
+                // Only the six learning taxonomy classes belong in this user-facing
+                // surface; provider/workflow and archivist rows share the profile
+                // store but are not learned preferences.
+                crate::openhuman::agent::learning::cache::class_from_key(&f.key).is_some()
+            })
+            .filter(|f| {
                 // Expose Active and Provisional rows to the user.
                 f.state == FacetState::Active || f.state == FacetState::Provisional
             })

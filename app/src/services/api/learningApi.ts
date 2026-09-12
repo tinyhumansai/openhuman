@@ -85,19 +85,19 @@ export const learningApi = {
 
   pinFacet: async (fullKey: string): Promise<void> => {
     const { class: cls, key } = splitFacetKey(fullKey);
-    log('pinFacet %s/%s', cls, key);
+    log('pinFacet class=%s', cls);
     await callCoreRpc({ method: 'openhuman.learning_pin_facet', params: { class: cls, key } });
   },
 
   unpinFacet: async (fullKey: string): Promise<void> => {
     const { class: cls, key } = splitFacetKey(fullKey);
-    log('unpinFacet %s/%s', cls, key);
+    log('unpinFacet class=%s', cls);
     await callCoreRpc({ method: 'openhuman.learning_unpin_facet', params: { class: cls, key } });
   },
 
   forgetFacet: async (fullKey: string): Promise<void> => {
     const { class: cls, key } = splitFacetKey(fullKey);
-    log('forgetFacet %s/%s', cls, key);
+    log('forgetFacet class=%s', cls);
     await callCoreRpc({ method: 'openhuman.learning_forget_facet', params: { class: cls, key } });
   },
 

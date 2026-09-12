@@ -1,4 +1,6 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+// @vitest-environment jsdom
+
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import FacetsPanel from './FacetsPanel';
@@ -33,6 +35,10 @@ vi.mock('../../lib/i18n/I18nContext', () => ({
   useT: () => ({ t: (key: string, fallback?: string) => fallback ?? key }),
 }));
 
+vi.mock('../analytics', () => ({
+  trackAnalyticsEvent: vi.fn(),
+}));
+
 describe('<FacetsPanel />', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -58,8 +64,11 @@ describe('<FacetsPanel />', () => {
     render(<FacetsPanel />);
     expect(await screen.findByTestId('facets-panel')).toBeInTheDocument();
     expect(screen.getByTestId('facets-class-style')).toBeInTheDocument();
-    expect(screen.getByText('verbosity')).toBeInTheDocument();
-    expect(screen.getByText('terse')).toBeInTheDocument();
+    const style = within(screen.getByTestId('facets-class-style'));
+    expect(style.getByTestId('facet-row-style/verbosity')).toBeInTheDocument();
+    expect(style.getByText('verbosity')).toBeInTheDocument();
+    expect(style.getByText('terse')).toBeInTheDocument();
+    expect(style.getByText('active · stability 1.80')).toBeInTheDocument();
   });
 
   it('pins a facet then refreshes the list', async () => {
