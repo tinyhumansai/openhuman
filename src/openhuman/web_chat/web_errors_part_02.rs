@@ -33,28 +33,44 @@ pub(crate) fn classify_inference_error(err: &str) -> ClassifiedError {
     // before the generic provider-429 branch — otherwise users see
     // a confusing "your AI provider is rate-limiting you" message
     // for limits OpenHuman itself enforced (issue #2364).
-    // Codex-specific sentinel emitted by `openai_oauth::store` on refresh
-    // failure. Checked before `is_session_expired_message` because the sentinel
-    // contains "authentication token is expired", which would also match the
-    // broader "session expired" substring test and route to the wrong sign-in
-    // flow. We require "codex" in the message so generic provider errors that
-    // happen to contain "token_expired" or "please try signing in again" are
-    // not misclassified as Codex OAuth failures. (#5869)
+    // Keep the Codex OAuth refresh sentinel ahead of the broader app-session
+    // expiry matcher so the user is sent to the Codex reconnect flow.
     const CODEX_SENTINEL: &str = "codex authentication token is expired";
-    let classified = if err.to_ascii_lowercase().contains(CODEX_SENTINEL) {
-        // The Codex OAuth token has expired and the refresh failed. This is a
-        // provider-specific re-auth — the user must reconnect Codex in
-        // Settings → Integrations, NOT sign into OpenHuman.
+    let classified = if let Some(detail) = local_cli_provider_setup_detail(err) {
+        // A local-CLI provider (`claude-code`) refused before any network call:
+        // the binary is missing, too old, or unusable. The message it raises is
+        // already the fix ("install …", "upgrade to >= X"), and it is the user's
+        // own machine to repair — so surface it verbatim instead of the generic
+        // "something went wrong, report it on Discord", which sends the user to
+        // support for a problem no maintainer can see or act on. Non-retryable:
+        // retrying the same turn re-probes the same absent binary.
         ClassifiedError {
-            error_type: "provider_error",
-            message: "Your Codex session has expired. Please reconnect it in \
-                 Settings → Integrations."
-                .to_string(),
-            source: "auth",
+            error_type: "provider_setup",
+            message: detail,
+            source: "provider",
             retryable: false,
             retry_after_ms: None,
-            provider: Some("openai_codex".to_string()),
-            fallback_available: None,
+            provider,
+            fallback_available,
+        }
+    } else if err.to_ascii_lowercase().contains(CODEX_SENTINEL) {
+        // Codex-specific sentinel emitted by `openai_oauth::store` on refresh
+        // failure. Checked before `is_session_expired_message` because the sentinel
+        // contains "authentication token is expired", which would also match the
+        // broader "session expired" substring test and route to the wrong sign-in
+        // flow. We require "codex" in the message so generic provider errors that
+        // happen to contain "token_expired" or "please try signing in again" are
+        // not misclassified as Codex OAuth failures. (#5869)
+        ClassifiedError {
+                error_type: "provider_error",
+                message: "Your Codex session has expired. Please reconnect it in \
+                     Settings → Integrations."
+                    .to_string(),
+                source: "auth",
+                retryable: false,
+                retry_after_ms: None,
+                provider: Some("openai_codex".to_string()),
+                fallback_available: None,
         }
     } else if crate::core::observability::is_session_expired_message(err) {
         // The OpenHuman app-session JWT expired (or the scheduler gate flagged
@@ -671,4 +687,18 @@ pub(crate) fn is_transient_unavailability_text(lower: &str) -> bool {
     TRANSIENT_MARKERS
         .iter()
         .any(|marker| lower.contains(marker))
+}
+
+/// Detect a local-CLI provider setup failure and return its message.
+///
+/// These errors are raised by [`crate::openhuman::inference::provider`] before
+/// any request leaves the machine, and every one of them is already phrased as
+/// an instruction to the user. The `[claude-code]` prefix is the marker the
+/// provider stamps on all four of its `CliStatus` failures (not installed,
+/// outdated, unusable, spawn failed).
+fn local_cli_provider_setup_detail(err: &str) -> Option<String> {
+    const MARKER: &str = "[claude-code] `claude` CLI";
+    let start = err.find(MARKER)?;
+    let detail = err[start..].trim();
+    (!detail.is_empty()).then(|| detail.to_string())
 }

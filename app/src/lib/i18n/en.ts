@@ -3613,6 +3613,7 @@ const en: TranslationMap = {
   'iosMascot.defaultPairedLabel': 'Desktop',
   'iosMascot.disconnect': 'Disconnect',
   'iosMascot.error.generic': 'Something went wrong. Please try again.',
+  'iosMascot.error.providerSetup': 'Claude Code setup issue: {details}',
   'iosMascot.error.sendFailed': 'Failed to send. Check your connection.',
   'iosMascot.pushToTalk': 'Push to talk',
   'iosMascot.sendMessage': 'Send message',

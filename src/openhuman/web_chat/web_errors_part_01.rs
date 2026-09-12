@@ -195,7 +195,8 @@ pub(crate) struct ClassifiedError {
     /// `session_expired`, `budget_exhausted`, `provider_error`,
     /// `context_overflow`, `model_unavailable`, `payload_too_large`,
     /// `provider_request_rejected`, `capability_unsupported`,
-    /// `chat_template_rejected`, `empty_response`, `network`, `inference`.
+    /// `chat_template_rejected`, `empty_response`, `network`, `provider_setup`,
+    /// `inference`.
     pub(crate) error_type: &'static str,
     /// User-facing copy (already includes provider detail block and the
     /// retry-after countdown sentence when available).

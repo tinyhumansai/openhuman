@@ -3208,6 +3208,7 @@ const messages: TranslationMap = {
   'iosMascot.defaultPairedLabel': 'Рабочий стол',
   'iosMascot.disconnect': 'Отключиться',
   'iosMascot.error.generic': 'Что-то пошло не так. Пожалуйста, попробуйте еще раз.',
+  'iosMascot.error.providerSetup': 'Проблема с настройкой Claude Code: {details}',
   'iosMascot.error.sendFailed': 'Не удалось отправить. Проверьте свое соединение.',
   'iosMascot.pushToTalk': 'Нажми и говори',
   'iosMascot.sendMessage': 'Отправить сообщение',

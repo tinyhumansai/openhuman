@@ -5,24 +5,20 @@
 //! The first whitespace-delimited token is the semver string we compare
 //! against [`MIN_CLI_VERSION`].
 
-use std::path::PathBuf;
-use std::process::Command;
+use std::ffi::OsString;
+use std::io::Read as _;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::Duration;
+
+use wait_timeout::ChildExt as _;
 
 use super::types::{CliStatus, MIN_CLI_VERSION};
 
-/// Locate the `claude` CLI binary.
+/// Locate the `claude` CLI binary on `PATH`.
 ///
-/// Resolution order:
-/// 1. `OPENHUMAN_CLAUDE_CLI` env override (tests / power users / a fixed path).
-/// 2. `PATH` search.
-/// 3. Well-known absolute install locations ([`well_known_candidates`]).
-///
-/// Step 3 exists because a macOS app launched from Finder/Dock inherits only
-/// the stripped launchd `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`), which never
-/// contains the native installer's `~/.local/bin` — so a PATH-only lookup
-/// reports the CLI "not installed" even though it is present. (Terminal
-/// launches inherit the shell `PATH` and hit step 2, so this only bites GUI
-/// launches.)
+/// Honors `OPENHUMAN_CLAUDE_CLI` env override so tests and power users can
+/// point at a specific binary.
 pub fn resolve_binary() -> Option<PathBuf> {
     if let Ok(explicit) = std::env::var("OPENHUMAN_CLAUDE_CLI") {
         let p = PathBuf::from(explicit);
@@ -30,51 +26,62 @@ pub fn resolve_binary() -> Option<PathBuf> {
             return Some(p);
         }
     }
-    if let Some(p) = which_on_path("claude") {
-        return Some(p);
-    }
-    // PATH miss — fall back to well-known install locations. This is the
-    // Finder/Dock-launch case where `~/.local/bin` is absent from `PATH`.
-    let found = first_existing(&well_known_candidates());
-    if let Some(p) = found.as_ref() {
-        log::debug!(
-            "[claude-code][version] `claude` not on PATH; resolved via well-known location {}",
-            p.display()
-        );
-    }
-    found
+    which_on_path("claude").or_else(well_known_install)
 }
 
-/// Absolute paths the `claude` CLI is commonly installed at, tried in order
-/// when it is not found on `PATH`. Ordered by how the native installer and the
-/// common package managers lay it down; the native installer's `~/.local/bin`
-/// is first because that is the default and the one a stripped launchd `PATH`
-/// omits.
-fn well_known_candidates() -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    if let Some(home) = dirs::home_dir() {
-        out.push(home.join(".local/bin/claude")); // native installer default
-        out.push(home.join(".claude/local/claude")); // legacy local install
-        out.push(home.join(".bun/bin/claude")); // bun global
-        out.push(home.join(".npm-global/bin/claude")); // npm global (custom prefix)
-        out.push(home.join("bin/claude"));
+/// Fallback locations for the `claude` CLI, probed when `PATH` does not carry
+/// it.
+///
+/// A macOS app launched from Finder/Dock inherits `launchd`'s minimal `PATH`
+/// (`/usr/bin:/bin:/usr/sbin:/sbin`), **not** the login shell's — so the same
+/// install that resolves fine from a terminal-launched build reports
+/// `NotInstalled` in the shipped app. The npm-global, Homebrew and native
+/// installer locations below cover every documented install route; the login
+/// shell is consulted last because spawning one costs ~50ms and only pays off
+/// for a genuinely unusual install prefix.
+fn well_known_install() -> Option<PathBuf> {
+    let home = dirs::home_dir().or_else(|| std::env::var_os("HOME").map(PathBuf::from));
+    for candidate in well_known_candidates(home.as_deref()) {
+        if candidate.is_file() && is_executable(&candidate) {
+            log::debug!(
+                "[claude-code][version] resolved off-PATH candidate path={}",
+                candidate.display()
+            );
+            return Some(candidate);
+        }
     }
-    out.push(PathBuf::from("/opt/homebrew/bin/claude")); // Homebrew (Apple Silicon)
-    out.push(PathBuf::from("/usr/local/bin/claude")); // Homebrew (Intel) / npm default
-    out
+
+    login_shell_lookup()
 }
 
-/// First candidate that resolves to a file (follows symlinks — the native
-/// installer's `~/.local/bin/claude` is a symlink into a versioned dir).
-fn first_existing(candidates: &[PathBuf]) -> Option<PathBuf> {
+/// The ordered fallback candidates, split out so the list is unit-testable
+/// without mutating the process environment.
+fn well_known_candidates(home: Option<&Path>) -> Vec<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(home) = home {
+        for suffix in [
+            ".local/bin/claude",
+            ".claude/local/claude",
+            ".bun/bin/claude",
+            ".volta/bin/claude",
+            "Library/pnpm/claude",
+            ".npm-global/bin/claude",
+            "bin/claude",
+        ] {
+            push_candidate_variants(&mut candidates, home.join(suffix));
+        }
+    }
+    #[cfg(windows)]
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        push_candidate_variants(&mut candidates, PathBuf::from(appdata).join("npm/claude"));
+    }
+    push_candidate_variants(&mut candidates, PathBuf::from("/opt/homebrew/bin/claude"));
+    push_candidate_variants(&mut candidates, PathBuf::from("/usr/local/bin/claude"));
     candidates
-        .iter()
-        .find(|p| p.is_file() && is_executable(p))
-        .cloned()
 }
 
 #[cfg(unix)]
-fn is_executable(path: &std::path::Path) -> bool {
+fn is_executable(path: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
 
     path.metadata()
@@ -83,8 +90,151 @@ fn is_executable(path: &std::path::Path) -> bool {
 }
 
 #[cfg(not(unix))]
-fn is_executable(path: &std::path::Path) -> bool {
+fn is_executable(path: &Path) -> bool {
     path.is_file()
+}
+
+fn push_candidate_variants(candidates: &mut Vec<PathBuf>, candidate: PathBuf) {
+    #[cfg(windows)]
+    for suffix in [".exe", ".cmd", ".bat"] {
+        candidates.push(PathBuf::from(format!("{}{}", candidate.display(), suffix)));
+    }
+    candidates.push(candidate);
+}
+
+/// Ask the user's login shell where `claude` lives.
+///
+/// `command -v` is used rather than `which` because it is POSIX-builtin and
+/// resolves the same way the user's own terminal would. A shell *function*
+/// named `claude` (a common wrapper) makes `command -v` print the function
+/// body rather than a path, so anything that is not an existing file is
+/// discarded instead of being handed to `Command::new`.
+fn login_shell_lookup() -> Option<PathBuf> {
+    if cfg!(windows) {
+        return None;
+    }
+    let mut shells = Vec::new();
+    if let Ok(shell) = std::env::var("SHELL") {
+        if !shell.trim().is_empty() {
+            shells.push(PathBuf::from(shell));
+        }
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(shell) = account_login_shell() {
+        if !shells.iter().any(|candidate| candidate == &shell) {
+            shells.push(shell);
+        }
+    }
+    shells
+        .into_iter()
+        .find_map(|shell| login_shell_lookup_with(&shell))
+}
+
+#[cfg(target_os = "macos")]
+fn account_login_shell() -> Option<PathBuf> {
+    let user = std::env::var("USER")
+        .ok()
+        .filter(|u| !u.trim().is_empty())?;
+    let mut child = Command::new("/usr/bin/dscl")
+        .args([".", "-read", &format!("/Users/{user}"), "UserShell"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let status = match child.wait_timeout(Duration::from_secs(2)) {
+        Ok(Some(status)) => status,
+        Ok(None) => {
+            log::warn!("[claude-code][version] dscl timed out; killing child");
+            let _ = child.kill();
+            if let Err(e) = child.wait() {
+                log::warn!("[claude-code][version] dscl reap failed after timeout err={e}");
+            }
+            return None;
+        }
+        Err(e) => {
+            log::warn!("[claude-code][version] dscl wait failed err={e}; killing child");
+            let _ = child.kill();
+            if let Err(e) = child.wait() {
+                log::warn!("[claude-code][version] dscl reap failed err={e}");
+            }
+            return None;
+        }
+    };
+    if !status.success() {
+        return None;
+    }
+    let mut stdout = Vec::new();
+    child.stdout.take()?.read_to_end(&mut stdout).ok()?;
+    let shell = String::from_utf8_lossy(&stdout)
+        .lines()
+        .find_map(|line| line.strip_prefix("UserShell:").map(str::trim))?;
+    (!shell.is_empty()).then(|| PathBuf::from(shell))
+}
+
+fn login_shell_lookup_with(shell: &Path) -> Option<PathBuf> {
+    let mut child = Command::new(shell)
+        .args(["-lc", "command -v claude"])
+        .env("PATH", path_with_binary_dir(shell))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    match child.wait_timeout(Duration::from_secs(2)) {
+        Ok(Some(status)) if status.success() => {
+            let mut stdout = Vec::new();
+            child.stdout.take()?.read_to_end(&mut stdout).ok()?;
+            let path = String::from_utf8_lossy(&stdout)
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(PathBuf::from)
+                .find(|path| path.is_file())?;
+            Some({
+                log::debug!(
+                    "[claude-code][version] resolved via login shell path={}",
+                    path.display()
+                );
+                path
+            })
+        }
+        Ok(Some(_)) => None,
+        Ok(None) => {
+            log::warn!(
+                "[claude-code][version] login shell timed out shell={}",
+                shell.display()
+            );
+            let _ = child.kill();
+            let _ = child.wait();
+            None
+        }
+        Err(e) => {
+            log::warn!(
+                "[claude-code][version] login shell wait failed shell={} err={e}",
+                shell.display()
+            );
+            let _ = child.kill();
+            let _ = child.wait();
+            None
+        }
+    }
+}
+
+/// Preserve the directory containing an off-PATH launcher for its shebang.
+/// npm launchers commonly use `/usr/bin/env node`, so finding the launcher
+/// alone is insufficient when a desktop app inherited a minimal PATH.
+pub(crate) fn path_with_binary_dir(binary: &Path) -> OsString {
+    let mut paths: Vec<PathBuf> = binary.parent().into_iter().map(PathBuf::from).collect();
+    if let Some(home) = dirs::home_dir() {
+        paths.push(home.join(".local/bin"));
+        paths.push(home.join("bin"));
+    }
+    #[cfg(target_os = "macos")]
+    paths.push(PathBuf::from("/opt/homebrew/bin"));
+    paths.push(PathBuf::from("/usr/local/bin"));
+    if let Some(path) = std::env::var_os("PATH") {
+        paths.extend(std::env::split_paths(&path));
+    }
+    std::env::join_paths(paths).unwrap_or_else(|_| std::env::var_os("PATH").unwrap_or_default())
 }
 
 fn which_on_path(name: &str) -> Option<PathBuf> {
@@ -126,8 +276,8 @@ pub fn probe() -> CliStatus {
     let path_str = path.display().to_string();
 
     let output = match Command::new(&path)
+        .env("PATH", path_with_binary_dir(&path))
         .arg("--version")
-        .env("PATH", super::driver::child_path_with_user_bins(&path))
         .output()
     {
         Ok(o) => o,

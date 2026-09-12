@@ -3235,6 +3235,7 @@ const messages: TranslationMap = {
   'iosMascot.defaultPairedLabel': 'Desktop',
   'iosMascot.disconnect': 'Desconectar',
   'iosMascot.error.generic': 'Algo deu errado. Por favor, tente novamente.',
+  'iosMascot.error.providerSetup': 'Problema na configuração do Claude Code: {details}',
   'iosMascot.error.sendFailed': 'Falha ao enviar. Verifique sua conexão.',
   'iosMascot.pushToTalk': 'Pressione para falar',
   'iosMascot.sendMessage': 'Enviar mensagem',

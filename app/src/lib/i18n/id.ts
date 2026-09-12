@@ -3197,6 +3197,7 @@ const messages: TranslationMap = {
   'iosMascot.defaultPairedLabel': 'Desktop',
   'iosMascot.disconnect': 'Putuskan sambungan',
   'iosMascot.error.generic': 'Ada yang tidak beres. Silakan coba lagi.',
+  'iosMascot.error.providerSetup': 'Masalah penyiapan Claude Code: {details}',
   'iosMascot.error.sendFailed': 'Gagal mengirim. Periksa koneksi Anda.',
   'iosMascot.pushToTalk': 'Tekan untuk bicara',
   'iosMascot.sendMessage': 'Kirim pesan',

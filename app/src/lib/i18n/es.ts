@@ -3240,6 +3240,7 @@ const messages: TranslationMap = {
   'iosMascot.defaultPairedLabel': 'Escritorio',
   'iosMascot.disconnect': 'Desconectar',
   'iosMascot.error.generic': 'Algo salió mal. Por favor inténtalo de nuevo.',
+  'iosMascot.error.providerSetup': 'Problema de configuración de Claude Code: {details}',
   'iosMascot.error.sendFailed': 'No se pudo enviar. Comprueba tu conexión.',
   'iosMascot.pushToTalk': 'Empuja para hablar',
   'iosMascot.sendMessage': 'enviar mensaje',
