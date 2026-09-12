@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import FacetsPanel from './FacetsPanel';
+import { renderWithProviders } from '../../test/test-utils';
 
 const listFacets = vi.fn();
 const pinFacet = vi.fn();
@@ -61,7 +62,7 @@ describe('<FacetsPanel />', () => {
   });
 
   it('lists facets grouped by class', async () => {
-    render(<FacetsPanel />);
+    renderWithProviders(<FacetsPanel />);
     expect(await screen.findByTestId('facets-panel')).toBeInTheDocument();
     expect(screen.getByTestId('facets-class-style')).toBeInTheDocument();
     const style = within(screen.getByTestId('facets-class-style'));
@@ -94,7 +95,7 @@ describe('<FacetsPanel />', () => {
         },
       ]);
 
-    render(<FacetsPanel />);
+    renderWithProviders(<FacetsPanel />);
     await screen.findByTestId('facet-pin-style/verbosity');
     fireEvent.click(screen.getByTestId('facet-pin-style/verbosity'));
     await waitFor(() => expect(pinFacet).toHaveBeenCalledWith('style/verbosity'));
@@ -102,7 +103,7 @@ describe('<FacetsPanel />', () => {
   });
 
   it('toggles learning.enabled', async () => {
-    render(<FacetsPanel />);
+    renderWithProviders(<FacetsPanel />);
     const toggle = await screen.findByTestId('learning-enabled-toggle');
     expect(toggle).not.toBeChecked();
     fireEvent.click(toggle);
@@ -111,7 +112,7 @@ describe('<FacetsPanel />', () => {
 
   it('shows empty state when there are no facets', async () => {
     listFacets.mockResolvedValueOnce([]);
-    render(<FacetsPanel />);
+    renderWithProviders(<FacetsPanel />);
     expect(await screen.findByTestId('facets-empty')).toBeInTheDocument();
   });
 
@@ -125,7 +126,7 @@ describe('<FacetsPanel />', () => {
       class: 'identity',
     };
     listFacets.mockResolvedValue([pinned]);
-    render(<FacetsPanel />);
+    renderWithProviders(<FacetsPanel />);
     await screen.findByTestId('facet-row-identity/name');
     fireEvent.click(screen.getByTestId('facet-pin-identity/name'));
     await waitFor(() => expect(unpinFacet).toHaveBeenCalledWith('identity/name'));
@@ -138,7 +139,7 @@ describe('<FacetsPanel />', () => {
   });
 
   it('disables rebuild while learning is off', async () => {
-    render(<FacetsPanel />);
+    renderWithProviders(<FacetsPanel />);
     const rebuild = await screen.findByTestId('facets-rebuild');
     expect(rebuild).toBeDisabled();
     fireEvent.click(rebuild);
@@ -147,12 +148,12 @@ describe('<FacetsPanel />', () => {
 
   it('shows action errors and load errors', async () => {
     listFacets.mockRejectedValueOnce(new Error('load failed'));
-    const firstView = render(<FacetsPanel />);
+    const firstView = renderWithProviders(<FacetsPanel />);
     expect(await screen.findByTestId('facets-panel-error')).toHaveTextContent('load failed');
     firstView.unmount();
     listFacets.mockResolvedValue([{ key: 'style/x', value: 'y', state: 'active', stability: 1 }]);
     pinFacet.mockRejectedValueOnce(new Error('pin failed'));
-    render(<FacetsPanel />);
+    renderWithProviders(<FacetsPanel />);
     await screen.findByTestId('facet-pin-style/x');
     fireEvent.click(screen.getByTestId('facet-pin-style/x'));
     expect(await screen.findByRole('alert')).toHaveTextContent('pin failed');
@@ -162,7 +163,7 @@ describe('<FacetsPanel />', () => {
     listFacets.mockResolvedValue([
       { key: 'other/value', value: 'x', state: 'active', stability: 1 },
     ]);
-    render(<FacetsPanel />);
+    renderWithProviders(<FacetsPanel />);
     await screen.findByTestId('facet-row-other/value');
 
     listFacets.mockRejectedValueOnce(new Error('refresh failed'));
@@ -180,7 +181,7 @@ describe('<FacetsPanel />', () => {
     listFacets.mockResolvedValueOnce([
       { key: 'unclassified', value: 'x', state: 'active', stability: 1 },
     ]);
-    render(<FacetsPanel />);
+    renderWithProviders(<FacetsPanel />);
     await screen.findByTestId('facets-class-other');
 
     forgetFacet.mockRejectedValueOnce('forget failed');
@@ -192,7 +193,7 @@ describe('<FacetsPanel />', () => {
 
   it('reports a learning toggle failure', async () => {
     updateSettings.mockRejectedValueOnce(new Error('toggle failed'));
-    render(<FacetsPanel />);
+    renderWithProviders(<FacetsPanel />);
     const toggle = await screen.findByTestId('learning-enabled-toggle');
     fireEvent.click(toggle);
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('toggle failed'));
