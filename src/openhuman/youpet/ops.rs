@@ -225,19 +225,24 @@ async fn send_action_request_decision(
 }
 
 fn resolve_tenant_id(config: &Config, override_id: Option<&str>) -> Result<String, String> {
-    if let Some(tenant) = override_id.map(str::trim).filter(|value| !value.is_empty()) {
-        return Ok(tenant.to_string());
-    }
-    config
+    let configured = config
         .youpet
         .tenant_id()
-        .map(str::to_string)
         .ok_or_else(|| {
             config_error(
                 "youpet.tenant_id is required for ActionRequest list (or pass tenantId)",
                 "tenant_id",
             )
-        })
+        })?;
+    if let Some(requested) = override_id.map(str::trim).filter(|value| !value.is_empty()) {
+        if requested != configured {
+            return Err(config_error(
+                "tenantId must match configured youpet.tenant_id",
+                "tenant_id",
+            ));
+        }
+    }
+    Ok(configured.to_string())
 }
 
 async fn send_alert_action(

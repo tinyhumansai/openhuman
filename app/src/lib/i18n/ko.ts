@@ -665,10 +665,9 @@ const messages: TranslationMap = {
   'home.routinesCard': '내 루틴',
   'home.routinesActive': '{count}개 활성',
   'home.youpetWorkbench': 'YouPet Workbench',
-  'home.youpetWorkbenchDescription': 'Review Core alerts and operator actions.',
+  'home.youpetWorkbenchDescription': 'Core 알림과 운영자 작업을 검토합니다.',
   'home.youpetActionRequests': 'Action Request Inbox',
-  'home.youpetActionRequestsDescription':
-    'Approve or reject pending Core ActionRequests as the operator.',
+  'home.youpetActionRequestsDescription': '운영자로서 보류 중인 Core 작업 요청을 승인하거나 거부합니다.',
   'actionRequest.eyebrow': 'YouPet Core',
   'actionRequest.title': 'Action Request Inbox',
   'actionRequest.subtitle':

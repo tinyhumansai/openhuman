@@ -702,10 +702,9 @@ const messages: TranslationMap = {
   'home.routinesCard': 'Deine Routinen',
   'home.routinesActive': '{count} aktiv',
   'home.youpetWorkbench': 'YouPet Workbench',
-  'home.youpetWorkbenchDescription': 'Review Core alerts and operator actions.',
+  'home.youpetWorkbenchDescription': 'Core-Warnungen und Bedieneraktionen prüfen.',
   'home.youpetActionRequests': 'Action Request Inbox',
-  'home.youpetActionRequestsDescription':
-    'Approve or reject pending Core ActionRequests as the operator.',
+  'home.youpetActionRequestsDescription': 'Ausstehende Core-Aktionsanfragen als Bediener genehmigen oder ablehnen.',
   'actionRequest.eyebrow': 'YouPet Core',
   'actionRequest.title': 'Action Request Inbox',
   'actionRequest.subtitle':
