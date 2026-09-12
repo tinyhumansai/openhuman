@@ -197,6 +197,7 @@ export interface ChatErrorEvent {
     | 'payload_too_large'
     | 'provider_request_rejected'
     | 'chat_template_rejected'
+    | 'provider_setup'
     | 'budget_exhausted';
   round: number | null;
 }

@@ -40,9 +40,9 @@ pub fn resolve_binary() -> Option<PathBuf> {
 /// shell is consulted last because spawning one costs ~50ms and only pays off
 /// for a genuinely unusual install prefix.
 fn well_known_install() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let home = dirs::home_dir().or_else(|| std::env::var_os("HOME").map(PathBuf::from));
     for candidate in well_known_candidates(home.as_deref()) {
-        if candidate.is_file() {
+        if candidate.is_file() && is_executable(&candidate) {
             log::debug!(
                 "[claude-code][version] resolved off-PATH candidate path={}",
                 candidate.display()
@@ -70,9 +70,27 @@ fn well_known_candidates(home: Option<&Path>) -> Vec<PathBuf> {
             push_candidate_variants(&mut candidates, home.join(suffix));
         }
     }
+    #[cfg(windows)]
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        push_candidate_variants(&mut candidates, PathBuf::from(appdata).join("npm/claude"));
+    }
     push_candidate_variants(&mut candidates, PathBuf::from("/opt/homebrew/bin/claude"));
     push_candidate_variants(&mut candidates, PathBuf::from("/usr/local/bin/claude"));
     candidates
+}
+
+#[cfg(unix)]
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    path.metadata()
+        .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable(path: &Path) -> bool {
+    path.is_file()
 }
 
 fn push_candidate_variants(candidates: &mut Vec<PathBuf>, candidate: PathBuf) {
