@@ -60,7 +60,10 @@ fn well_known_install() -> Option<PathBuf> {
 /// answer `--version` at all.
 fn version_probe_succeeds(path: &Path) -> bool {
     match Command::new(path).arg("--version").output() {
-        Ok(output) => output.status.success() && parse_version(&String::from_utf8_lossy(&output.stdout)).is_some(),
+        Ok(output) => {
+            output.status.success()
+                && parse_version(&String::from_utf8_lossy(&output.stdout)).is_some()
+        }
         Err(err) => {
             log::debug!(
                 "[claude-code][version] skipping unusable fallback path={} err={err}",
