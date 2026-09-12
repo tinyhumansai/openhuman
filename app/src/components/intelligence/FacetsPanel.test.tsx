@@ -1,10 +1,9 @@
 // @vitest-environment jsdom
-
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import FacetsPanel from './FacetsPanel';
 import { renderWithProviders } from '../../test/test-utils';
+import FacetsPanel from './FacetsPanel';
 
 const listFacets = vi.fn();
 const pinFacet = vi.fn();
@@ -36,9 +35,7 @@ vi.mock('../../lib/i18n/I18nContext', () => ({
   useT: () => ({ t: (key: string, fallback?: string) => fallback ?? key }),
 }));
 
-vi.mock('../analytics', () => ({
-  trackAnalyticsEvent: vi.fn(),
-}));
+vi.mock('../analytics', () => ({ trackAnalyticsEvent: vi.fn() }));
 
 describe('<FacetsPanel />', () => {
   beforeEach(() => {
