@@ -39,7 +39,26 @@ export type ToolTimelineEntryStatus =
   | 'awaiting_user'
   | 'cancelled';
 
-interface InferenceStatus {
+/**
+ * The single answer to "is this row still in flight?".
+ *
+ * `awaiting_user` is in flight. `subagentAwaitingUser` below sets it on the
+ * row's TOP-LEVEL `status` (not only on `subagent.status`) when a delegated
+ * child parks on `ask_user_clarification`, and a turn parked on the user has
+ * not finished — it is blocked, which is the one moment the UI most needs to
+ * keep the row's identity.
+ *
+ * It lives beside the reducer that produces the status because the alternative
+ * was measured: three call sites spelled this out by hand, and the one that
+ * omitted `awaiting_user` lost the delegation exactly during the pause. A
+ * predicate a caller can retype is a predicate that drifts.
+ */
+export function isActiveTimelineStatus(status: string | undefined): boolean {
+  return status === 'running' || status === 'awaiting_user';
+}
+
+/** Live progress of the running turn, as the socket handlers maintain it. */
+export interface InferenceStatus {
   phase: 'thinking' | 'tool_use' | 'subagent';
   iteration: number;
   maxIterations: number;
@@ -64,6 +83,29 @@ export interface SubagentActivity {
   agentId: string;
   /** High-level status: `"running"`, `"awaiting_user"`, `"completed"`, `"failed"`. */
   status?: string;
+  /**
+   * The question the sub-agent asked via `ask_user_clarification`, carried on
+   * the `subagent_awaiting_user` event's `message`. Present only while
+   * `status === 'awaiting_user'`; cleared when the delegation resumes.
+   *
+   * Without it the pause is unreadable: the UI can say the child is blocked
+   * but not what on, and the user has nothing to answer.
+   */
+  awaitingQuestion?: string;
+  /**
+   * Identity (`<request_id>:<seq>`) of the `subagent_spawned` event that last
+   * started or resumed this delegation.
+   *
+   * `continue_subagent` announces a resume by republishing `subagent_spawned`
+   * for the same task/agent, so "an existing row got spawned again" is the
+   * only resume signal the frontend gets — and a Socket.IO redelivery of the
+   * ORIGINAL spawn is indistinguishable from it by shape alone. Comparing
+   * identities separates them: a redelivery repeats the pair the core stamped
+   * (`publish_seq_stamped`), a genuine resume never does. Without this a
+   * replay clears a live pause and the child's question disappears while it is
+   * still blocked on the user.
+   */
+  spawnEventId?: string;
   /** Human-readable display name from the agent registry (e.g. "Researcher"). */
   displayName?: string;
   /**
@@ -1450,6 +1492,8 @@ const chatRuntimeSlice = createSlice({
         workerThreadId?: string;
         mode?: string;
         dedicatedThread?: boolean;
+        /** `<request_id>:<seq>` of the emitting event; see {@link SubagentActivity.spawnEventId}. */
+        spawnEventId?: string;
       }>
     ) => {
       const {
@@ -1462,12 +1506,48 @@ const chatRuntimeSlice = createSlice({
         workerThreadId,
         mode,
         dedicatedThread,
+        spawnEventId,
       } = action.payload;
       const entries = (state.toolTimelineByThread[threadId] ??= []);
       // Idempotent: a socket redelivery must not append a second row with the
       // same id (later updates find only the first). Not gated by the provider's
       // event-seen map, so guard here.
-      if (entries.some(e => e.id === rowId)) return;
+      const existing = entries.find(e => e.id === rowId);
+      if (existing) {
+        // ...with one exception. `continue_subagent` republishes
+        // `subagent_spawned` for the SAME task/agent when it resumes a paused
+        // child (continue_subagent.rs:330), and that is the only signal the
+        // frontend gets that the pause is over. Swallowing it left the row
+        // stuck on `awaiting_user` for the rest of the run: the card kept
+        // asking a question the user had already answered.
+        //
+        // But "the row already exists and got spawned again" is ALSO what a
+        // redelivered original spawn looks like, and this socket redelivers
+        // often. So the unpark is gated on event identity: only a spawn the
+        // row has not already been started by can be a resume. A replay
+        // repeats the identity the core stamped and is ignored, which is the
+        // safe direction to fail — a stale question is visible and recoverable
+        // (`subagent_done` still settles the row), a silently cleared one
+        // leaves the user staring at a spinner with nothing to answer.
+        //
+        // Unidentifiable events (an older core with no `seq`, replaying inside
+        // one request) collapse to the same string and are therefore treated
+        // as replays, deliberately: the cross-turn resume that matters carries
+        // a different `request_id` regardless.
+        const isResume =
+          existing.status === 'awaiting_user' &&
+          spawnEventId !== undefined &&
+          spawnEventId !== existing.subagent?.spawnEventId;
+        if (isResume) {
+          existing.status = 'running';
+          if (existing.subagent) {
+            existing.subagent.status = 'running';
+            existing.subagent.awaitingQuestion = undefined;
+            existing.subagent.spawnEventId = spawnEventId;
+          }
+        }
+        return;
+      }
       const pending = findPendingDelegationContext(entries, round);
       // Collapse the parent spawn/delegate row into the subagent row so the
       // timeline shows one entry per delegation.
@@ -1491,6 +1571,7 @@ const chatRuntimeSlice = createSlice({
             agentId,
             displayName,
             workerThreadId,
+            spawnEventId,
             mode,
             dedicatedThread,
             prompt: pending.prompt,
@@ -1500,13 +1581,22 @@ const chatRuntimeSlice = createSlice({
         })
       );
     },
-    subagentAwaitingUser: (state, action: PayloadAction<{ threadId: string; rowId: string }>) => {
+    subagentAwaitingUser: (
+      state,
+      action: PayloadAction<{ threadId: string; rowId: string; question?: string }>
+    ) => {
       const entry = state.toolTimelineByThread[action.payload.threadId]?.find(
         e => e.id === action.payload.rowId && e.status === 'running'
       );
       if (!entry) return;
       entry.status = 'awaiting_user';
-      if (entry.subagent) entry.subagent.status = 'awaiting_user';
+      if (entry.subagent) {
+        entry.subagent.status = 'awaiting_user';
+        // The question is the whole point of the pause. Keep the previous one
+        // if this event carried none rather than blanking a readable prompt.
+        const question = action.payload.question?.trim();
+        if (question) entry.subagent.awaitingQuestion = question;
+      }
     },
     subagentDone: (
       state,

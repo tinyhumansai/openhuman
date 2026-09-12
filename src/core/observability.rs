@@ -327,7 +327,6 @@ pub enum ExpectedErrorKind {
     /// — `store::decide` updated 0 rows because `decided_at` was already set,
     /// and `store::get_decision` confirms a persisted decision exists. The
     /// inline-approvals design spec
-    /// (`docs/superpowers/specs/2026-05-23-telegram-inline-approvals-design.md`)
     /// classifies "no pending approval found" as a **benign** outcome: the
     /// frontend `ApprovalRequestCard.decide` and the Telegram callback both call
     /// `approval_decide` without server-confirmed dedupe, so double-taps, two

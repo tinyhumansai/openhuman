@@ -4,7 +4,6 @@ use serde_json::json;
 use tempfile::TempDir;
 
 fn test_config(tmp: &TempDir) -> Config {
-    crate::openhuman::memory::host_impls::install_for_tests();
     let config = Config {
         workspace_dir: tmp.path().join("workspace"),
         action_dir: tmp.path().join("workspace"),

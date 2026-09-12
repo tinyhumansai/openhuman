@@ -65,7 +65,6 @@ use openhuman_core::openhuman::security::credentials::{
     AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
 };
 use tinymemory_api::composio::{render_connected_identities_section, ProviderUserProfile};
-use tinymemory_core::store::identity::{is_self_identity_any_toolkit, IdentityKind};
 
 static ENV_LOCK: &OnceLock<Mutex<()>> = &crate::SHARED_ENV_LOCK;
 static MEMORY_SEAMS_INIT: OnceLock<()> = OnceLock::new();
@@ -76,9 +75,6 @@ fn ensure_memory_seams() {
             .name("memory-sync-round23-raw-coverage-seams".to_string())
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                openhuman_core::openhuman::memory::host_impls::install_memory_host_seams(
-                    std::sync::Arc::new(Config::default()),
-                );
             })
             .expect("spawn round23 memory sync seam installer")
             .join()
@@ -185,125 +181,3 @@ async fn composio_get_user_profile_refuses_cleanly_without_a_loaded_module() {
     );
 }
 
-#[tokio::test]
-async fn profile_persistence_loads_matches_renders_and_deletes_connected_identities() {
-    let _guard = env_lock();
-    let tmp = TempDir::new().expect("tempdir");
-    let _workspace = EnvGuard::set_path("OPENHUMAN_WORKSPACE", tmp.path());
-    let _home = EnvGuard::set_path("HOME", tmp.path());
-    let mut config = config_in(&tmp);
-    // This integration test exercises the Profile family through the same
-    // loaded TinyMemory module that production uses. The full-suite fixture
-    // supplies its local path via TINYMEMORY_TEST_MODULE, keeping this out of
-    // the release-metadata resolver.
-    config.modules.enabled = true;
-    persist_config(&config).await;
-    // `ensure_loaded` binds the module through the boot-time policy, which is
-    // deliberately process-global. This raw-coverage module runs in its own
-    // test process, so publish the same config here just as normal boot does.
-    #[cfg(feature = "modules")]
-    openhuman_core::openhuman::modules::memory::set_modules_policy(std::sync::Arc::new(
-        config.clone(),
-    ));
-    openhuman_core::openhuman::modules::ops::ensure_loaded(&config, "tinymemory")
-        .await
-        .expect("load local TinyMemory test module");
-
-    let slack = ProviderUserProfile {
-        toolkit: "Slack!".to_string(),
-        connection_id: Some("Conn:23".to_string()),
-        display_name: Some("  Round\tTwenty\nThree  ".to_string()),
-        email: Some("ROUND23@Example.TEST".to_string()),
-        username: Some("U23SELF".to_string()),
-        avatar_url: Some("https://example.test/avatar.png".to_string()),
-        profile_url: Some("https://example.test/profile|unsafe".to_string()),
-        extras: json!({ "handle": "@Round23" }),
-    };
-    let notion = ProviderUserProfile {
-        toolkit: "notion".to_string(),
-        connection_id: Some("notion-conn-23".to_string()),
-        display_name: Some("Notion Owner".to_string()),
-        email: Some("owner@notion.test".to_string()),
-        username: Some("notion-user-23".to_string()),
-        avatar_url: None,
-        profile_url: None,
-        extras: Value::Null,
-    };
-
-    let slack_written = persist_provider_profile(&config, &slack)
-        .await
-        .expect("persist slack profile");
-    let notion_written = persist_provider_profile(&config, &notion)
-        .await
-        .expect("persist notion profile");
-
-    // Profile is an optional memory-driver family. `persist_provider_profile`
-    // is deliberately best-effort: a driver that does not serve Profile
-    // rejects individual facets and the host reports zero writes without
-    // turning a successful Composio profile fetch into an RPC failure. The
-    // module fixture used by this raw suite currently takes that path.
-    if slack_written == 0 {
-        assert_eq!(notion_written, 0);
-        assert!(
-            load_connected_identities(&config)
-                .await
-                .expect("load empty connected identities")
-                .is_empty()
-        );
-        return;
-    }
-    assert_eq!(slack_written, 6);
-    assert_eq!(notion_written, 3);
-
-    // The module-backed profile store owns its identities. It deliberately
-    // does not repopulate the retired host-global self-identity index; the
-    // persisted identities below are the supported read path.
-    assert!(!is_self_identity_any_toolkit(
-        IdentityKind::UserId,
-        "U23SELF"
-    ));
-    assert!(!is_self_identity_any_toolkit(
-        IdentityKind::Handle,
-        "@round23"
-    ));
-    assert!(!is_self_identity_any_toolkit(
-        IdentityKind::Email,
-        "round23@example.test"
-    ));
-    assert!(!is_self_identity_any_toolkit(
-        IdentityKind::AvatarUrl,
-        "https://example.test/avatar.png"
-    ));
-
-    let identities = load_connected_identities(&config)
-        .await
-        .expect("load connected identities");
-    let slack_identity = identities
-        .iter()
-        .find(|id| id.source == "slack" && id.identifier == "conn_23")
-        .expect("slack identity loaded");
-    assert_eq!(
-        slack_identity.email.as_deref(),
-        Some("round23@example.test")
-    );
-    assert_eq!(slack_identity.handle.as_deref(), Some("round23"));
-    assert_eq!(slack_identity.user_id.as_deref(), Some("U23SELF"));
-
-    let rendered = render_connected_identities_section(&identities);
-    assert!(rendered.contains("Round Twenty Three"));
-    assert!(rendered.contains("@round23"));
-    assert!(rendered.contains("https://example.test/profile/unsafe"));
-
-    let deleted = delete_connected_identity_facets(&config, "Slack!", "Conn:23")
-        .await
-        .expect("delete slack identity facets");
-    assert_eq!(deleted, 6);
-    assert!(!is_self_identity_any_toolkit(
-        IdentityKind::UserId,
-        "U23SELF"
-    ));
-    assert!(!is_self_identity_any_toolkit(
-        IdentityKind::UserId,
-        "notion-user-23"
-    ));
-}

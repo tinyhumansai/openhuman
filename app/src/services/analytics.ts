@@ -104,6 +104,7 @@ const ALLOWED_EVENT_NAMES = [
   'automation_run_started',
   'automation_run_resumed',
   'automation_run_cancelled',
+  'memory_repair_succeeded',
   'memory_tree_retry_succeeded',
   'skill_install',
   'skill_uninstall',

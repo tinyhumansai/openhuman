@@ -458,7 +458,7 @@ async fn enrich_does_nothing_when_no_cached_identities() {
     // returns `Vec::new()` and the connection is returned unchanged.
     let tmp = tempfile::tempdir().unwrap();
     let config = test_config(&tmp);
-    crate::openhuman::memory::test_support::install_tinycortex_for_test(&config);
+    crate::openhuman::memory::test_support::install_memory_driver_for_test(&config);
     let resp = make_connections_response(&[("c1", "gmail", "ACTIVE")]);
     let enriched = enrich_connections_with_identity(&config, resp).await;
     assert_eq!(enriched.connections.len(), 1);
@@ -468,86 +468,12 @@ async fn enrich_does_nothing_when_no_cached_identities() {
 }
 
 #[tokio::test]
-async fn enrich_populates_email_from_cached_profile() {
-    use crate::openhuman::integrations::composio::identity_store::persist_provider_profile;
-    use tinymemory_api::composio::ProviderUserProfile;
-
-    let tmp = tempfile::tempdir().unwrap();
-    let config = test_config(&tmp);
-    crate::openhuman::memory::test_support::install_tinycortex_for_test(&config);
-
-    persist_provider_profile(
-        &config,
-        &ProviderUserProfile {
-            toolkit: "gmail".to_string(),
-            connection_id: Some("conn-gmail-1".to_string()),
-            email: Some("alice@example.com".to_string()),
-            display_name: Some("Alice Smith".to_string()),
-            ..Default::default()
-        },
-    )
-    .await
-    .expect("persist provider profile");
-
-    let resp = make_connections_response(&[("conn-gmail-1", "gmail", "ACTIVE")]);
-    let enriched = enrich_connections_with_identity(&config, resp).await;
-
-    assert_eq!(
-        enriched.connections[0].account_email.as_deref(),
-        Some("alice@example.com"),
-        "email should be populated from cached gmail profile"
-    );
-    assert_eq!(
-        enriched.connections[0].workspace.as_deref(),
-        Some("Alice Smith"),
-        "workspace (display_name) should be populated"
-    );
-    assert!(
-        enriched.connections[0].username.is_none(),
-        "username (handle) should be absent for gmail"
-    );
-}
-
-#[tokio::test]
-async fn enrich_populates_handle_for_github() {
-    use crate::openhuman::integrations::composio::identity_store::persist_provider_profile;
-    use tinymemory_api::composio::ProviderUserProfile;
-
-    let tmp = tempfile::tempdir().unwrap();
-    let config = test_config(&tmp);
-    crate::openhuman::memory::test_support::install_tinycortex_for_test(&config);
-
-    persist_provider_profile(
-        &config,
-        &ProviderUserProfile {
-            toolkit: "github".to_string(),
-            connection_id: Some("conn-gh-1".to_string()),
-            username: Some("octocat".to_string()),
-            ..Default::default()
-        },
-    )
-    .await
-    .expect("persist provider profile");
-
-    let resp = make_connections_response(&[("conn-gh-1", "github", "ACTIVE")]);
-    let enriched = enrich_connections_with_identity(&config, resp).await;
-
-    // GitHub uses `handle` kind (the catch-all branch in expand_identity_rows).
-    assert_eq!(
-        enriched.connections[0].username.as_deref(),
-        Some("octocat"),
-        "username (handle) should be populated for github"
-    );
-    assert!(enriched.connections[0].account_email.is_none());
-}
-
-#[tokio::test]
 async fn enrich_skips_connection_already_having_identity() {
     // If the backend-proxied path already populated account_email, the
     // enricher must NOT overwrite it with a potentially stale cached value.
     let tmp = tempfile::tempdir().unwrap();
     let config = test_config(&tmp);
-    crate::openhuman::memory::test_support::install_tinycortex_for_test(&config);
+    crate::openhuman::memory::test_support::install_memory_driver_for_test(&config);
 
     let mut resp = make_connections_response(&[("c-preloaded", "gmail", "ACTIVE")]);
     resp.connections[0].account_email = Some("preloaded@example.com".to_string());
@@ -561,57 +487,6 @@ async fn enrich_skips_connection_already_having_identity() {
 }
 
 #[tokio::test]
-async fn enrich_handles_multiple_connections_same_toolkit() {
-    // Two Gmail accounts — each gets its own identity label, not "Account N".
-    use crate::openhuman::integrations::composio::identity_store::persist_provider_profile;
-    use tinymemory_api::composio::ProviderUserProfile;
-
-    let tmp = tempfile::tempdir().unwrap();
-    let config = test_config(&tmp);
-    crate::openhuman::memory::test_support::install_tinycortex_for_test(&config);
-
-    persist_provider_profile(
-        &config,
-        &ProviderUserProfile {
-            toolkit: "gmail".to_string(),
-            connection_id: Some("g1".to_string()),
-            email: Some("alice@example.com".to_string()),
-            ..Default::default()
-        },
-    )
-    .await
-    .expect("persist provider profile");
-    persist_provider_profile(
-        &config,
-        &ProviderUserProfile {
-            toolkit: "gmail".to_string(),
-            connection_id: Some("g2".to_string()),
-            email: Some("bob@example.com".to_string()),
-            ..Default::default()
-        },
-    )
-    .await
-    .expect("persist provider profile");
-
-    let resp = make_connections_response(&[("g1", "gmail", "ACTIVE"), ("g2", "gmail", "ACTIVE")]);
-    let enriched = enrich_connections_with_identity(&config, resp).await;
-
-    let emails: Vec<_> = enriched
-        .connections
-        .iter()
-        .map(|c| c.account_email.as_deref())
-        .collect();
-    assert!(
-        emails.contains(&Some("alice@example.com")),
-        "first gmail account should carry alice's email"
-    );
-    assert!(
-        emails.contains(&Some("bob@example.com")),
-        "second gmail account should carry bob's email"
-    );
-}
-
-#[tokio::test]
 async fn enrich_leaves_unmatched_connection_unchanged() {
     // Connection whose id has no cached profile row is returned with all
     // identity fields as None — the UI falls back to "toolkit · connection_id".
@@ -620,7 +495,7 @@ async fn enrich_leaves_unmatched_connection_unchanged() {
 
     let tmp = tempfile::tempdir().unwrap();
     let config = test_config(&tmp);
-    crate::openhuman::memory::test_support::install_tinycortex_for_test(&config);
+    crate::openhuman::memory::test_support::install_memory_driver_for_test(&config);
 
     // Persist a profile for a DIFFERENT connection id.
     persist_provider_profile(
@@ -642,4 +517,130 @@ async fn enrich_leaves_unmatched_connection_unchanged() {
         enriched.connections[0].account_email.is_none(),
         "connection with no cached profile must remain unenriched"
     );
+}
+
+/// A run that wrote nothing because the day's request budget was spent must
+/// say so: the UI shows "Up to date" for a zero count, and a spent budget is
+/// the opposite. The note rides after the count so the parse contract holds,
+/// and a blank note is no separator with nothing behind it.
+#[test]
+fn completed_detail_carries_the_module_note_after_the_count() {
+    let re = regex::Regex::new(r"(?i)ingested\s+(\d+)\s+item").expect("ui parse regex");
+    let detail = crate::openhuman::integrations::composio::ops::completed_sync_detail(
+        0,
+        true,
+        Some("today's provider request budget is spent"),
+    );
+    let caps = re.captures(&detail).expect("detail still parses");
+    assert_eq!(&caps[1], "0");
+    assert!(
+        detail.ends_with("; today's provider request budget is spent"),
+        "{detail}"
+    );
+    let bare =
+        crate::openhuman::integrations::composio::ops::completed_sync_detail(3, false, Some("   "));
+    assert_eq!(bare, "ingested 3 item(s)");
+}
+
+/// The per-source depth cap is matched the way the engine keys the rows and a
+/// zero reads as "no cap": the settings field stores unlimited as empty, and a
+/// zero typed by hand must not ask for mail newer than today.
+#[test]
+fn source_depth_matches_the_row_and_treats_zero_as_unbounded() {
+    use crate::openhuman::integrations::composio::ops::pick_source_sync_depth_days;
+    let rows = [
+        (Some("gmail"), Some("conn-1"), Some(30)),
+        (Some("gmail"), Some("conn-2"), Some(0)),
+        (Some("notion"), Some("conn-3"), Some(14)),
+        (Some("gmail"), None, Some(7)),
+    ];
+    assert_eq!(
+        pick_source_sync_depth_days(rows, "gmail", "conn-1"),
+        Some(30)
+    );
+    assert_eq!(
+        pick_source_sync_depth_days(rows, " GMAIL ", "conn-1 "),
+        Some(30)
+    );
+    assert_eq!(pick_source_sync_depth_days(rows, "gmail", "conn-2"), None);
+    assert_eq!(pick_source_sync_depth_days(rows, "gmail", "conn-9"), None);
+    assert_eq!(
+        pick_source_sync_depth_days(rows, "notion", "conn-3"),
+        Some(14)
+    );
+    assert_eq!(pick_source_sync_depth_days([], "gmail", "conn-1"), None);
+}
+
+// ── Backend mode with no session yet (#6176) ──────────────────────────
+//
+// The twin of the direct-mode-without-key guard: backend mode (the default)
+// with no app-session JWT is the fresh-install / signed-out state.
+// `composio_list_connections` must answer with an empty list instead of
+// letting the connector module report "loaded without a connector route",
+// which the boot-time memory-source reconcile and the 60 s periodic tick
+// would otherwise turn into an error-level report and a Sentry event.
+
+/// Store an app-session JWT in the auth store `config` points at, the same
+/// way `client_tests::config_with_session_token` does.
+fn store_test_session_token(config: &crate::openhuman::config::Config) {
+    crate::openhuman::security::credentials::AuthService::from_config(config)
+        .store_provider_token(
+            crate::openhuman::security::credentials::APP_SESSION_PROVIDER,
+            crate::openhuman::security::credentials::DEFAULT_AUTH_PROFILE_NAME,
+            "test-session-token",
+            std::collections::HashMap::new(),
+            true,
+        )
+        .expect("store test session token");
+}
+
+#[test]
+fn backend_mode_without_session_is_true_for_default_mode_and_no_session() {
+    let tmp = tempfile::tempdir().unwrap();
+    // `Config::default()` leaves `composio.mode` empty, which is backend mode.
+    let config = test_config(&tmp);
+    assert!(backend_mode_without_session(&config));
+}
+
+#[test]
+fn backend_mode_without_session_is_true_for_explicit_backend_mode() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut config = test_config(&tmp);
+    config.composio.mode = crate::openhuman::config::schema::COMPOSIO_MODE_BACKEND.into();
+    assert!(backend_mode_without_session(&config));
+}
+
+#[test]
+fn backend_mode_without_session_is_false_in_direct_mode() {
+    let tmp = tempfile::tempdir().unwrap();
+    // Direct mode never needs a session; its no-key state belongs to
+    // `direct_mode_without_key`, and the two guards must not overlap.
+    let config = direct_mode_no_key_config(&tmp);
+    assert!(!backend_mode_without_session(&config));
+}
+
+#[test]
+fn backend_mode_without_session_is_false_once_signed_in() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = test_config(&tmp);
+    store_test_session_token(&config);
+    // A stored session means the module gets a proxy route — the guard must
+    // step aside, or a signed-in user would see a silent empty list.
+    assert!(!backend_mode_without_session(&config));
+}
+
+#[test]
+fn backend_mode_without_session_is_false_when_the_session_store_is_unreadable() {
+    let tmp = tempfile::tempdir().unwrap();
+    // The auth-profile store lives in `config_path.parent()`
+    // (`state_dir_from_config`); a regular file there makes it fail to load,
+    // the same trick `auth_profile_lock_errors_do_not_include_local_paths`
+    // uses. A lookup that *failed* is not "signed out": the guard must step
+    // aside so the real fault keeps surfacing through the normal error path
+    // instead of being hidden behind a silent empty list.
+    let occupied = tmp.path().join("occupied");
+    std::fs::write(&occupied, "not a directory").unwrap();
+    let mut config = test_config(&tmp);
+    config.config_path = occupied.join("config.toml");
+    assert!(!backend_mode_without_session(&config));
 }

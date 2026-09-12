@@ -18,11 +18,22 @@ const MAX_FILE_BYTES: u64 = 5 * 1024 * 1024;
 
 pub struct EditFileTool {
     security: Arc<SecurityPolicy>,
+    sink: Arc<dyn super::write_sink::FileSink>,
 }
 
 impl EditFileTool {
     pub fn new(security: Arc<SecurityPolicy>) -> Self {
-        Self { security }
+        Self {
+            security,
+            sink: super::write_sink::os_sink(),
+        }
+    }
+
+    /// Sends this tool's writes somewhere other than the OS.
+    #[cfg(test)]
+    pub fn with_sink(mut self, sink: Arc<dyn super::write_sink::FileSink>) -> Self {
+        self.sink = sink;
+        self
     }
 }
 
@@ -204,7 +215,7 @@ impl EditFileTool {
             contents.replacen(old_string, new_string, 1)
         };
 
-        match tokio::fs::write(&resolved, &updated).await {
+        match self.sink.write(&resolved, updated.as_bytes()).await {
             Ok(()) => {
                 if let Some(agent_id) = file_state::current_file_state_agent_id() {
                     file_state::record_write(&agent_id, resolved);

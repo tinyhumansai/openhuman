@@ -65,9 +65,17 @@ describe('InferenceBudget', () => {
 
   describe('with cycleBudgetUsd > 0', () => {
     it('renders remaining / budget text in the header', () => {
-      const usage = buildTeamUsage({ remainingUsd: 5, cycleBudgetUsd: 10 });
+      const usage = buildTeamUsage({ remainingUsd: 20, cycleBudgetUsd: 10, cycleSpentUsd: 5 });
       render(<InferenceBudget teamUsage={usage} isLoadingCredits={false} />);
       expect(screen.getByText(/\$5\.00 \/ \$10\.00 remaining/i)).toBeInTheDocument();
+    });
+
+    it('does not count promotional and top-up balances as recurring cycle budget', () => {
+      const usage = buildTeamUsage({ remainingUsd: 30, cycleBudgetUsd: 10, cycleSpentUsd: 8.5 });
+      const { container } = render(<InferenceBudget teamUsage={usage} isLoadingCredits={false} />);
+
+      expect(screen.getByText(/\$1\.50 \/ \$10\.00 remaining/i)).toBeInTheDocument();
+      expect(container.querySelector<HTMLElement>('.bg-amber-500')).toHaveStyle({ width: '15%' });
     });
 
     it('renders cycle-spent and cycle-ends date', () => {
@@ -87,6 +95,12 @@ describe('InferenceBudget', () => {
       const usage = buildTeamUsage({ remainingUsd: 0, cycleSpentUsd: 10 });
       render(<InferenceBudget teamUsage={usage} isLoadingCredits={false} />);
       expect(screen.getByText(/Included subscription usage is exhausted/i)).toBeInTheDocument();
+    });
+
+    it('does not tell users to top up when non-cycle credits remain', () => {
+      const usage = buildTeamUsage({ remainingUsd: 5, cycleSpentUsd: 10 });
+      render(<InferenceBudget teamUsage={usage} isLoadingCredits={false} />);
+      expect(screen.queryByText(/Top up credits to keep using AI/i)).not.toBeInTheDocument();
     });
   });
 

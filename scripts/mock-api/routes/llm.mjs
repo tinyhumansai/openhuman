@@ -762,3 +762,74 @@ export function handleLlmCompletions(ctx) {
   );
   return true;
 }
+
+/**
+ * `GET /openai/v1/models` — the managed backend's model listing.
+ *
+ * Two deliberately different shapes behind one path, because that distinction
+ * is the whole point of the feature:
+ *
+ *   * **no `catalog` param** → only the curated tier list (`chat-v1`,
+ *     `reasoning-v1`, …), bare OpenAI-compatible entries with no display name
+ *     and no pricing. This is the legacy payload the client saw before the
+ *     OpenRouter passthrough existed.
+ *   * **`?catalog=openrouter`** → the passthrough catalog: `openrouter/<author>/<slug>`
+ *     ids, each with `name` and `pricing.{inputPer1M,outputPer1M}` so the picker
+ *     can label by name and charged price rather than a bare slug.
+ *
+ * The real backend gates the catalog on `OPENROUTER_PASSTHROUGH_ENABLED` and
+ * returns an EMPTY set when it is off — not an error. `managedCatalogEmpty`
+ * models that flag being off, so a spec can assert the picker degrades to the
+ * pre-feature behaviour (no select) rather than showing an error.
+ */
+const MANAGED_TIER_MODELS = [
+  { id: "chat-v1", object: "model", owned_by: "openhuman" },
+  { id: "reasoning-v1", object: "model", owned_by: "openhuman" },
+];
+
+const MANAGED_OPENROUTER_CATALOG = [
+  {
+    id: "openrouter/nex-agi/nex-n2.5-mini",
+    object: "model",
+    owned_by: "openrouter",
+    name: "Nex N2.5 Mini",
+    context_window: 131072,
+    pricing: { inputPer1M: 0.15, outputPer1M: 0.6 },
+  },
+  {
+    // The `:free` variant. `displayValue` used to split on `:` as if this were
+    // `providerSlug:model` and render the chip as the bare word "free".
+    id: "openrouter/nex-agi/nex-n2.5-mini:free",
+    object: "model",
+    owned_by: "openrouter",
+    name: "Nex N2.5 Mini (free)",
+    context_window: 131072,
+    pricing: { inputPer1M: 0, outputPer1M: 0 },
+  },
+  {
+    // No `name` and no `pricing`: the label must fall back to the bare id
+    // rather than rendering "undefined" or an empty option.
+    id: "openrouter/acme/plain-model",
+    object: "model",
+    owned_by: "openrouter",
+  },
+];
+
+export function handleModelListing(ctx) {
+  const { method, url, res } = ctx;
+  const [path, query = ""] = url.split("?");
+  if (method !== "GET" || !/^(\/openai)?(\/v1)?\/models\/?$/.test(path)) {
+    return false;
+  }
+  setCors(res);
+  const catalog = new URLSearchParams(query).get("catalog");
+  if (catalog !== "openrouter") {
+    json(res, 200, { object: "list", data: MANAGED_TIER_MODELS });
+    return true;
+  }
+  // Mirror OPENROUTER_PASSTHROUGH_ENABLED=false: an empty set, HTTP 200.
+  const data =
+    behavior().managedCatalogEmpty === "true" ? [] : MANAGED_OPENROUTER_CATALOG;
+  json(res, 200, { object: "list", data });
+  return true;
+}

@@ -1,4 +1,3 @@
-
 /// Derive the install directory slug from the SKILL.md frontmatter.
 ///
 /// Prefers `metadata.id` (the spec-aligned identifier) when present. Falls
@@ -184,7 +183,7 @@ pub async fn validate_resolved_host(raw_url: &str) -> Result<(), String> {
         let ip = addr.ip();
         match ip {
             std::net::IpAddr::V4(v4) => {
-                if is_private_v4(&v4) {
+                if crate::openhuman::tools::is_non_global_v4(v4) {
                     tracing::warn!(
                         host = %host,
                         resolved = %v4,
@@ -196,7 +195,7 @@ pub async fn validate_resolved_host(raw_url: &str) -> Result<(), String> {
                 }
             }
             std::net::IpAddr::V6(v6) => {
-                if is_private_v6(&v6) {
+                if crate::openhuman::tools::is_non_global_v6(v6) {
                     tracing::warn!(
                         host = %host,
                         resolved = %v6,
@@ -213,59 +212,5 @@ pub async fn validate_resolved_host(raw_url: &str) -> Result<(), String> {
 }
 
 fn is_blocked_install_host(host: &str) -> bool {
-    let lower = host.to_ascii_lowercase();
-    // url::Url::host_str returns IPv6 literals wrapped in brackets (e.g. "[::1]").
-    // Strip them before attempting Ipv6Addr parse.
-    let stripped = lower
-        .strip_prefix('[')
-        .and_then(|s| s.strip_suffix(']'))
-        .unwrap_or(&lower);
-    if stripped == "localhost" || stripped.ends_with(".localhost") || stripped.ends_with(".local") {
-        return true;
-    }
-    if let Ok(v4) = stripped.parse::<Ipv4Addr>() {
-        return is_private_v4(&v4);
-    }
-    if let Ok(v6) = stripped.parse::<Ipv6Addr>() {
-        return is_private_v6(&v6);
-    }
-    false
-}
-
-fn is_private_v4(ip: &Ipv4Addr) -> bool {
-    if ip.is_private()
-        || ip.is_loopback()
-        || ip.is_link_local()
-        || ip.is_broadcast()
-        || ip.is_unspecified()
-        || ip.is_multicast()
-    {
-        return true;
-    }
-    let [a, b, _, _] = ip.octets();
-    // 100.64.0.0/10 shared address (CGN)
-    if a == 100 && (64..=127).contains(&b) {
-        return true;
-    }
-    // 0.0.0.0/8
-    if a == 0 {
-        return true;
-    }
-    false
-}
-
-fn is_private_v6(ip: &Ipv6Addr) -> bool {
-    if ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() {
-        return true;
-    }
-    let first = ip.segments()[0];
-    // fc00::/7 unique-local
-    if (first & 0xfe00) == 0xfc00 {
-        return true;
-    }
-    // fe80::/10 link-local
-    if (first & 0xffc0) == 0xfe80 {
-        return true;
-    }
-    false
+    crate::openhuman::tools::is_private_or_local_host(host)
 }

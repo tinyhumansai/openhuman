@@ -32,7 +32,7 @@ use openhuman_core::openhuman::agent::tool_policy::{
 };
 use openhuman_core::openhuman::skills::types::tool_result_from_mcp;
 use openhuman_core::openhuman::tools::toolpacks::registry::PACKS;
-use openhuman_core::openhuman::tools::toolpacks::tools::{LoadSkillTool, PackRegistryHandle};
+use openhuman_core::openhuman::tools::toolpacks::tools::{PackRegistryHandle, UseSkillTool};
 use openhuman_core::openhuman::tools::traits::{
     generated_runtime_context, pack_registry_handle, PermissionLevel, Tool, ToolResult,
 };
@@ -40,7 +40,7 @@ use openhuman_core::openhuman::tools::traits::{
 /// A production pack tool's registry handle survives the round trip through
 /// `dyn Any` **as the same handle**, not merely as some handle.
 ///
-/// `LoadSkillTool` is one of the two real producers in the tree. If its
+/// `UseSkillTool` is the only real producer in the tree. If its
 /// `host_extension` ever stored something other than a `PackRegistryHandle`,
 /// this is the only place that would notice: `toolpacks::ops` reads the handle
 /// back through the same free function and, on `None`, silently skips the pack
@@ -66,7 +66,7 @@ use openhuman_core::openhuman::tools::traits::{
 /// observed without needing to construct a real packed tool.
 #[tokio::test]
 async fn a_pack_tools_registry_handle_reads_back_as_the_same_handle() {
-    let tool = LoadSkillTool::new(PackRegistryHandle::default());
+    let tool = UseSkillTool::new(PackRegistryHandle::default());
 
     let recovered = pack_registry_handle(&tool).expect(
         "a pack tool must yield its PackRegistryHandle through the erased \
@@ -86,7 +86,7 @@ async fn a_pack_tools_registry_handle_reads_back_as_the_same_handle() {
     let rendered = tool
         .execute(json!({ "skill": skill }))
         .await
-        .expect("load_skill reports failure in its ToolResult, never as Err")
+        .expect("use_skill reports failure in its ToolResult, never as Err")
         .output()
         .to_string();
 

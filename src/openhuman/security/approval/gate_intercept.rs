@@ -343,9 +343,15 @@ impl ApprovalGate {
                 // TTL-denies, the conservative fail-closed default for a
                 // user-forced HITL gate.
             }
-            AgentTurnOrigin::Cli => {
+            // Same trust decision for both: a local operator invoking the core
+            // directly. They differ only in whether the turn's text was written
+            // by a person (`turn_origin::is_user_authored`), which this gate
+            // does not ask. Kept as one arm so the two can never drift apart on
+            // the trust axis, which is the axis this gate owns.
+            AgentTurnOrigin::Cli | AgentTurnOrigin::DirectChat => {
                 tracing::debug!(
                     tool = tool_name,
+                    origin = %origin.class(),
                     "[approval::gate] CLI / sub-agent caller — allowing without prompt"
                 );
                 return (GateOutcome::Allow, None);

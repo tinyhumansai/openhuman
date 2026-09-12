@@ -19,7 +19,8 @@
 //! - [`tokenize`] — multilingual normalization + character n-gram tokenizer.
 //! - [`inverted_index`] — in-memory trigram/bigram index over message content.
 //! - [`store`] — the JSONL [`ConversationStore`] (append/read/update/delete,
-//!   process-wide write serialization, warm-index cache, cross-thread search).
+//!   root lifecycle coordination, per-root metadata and per-thread message
+//!   locks, warm-index cache, cross-thread search).
 //!
 //! The channel-persistence subscriber that mirrors inbound/processed channel
 //! turns into this store is the host's own [`super::bus`], not part of this

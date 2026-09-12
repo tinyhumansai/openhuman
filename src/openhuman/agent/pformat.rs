@@ -37,8 +37,19 @@ pub use tinyagents_harness::tool_calling::{
 /// exist. A registry built from anything other than the agent's real tools
 /// would widen that.
 pub fn build_registry(tools: &[Box<dyn Tool>]) -> PFormatRegistry {
+    build_registry_from_refs(tools.iter().map(|t| t.as_ref()))
+}
+
+/// [`build_registry`] over any iterator of borrowed tools.
+///
+/// A session agent's surface is two sets — the durable registry and the
+/// synthesised delegation set (`Agent::synthesized_tools`) — that cannot be
+/// merged into one owned slice, since `Box<dyn Tool>` is not cloneable.
+pub fn build_registry_from_refs<'a>(
+    tools: impl IntoIterator<Item = &'a dyn Tool>,
+) -> PFormatRegistry {
     tinyagents_harness::tool_calling::build_registry(
-        tools.iter().map(|t| (t.name(), t.parameters_schema())),
+        tools.into_iter().map(|t| (t.name(), t.parameters_schema())),
     )
 }
 

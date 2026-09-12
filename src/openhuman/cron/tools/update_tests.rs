@@ -104,3 +104,53 @@ fn cron_update_permission_level_is_execute() {
     let tool = CronUpdateTool::new(cfg.clone(), test_security(&cfg));
     assert_eq!(tool.permission_level(), PermissionLevel::Execute);
 }
+
+#[tokio::test]
+async fn rejects_tightening_an_agent_job_below_five_minutes() {
+    use crate::openhuman::cron::{Schedule, SessionTarget};
+
+    let tmp = TempDir::new().unwrap();
+    let cfg = test_config(&tmp).await;
+    let job = cron::add_agent_job(
+        &cfg,
+        Some("inbox".into()),
+        Schedule::Every { every_ms: 600_000 },
+        "check my inbox",
+        SessionTarget::Isolated,
+        None,
+        None,
+        false,
+    )
+    .unwrap();
+    let tool = CronUpdateTool::new(cfg.clone(), test_security(&cfg));
+
+    let result = tool
+        .execute(json!({
+            "job_id": job.id,
+            "patch": { "schedule": { "kind": "every", "every_ms": 60_000 } }
+        }))
+        .await
+        .unwrap();
+    assert!(result.is_error, "{:?}", result.output());
+    assert!(
+        result
+            .output()
+            .contains("agent jobs must run at least 5 minutes apart"),
+        "{:?}",
+        result.output()
+    );
+    // A rejected patch must not have been written before the error came back.
+    assert_eq!(
+        cron::get_job(&cfg, &job.id).unwrap().schedule,
+        Schedule::Every { every_ms: 600_000 }
+    );
+
+    let result = tool
+        .execute(json!({
+            "job_id": job.id,
+            "patch": { "schedule": { "kind": "every", "every_ms": 300_000 } }
+        }))
+        .await
+        .unwrap();
+    assert!(!result.is_error, "{:?}", result.output());
+}

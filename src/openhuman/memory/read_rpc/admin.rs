@@ -15,10 +15,11 @@ use crate::rpc::RpcOutcome;
 // and it is the same constant the driver writing those rows reads.
 use tinymemory_api::chunks::SourceKind;
 use tinymemory_api::composio::KV_NAMESPACE;
+use tinymemory_api::provider::types::BackfillTreesRequest;
 
 use super::types::{
-    DeleteSourceResponse, FlushNowResponse, FlushSourceTreeResponse, ResetTreeResponse,
-    WipeAllResponse,
+    BackfillConnectorTreesResponse, DeleteSourceResponse, FlushNowResponse,
+    FlushSourceTreeResponse, ResetTreeResponse, WipeAllResponse,
 };
 
 // ── wipe_all ─────────────────────────────────────────────────────────────
@@ -414,6 +415,67 @@ pub async fn flush_now_rpc(config: &Config) -> Result<RpcOutcome<FlushNowRespons
     let log = format!(
         "memory_tree::read: flush_now enqueued={} stale_buffers={}",
         resp.enqueued, resp.stale_buffers
+    );
+    Ok(RpcOutcome::single_log(resp, log))
+}
+
+// ── backfill_connector_trees ───────────────────────────────────────────────
+
+/// Re-file connector documents stored before the routing fix into the memory
+/// tree (#6012).
+///
+/// #6007 fixed the routing for items synced from then on. It could not fix the
+/// records already stored: the per-item sync gate treats an ingested document as
+/// done, so re-syncing fetches nothing and creates no tree rows. Those memories
+/// sit fully embedded in the document store and invisible to every tree-backed
+/// surface until something re-files them.
+///
+/// Asked of the driver rather than walked here. The namespaces, the
+/// `{toolkit}:{connection_id}` identity and the ingest funnel all live in the
+/// engine beside the sync path that writes the same rows — a host-side walk
+/// would be a second implementation of an identity that must not drift, which
+/// is the mistake that caused #6007 in the first place.
+///
+/// Expensive by nature: a pass is one read and one set of chunk embeddings per
+/// document. Nothing calls this on its own initiative, and `dry_run` defaults to
+/// true at the RPC boundary so a caller has to ask for the write.
+pub async fn backfill_connector_trees_rpc(
+    config: &Config,
+    limit: Option<u64>,
+    dry_run: bool,
+) -> Result<RpcOutcome<BackfillConnectorTreesResponse>, String> {
+    let binding = crate::openhuman::memory::binding::for_config(config)?;
+    let Some(maintenance) = binding.provider().as_maintenance() else {
+        return Err(format!(
+            "backfill_connector_trees: driver '{}' does not serve Maintenance",
+            binding.driver_id()
+        ));
+    };
+
+    let outcome = maintenance
+        .backfill_connector_trees(BackfillTreesRequest { limit, dry_run })
+        .await
+        .map_err(|error| format!("backfill_connector_trees: {error}"))?;
+
+    let resp = BackfillConnectorTreesResponse {
+        executed: !dry_run,
+        scanned: outcome.scanned,
+        ingested: outcome.ingested,
+        already_present: outcome.already_present,
+        skipped: outcome.skipped,
+        more_pending: outcome.more_pending,
+        notes: outcome.notes,
+    };
+
+    let log = format!(
+        "memory_tree::read: backfill_connector_trees executed={} scanned={} ingested={} \
+         already_present={} skipped={} more_pending={}",
+        resp.executed,
+        resp.scanned,
+        resp.ingested,
+        resp.already_present,
+        resp.skipped,
+        resp.more_pending
     );
     Ok(RpcOutcome::single_log(resp, log))
 }

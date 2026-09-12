@@ -17,10 +17,6 @@ vi.mock('../../components/rewards/RewardsReferralsTab', () => ({
   default: () => <div>Referral Rewards Section</div>,
 }));
 
-vi.mock('../../components/rewards/RewardsRedeemTab', () => ({
-  default: () => <div>Rewards Coupon Section</div>,
-}));
-
 vi.mock('../../hooks/useUser', () => ({
   useUser: () => ({ user: { subscription: { plan: 'FREE', hasActiveSubscription: false } } }),
 }));
@@ -224,11 +220,10 @@ describe('Rewards page', () => {
     );
 
     expect(screen.getByText('Referral Rewards Section')).toBeInTheDocument();
-    expect(screen.queryByText('Rewards Coupon Section')).not.toBeInTheDocument();
     expect(screen.queryByText('Earn community roles')).not.toBeInTheDocument();
   });
 
-  it('switches to the redeem tab content', async () => {
+  it('falls back to community rewards for the retired redeem URL', async () => {
     rewardsApi.getMyRewards.mockResolvedValueOnce({
       discord: {
         linked: false,
@@ -261,7 +256,7 @@ describe('Rewards page', () => {
       </MemoryRouter>
     );
 
-    expect(screen.getByText('Rewards Coupon Section')).toBeInTheDocument();
+    expect(await screen.findByText('Earn rewards with OpenHuman')).toBeInTheDocument();
     expect(screen.queryByText('Referral Rewards Section')).not.toBeInTheDocument();
   });
 

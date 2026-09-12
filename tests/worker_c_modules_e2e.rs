@@ -117,21 +117,6 @@ embedding_strict = false
 async fn setup() -> Harness {
     ensure_rpc_auth();
 
-    // Memory-source RPC handlers invoke the extracted tinymemory host seams
-    // from background work. Production startup installs these before building
-    // the router; mirror that wiring in this standalone transport harness.
-    std::thread::Builder::new()
-        .name("worker-c-memory-seams".to_string())
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            openhuman_core::openhuman::memory::host_impls::install_memory_host_seams(Arc::new(
-                openhuman_core::openhuman::config::Config::default(),
-            ));
-        })
-        .expect("spawn worker-c memory seam installer")
-        .join()
-        .expect("worker-c memory seam installer panicked");
-
     let tmp = tempdir().expect("tempdir");
     let home = tmp.path();
     write_config(&home.join(".openhuman"));

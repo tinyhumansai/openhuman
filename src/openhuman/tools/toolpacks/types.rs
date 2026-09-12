@@ -8,7 +8,7 @@
 /// spends far more of its fixed per-turn budget on schemas than on its own
 /// instructions, and most of those tools go untouched in most conversations.
 pub struct ToolPack {
-    /// Stable id the agent names in `load_skill` / `use_skill`.
+    /// Stable id the agent names in `use_skill`.
     pub id: &'static str,
     /// One line, rendered in the always-on pack index. This is the only text
     /// about the pack the model sees before loading it, so it has to carry
@@ -22,7 +22,7 @@ pub struct ToolPack {
     /// Withholding is a bet that the tools are idle in most turns. That bet is
     /// wrong for the specialist a family was delegated to: `settings_agent`
     /// exists precisely to run `config_*` / `health_*` / `service_*`, so
-    /// packing them would put a `load_skill` round trip in front of the first
+    /// packing them would put a `use_skill` round trip in front of the first
     /// call of every one of its turns and buy nothing — its whole belt is the
     /// pack.
     ///

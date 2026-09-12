@@ -205,3 +205,110 @@ fn the_question_in_an_unpersisted_pause_failure_is_encoded_not_interpolated() {
         "the question should appear JSON-escaped rather than raw: {out}"
     );
 }
+
+// ── Unexecuted tool-call stubs + inline-result framing (#6033) ──────────
+
+#[test]
+fn a_tool_call_stub_is_recognised_as_unexecuted() {
+    assert!(super::is_unexecuted_tool_call_stub(
+        "<tool_call>{\"name\": \"GMAIL_LIST_MESSAGES\", \"arguments\": {}}</tool_call>"
+    ));
+    assert!(super::is_unexecuted_tool_call_stub(
+        "{\"tool_calls\": [{\"name\": \"GMAIL_FETCH_EMAILS\"}]}"
+    ));
+}
+
+#[test]
+fn a_real_answer_that_mentions_a_tool_call_is_not_a_stub() {
+    assert!(!super::is_unexecuted_tool_call_stub(
+        "I found 3 job emails. I used <tool_call>GMAIL_FETCH_EMAILS</tool_call> to read them."
+    ));
+    assert!(!super::is_unexecuted_tool_call_stub(
+        "Here are the emails from the last 5 days: Acme, Globex, Initech."
+    ));
+    assert!(
+        !super::is_unexecuted_tool_call_stub(""),
+        "empty output carries no markup, so it is not a stub"
+    );
+}
+
+#[test]
+fn a_blocking_delegation_says_its_result_is_inline() {
+    let framed = super::with_inline_result_note(
+        "the emails are …".to_string(),
+        super::DispatchMode::Blocking,
+    );
+    assert!(framed.starts_with("the emails are …"));
+    assert!(framed.contains("[INLINE_RESULT]"));
+    assert!(framed.contains("no sub-agent worker"));
+    assert!(framed.contains("wait_subagent"));
+}
+
+#[test]
+fn an_async_delegation_keeps_its_output_untouched() {
+    let output = "the emails are …".to_string();
+    assert_eq!(
+        super::with_inline_result_note(output.clone(), super::DispatchMode::PreferAsync),
+        output,
+        "only a blocking dispatch may claim there is no worker"
+    );
+}
+
+#[test]
+fn the_incomplete_envelope_frames_a_stub_without_claiming_success() {
+    let envelope = super::incomplete_envelope(
+        "delegate_to_integrations_agent",
+        "returned an unexecuted tool call instead of a result",
+        "<tool_call>GMAIL_LIST_MESSAGES</tool_call>",
+        super::DispatchMode::Blocking,
+    );
+    assert!(envelope.starts_with("[SUBAGENT_INCOMPLETE]"));
+    assert!(envelope.contains("do NOT report it as done"));
+    assert!(envelope.contains("returned an unexecuted tool call"));
+    assert!(envelope.contains("[INLINE_RESULT]"));
+    assert!(
+        !envelope.contains("complete as returned"),
+        "an unfinished run must never be described as complete"
+    );
+    assert!(envelope.contains("Re-delegate with a corrected prompt"));
+}
+
+#[test]
+fn an_unfinished_envelope_never_claims_completeness() {
+    // The completed note and the not-finished note are deliberately
+    // different: appending "is complete as returned" under a
+    // [SUBAGENT_INCOMPLETE] header would contradict the guardrail.
+    let done = super::with_inline_result_note("answer".to_string(), super::DispatchMode::Blocking);
+    assert!(done.contains("complete as returned"));
+
+    let unfinished = super::incomplete_envelope(
+        "delegate_to_integrations_agent",
+        "hit its iteration cap",
+        "partial",
+        super::DispatchMode::Blocking,
+    );
+    assert!(!unfinished.contains("complete as returned"));
+    assert!(unfinished.contains("nothing to collect"));
+}
+
+#[test]
+fn a_pretty_printed_tool_call_payload_is_still_a_stub() {
+    // The marker is matched as a JSON key, not as "{\"tool_calls\"", so
+    // whitespace before it does not hide the payload; and the leftover
+    // braces are punctuation, not an answer.
+    assert!(super::is_unexecuted_tool_call_stub(
+        "{\n  \"tool_calls\": [\n    {\"name\": \"GMAIL_FETCH_EMAILS\"}\n  ]\n}"
+    ));
+}
+
+#[test]
+fn prose_naming_a_protocol_field_is_not_a_stub() {
+    // "tool_use" alone is enough for the archivist to attempt a strip, but
+    // never enough to decide a sub-agent produced no answer.
+    assert!(!super::is_unexecuted_tool_call_stub(
+        "The \"tool_use\" field is how the provider reports a call."
+    ));
+    assert!(!super::is_unexecuted_tool_call_stub(
+        "I could not read the inbox: the connection is not authorised."
+    ));
+}

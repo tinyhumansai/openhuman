@@ -2,16 +2,20 @@ import type {
   ThreadAssistantMessagePart,
   ThreadMessageLike,
   ThreadUserMessagePart,
+  ToolApprovalOption,
 } from '@assistant-ui/react';
 
 import { parseMessageImages } from '../lib/attachments';
 import { unwrapToolCallEnvelope } from '../lib/chat/toolCallEnvelope';
-import type {
-  ProcessingTranscriptItem,
-  StreamingAssistantState,
-  ToolTimelineEntry,
+import {
+  isActiveTimelineStatus,
+  type PendingApproval,
+  type ProcessingTranscriptItem,
+  type StreamingAssistantState,
+  type ToolTimelineEntry,
 } from '../store/chatRuntimeSlice';
 import type { ThreadMessage } from '../types/thread';
+import { categorizeTool, type ToolCategory } from '../utils/toolTimelineFormatting';
 
 /**
  * Redux -> assistant-ui message mapping.
@@ -103,7 +107,7 @@ function toolResultPayload(entry: ToolTimelineEntry): unknown {
 }
 
 function toolPart(entry: ToolTimelineEntry): ThreadAssistantMessagePart {
-  const running = entry.status === 'running' || entry.status === 'awaiting_user';
+  const running = isActiveTimelineStatus(entry.status);
   const isSubagent = entry.name.startsWith('subagent:') || entry.subagent !== undefined;
   const args = isSubagent
     ? jsonObject({
@@ -130,7 +134,141 @@ function toolPart(entry: ToolTimelineEntry): ThreadAssistantMessagePart {
 }
 
 /**
+ * The decision set offered for a parked tool call.
+ *
+ * Each `id` is verbatim the `decision` literal `openhuman.approval_decide`
+ * takes, so the runtime hands the adapter an option id it can forward to the
+ * RPC without a translation table — see `useOpenHumanExternalStore`. The
+ * `kind`s are what assistant-ui resolves to the boolean `approved` it reports
+ * alongside the id, and what a renderer keys its default labels off.
+ *
+ * `reject-always` is deliberately absent: the core has no "never allow this
+ * tool" decision, and offering one that silently degrades to a one-off deny
+ * would be a lie about what the click did.
+ */
+export const APPROVAL_DECISION_OPTIONS: readonly ToolApprovalOption[] = [
+  { id: 'approve_once', kind: 'allow-once' },
+  { id: 'approve_always_for_tool', kind: 'allow-always' },
+  { id: 'deny', kind: 'reject-once' },
+];
+
+/**
+ * `toolCallId` prefix for the part synthesised when a parked approval cannot be
+ * matched to a live timeline row. Namespaced so it can never collide with a
+ * core-issued tool-call id (the duplicate-id invariant above is a hard one).
+ */
+const APPROVAL_PART_ID_PREFIX = '__openhuman_approval__:';
+
+/** The part the parked call is asking about, when no timeline row carries it. */
+function syntheticApprovalPart(approval: PendingApproval): ThreadAssistantMessagePart {
+  // `command` is the redacted command/path/url the gate extracted for display;
+  // rendering it as the call's args is what makes the prompt answerable.
+  const args = approval.command ? { command: approval.command } : {};
+  return {
+    type: 'tool-call',
+    toolCallId: `${APPROVAL_PART_ID_PREFIX}${approval.requestId}`,
+    toolName: approval.toolName,
+    args: args as Record<string, never>,
+    argsText: JSON.stringify(args, null, 2),
+    approval: { id: approval.requestId, options: APPROVAL_DECISION_OPTIONS },
+  };
+}
+
+/**
+ * Hang a parked approval off the tool part it is gating.
+ *
+ * The `approval_request` socket event carries no `tool_call_id` (see
+ * `ChatApprovalRequestEvent`), so the row is matched by name against the
+ * newest still-unsettled call — a `result` means the call already ran and
+ * cannot be the one parked. When nothing matches (the progress channel is
+ * bounded and can drop the `tool_call` frame, and the gate can park before the
+ * frame lands at all) a part is synthesised rather than dropped: a prompt in
+ * the wrong visual slot is recoverable, a turn that parks with no prompt at all
+ * is the bug this exists to close.
+ */
+function withApproval(
+  parts: ThreadAssistantMessagePart[],
+  approval: PendingApproval
+): ThreadAssistantMessagePart[] {
+  const index = parts.reduce(
+    (best, part, at) =>
+      part.type === 'tool-call' && part.toolName === approval.toolName && part.result === undefined
+        ? at
+        : best,
+    -1
+  );
+  if (index < 0) return [...parts, syntheticApprovalPart(approval)];
+  return parts.map((part, at) =>
+    at === index
+      ? { ...part, approval: { id: approval.requestId, options: APPROVAL_DECISION_OPTIONS } }
+      : part
+  );
+}
+
+/**
+ * Categories `categorizeTool` can prove are read-only. Everything else —
+ * including its `other` default, which is where every unmapped tool lands — is
+ * treated as potentially side-effecting.
+ *
+ * The direction is the point: this is a fail-SAFE allowlist, not a
+ * classification. An agent sending an email or writing a file behind a
+ * collapsed panel is a trust problem, not a clutter fix, so an unrecognised
+ * tool keeps its line on the main surface. Being wrong here costs one extra
+ * row; being wrong the other way hides a real-world action.
+ *
+ * `web_fetch` / `http_request` / `curl` (`fetch`) and `browser*` (`browse`) are
+ * deliberately NOT here: a `curl` can POST and a browser click can buy
+ * something.
+ *
+ * **This is a stand-in.** The core already models exactly this, precisely, as
+ * `PermissionLevel` (`ReadOnly` / `Write` / `Execute` / `Dangerous`,
+ * `vendor/tinyagents/vendor/tinytools/.../permission/types.rs:18-30`) on every
+ * tool. It is simply not on the wire: `AgentProgress::ToolCallStarted`
+ * (`src/openhuman/agent/progress.rs:31-47`) carries no permission field, so the
+ * renderer cannot see it. When that field is plumbed through to
+ * `ToolTimelineEntry`, delete this set and the function below and test
+ * `entry.permissionLevel === 'read_only'` instead.
+ */
+const READ_ONLY_TOOL_CATEGORIES: ReadonlySet<ToolCategory> = new Set<ToolCategory>([
+  'read',
+  'search',
+]);
+
+/**
+ * Whether this tool row still earns a line on the main `/chat` surface.
+ *
+ * Read-only steps (reading a file, searching memory, listing) are process, and
+ * move to the rail behind the turn footer. Everything else keeps one line:
+ *
+ * - anything not provably read-only — the side-effect exception above;
+ * - a failed call, because an error is the user's to see;
+ * - a parked call, because an approval gate is the user's to answer. The part's
+ *   `approval` is attached later by {@link withApproval}, so the check here is
+ *   on the row's own `awaiting_user` status.
+ *
+ * A `subagent:*` delegation also stays, for two reasons that outrank tidiness:
+ * its card is the only route to the sub-agent drawer on this surface (see
+ * `ChatToolParts.SubagentCall`), and a delegation spends real money and can act
+ * outside the app through its own tools. Its *transcript* is already behind the
+ * drawer, which is where the brief wanted it; the row itself is one line.
+ */
+function toolRowStaysOnMainSurface(entry: ToolTimelineEntry): boolean {
+  if (entry.status === 'error' || entry.status === 'awaiting_user') return true;
+  if (entry.name.startsWith('subagent:')) return true;
+  return !READ_ONLY_TOOL_CATEGORIES.has(categorizeTool(entry.name));
+}
+
+/**
  * Project one assistant message into assistant-ui parts.
+ *
+ * The main surface carries **the answer, plus anything the user must see or
+ * act on** — a failed or parked tool call, and any call that might have changed
+ * something outside the app. The agent's *explanation* of how it got there —
+ * reasoning, narration prose, and the arguments and results of read-only steps
+ * — is not dropped: it stays in Redux and in the persisted transcript, and
+ * renders in the process rail reached from the turn footer
+ * (`TurnFooter` → `AgentProcessSourcePanel`). Nothing here changes what is
+ * stored, only what is painted.
  *
  * **Every tool part must have a distinct `toolCallId`.** assistant-ui keys them
  * as `toolCallId-${id}` and *throws* on a repeat ("Duplicate key … in
@@ -149,46 +287,66 @@ function assistantParts(
   const parts: ThreadAssistantMessagePart[] = [];
   const timelineById = new Map(timeline.map(entry => [entry.id, entry]));
   const emittedToolIds = new Set<string>();
+  // A row is considered once, whether or not it is painted. Both passes apply
+  // the same filter, so this is belt-and-braces rather than load-bearing — it
+  // is here so the two can never disagree and mint a duplicate `toolCallId`,
+  // which assistant-ui throws on.
+  const claim = (entry: ToolTimelineEntry): boolean => {
+    if (emittedToolIds.has(entry.id)) return false;
+    emittedToolIds.add(entry.id);
+    return true;
+  };
 
   for (const item of transcript) {
-    if (item.kind === 'thinking') {
-      if (item.text.trim().length > 0) parts.push({ type: 'reasoning', text: item.text });
-      continue;
-    }
+    // `thinking` and `narration` are the turn's explanation of itself. Both
+    // live on in `processingByThread` / the persisted transcript and render in
+    // the rail; neither belongs in the answer stream.
     if (item.kind === 'toolCall') {
       const entry = timelineById.get(item.callId);
       // Guarded here too, not only in the timeline pass below: two transcript
       // pointers can name the same `callId` (a provider that emits tool calls
       // without ids writes the empty string for all of them), and both resolve
       // to the same timeline row.
-      if (entry && !emittedToolIds.has(entry.id)) {
-        emittedToolIds.add(entry.id);
+      if (entry && claim(entry) && toolRowStaysOnMainSurface(entry)) {
         parts.push(toolPart(entry));
       }
-    }
-    if (
-      item.kind === 'narration' &&
-      item.text.trim().length > 0 &&
-      !text.trim().includes(item.text.trim())
-    ) {
-      // Narration emitted before a tool call is assistant content in its own
-      // right. Keep it inline in assistant-ui's ordered part stream; the final
-      // answer is appended separately below. A final-round narration is the
-      // same streamed bytes as that answer and must not render twice —
-      // `includes`, not equality, because `mergedAssistantText` prefers the
-      // longest text when it *contains* every segment, so the duplicate is a
-      // substring rather than an exact match.
-      parts.push({ type: 'text', text: item.text });
     }
   }
 
   for (const entry of [...timeline].sort((a, b) => a.seq - b.seq)) {
-    if (emittedToolIds.has(entry.id)) continue;
-    emittedToolIds.add(entry.id);
-    parts.push(toolPart(entry));
+    if (!claim(entry)) continue;
+    if (toolRowStaysOnMainSurface(entry)) parts.push(toolPart(entry));
   }
   if (text.length > 0) parts.push({ type: 'text', text });
   return parts;
+}
+
+/**
+ * The one-line summary the settled turn footer renders, and the trail its click
+ * opens. Counted from what the store already holds — no new telemetry.
+ *
+ * `steps` is every process item the turn recorded (reasoning blocks, narration
+ * segments and tool pointers); `tools` is the tool rows. `null` when the turn
+ * recorded no process at all, which is the footer's signal to render nothing —
+ * a plain answer with no trail behind it gets no door.
+ */
+export type TurnProcessTrail = {
+  steps: number;
+  tools: number;
+  timeline: readonly ToolTimelineEntry[];
+  transcript: readonly ProcessingTranscriptItem[];
+};
+
+function processTrail(
+  timeline: readonly ToolTimelineEntry[],
+  transcript: readonly ProcessingTranscriptItem[]
+): TurnProcessTrail | null {
+  if (timeline.length === 0 && transcript.length === 0) return null;
+  // Prefer the transcript's own length when it has one: it is the ordered
+  // record of what happened. A legacy snapshot with tool rows but no transcript
+  // still has a step per row.
+  const steps = transcript.length > 0 ? transcript.length : timeline.length;
+  return { steps, tools: timeline.length, timeline, transcript };
 }
 
 function stringArray(value: unknown): string[] {
@@ -382,7 +540,17 @@ export function toThreadMessageLike(
     ...(msg.sender === 'agent' && msg.extraMetadata?.stopped === true
       ? { status: { type: 'incomplete' as const, reason: 'cancelled' as const } }
       : {}),
-    metadata: { custom: { extraMetadata: msg.extraMetadata ?? {}, sourceType: msg.type } },
+    metadata: {
+      custom: {
+        extraMetadata: msg.extraMetadata ?? {},
+        sourceType: msg.type,
+        // The settled turn's one-line footer + the trail its click opens.
+        // Only on the assistant side: a user message has no process behind it.
+        ...(msg.sender === 'agent'
+          ? { processTrail: processTrail(effectiveTimeline, transcript) }
+          : {}),
+      },
+    },
   };
 
   conversionCache.set(msg, { timeline, transcript, converted });
@@ -401,21 +569,27 @@ export function toThreadMessageLike(
 export function streamingTailMessage(
   streaming: StreamingAssistantState | null,
   timeline: readonly ToolTimelineEntry[] = EMPTY_TIMELINE,
-  transcript: readonly ProcessingTranscriptItem[] = EMPTY_TRANSCRIPT
+  transcript: readonly ProcessingTranscriptItem[] = EMPTY_TRANSCRIPT,
+  approval: PendingApproval | null = null
 ): ThreadMessageLike | null {
-  if (!streaming && timeline.length === 0 && transcript.length === 0) return null;
+  if (!approval && !streaming && timeline.length === 0 && transcript.length === 0) return null;
   const text = streaming?.content ?? '';
-  const parts = assistantParts(text, timeline, transcript);
-  if (streaming?.thinking.trim()) {
-    const hasTranscriptThinking = transcript.some(item => item.kind === 'thinking');
-    if (!hasTranscriptThinking) parts.unshift({ type: 'reasoning', text: streaming.thinking });
-  }
+  // `streaming.thinking` is deliberately not projected: reasoning does not
+  // render on the main surface any more. While the turn runs, `RunningStatus`
+  // is the in-flight signal; the thinking itself is in `processingByThread`
+  // and reachable through the rail. See `assistantParts`.
+  let parts = assistantParts(text, timeline, transcript);
+  if (approval) parts = withApproval(parts, approval);
   if (parts.length === 0) return null;
   return {
     id: STREAMING_TAIL_ID,
     role: 'assistant',
     content: parts,
-    status: { type: 'running' },
+    // A parked gate is not a running turn: it is a turn stopped on the user.
+    // `requires-action` is what gives the gated tool part its own
+    // `requires-action` status (a tool part with no result inherits the
+    // message's), which is the state assistant-ui renders a decision on.
+    status: approval ? { type: 'requires-action', reason: 'interrupt' } : { type: 'running' },
     metadata: { custom: { requestId: streaming?.requestId, streaming: true } },
   };
 }
@@ -423,6 +597,12 @@ export function streamingTailMessage(
 export type AssistantUiProjection = {
   /** Whether the synthetic live tail has an active core turn driving it. */
   isRunning?: boolean;
+  /**
+   * The thread's parked ApprovalGate request, if any. Present means the turn is
+   * blocked on the user, and the tail is minted even when nothing else would
+   * mint one — a parked gate with no prompt is the failure mode this closes.
+   */
+  pendingApproval?: PendingApproval | null;
   liveTimeline?: readonly ToolTimelineEntry[];
   liveTranscript?: readonly ProcessingTranscriptItem[];
   turnTimelines?: Readonly<Record<string, readonly ToolTimelineEntry[]>>;
@@ -442,6 +622,10 @@ export function buildRuntimeMessages(
   streaming: StreamingAssistantState | null,
   projection: AssistantUiProjection = {}
 ): ThreadMessageLike[] {
+  // A parked approval outranks the lifecycle: `chat_done` has not fired (the
+  // turn is stopped, not finished), but a snapshot race that reports the turn
+  // settled must not swallow the only surface that can unblock it.
+  const pendingApproval = projection.pendingApproval ?? null;
   const coalescedMessages = coalesceAssistantSegments(messages);
   const out: ThreadMessageLike[] = [];
   const claimedRequestIds = new Set(
@@ -497,8 +681,12 @@ export function buildRuntimeMessages(
     // indexed into the request maps. Keep the just-settled tools/reasoning on
     // the final assistant message during that handoff; never mint a running
     // synthetic tail for them.
+    // Not while a gate is parked: the tail below is minted unconditionally in
+    // that case and would emit the same rows a second time, and a repeated
+    // `toolCallId` throws inside assistant-ui rather than dropping a row.
     const useSettledLiveFallback =
       projection.isRunning === false &&
+      !pendingApproval &&
       msg.id === lastVisibleAgentId &&
       !persistedTimeline &&
       !persistedTranscript;
@@ -515,12 +703,13 @@ export function buildRuntimeMessages(
     );
   }
   const tail =
-    projection.isRunning === false
+    projection.isRunning === false && !pendingApproval
       ? null
       : streamingTailMessage(
           streaming,
           projection.liveTimeline ?? EMPTY_TIMELINE,
-          projection.liveTranscript ?? EMPTY_TRANSCRIPT
+          projection.liveTranscript ?? EMPTY_TRANSCRIPT,
+          pendingApproval
         );
   if (tail) out.push(tail);
   return out;

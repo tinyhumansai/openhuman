@@ -35,7 +35,10 @@ pub(crate) struct ChannelRuntimeContext {
     pub(crate) default_provider: Arc<String>,
     pub(crate) memory: Arc<crate::openhuman::memory::guard::MemoryGuard>,
     pub(crate) tools_registry: Arc<Vec<Box<dyn Tool>>>,
-    pub(crate) system_prompt: Arc<String>,
+    /// Seeds every turn's history. Production uses the refreshing variant so
+    /// the active profile and identity-file edits reach the next message
+    /// (#6027, #6028); tests pin a fixed literal.
+    pub(crate) system_prompt: super::ChannelSystemPrompt,
     pub(crate) model: Arc<String>,
     pub(crate) temperature: f64,
     pub(crate) auto_save_memory: bool,

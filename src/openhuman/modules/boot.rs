@@ -87,6 +87,16 @@ pub async fn load_declared_modules(config: &Config) {
                 "[modules] eager module '{}' did not load: {reason}",
                 record.id
             );
+            continue;
+        }
+        // The first retrieval after boot pays the Python server start, the
+        // model load and the embedder's first connection — several seconds the
+        // user's first question would otherwise wait on, or lose its memory
+        // block to. Pay it now, off the request path (#6040).
+        if record.id == super::memory::MODULE_ID {
+            crate::openhuman::memory::auto_recall::warm::spawn_at_boot(std::sync::Arc::new(
+                config.clone(),
+            ));
         }
     }
 }

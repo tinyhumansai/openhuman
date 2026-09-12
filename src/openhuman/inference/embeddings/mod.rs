@@ -54,14 +54,11 @@ pub use factory::{
 // warning. Pre-dates #5560; fixed here because the line next to it moved.
 #[cfg(feature = "modules")]
 pub(crate) use factory::MODELS_SUPPORTING_DIMENSIONS;
-// Its sole caller through this re-export is `memory::host_impls`, which is
-// gated on `memory-engine-seams` since the engine crates left the product
-// build (#5560) — so the re-export is too, or the product lane fails on
-// `-D warnings`. The
-// function itself is not test-only: `factory` and `embeddings::rpc` both reach
-// it directly through `super::factory::`, which is why only the re-export moves.
-#[cfg(any(test, feature = "memory-engine-seams"))]
-pub(crate) use factory::model_supports_dimensions;
+// `model_supports_dimensions` used to be re-exported here beside it, for
+// `memory::host_impls`. That file is gone with the in-process engine
+// (openhuman#6161), and so is the re-export — the function is not test-only,
+// and `factory` and `embeddings::rpc` both reach it directly through
+// `super::factory::`, so nothing else had to move.
 // #002 FR-015: the memory-tree OpenAI-compat embedder reuses the same key
 // resolution the embeddings RPC uses, so there is one source of truth.
 pub use noop::NoopEmbedding;
@@ -69,12 +66,13 @@ pub use provider_trait::{
     format_embedding_signature, EmbeddingProvider, TinyAgentsEmbeddingProvider,
 };
 pub use rpc::provider_from_config;
-// Reached through this re-export by `modules::memory_host` (serving the seam
-// over the bus) and by `memory::host_impls` (serving it in-process, and
-// gated on `memory-engine-seams` since #5560). `embeddings::rpc` itself names
-// the function
-// through `super::rpc`, not through here, so this gate does not narrow it.
-#[cfg(any(test, feature = "modules", feature = "memory-engine-seams"))]
+// Reached through this re-export by `modules::memory_host`, which serves the
+// seam over the bus. `memory::host_impls` served the same seam in-process and
+// reached it the same way, until the in-process engine left the test build too
+// (openhuman#6161) and took that file with it. `embeddings::rpc` itself names
+// the function through `super::rpc`, not through here, so this gate does not
+// narrow it.
+#[cfg(any(test, feature = "modules"))]
 pub(crate) use rpc::resolve_api_key;
 pub use schemas::{
     all_controller_schemas as all_embeddings_controller_schemas,

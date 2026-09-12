@@ -75,16 +75,69 @@ pub struct Agent {
     /// set per turn (issue #4249, Phase 3 / Motion A). Replaces the raw
     /// `Arc<dyn Provider>`; the harness names crate model types only.
     pub(super) turn_model_source: TurnModelSource,
-    /// Full tool registry. Sub-agents pull from this via
-    /// [`ParentExecutionContext::all_tools`].
+    /// Durable tool registry — everything the session was built with.
+    /// Sub-agents pull from this via [`ParentExecutionContext::all_tools`].
+    ///
+    /// Fixed for the life of the agent: the synthesised delegation surface,
+    /// which *does* change mid-session, lives in [`Self::synthesized_tools`]
+    /// instead. See that field for why.
     pub(super) tools: Arc<Vec<Box<dyn Tool>>>,
-    /// Full tool specs — sub-agents receive these via
-    /// [`ParentExecutionContext::all_tool_specs`].
-    pub(super) tool_specs: Arc<Vec<ToolSpec>>,
+    /// The delegation tools synthesised for the current connection set —
+    /// `delegate_<toolkit>` skill tools and archetype delegates, produced by
+    /// [`crate::openhuman::tools::orchestrator_tools::collect_orchestrator_tools`].
+    ///
+    /// Held apart from [`Self::tools`] because it is the only part of the
+    /// surface that changes mid-session, and `Box<dyn Tool>` is not cloneable:
+    /// reconciling it *inside* `tools` meant `Arc::get_mut`, which fails
+    /// whenever any reader holds a clone — in practice a detached sub-agent's
+    /// cloned `ParentExecutionContext`, which outlives the turn that spawned
+    /// it. The old code then reconciled `tool_specs` anyway and left the
+    /// instances as they were, so the two halves drifted (#6145): a newly
+    /// connected toolkit's delegate had a spec but no instance — and, the
+    /// policy snapshot being built from the instances, no decision either, so
+    /// the fail-closed visibility filter silently hid it until a unique-owner
+    /// refresh — while a revoked toolkit's delegate lost its spec but stayed
+    /// registered, advertised through its adapter, and callable.
+    ///
+    /// Because these instances are regenerated from scratch on every refresh,
+    /// this `Arc` can always be *replaced* wholesale — no unique ownership
+    /// required, so reconciliation cannot fail. Readers holding the previous
+    /// `Arc` keep a consistent view for the rest of their turn, and the
+    /// superseded instances are freed once the last of them drops.
+    ///
+    /// Disjoint from [`Self::tools`] by construction: a synthesised tool whose
+    /// name a durable tool owns is dropped at build time and on every refresh
+    /// (`builder::drop_synthesized_name_collisions`), so the durable tool wins
+    /// on every surface. Every reader enumerates `tools` first and this set
+    /// second — [`Self::tool_specs`], [`Self::all_tool_refs`], turn dispatch —
+    /// so a name resolves in the same order everywhere. Empty for agents that
+    /// do not delegate.
+    pub(super) synthesized_tools: Arc<Vec<Box<dyn Tool>>>,
+    /// Full tool specs: [`Self::tools`]' specs first, then the synthesised
+    /// half, which [`Agent::refresh_delegation_tools`] swaps in place.
+    ///
+    /// The leaves are `Arc<ToolSpec>` and are **shared** with
+    /// [`Self::durable_tool_specs`] and [`Self::visible_tool_specs`]: all three
+    /// views point at the same schema objects, so a JSON-Schema `parameters`
+    /// value is resident once per agent rather than three times
+    /// (openhuman#6218 — it was ~1.1 MiB of the ~2.5 MiB a live agent cost).
+    /// `refresh_delegation_tools` preserves that: `Arc::make_mut` clones the
+    /// vector of pointers, never the schemas behind them. Anything that
+    /// rebuilds an entry instead of cloning its `Arc` silently reintroduces the
+    /// copy, which is why
+    /// `builder_tests::part_01_tests::the_three_spec_views_share_their_leaf_schemas`
+    /// asserts pointer identity rather than equal contents.
+    pub(super) tool_specs: Arc<Vec<Arc<ToolSpec>>>,
+    /// The specs of [`Self::tools`] alone, index for index. Sub-agents receive
+    /// these via [`ParentExecutionContext::all_tool_specs`] beside
+    /// [`Self::tools`], so a child's spec list can never name a synthesised
+    /// delegate it holds no instance for (#4452). Fixed for the life of the
+    /// agent, like the registry it describes.
+    pub(super) durable_tool_specs: Arc<Vec<Arc<ToolSpec>>>,
     /// Tool specs filtered by the visible-tool allowlist and session
     /// permission policy. These are the specs actually sent to the
     /// provider in the main agent's chat requests.
-    pub(super) visible_tool_specs: Arc<Vec<ToolSpec>>,
+    pub(super) visible_tool_specs: Arc<Vec<Arc<ToolSpec>>>,
     /// When non-empty, only these tool names are visible in the main
     /// agent's prompt and callable by the main agent. Sub-agents intersect
     /// their per-definition scopes with the effective parent-visible set.
@@ -102,6 +155,10 @@ pub struct Agent {
     /// experience recall can merge unstamped legacy guidance. `None` for the
     /// shared/default memory path.
     pub(super) shared_experience_memory: Option<Arc<dyn Memory>>,
+    /// Lane C — the gated pre-turn recall of facts about the user (#6040).
+    /// `None` when the session was built without a memory binding (tests,
+    /// embedders that bring their own `Memory`); the lane then stays silent.
+    pub(super) auto_recall: Option<Arc<crate::openhuman::memory::auto_recall::AutoRecall>>,
     // `Arc` (not `Box`) so the tinyagents turn path can hold a cheap clone of
     // the dispatcher without borrowing the `Agent` while session state mutates.
     pub(super) tool_dispatcher: Arc<dyn ToolDispatcher>,
@@ -427,41 +484,27 @@ pub struct Agent {
     /// closest available signal to "session is ending") to finalize the
     /// trailing open segment with an LLM recap + embedding.
     pub(super) archivist_hook: Option<Arc<ArchivistHook>>,
-    /// Names of every tool currently in [`Agent::tools`] that was
+    /// Names of every tool currently in [`Agent::synthesized_tools`] — those
     /// produced by [`crate::openhuman::tools::orchestrator_tools::collect_orchestrator_tools`]
     /// (i.e. `delegate_<toolkit>` skill tools and archetype-delegation
     /// tools like `delegate_archivist`). Tracked so
     /// [`Agent::refresh_delegation_tools`] can drop the entire
-    /// previously-synthesised subset on each refresh and append the
-    /// fresh set — without that mask we'd risk either leaking stale
-    /// `delegate_<toolkit>` entries on revoke or accidentally removing
+    /// previously-synthesised subset of [`Agent::tool_specs`] on each refresh
+    /// and append the fresh set — without that mask we'd risk either leaking
+    /// stale `delegate_<toolkit>` specs on revoke or accidentally removing
     /// direct tools (`query_memory`, `cron_add`, …) that share a name
     /// prefix.
     ///
-    /// Populated by `refresh_delegation_tools` itself; empty at
-    /// construction time.
+    /// Seeded by [`AgentBuilder::build`] from the set handed to
+    /// [`AgentBuilder::synthesized_tools`], then replaced by
+    /// `refresh_delegation_tools` on every refresh.
     ///
-    /// Invariant: this tracks the names whose **`tool_specs`** are currently
-    /// live. `tool_specs` reconcile on every refresh (they're cloneable
-    /// data), so this set always equals the most recent synthesised set —
-    /// even when the executable `tools` Vec could not be reconciled because
-    /// its `Arc` was shared. Removing stale `tools` entries is tracked
-    /// separately by [`Self::pending_synthesized_tools_mask`].
+    /// Invariant: this set is the name mask for **both** [`Self::tool_specs`]'
+    /// synthesised half and [`Self::synthesized_tools`], which reconcile
+    /// together on every refresh. There is no longer a case where one advances
+    /// without the other — the schema and the executable instances cannot
+    /// drift (#6145).
     pub(super) synthesized_tool_names: std::collections::HashSet<String>,
-    /// Names of synthesised tool *instances* still present in [`Agent::tools`]
-    /// that a future unique-owner refresh must drop.
-    ///
-    /// When `refresh_delegation_tools` updates `tool_specs` but cannot
-    /// reconcile `tools` (the `Arc` is shared — the normal case while
-    /// `AgentToolSource` holds a clone during `before_dispatch`), the
-    /// previously-synthesised tool objects remain in `tools`. Their names are
-    /// accumulated here so the next refresh that *does* own `tools` uniquely
-    /// removes them — instead of overloading `synthesized_tool_names` (which
-    /// must stay in sync with `tool_specs`) and corrupting the spec
-    /// reconciliation on the following refresh (duplicate `ToolSpec`s, #3044).
-    ///
-    /// Empty at construction time and whenever `tools` is fully reconciled.
-    pub(super) pending_synthesized_tools_mask: std::collections::HashSet<String>,
     /// Overrides applied to the **next** [`Agent::turn`] call, then reset.
     ///
     /// Defaults to [`TurnOverrides::default`] (no suppression), so an agent
@@ -476,6 +519,9 @@ pub struct Agent {
 pub struct AgentBuilder {
     pub(super) turn_model_source: Option<TurnModelSource>,
     pub(super) tools: Option<Vec<Box<dyn Tool>>>,
+    /// Delegation tools synthesised for the session's initial connection set.
+    /// Held in [`Agent::synthesized_tools`], never inside [`Agent::tools`].
+    pub(super) synthesized_tools: Option<Vec<Box<dyn Tool>>>,
     /// When set, restricts which tools the main agent sees/calls.
     pub(super) visible_tool_names: Option<std::collections::HashSet<String>>,
     /// Optional explicit profile ceiling for tools delegated agents may inherit.
@@ -483,6 +529,8 @@ pub struct AgentBuilder {
     pub(super) subagent_tool_ceiling_names: Option<std::collections::HashSet<String>>,
     pub(super) memory: Option<Arc<dyn Memory>>,
     pub(super) shared_experience_memory: Option<Arc<dyn Memory>>,
+    /// Forwarded to [`Agent::auto_recall`] at build time. Defaults to `None`.
+    pub(super) auto_recall: Option<Arc<crate::openhuman::memory::auto_recall::AutoRecall>>,
     pub(super) prompt_builder: Option<SystemPromptBuilder>,
     pub(super) tool_dispatcher: Option<Box<dyn ToolDispatcher>>,
     pub(super) config: Option<crate::openhuman::config::AgentConfig>,

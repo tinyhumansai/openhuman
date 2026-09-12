@@ -8,7 +8,7 @@ use tinymemory_api::capabilities::{Capabilities, Capability};
 /// Checked against the registry pin by `the_capability_list_matches_the_pinned_release`,
 /// so bumping the pin without re-reading the list is a red test rather than a
 /// silent over-claim.
-pub(crate) const ARTIFACT_CAPABILITIES_PIN: &str = "1.13.8";
+pub(crate) const ARTIFACT_CAPABILITIES_PIN: &str = "1.16.0";
 
 /// The capability families the **pinned artifact** actually serves.
 ///
@@ -74,6 +74,32 @@ pub(crate) const ARTIFACT_CAPABILITIES: &[Capability] = &[
     // and embedder identification, served by the module's engine and forwarded
     // by `MemoryScoring for ModuleMemoryProvider` below.
     Capability::Scoring,
+    // Re-read at tag `v1.15.1` (tinymemory#142), one commit past v1.15.0. The
+    // CortexDB adapter now asks `v1/scopes/list` for every scope instead of
+    // accepting the engine's undocumented first fifty, which had been
+    // truncating namespace enumeration — a live instance holding 93 listed 50,
+    // and everything downstream of `namespace_summaries` reported success on
+    // the subset. Behaviour inside a hosted adapter, not the module's surface:
+    // `git diff v1.15.0..v1.15.1 -- crates/tinymemory-api/src/capabilities.rs
+    // crates/tinymemory-bus/src/capabilities.rs crates/tinymemory-bus/src/names.rs`
+    // is empty and `crates/tinymemory-module/` moves only its `Cargo.lock`, so
+    // the module declares the same members it did and the list below is
+    // unchanged — only the pin advances.
+    //
+    // Re-read at tag `v1.15.0` (tinymemory#141, openhuman#6025). The connector
+    // sink now embeds a whole `accept_source_items` batch together and the
+    // vendored engine claims a due `reembed_backfill` ahead of the extraction
+    // backlog (tinycortex#168). Behaviour inside `Sources`/`Maintenance`, no
+    // new bus member and no new family: `git diff v1.14.1..v1.15.0 --
+    // crates/tinymemory-bus/src/capabilities.rs crates/tinymemory-bus/src/names.rs`
+    // is empty, so the list below is unchanged and only the pin moves.
+    //
+    // Re-read at tag `v1.14.1` (tinymemory#136 + #137, openhuman#6012). It adds a bus
+    // *member*, `BackfillConnectorTrees`, and no capability: `Capability` is the
+    // family enum, and the member is a method inside `Maintenance`, which this
+    // build already advertises. `git diff v1.13.8..v1.14.1 --
+    // crates/tinymemory-bus/src/capabilities.rs` is empty, so nothing below moves.
+    //
     // Re-read at tag `v1.13.8` (tinymemory#134, openhuman#6007): the connector
     // sync path now routes its items into the memory-tree ingest funnel, and
     // `forget_source` sweeps the per-item tree rows it creates. Behaviour inside
@@ -152,8 +178,9 @@ use tinymemory_api::provider::sync::{
     SyncRunOutcome,
 };
 use tinymemory_api::provider::types::{
-    ChunkEntityOccurrence, DiffReport, EntityHit, EntityOccurrence, ExportPage, ExportRecord,
-    FlushOutcome, ForgetOutcome, ForgetSelector, ImportOutcome, IngestItem, IngestOutcome,
+    BackfillTreesOutcome, BackfillTreesRequest, ChunkEntityOccurrence, DiffReport, EntityHit,
+    EntityOccurrence, ExportPage, ExportRecord, FlushOutcome, ForgetOutcome, ForgetSelector,
+    ImportOutcome, IngestItem, IngestOutcome,
     MaintenanceReport, PurgeOutcome, QueueFailure, QueueStats, ResetOutcome, SnapshotRef,
     SourceItem, SourceScope, StoreStats,
 };
@@ -335,6 +362,9 @@ const BOUNDED_READ_OPERATIONS: &[&str] = &[
     "runtime_tree_status",
     "score_person",
     "search_entities",
+    // #6186. Selects closed segments with no summary; it writes nothing.
+    // The write it leads to is `set_segment_summary`, classified separately.
+    "segments_pending_summary",
     "session_turns",
     "snapshots",
     "source_ingest_status",

@@ -48,7 +48,7 @@ GATE=1
 # Idle CPU is measured over a 10s parked window and should be ~flat
 # regardless of agent count (idle agents cost ~zero CPU). 500ms of CPU
 # across that window (5% of one core) is the "low" threshold used in the
-# PASS/FAIL verdict line; see docs/library-benchmarking.md.
+# PASS/FAIL verdict line.
 IDLE_CPU_MS_MAX=500
 
 usage() {

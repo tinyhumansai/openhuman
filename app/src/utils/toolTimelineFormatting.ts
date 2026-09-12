@@ -179,7 +179,13 @@ const TOOL_CATEGORIES: Record<string, ToolCategory> = {
   apply_patch: 'write',
   grep: 'search',
   glob: 'search',
+  // `web_search_tool` is the runtime tool name; `web_search` is only the UI
+  // toggle id the core expands from (`tools/user_filter.rs:79-80`, and
+  // `test/e2e/specs/harness-search-tool-flow.spec.ts:10` says so outright).
+  // Both are mapped: the toggle id never reaches a timeline row, but leaving
+  // it out would break any older snapshot that recorded the alias.
   web_search: 'search',
+  web_search_tool: 'search',
   gitbooks_search: 'search',
   gitbooks_get_page: 'read',
   shell: 'run',
@@ -476,7 +482,7 @@ const MAX_SEARCH_PROVIDER_LENGTH = 32;
  * Extract the resolved search provider from a completed web-search result.
  * Every search engine tags its output with a `(via <Provider>)` marker on the
  * heading line (managed resolves to "Exa" by default, or to whatever the
- * backend reports; BYOK engines tag "Brave"/"Querit"/"Seltz"). Reading it back
+ * backend reports; BYOK engines tag "Brave"/"Querit"/"Seltz"/"Tavily"). Reading it back
  * keeps the timeline attribution dynamic: it is driven by what actually ran,
  * never by a hardcoded provider name (#5136).
  *

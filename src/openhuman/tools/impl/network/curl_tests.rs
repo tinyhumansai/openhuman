@@ -226,3 +226,32 @@ async fn execute_rejects_allowlist_miss() {
     assert!(result.is_error);
     assert!(result.output().contains("allowed websites"));
 }
+
+/// The downloads root cannot be created (a plain file already occupies its
+/// path) — `create_dir_all` must be reported as a tool error, never a panic,
+/// and no network request is attempted before that check runs. The URL uses
+/// a public IPv4 literal (never actually contacted — `create_dir_all` fails
+/// and returns before any HTTP client is built) so `validate_url_with_dns_check`
+/// takes its IP-literal short-circuit and this test needs no live DNS.
+#[tokio::test]
+async fn execute_reports_a_create_dir_all_failure_rather_than_panicking() {
+    let tmp = TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("downloads"), b"not a directory").unwrap();
+    let t = tool(&tmp, vec!["8.8.8.8"]);
+    let result = t
+        .execute(serde_json::json!({"url": "https://8.8.8.8/x", "dest_path": "sub/file.txt"}))
+        .await
+        .unwrap();
+    assert!(
+        result.is_error,
+        "an unwritable downloads root must be reported, not panic: {}",
+        result.output()
+    );
+    assert!(
+        result
+            .output()
+            .contains("Failed to create destination directory"),
+        "must fail at the create_dir_all step specifically, not e.g. DNS resolution: {}",
+        result.output()
+    );
+}

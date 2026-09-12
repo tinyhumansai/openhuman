@@ -52,7 +52,7 @@ fn runtime_context() -> ChannelRuntimeContext {
         default_provider: Arc::new("default".into()),
         memory: crate::openhuman::memory::guard::in_memory::FixedRecallProvider::guarded(Vec::new()),
         tools_registry: Arc::new(vec![Box::new(DummyTool) as Box<dyn Tool>]),
-        system_prompt: Arc::new("prompt".into()),
+        system_prompt: crate::openhuman::channels::ChannelSystemPrompt::fixed("prompt"),
         model: Arc::new("model".into()),
         temperature: 0.0,
         auto_save_memory: false,

@@ -147,6 +147,29 @@ pub fn class_from_key(key: &str) -> Option<FacetClass> {
     }
 }
 
+/// Validate a caller-supplied class **name** against the facet taxonomy.
+///
+/// The learning RPC handlers and agent tools take `class` as a bare taxonomy
+/// name (`"style"`, `"goal"`, …), not a full key. Reuse [`class_from_key`],
+/// which matches on the first `/`-segment, so a bare name is validated as its
+/// own prefix and an unknown name is rejected with a caller-facing error rather
+/// than silently composing a key no facet can ever carry.
+pub(crate) fn parse_facet_class_name(class: &str) -> Result<FacetClass, String> {
+    // A taxonomy name never contains a `/`. Reject one up front so a value like
+    // `"style/"` (which `class_from_key` would accept via its first segment,
+    // then compose into a key no facet can carry) fails loudly instead of
+    // reintroducing the silent-empty behaviour this fix removes.
+    let invalid = || {
+        format!(
+            "invalid class `{class}` (expected one of style, identity, tooling, veto, goal, channel)"
+        )
+    };
+    if class.contains('/') {
+        return Err(invalid());
+    }
+    class_from_key(class).ok_or_else(invalid)
+}
+
 /// Delete every non-`Pinned` facet, returning `(deleted, pinned_preserved)`.
 ///
 /// Shared by the `learning.reset_cache` RPC and the `learning_reset_cache`

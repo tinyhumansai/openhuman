@@ -1,5 +1,6 @@
-import type { ToolCallMessagePartComponent } from '@assistant-ui/react';
+import type { ToolCallMessagePart, ToolCallMessagePartProps } from '@assistant-ui/react';
 import { CheckIcon, ChevronDownIcon, CircleXIcon, Loader2Icon, WrenchIcon } from 'lucide-react';
+import type { FC, ReactNode } from 'react';
 
 import { cn } from '../../../components/assistant-ui/lib/utils';
 import {
@@ -98,6 +99,17 @@ function inferredToolLabel(toolName: string, running: boolean, args: unknown, re
   return formatToolName(toolName);
 }
 
+/**
+ * Is this approval still the user's to answer?
+ *
+ * A resolved one keeps its `approval` object (with `approved` / `resolution`
+ * filled in) so the transcript can show what was decided — offering the buttons
+ * again would let a second decision race the first.
+ */
+export function isApprovalPending(approval: ToolCallMessagePart['approval']): boolean {
+  return approval != null && approval.approved === undefined && approval.resolution === undefined;
+}
+
 export interface AssistantUiToolCallCardProps {
   toolName: string;
   args?: unknown;
@@ -108,6 +120,14 @@ export interface AssistantUiToolCallCardProps {
   detail?: string;
   elapsedMs?: number;
   failure?: ToolFailureExplanation;
+  /**
+   * The call is parked on the user — an ApprovalGate request, or a sub-agent
+   * that asked a question. Renders as in-flight (it *is* unfinished) but says
+   * what it is actually waiting for.
+   */
+  awaitingUser?: boolean;
+  /** Decision row / connect affordance, rendered under the call's header. */
+  footer?: ReactNode;
 }
 
 /** The single assistant-ui tool-call presentation used at every nesting level. */
@@ -121,10 +141,12 @@ export function AssistantUiToolCallCard({
   detail,
   elapsedMs,
   failure,
+  awaitingUser = false,
+  footer,
 }: AssistantUiToolCallCardProps) {
-  const running = status
-    ? status === 'running' || status === 'awaiting_user'
-    : result === undefined;
+  const running =
+    awaitingUser ||
+    (status ? status === 'running' || status === 'awaiting_user' : result === undefined);
   const input = hasDisplayValue(args) ? args : parsedValue(argsText ?? '');
   const output = result === '' && status && !running ? 'No output' : parsedValue(result);
   const suppliedLabel = displayName?.trim();
@@ -132,12 +154,15 @@ export function AssistantUiToolCallCard({
     suppliedLabel && suppliedLabel.toLowerCase() !== 'tool'
       ? suppliedLabel
       : inferredToolLabel(toolName, running, args, result);
+  // `awaiting input` was previously reachable only via `status`, which the
+  // adapter forwards for `error` / `cancelled` alone — so the label could never
+  // render for the case it was written for. A parked call now says so.
   const statusLabel =
     status === 'error'
       ? 'failed'
       : status === 'cancelled'
         ? 'cancelled'
-        : status === 'awaiting_user'
+        : awaitingUser || status === 'awaiting_user'
           ? 'awaiting input'
           : running
             ? 'running'
@@ -154,6 +179,7 @@ export function AssistantUiToolCallCard({
       data-slot="aui_openhuman-tool-call"
       data-testid="assistant-ui-tool-call"
       defaultOpen={running}
+      data-awaiting-user={awaitingUser ? 'true' : undefined}
       className={cn(
         'border-border/60 dark:border-muted-foreground/15 rounded-xl border',
         running && 'border-dashed'
@@ -188,6 +214,10 @@ export function AssistantUiToolCallCard({
           <ToolFailureLines failure={failure} />
         </div>
       ) : null}
+      {/* Outside `CollapsibleContent` on purpose: a decision the turn is
+          blocked on must not be hidden behind a disclosure the user has to
+          find and open. */}
+      {footer}
       <CollapsibleContent className="space-y-2 px-3 pb-3">
         {hasDisplayValue(input) ? (
           <div data-testid="assistant-ui-tool-input">
@@ -235,7 +265,24 @@ function toolStatusEnvelope(
     : undefined;
 }
 
-export const OpenHumanToolCall: ToolCallMessagePartComponent = props => {
+/**
+ * One tool call in the assistant-ui transcript.
+ *
+ * `approval` is supplied by assistant-ui on every tool part; this component used
+ * to destructure four fields and drop the rest, which is why a parked call
+ * rendered as an ordinary running one with no way to answer it.
+ *
+ * The decision surface itself is passed in rather than built here. It is
+ * `ApprovalRequestCard`, which needs the thread id and the store's
+ * `PendingApproval` — neither of which belongs in this file, and both of which
+ * `ChatToolParts` already resolves for the `composio_connect` route.
+ */
+export const OpenHumanToolCall: FC<
+  ToolCallMessagePartProps & {
+    /** Decision surface for a parked call; rendered under the call's header. */
+    approvalCard?: ReactNode;
+  }
+> = props => {
   const envelope = toolStatusEnvelope(props.result);
   return (
     <AssistantUiToolCallCard
@@ -245,6 +292,8 @@ export const OpenHumanToolCall: ToolCallMessagePartComponent = props => {
       result={envelope ? envelope.value : props.result}
       status={envelope?.status}
       failure={envelope?.failure}
+      awaitingUser={isApprovalPending(props.approval)}
+      footer={props.approvalCard}
     />
   );
 };

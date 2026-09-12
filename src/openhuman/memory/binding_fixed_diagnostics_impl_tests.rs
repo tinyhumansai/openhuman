@@ -22,6 +22,7 @@ impl FixedDiagnostics {
             queue,
             failure: None,
             backfill: false,
+            backfill_trees: Default::default(),
             flush: Default::default(),
             reset: Default::default(),
             retry_calls: std::sync::atomic::AtomicUsize::new(0),
@@ -39,6 +40,18 @@ impl FixedDiagnostics {
     /// Report a backfill running in this driver's process.
     pub(crate) fn backfilling(mut self) -> Self {
         self.backfill = true;
+        self
+    }
+
+    /// Answer [`MemoryMaintenance::backfill_connector_trees`] with `outcome`.
+    ///
+    /// Named apart from [`Self::backfilling`], which sets the unrelated
+    /// `backfill_in_progress` flag.
+    pub(crate) fn backfilling_trees(
+        mut self,
+        outcome: crate::openhuman::memory::api::provider::types::BackfillTreesOutcome,
+    ) -> Self {
+        self.backfill_trees = outcome;
         self
     }
 
@@ -191,6 +204,14 @@ impl MemoryMaintenance for FixedDiagnostics {
         &self,
     ) -> Result<crate::openhuman::memory::api::provider::types::FlushOutcome, MemoryError> {
         Ok(self.flush.clone())
+    }
+
+    async fn backfill_connector_trees(
+        &self,
+        _request: crate::openhuman::memory::api::provider::types::BackfillTreesRequest,
+    ) -> Result<crate::openhuman::memory::api::provider::types::BackfillTreesOutcome, MemoryError>
+    {
+        Ok(self.backfill_trees.clone())
     }
 
     async fn reset_derived_index(

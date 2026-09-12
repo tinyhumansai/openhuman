@@ -145,12 +145,49 @@ fn final_probe_dims(model: &str, configured: usize, actual: usize) -> usize {
     }
 }
 
+fn active_custom_profile(
+    config: &Config,
+) -> Option<crate::openhuman::config::schema::CustomEmbeddingsConfig> {
+    let endpoint = config
+        .memory
+        .embedding_provider
+        .strip_prefix("custom:")?
+        .trim();
+    if endpoint.is_empty() {
+        return None;
+    }
+    Some(crate::openhuman::config::schema::CustomEmbeddingsConfig {
+        endpoint: endpoint.to_string(),
+        model: config.memory.embedding_model.clone(),
+        dimensions: config.memory.embedding_dimensions,
+    })
+}
+
+fn remember_active_custom_profile(config: &mut Config) {
+    if let Some(profile) = active_custom_profile(config) {
+        config.custom_embeddings = Some(profile);
+    }
+}
+
 /// Returns the current embedding settings plus the provider catalog.
 pub async fn get_settings(config: &Config) -> Result<RpcOutcome<serde_json::Value>, String> {
     let provider = &config.memory.embedding_provider;
     let model = &config.memory.embedding_model;
     let dimensions = config.memory.embedding_dimensions;
     let rate_limit = config.memory.embedding_rate_limit_per_min;
+
+    // Older configs encode the endpoint only in the active provider string.
+    // Prefer that live value when Custom is selected, and otherwise return the
+    // retained profile so disabling embeddings does not blank the edit form.
+    let custom_settings = active_custom_profile(config)
+        .or_else(|| config.custom_embeddings.clone())
+        .map(|profile| {
+            serde_json::json!({
+                "endpoint": profile.endpoint,
+                "model": profile.model,
+                "dimensions": profile.dimensions,
+            })
+        });
 
     let auth = AuthService::from_config(config);
     let providers: Vec<serde_json::Value> = catalog::all_providers()
@@ -201,6 +238,7 @@ pub async fn get_settings(config: &Config) -> Result<RpcOutcome<serde_json::Valu
         "model": model,
         "dimensions": dimensions,
         "rate_limit_per_min": rate_limit,
+        "custom_settings": custom_settings,
         "providers": providers,
         "vector_search_enabled": vector_search_enabled,
     });
@@ -234,6 +272,11 @@ pub async fn update_settings(
     use crate::openhuman::inference::embeddings::format_embedding_signature;
 
     let mut config = config_rpc::load_config_with_timeout().await?;
+
+    // Upgrade-in-place for users whose endpoint predates the retained Custom
+    // profile: if they disable or switch away now, capture the active profile
+    // before `memory.embedding_provider` is overwritten below.
+    remember_active_custom_profile(&mut config);
 
     let old_sig = format_embedding_signature(
         &config.memory.embedding_provider,
@@ -457,6 +500,12 @@ pub async fn update_settings(
     if let Some(ep) = &custom_endpoint {
         if new_provider == "custom" || new_provider.starts_with("custom:") {
             config.memory.embedding_provider = format!("custom:{ep}");
+            config.custom_embeddings =
+                Some(crate::openhuman::config::schema::CustomEmbeddingsConfig {
+                    endpoint: ep.clone(),
+                    model: new_model.clone(),
+                    dimensions: new_dims,
+                });
         }
     }
 

@@ -216,6 +216,9 @@ fn every_operation_label_is_classified_and_no_mutation_is_a_read() {
         "add_handle_alias",
         "append",
         "append_turn",
+        // openhuman#6012: re-files stored connector documents into the memory
+        // tree, so it writes and must wait rather than answer "still loading".
+        "backfill_connector_trees",
         "bootstrap_connection",
         "capture_snapshot",
         "cascade",

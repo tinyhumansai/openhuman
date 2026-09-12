@@ -104,9 +104,9 @@ fn append_message_is_idempotent_by_message_id() {
 fn append_message_does_not_dedupe_client_generated_ids() {
     // The idempotency lookup is scoped to the ids the core mints
     // deterministically. Client-generated ids are UUID-fresh per message, so
-    // paying a transcript scan to verify that on every append would put a
-    // quadratic write path under the process-wide store lock — the store takes
-    // them at face value instead.
+    // paying a transcript scan to verify that on every append would make the
+    // per-thread write path quadratic — the store takes them at face value
+    // instead.
     let (_temp, store) = make_store();
     store
         .ensure_thread(CreateConversationThread {

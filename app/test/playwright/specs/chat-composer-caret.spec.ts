@@ -1,66 +1,65 @@
 /**
- * Caret position when editing the MIDDLE of composer text.
+ * Caret position while typing in the composer.
  *
- * User report: "in the chat page text field, whenever I type in the middle of
- * already-written text, the caret jumps to the end of the string."
+ * Two user reports, one cause:
+ *   #5893 — typing in the MIDDLE of existing text sent the caret to the end.
+ *   #6163 — typing `hello` into an EMPTY composer produced `holle`, with the
+ *           caret stuck after the first character.
  *
- * # Confirmed, and the root cause is NOT the IME text bridge
+ * # The cause, measured in Chrome against the live app
  *
- * The standing hypothesis was `useComposerTextBridge`
- * (`app/src/components/chat/composer/useComposerTextBridge.ts:43-51`), which
- * calls `aui.composer.setText(value)` without preserving a selection. That is
- * **disproved**: instrumented with a `console.warn` on the line above the
- * `setText` call, the bridge fires **zero** times across a full type-and-edit
- * session. Its `composerText === value` early-return holds on every keystroke,
- * exactly as its own doc comment claims ("a keystroke converges in one pass").
- *
- * The real mechanism, from a `MutationObserver` on the composer subtree:
+ * The composer is a contenteditable `<div>` (`div.aui-lexical-input`,
+ * `role=textbox`, no `value`, no `selectionStart`), so the caret has to be
+ * measured with Selection/Range. A `MutationObserver` on it showed, per
+ * keystroke:
  *
  *   ArrowRight (caret moves, text unchanged) -> []            no mutations
- *   'X'        (text changes)                -> characterData on #text,
+ *   'e'        (text changes)                -> characterData on #text,
  *                                               then childList on DIV
  *                                               {added: 1, removed: 1}
  *
- * The composer is a **contenteditable `<div>`** (`tagName: DIV`,
- * `isContentEditable: true`, `role: textbox`) — it has no `value` and no
- * `selectionStart`, which is why this has to be measured with Selection/Range.
- * The browser inserts the character natively (the `characterData` record), and
- * then the text node is **replaced wholesale** (the `childList` record).
- * Replacing the node destroys the DOM Selection anchored to it, and the browser
- * re-collapses the caret to the end of the content.
+ * That second record is `root.clear()` and a full rebuild inside
+ * `@assistant-ui/react-lexical`'s `SyncPlugin`, and it is reached from the
+ * plugin's *runtime subscription* — the path for an edit made by something
+ * other than the editor. An ordinary keystroke should never take it.
  *
- * # Two host-side suspects, both eliminated by instrumentation
+ * It took it because the host wrote to the composer store too. `thread.tsx`'s
+ * `onInputCapture` bridge read `textContent` and pushed it into the store on a
+ * microtask; Lexical had not reconciled yet, so the store moved `h` -> `he`
+ * through the external path, the plugin read that as a foreign edit, and the
+ * rebuild restored the caret to the offset it captured from the editor state —
+ * which still held `h`. Hence a caret that never advances.
  *
- * 1. `useComposerTextBridge` — probed with an unconditional `console.warn`
- *    immediately above its `aui.composer.setText(value)` call. **Zero** hits
- *    across a full type-and-edit session.
- * 2. `onChange={e => setInputValue(e.target.value)}`
- *    (`app/src/components/chat/ChatComposer.tsx:416`) — replaced with a
- *    complete no-op and the bundle rebuilt. Typing, the text node replacement
- *    and the caret jump were all **unchanged**, so the host's `inputValue`
- *    state is not on the typing path at all.
+ * # Why the earlier conclusion in this file was wrong
  *
- * What remains is assistant-ui's own `ComposerPrimitive.Input`: it owns the
- * composer store during typing (`flushTapSync`), and its re-render is what
- * swaps the text node. The fix therefore belongs at that seam — either
- * preserving the selection across the primitive's render, or keeping the text
- * node stable — not in the two host-side places that look responsible.
+ * A previous revision concluded the defect was inside
+ * `ComposerPrimitive.Input` and that the two host-side suspects were
+ * eliminated. The suspects genuinely were — `useComposerTextBridge` never
+ * fires, and `ChatComposer.tsx`'s `onChange` is not on this path — but both
+ * belong to `ChatComposer`, which `/chat` does not mount at all: `Conversations
+ * .tsx` renders `assistantUiMainPanel`, and the textarea composer lives in
+ * `legacyMainPanel`, reached only in mic-cloud voice mode. The real writer was
+ * never among the suspects being tested.
  *
- * The arrow-key row is the control: caret movement alone causes no re-render,
- * no node replacement, and no caret loss.
+ * # The fix
  *
- * One refinement, measured rather than assumed: **deletion does not lose the
- * caret.** Backspace at offset 5 correctly leaves it at 4 (I predicted 10 and
- * was wrong). So the defect is specific to INSERTION renders, not to every
- * value-changing render — which is a narrower and more useful statement than
- * the mutation trace alone supports.
+ * `thread.tsx` runs that bridge only where Lexical cannot drive the store
+ * itself — feature-detected on `InputEvent.prototype.getTargetRanges`, which
+ * jsdom does not implement and every real browser does. jsdom keeps the bridge
+ * (#5763 gated it rather than deleting it precisely because 54 composer tests
+ * are the only path from a synthetic `input` to the store there); browsers stop
+ * writing, the rebuild stops happening, and the caret survives.
  *
- * # Why no existing test caught it
+ * One measured refinement worth keeping: **deletion never lost the caret.**
+ * Backspace at offset 5 correctly left it at 4. The defect was specific to
+ * INSERTION renders, which is narrower than the mutation trace alone implies.
  *
- * Every composer test in the repo is jsdom. jsdom has no contenteditable
- * selection model, so the caret is unobservable there — and a text-only
- * assertion passes while the bug is live, because a single keystroke still
- * lands in the right place. It is the SECOND keystroke that corrupts the text.
+ * # Why no unit test caught it
+ *
+ * Every composer test in the repo is jsdom, which has no contenteditable
+ * selection model — the caret is unobservable there. Worse, jsdom is exactly
+ * the environment where the bridge is *supposed* to run, so the buggy path
+ * never executes under it. This needs a real browser.
  */
 import { expect, type Locator, type Page, test } from '@playwright/test';
 
@@ -173,16 +172,53 @@ test.describe('Chat composer — caret on mid-string edits', () => {
   });
 
   /**
-   * REPRODUCES THE REPORTED BUG. Marked `test.fail()`.
+   * #6163, and the reason this file needed a second case.
    *
-   * The body asserts the correct behaviour — after inserting one character at
-   * offset 5, the caret belongs at 6. Today it lands at 12, the end of the
-   * string. When this is fixed the test starts passing, Playwright reports
-   * "expected to fail but passed", and the marker has to be removed here.
+   * Every other test here seeds text first, so they all measure a caret that
+   * starts mid-string. The user's report was simpler and worse: typing into an
+   * EMPTY composer. The first character landed, the caret then stopped
+   * advancing, and each subsequent character was inserted at offset 1 —
+   * `h`, `he`, `hle`, `hlle`, `holle`. The text was silently reordered, which
+   * is a data defect, not only a cursor annoyance.
+   *
+   * Typed one key at a time on purpose: a single `type()` call reproduces it,
+   * but per-key assertions are what distinguish "the caret is stuck at 1" from
+   * "the caret jumps to the end", and those two have different causes.
+   */
+  test('typing into an empty composer keeps the caret after the last character', async ({
+    page,
+  }) => {
+    const input = await openChat(page);
+    await input.click();
+    await page.keyboard.press('ControlOrMeta+a');
+    await page.keyboard.press('Delete');
+    await expect.poll(() => composerText(input), { timeout: 15_000 }).toBe('');
+
+    const expected = ['h', 'he', 'hel', 'hell', 'hello'];
+    for (const [index, key] of [...'hello'].entries()) {
+      await page.keyboard.type(key);
+      await page.waitForTimeout(150);
+
+      // Text first: a wrong caret here corrupts the STRING, so this is the
+      // assertion that would have caught `holle`.
+      expect(
+        await composerText(input),
+        `after key ${index + 1} (${key}) the text must be in typed order`
+      ).toBe(expected[index]);
+
+      expect(
+        await caretOffset(input),
+        `after key ${index + 1} (${key}) the caret must sit after it`
+      ).toBe(index + 1);
+    }
+  });
+
+  /**
+   * #5893: inserting one character at offset 5 leaves the caret at 6.
+   *
+   * Before the fix it landed at 12 — the end of `helloX world`.
    */
   test('typing mid-string leaves the caret after the inserted character', async ({ page }) => {
-    test.fail();
-
     const input = await openChat(page);
     await seed(page, input, 'hello world');
 
@@ -203,15 +239,12 @@ test.describe('Chat composer — caret on mid-string edits', () => {
   });
 
   /**
-   * The user-visible consequence, and the test that must stay GREEN so the
-   * `test.fail()` above is not the only record of the defect.
-   *
-   * Because the caret snaps to the end after the first character, the second
-   * character lands at the end too — so "hello world" + "AB" typed at offset 5
-   * produces `helloA worldB` instead of `helloAB world`. This is what the
-   * reporter actually experiences: the text is scrambled, not just the cursor.
+   * The user-visible consequence of the fix: successive mid-string keystrokes
+   * all land in-place. Before the fix the caret snapped to the end after the
+   * first character, so "hello world" + "AB" typed at offset 5 produced
+   * `helloA worldB`; now both characters land at offset 5, giving `helloAB world`.
    */
-  test('CHARACTERISES the bug: a second mid-string keystroke lands at the end', async ({
+  test('successive mid-string keystrokes each land after the previous character', async ({
     page,
   }) => {
     const input = await openChat(page);
@@ -221,14 +254,15 @@ test.describe('Chat composer — caret on mid-string edits', () => {
     await page.keyboard.type('A');
     await page.waitForTimeout(300);
 
-    // Caret has already jumped to the end of 'helloA world'.
-    expect(await caretOffset(input)).toBe(12);
+    // Caret stays right after the inserted 'A' (offset 6).
+    expect(await caretOffset(input)).toBe(6);
 
     await page.keyboard.type('B');
     await page.waitForTimeout(300);
 
-    // Correct behaviour would be 'helloAB world'.
-    expect(await composerText(input)).toBe('helloA worldB');
+    // Both characters land consecutively mid-string, caret after the second.
+    expect(await caretOffset(input)).toBe(7);
+    expect(await composerText(input)).toBe('helloAB world');
   });
 
   /**
@@ -240,10 +274,9 @@ test.describe('Chat composer — caret on mid-string edits', () => {
    * insertion**, not to "any render that changes the value", which is what the
    * mutation trace alone would have suggested.
    *
-   * Whoever fixes this should start from that asymmetry: whatever preserves
-   * the selection across a deletion render is not happening on an insertion
-   * render. This test is the guard that deletion does not regress while
-   * insertion is being fixed.
+   * That asymmetry was the lead that found the cause: deletion does not go
+   * through the host bridge's insertion path, so it never triggered the
+   * external-write rebuild. This test guards it against regressing.
    */
   test('backspace mid-string keeps the caret at the deletion point (contrast case)', async ({
     page,

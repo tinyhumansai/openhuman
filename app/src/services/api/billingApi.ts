@@ -1,4 +1,5 @@
 import type {
+  BillingSummaryData,
   CoinbaseChargeData,
   CurrentPlanData,
   PlanIdentifier,
@@ -12,6 +13,11 @@ import { callCoreCommand } from '../coreCommandClient';
  * Billing API endpoints
  */
 export const billingApi = {
+  /** Get the read-only billing summary and hosted dashboard links. */
+  getSummary: async (): Promise<BillingSummaryData> => {
+    return await callCoreCommand<BillingSummaryData>('openhuman.billing_get_summary');
+  },
+
   /**
    * Get the current user's subscription plan
    * GET /payments/stripe/currentPlan

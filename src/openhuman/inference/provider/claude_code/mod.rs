@@ -48,6 +48,13 @@ pub(crate) static ENV_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(()
 /// parent so the RPC layer and the chat factory agree on the exact path. Falls
 /// back to `~/.openhuman` (then `./.openhuman`) when the config path has no
 /// parent.
+///
+/// **"Workspace" here is provider-local and means the OpenHuman config
+/// directory** (`~/.openhuman` by default) — the parent of `config.config_path`.
+/// It is deliberately *not*
+/// [`crate::openhuman::config::Config::workspace_dir`] (the internal state dir
+/// `~/.openhuman/workspace`) and *not* the user's project root
+/// (`config.action_dir`, where the CLI's file tools run).
 pub fn workspace_dir_from_config(config: &crate::openhuman::config::Config) -> PathBuf {
     config
         .config_path

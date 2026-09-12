@@ -1954,9 +1954,13 @@ async fn inference_provider_factory_and_classifiers_cover_user_state_edges() {
     config.reasoning_provider = None;
     config.memory_provider = None;
     assert_eq!(provider_for_role("chat", &config), "mock:chat-model@0.25");
+    // #6109: `reasoning` is unset, and an unset route no longer borrows a
+    // sibling's BYOK provider. It resolves through `primary_cloud` like every
+    // other unset workload — the same answer `memory` gives just below.
     assert_eq!(
         provider_for_role("reasoning", &config),
-        "mock:chat-model@0.25"
+        "openhuman",
+        "an unset reasoning route must not inherit chat's BYOK provider"
     );
     assert_eq!(provider_for_role("memory", &config), "openhuman");
 }
@@ -3031,6 +3035,7 @@ async fn agent_public_tools_cover_validation_and_metadata_paths() {
         AskClarificationTool, DelegateToPersonalityTool, DelegateTool, RunWorkflowTool, TodoTool,
         RUN_WORKFLOW_TOOL_NAME,
     };
+    use openhuman_core::openhuman::agent::orchestration::tools::DelegationTarget;
     use openhuman_core::openhuman::tools::{ArchetypeDelegationTool, SkillDelegationTool};
 
     let ask = AskClarificationTool::new();
@@ -3079,7 +3084,11 @@ async fn agent_public_tools_cover_validation_and_metadata_paths() {
 
     let archetype = ArchetypeDelegationTool {
         tool_name: "delegate_researcher".into(),
-        agent_id: "researcher".into(),
+        // Constructed explicitly rather than via `.into()`: `DelegationTarget`
+        // exists so a routing target cannot be an anonymous string, and an
+        // ambient `From<&str>` would let any `.into()` mint one silently —
+        // re-opening the hole the newtype was added to close.
+        agent_id: DelegationTarget("researcher".into()),
         tool_description: "Use for research.".into(),
     };
     assert_eq!(
@@ -3155,7 +3164,7 @@ async fn agent_public_tools_cover_validation_and_metadata_paths() {
 
 #[tokio::test]
 async fn agent_preference_tools_tree_loader_and_triage_events_cover_public_edges() {
-    let memory = Arc::new(RecordingMemory::default());
+    let _memory = Arc::new(RecordingMemory::default());
     let security = Arc::new(SecurityPolicy::default());
 
     assert_eq!(FacetClass::parse(" Tooling "), Some(FacetClass::Tooling));

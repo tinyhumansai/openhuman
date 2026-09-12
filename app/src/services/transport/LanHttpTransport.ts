@@ -6,6 +6,7 @@
  */
 import debug from 'debug';
 
+import { redactRpcUrlForLog } from '../../utils/redactRpcUrlForLog';
 import type { CoreTransport } from './CoreTransport';
 
 const log = debug('transport:lan');
@@ -34,7 +35,7 @@ export class LanHttpTransport implements CoreTransport {
     private readonly rpcUrl: string,
     private readonly timeoutMs: number = 10_000
   ) {
-    log('[transport:lan] created rpcUrl=%s', rpcUrl);
+    log('[transport:lan] created rpcUrl=%s', redactRpcUrlForLog(rpcUrl));
   }
 
   async call<T>(

@@ -156,32 +156,77 @@ fn ollama_provider_passes_num_ctx() {
     // E2E suite; here we just confirm the factory doesn't reject it.
 }
 
+// #6109 removed `resolve_byok_fallback_provider_string` along with the chat-tier
+// inheritance it fed. These two cases previously asserted that *local* providers
+// were not eligible to be inherited; they now assert the stronger property that
+// replaced it — an unset route inherits nothing at all — through the public seam.
+
 #[test]
-fn byok_fallback_skips_mlx_and_local_openai() {
+fn unset_route_does_not_inherit_a_local_sibling() {
     let mut config = Config::default();
     config.chat_provider = Some("mlx:llama3".to_string());
     config.reasoning_provider = Some("local-openai:phi3".to_string());
-    // Neither should be picked up as a BYOK fallback
-    let result = resolve_byok_fallback_provider_string(&config);
-    assert!(
-        result.is_none(),
-        "local providers must not be BYOK fallbacks"
+    assert_eq!(
+        provider_for_role("coding", &config),
+        "openhuman",
+        "an unset coding route must fall through to the managed backend"
     );
 }
 
 #[test]
-fn byok_fallback_skips_omlx() {
+fn unset_route_does_not_inherit_omlx() {
     let mut config = Config::default();
     config.chat_provider = Some("omlx:llama3".to_string());
-
-    assert!(
-        resolve_byok_fallback_provider_string(&config).is_none(),
-        "OMLX is a local provider and must not be treated as a BYOK cloud fallback"
-    );
     assert_eq!(
         provider_for_role("coding", &config),
         "openhuman",
-        "unset coding must not inherit chat OMLX as a BYOK fallback"
+        "unset coding must not pick up chat's OMLX route"
+    );
+}
+
+/// The #6109 regression itself: a user who configures exactly one chat-tier
+/// route must not find the other two moved onto it. Before the fix,
+/// `coding_provider` alone re-routed both `chat` and `reasoning` to
+/// `openrouter:zai/glm-4.7` — their ordinary conversations billed to their own
+/// key, with no settings field saying so.
+#[test]
+fn setting_one_chat_tier_route_leaves_its_siblings_on_the_managed_backend() {
+    let mut config = Config::default();
+    config.coding_provider = Some("openrouter:zai/glm-4.7".to_string());
+
+    assert_eq!(
+        provider_for_role("coding", &config),
+        "openrouter:zai/glm-4.7",
+        "the route the user actually set must be honoured"
+    );
+    for sibling in ["chat", "reasoning"] {
+        assert_eq!(
+            provider_for_role(sibling, &config),
+            "openhuman",
+            "`{sibling}` was never configured and must stay on the managed backend, \
+             not inherit the coding route"
+        );
+    }
+}
+
+/// The relation was not even symmetric before the fix: `agentic_provider` was
+/// read as a donor but never received a route. Both directions are now inert.
+#[test]
+fn agentic_route_is_neither_donor_nor_beneficiary() {
+    let mut config = Config::default();
+    config.agentic_provider = Some("openrouter:some/model".to_string());
+    assert_eq!(
+        provider_for_role("chat", &config),
+        "openhuman",
+        "chat must not inherit the agentic route"
+    );
+
+    let mut config = Config::default();
+    config.chat_provider = Some("openrouter:some/model".to_string());
+    assert_eq!(
+        provider_for_role("agentic", &config),
+        "openhuman",
+        "agentic must not inherit the chat route"
     );
 }
 

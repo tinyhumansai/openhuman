@@ -54,20 +54,31 @@ impl PromptSection for AgentProfilePromptSection {
     }
 
     fn build(&self, _ctx: &PromptContext<'_>) -> Result<String> {
-        let body = self.body.trim();
-        let notice = self.workspace_notice.as_deref().unwrap_or_default();
-        let mut parts: Vec<&str> = Vec::new();
-        if !body.is_empty() {
-            parts.push(body);
-        }
-        if !notice.is_empty() {
-            parts.push(notice);
-        }
-        if parts.is_empty() {
-            return Ok(String::new());
-        }
-        Ok(format!("## Agent profile\n\n{}", parts.join("\n\n")))
+        Ok(render_agent_profile_block(
+            &self.body,
+            self.workspace_notice.as_deref(),
+        ))
     }
+}
+
+/// The `## Agent profile` block as text — what [`AgentProfilePromptSection`]
+/// renders, exposed so a prompt path without a [`PromptContext`] (the native
+/// channel runtime) emits byte-identical output. Empty when both inputs are
+/// blank.
+pub fn render_agent_profile_block(body: &str, workspace_notice: Option<&str>) -> String {
+    let body = body.trim();
+    let notice = workspace_notice.map(str::trim).unwrap_or_default();
+    let mut parts: Vec<&str> = Vec::new();
+    if !body.is_empty() {
+        parts.push(body);
+    }
+    if !notice.is_empty() {
+        parts.push(notice);
+    }
+    if parts.is_empty() {
+        return String::new();
+    }
+    format!("## Agent profile\n\n{}", parts.join("\n\n"))
 }
 
 #[cfg(test)]

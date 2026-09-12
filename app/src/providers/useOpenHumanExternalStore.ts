@@ -1,9 +1,16 @@
-import type { AppendMessage } from '@assistant-ui/react';
+import type { AppendMessage, RespondToToolApprovalOptions } from '@assistant-ui/react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { mapDisplayItems } from '../features/conversations/derived/mapDisplayItems';
+import { type ApprovalDecision, decideApproval } from '../services/api/approvalApi';
 import { threadApi } from '../services/api/threadApi';
-import { useAppSelector } from '../store/hooks';
+import {
+  clearPendingApprovalForThread,
+  type InferenceStatus,
+  isActiveTimelineStatus,
+  type ToolTimelineEntry,
+} from '../store/chatRuntimeSlice';
+import { useAppDispatch, useAppSelector } from '../store/hooks';
 import type { DerivedDisplayItem } from '../types/derivedTranscript';
 import type { ThreadMessage } from '../types/thread';
 import { buildRuntimeMessages } from './assistantUiMessages';
@@ -22,6 +29,46 @@ const DERIVED_TRANSCRIPT_PAGE_LIMIT = 500;
  * the transcript RPC, not here.
  */
 const DERIVED_TRANSCRIPT_MAX_PAGES = 20;
+
+/**
+ * Everything the assistant-ui surface needs about the *currently running* turn
+ * that is not a message, a tool part or a stream delta.
+ *
+ * assistant-ui derives its own running state from `thread.isRunning` alone, so
+ * without this channel a long turn is a bare spinner: no phase, no round
+ * counter, no active tool. The socket handlers already maintain all three in
+ * `chatRuntime.inferenceStatusByThread` (`onInferenceStart`, `onIterationStart`,
+ * `onToolCall`); this projects that slice onto the runtime the surface reads.
+ *
+ * It travels on the adapter's `extras` channel rather than being read from
+ * Redux by the renderer so it stays scoped to *this runtime's* thread — the
+ * Workflow Copilot mounts a second runtime on a thread that is deliberately not
+ * `selectedThreadId`, and a renderer-side Redux read would paint the home
+ * chat's progress inside it.
+ */
+export type OpenHumanThreadExtras = {
+  /** Live phase/round/active-tool for the running turn, or `null` when idle. */
+  inferenceStatus: InferenceStatus | null;
+  /** Newest running non-subagent row, used to title the `tool_use` phase. */
+  activeToolEntry?: ToolTimelineEntry | undefined;
+  /** Running subagent row, used to title the `subagent` phase. */
+  activeSubagentEntry?: ToolTimelineEntry | undefined;
+};
+
+const EMPTY_EXTRAS: OpenHumanThreadExtras = { inferenceStatus: null };
+
+/**
+ * Narrow assistant-ui's untyped `thread.extras` back to our own shape.
+ *
+ * `extras` is `unknown` by contract, and a surface can be mounted on a runtime
+ * that is not ours (or on none at all), so this returns `null` rather than
+ * asserting.
+ */
+export function readOpenHumanThreadExtras(extras: unknown): OpenHumanThreadExtras | null {
+  if (typeof extras !== 'object' || extras === null) return null;
+  if (!('inferenceStatus' in extras)) return null;
+  return extras as OpenHumanThreadExtras;
+}
 
 type CoreTranscriptProjection = {
   threadId: string | null;
@@ -128,6 +175,7 @@ function appendMessageText(message: AppendMessage): string {
  * projection. Redux is not a second transcript database.
  */
 export function useOpenHumanExternalStore(threadId: string | null) {
+  const dispatch = useAppDispatch();
   const messages = useAppSelector(state =>
     threadId ? (state.thread.messagesByThreadId[threadId] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES
   );
@@ -147,6 +195,17 @@ export function useOpenHumanExternalStore(threadId: string | null) {
     threadId
       ? (state.chatRuntime.processingByThread?.[threadId] ?? EMPTY_TRANSCRIPT)
       : EMPTY_TRANSCRIPT
+  );
+  // Progress status for the running turn. Cleared by the socket layer on turn
+  // end/error/cancel, so its presence is itself the "still working" signal.
+  const inferenceStatus = useAppSelector(state =>
+    threadId ? (state.chatRuntime.inferenceStatusByThread?.[threadId] ?? null) : null
+  );
+  // The thread's parked ApprovalGate request. Selected here rather than read by
+  // a card somewhere else on the page: the decision belongs on the tool call it
+  // gates, and only this adapter can put it there.
+  const pendingApproval = useAppSelector(state =>
+    threadId ? (state.chatRuntime.pendingApprovalByThread?.[threadId] ?? null) : null
   );
   const settledRevision = `${messages.at(-1)?.id ?? ''}:${messages.at(-1)?.content?.length ?? 0}:${lifecycle ?? ''}`;
   const coreTranscript = useCoreTranscriptProjection(
@@ -169,11 +228,33 @@ export function useOpenHumanExternalStore(threadId: string | null) {
         isRunning,
         liveTimeline,
         liveTranscript,
+        pendingApproval,
         turnTimelines: coreTranscript.timelines,
         turnTranscripts: coreTranscript.transcripts,
       }),
-    [messages, streaming, isRunning, liveTimeline, liveTranscript, coreTranscript]
+    [messages, streaming, isRunning, liveTimeline, liveTranscript, pendingApproval, coreTranscript]
   );
+
+  // The status line titles its `tool_use` / `subagent` phases from the matching
+  // running timeline row (the same rows the surface renders as tool parts), so
+  // "Running command: npm test..." reads like the row rather than the raw tool
+  // id. Resolved here so the renderer stays a pure projection of `extras`.
+  const extras = useMemo<OpenHumanThreadExtras>(() => {
+    if (!inferenceStatus) return EMPTY_EXTRAS;
+    return {
+      inferenceStatus,
+      // `isActiveTimelineStatus`, not `status === 'running'`: a delegated child
+      // parked on `ask_user_clarification` carries `awaiting_user` on the row's
+      // top-level status, and dropping the match there loses the sub-agent's
+      // identity at the one moment the user is the thing being waited on.
+      activeToolEntry: [...liveTimeline]
+        .reverse()
+        .find(entry => isActiveTimelineStatus(entry.status) && !entry.name.startsWith('subagent:')),
+      activeSubagentEntry: liveTimeline.find(
+        entry => isActiveTimelineStatus(entry.status) && entry.name.startsWith('subagent:')
+      ),
+    };
+  }, [inferenceStatus, liveTimeline]);
 
   const onNew = useCallback(
     async (message: AppendMessage) => {
@@ -193,16 +274,44 @@ export function useOpenHumanExternalStore(threadId: string | null) {
     await getChatSurface(threadId)?.cancel?.();
   }, [threadId]);
 
+  /**
+   * Record the user's decision on the parked tool call.
+   *
+   * `optionId` is the core's own `decision` literal (see
+   * `APPROVAL_DECISION_OPTIONS`), so it forwards unchanged; the boolean
+   * `approved` is only the fallback for a renderer that answered with a plain
+   * allow/deny rather than picking one of the declared options.
+   *
+   * Supplying this at all is load-bearing, not optional: without it the runtime
+   * *throws* `Runtime does not support tool approvals.` the moment a decision
+   * button is pressed, rather than no-opping.
+   */
+  const onRespondToToolApproval = useCallback(
+    async ({ approvalId, approved, optionId }: RespondToToolApprovalOptions) => {
+      const decision = (optionId ?? (approved ? 'approve_once' : 'deny')) as ApprovalDecision;
+      await decideApproval(approvalId, decision);
+      // Resolve optimistically, exactly as `ApprovalRequestCard` does — the
+      // turn-end handlers in `ChatRuntimeProvider` clear it again if the turn
+      // is cancelled instead. Only on success: a failed decide leaves the call
+      // parked, and dropping the prompt would strand the thread until the
+      // gate's TTL with nothing left on screen to retry from.
+      if (threadId) dispatch(clearPendingApprovalForThread({ threadId }));
+    },
+    [dispatch, threadId]
+  );
+
   return useMemo(
     () => ({
       messages: runtimeMessages,
       isRunning,
       isLoading,
+      extras,
       // Already `ThreadMessageLike`; the runtime's converter is the identity.
       convertMessage: (m: (typeof runtimeMessages)[number]) => m,
       onNew,
       onCancel,
+      onRespondToToolApproval,
     }),
-    [runtimeMessages, isRunning, isLoading, onNew, onCancel]
+    [runtimeMessages, isRunning, isLoading, extras, onNew, onCancel, onRespondToToolApproval]
   );
 }

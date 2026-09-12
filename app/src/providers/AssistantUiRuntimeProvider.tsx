@@ -1,11 +1,29 @@
 import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react';
 import debugFactory from 'debug';
-import type { ReactNode } from 'react';
+import { createContext, type ReactNode, useContext } from 'react';
 
 import { useAppSelector } from '../store/hooks';
 import { useOpenHumanExternalStore } from './useOpenHumanExternalStore';
 
 const debug = debugFactory('openhuman:assistant-ui');
+
+const AuiThreadIdContext = createContext<string | null>(null);
+
+/**
+ * The OpenHuman thread this assistant-ui runtime represents.
+ *
+ * assistant-ui's own context carries its internal thread identity, not ours, so
+ * a component rendered *inside* the transcript (a tool part, say) has no other
+ * way to name the thread it belongs to. Reading `selectedThreadId` from Redux
+ * instead would be wrong on any surface whose thread is not the selected one —
+ * the Workflow Copilot mounts a runtime on its own builder thread — which is
+ * the same trap {@link AssistantUiRuntimeProvider} documents for messages.
+ *
+ * `null` outside a runtime, or on a surface that has not created its thread yet.
+ */
+export function useAuiThreadId(): string | null {
+  return useContext(AuiThreadIdContext);
+}
 
 /**
  * Mounts assistant-ui's runtime over one OpenHuman thread.
@@ -58,7 +76,13 @@ export function AssistantUiRuntimeProvider({
   );
   const adapter = useOpenHumanExternalStore(effectiveThreadId);
   const runtime = useExternalStoreRuntime(adapter);
-  return <AssistantRuntimeProvider runtime={runtime}>{children}</AssistantRuntimeProvider>;
+  return (
+    <AssistantRuntimeProvider runtime={runtime}>
+      <AuiThreadIdContext.Provider value={effectiveThreadId}>
+        {children}
+      </AuiThreadIdContext.Provider>
+    </AssistantRuntimeProvider>
+  );
 }
 
 export default AssistantUiRuntimeProvider;

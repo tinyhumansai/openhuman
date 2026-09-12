@@ -542,6 +542,8 @@ const messages: TranslationMap = {
   'settings.developerMode.enabledByBuild': 'Selalu aktif di build pengembangan',
   'settings.clearAppData': 'Bersihkan Data Aplikasi',
   'settings.clearAppDataDesc': 'Keluar dan hapus permanen semua data aplikasi lokal',
+  'settings.clearAppDataIrreversible': 'Tindakan ini tidak dapat dibatalkan.',
+  'settings.clearAppDataAction': 'Hapus data',
   'settings.logOut': 'Keluar',
   'settings.logOutDesc': 'Keluar dari akun Anda',
   'settings.exitLocalSession': 'Keluar dari sesi lokal',
@@ -1511,7 +1513,7 @@ const messages: TranslationMap = {
   'settings.search.menuDesc':
     'Baku bagi OpenHuman- mengatur pencarian atau menghubungkan penyedia anda sendiri dengan kunci API.',
   'settings.search.description':
-    'Pilih mesin pencari yang digunakan agen, atau nonaktifkan alat pencarian sepenuhnya. Managed menggunakan backend OpenHuman (tanpa pengaturan). Parallel, Brave, Querit, dan Exa berjalan langsung dari mesin Anda menggunakan kunci API Anda.',
+    'Pilih mesin pencari yang digunakan agen, atau nonaktifkan alat pencarian sepenuhnya. OpenHuman Dikelola menggunakan backend OpenHuman (tanpa pengaturan). Parallel, Brave, Querit, Exa, dan Tavily berjalan langsung dari mesin Anda menggunakan kunci API Anda.',
   'settings.search.engineAria': 'Mesin pencari',
   'settings.search.engineDisabledLabel': 'Disabled',
   'settings.search.engineDisabledDesc':
@@ -1520,7 +1522,7 @@ const messages: TranslationMap = {
   'settings.search.engineManagedDesc':
     'Baku. Diarahkan melalui backend OpenHuman, saat ini didukung oleh Exa: tidak diperlukan kunci API.',
   'settings.search.localManagedUnavailable':
-    'Pencarian OpenHuman Managed tidak tersedia untuk pengguna lokal. Tambahkan API key Parallel, Brave, Querit, atau Exa Anda sendiri untuk mengaktifkan pencarian web.',
+    'Pencarian OpenHuman Dikelola tidak tersedia untuk pengguna lokal. Tambahkan API key Parallel, Brave, Querit, Exa, atau Tavily Anda sendiri untuk mengaktifkan pencarian web.',
   'settings.search.engineParallelLabel': 'Parallel',
   'settings.search.engineParallelDesc':
     'Parallel Langsung API: pencarian, ekstrak, percakapan, penelitian, perkaya, alat dataset.',
@@ -1533,6 +1535,9 @@ const messages: TranslationMap = {
   'settings.search.engineExaLabel': 'Exa',
   'settings.search.engineExaDesc':
     'Pencarian neural yang didukung Exa. Memerlukan API key Exa Anda sendiri. Menambahkan alat pencarian, halaman serupa, dan konten halaman.',
+  'settings.search.engineTavilyLabel': 'Tavily',
+  'settings.search.engineTavilyDesc':
+    'Pencarian web, berita, dan keuangan yang didukung Tavily. Memerlukan API key Tavily Anda sendiri. Menambahkan alat pencarian dan ekstraksi konten halaman.',
   'settings.search.statusConfigured': 'Dikonfigurasi',
   'settings.search.statusNeedsKey': 'Memerlukan kunci API',
   'settings.search.fallbackToManaged':
@@ -1554,6 +1559,8 @@ const messages: TranslationMap = {
   'settings.search.placeholderBrave': 'BSA...',
   'settings.search.placeholderQuerit': 'kunci Querit API',
   'settings.search.placeholderExa': 'Tempelkan kunci API Exa Anda…',
+  'settings.search.tavilyKeyLabel': 'Kunci API Tavily',
+  'settings.search.placeholderTavily': 'tvly-...',
   'settings.search.allowedSitesLabel': 'Situs yang diijinkan',
   'settings.search.allowedSitesHint':
     'Host yang boleh dibuka dan dibaca oleh asisten (melalui pengambilan web dan alat browser) satu per baris, mis. reuters.com. Sebuah host juga mencakup subdomain-nya. Penelusuran web itu sendiri tidak dibatasi oleh daftar ini.',
@@ -2771,6 +2778,8 @@ const messages: TranslationMap = {
   'memorySources.sync.itemsSynced': 'item tersinkron',
   'memorySources.sync.upToDate': 'Sudah terbaru',
   'memorySources.sync.failedLabel': 'Gagal',
+  'memorySources.sync.morePending': 'Masih ada yang perlu disinkronkan. Klik Sinkronkan lagi',
+  'memorySources.sync.budgetSpent': 'Anggaran permintaan hari ini sudah habis. Coba lagi besok',
   'time.justNow': 'baru saja',
   'time.secondsAgoSuffix': 'd lalu',
   'time.minutesAgoSuffix': 'm lalu',
@@ -2813,6 +2822,18 @@ const messages: TranslationMap = {
   'memorySources.allIn.allFailed':
     'Tidak ada sinkronisasi yang bisa dimulai. Periksa setiap sumber untuk melihat alasannya.',
   'memorySources.allIn.partial': 'Sinkronisasi dimulai: {triggered}. Tidak bisa dimulai: {failed}.',
+  'memorySources.repair.button': 'Perbaiki memori lama',
+  'memorySources.repair.title': 'Perbaiki memori lama?',
+  'memorySources.repair.message':
+    'Hingga {scanned} dokumen yang disinkronkan disimpan sebelum pengarsipan pohon memori diperbaiki dan tidak terlihat di grafik memori. Mengarsipkannya menggunakan kredit embedding. Dokumen yang sudah ada di pohon dilewati.',
+  'memorySources.repair.confirm': 'Perbaiki',
+  'memorySources.repair.cancel': 'Nanti saja',
+  'memorySources.repair.nothing':
+    'Tidak ada yang perlu diperbaiki. Tidak ada dokumen tersinkron yang menunggu diarsipkan.',
+  'memorySources.repair.success':
+    '{ingested} diarsipkan ke pohon memori ({already} sudah ada, {skipped} dilewati).',
+  'memorySources.repair.morePending': 'Masih ada sisa. Klik Perbaiki memori lama lagi.',
+  'memorySources.repair.failed': 'Tidak dapat memperbaiki memori lama.',
   'memorySources.settings.button': 'Pengaturan',
   'memorySources.settings.title': 'Pengaturan sinkronisasi',
   'memorySources.settings.maxPrs': 'Maksimal pull request',
@@ -2826,7 +2847,6 @@ const messages: TranslationMap = {
   'memorySources.settings.unlimited': 'Tanpa batas',
   'memorySources.settings.unlimitedTooltip':
     'Anda memilih menyinkronkan maksimum untuk {toolkit}. Anda dapat mengubah batas di sini.',
-  'memorySources.settings.maxed': 'Penuh',
   'memorySources.settings.save': 'Simpan',
   'memorySources.settings.saving': 'Menyimpan…',
   'memorySources.settings.saved': 'Pengaturan tersimpan',
@@ -3486,6 +3506,10 @@ const messages: TranslationMap = {
   'conversations.subagent.statusFailed': 'gagal',
   'conversations.subagent.statusAwaitingUser': 'menunggu pengguna',
   'conversations.subagent.statusCancelled': 'dibatalkan',
+  'conversations.subagent.awaitingTitle': 'Menunggu jawaban Anda',
+  'conversations.subagent.answerPlaceholder': 'Ketik jawaban Anda',
+  'conversations.subagent.answerSend': 'Kirim jawaban',
+  'conversations.subagent.answerSent': 'Jawaban terkirim',
   'conversations.agentTaskInsights.title': 'Wawasan tugas agen',
   'conversations.agentTaskInsights.response': 'Respons',
   'conversations.agentTaskInsights.processSourceTitle': 'Sumber proses agen',
@@ -4481,7 +4505,7 @@ const messages: TranslationMap = {
   'settings.ai.claudeCode.signIn': 'Masuk dengan Claude',
   'settings.ai.claudeCode.reconnect': 'Hubungkan ulang',
   'settings.ai.claudeCode.loginHint':
-    'Membuka terminal yang menjalankan claude login. Setelah selesai, klik Periksa ulang.',
+    'Membuka terminal yang menjalankan claude auth login --claudeai. Setelah selesai, klik Periksa ulang.',
   'settings.ai.claudeCode.loginError': 'Tidak dapat membuka terminal login. Silakan coba lagi.',
   'settings.ai.claudeCode.fullAccess': 'Akses penuh',
   'settings.ai.claudeCode.fullAccessOn':
@@ -5083,6 +5107,10 @@ const messages: TranslationMap = {
   'settings.developerMenu.eventLog.live': 'Live',
   'settings.developerMenu.eventLog.disconnected': 'Terputus',
   'settings.developerMenu.eventLog.waiting': 'Menunggu peristiwa...',
+  'settings.developerMenu.eventLog.waitingHint':
+    'Peristiwa muncul di sini saat agen, alat, dan sistem bekerja. Belum ada yang terjadi.',
+  'settings.developerMenu.eventLog.notConnectedHint':
+    'Hubungkan kembali ke core untuk melanjutkan aliran.',
   'settings.developerMenu.eventLog.notConnected': 'Tidak terhubung ke inti',
   'settings.developerMenu.eventLog.jumpToLatest': 'Lompat ke terbaru',
   'settings.developerMenu.eventLog.badge.tool': 'TOOL',
@@ -6211,6 +6239,7 @@ const messages: TranslationMap = {
   'settings.agents.editor.modelHints': 'Petunjuk rute',
   'settings.agents.editor.modelTiers': 'Tingkatan model',
   'settings.agents.editor.modelCustom': 'ID model kustom…',
+  'settings.agents.editor.modelManaged': 'Model terkelola',
   'settings.agents.editor.modelCustomPlaceholder': 'mis. anthropic/claude-sonnet-4',
   'settings.agents.editor.selectTools': 'Tambah alat',
   'settings.agents.editor.toolsAllSelected': 'Semua alat',
@@ -6358,6 +6387,8 @@ const messages: TranslationMap = {
   'keyring.settings.storageMode': 'Mode penyimpanan rahasia',
   'keyring.settings.mode.osKeychain': 'Keychain OS',
   'keyring.settings.mode.encryptedFile': 'Lokal terenkripsi',
+  'keyring.settings.mode.localEncryptedFile': 'Berkas terenkripsi',
+  'keyring.settings.mode.localPlaintextFile': 'Berkas tanpa enkripsi',
   'keyring.settings.mode.consentPending': 'Belum dikonfigurasi',
   'keyring.settings.mode.declined': 'Ditolak',
   'keyring.settings.availability': 'Ketersediaan keychain',
@@ -6871,6 +6902,9 @@ const messages: TranslationMap = {
   'userErrors.localModelUnavailable.title': 'Model lokal tidak tersedia',
   'userErrors.localModelUnavailable.body':
     'Ollama tidak dapat dijangkau di endpoint yang dikonfigurasi, atau model yang dibutuhkan belum terpasang di sana. Jalankan Ollama dan unduh modelnya di endpoint tersebut, atau alihkan pekerjaan ini ke penyedia cloud.',
+  'userErrors.replyDeliveryFailed.title': 'Balasan tidak dapat ditampilkan',
+  'userErrors.replyDeliveryFailed.body':
+    'Agen menyelesaikan giliran ini, tetapi balasannya tidak dapat disimpan atau dibaca ulang. Tanyakan lagi agar diulangi.',
   'userErrors.memoryStoreCorrupt.title': 'Indeks memori rusak',
   'userErrors.memoryStoreCorrupt.body':
     'Basis data pohon memori mengalami kerusakan. Berkas yang rusak disimpan di samping data memori Anda, dan indeks kosong telah dibangun ulang. Sinkronkan ulang sumber memori untuk mengisinya kembali.',
@@ -6915,6 +6949,25 @@ const messages: TranslationMap = {
   'flows.delete.confirm': 'Hapus',
   'flows.delete.deleting': 'Menghapus…',
   'flows.canvas.renameLabel': 'Ganti nama alur kerja',
+  'settings.ai.openaiOauthTitle': 'Masuk dengan ChatGPT',
+  'settings.ai.openaiOauthDescription':
+    'Masuk dengan akun ChatGPT untuk menggunakan model OpenAI tanpa kunci API.',
+  'settings.ai.openaiOauthConnect': 'Masuk dengan ChatGPT',
+  'settings.ai.openaiOauthConnected': 'Terhubung ke ChatGPT',
+  'settings.ai.openaiOauthOpening': 'Membuka proses masuk…',
+  'settings.ai.openaiOauthCallbackHint':
+    'Setelah masuk, tempel URL pengalihan lengkap dari browser Anda (diawali dengan http://127.0.0.1:1455/).',
+  'settings.ai.openaiOauthCallbackPlaceholder':
+    'http://127.0.0.1:1455/auth/callback?code=...&state=...',
+  'settings.ai.openaiOauthFinish': 'Selesaikan proses masuk ChatGPT',
+  'settings.ai.openaiOauthDisconnect': 'Putuskan ChatGPT',
+  'settings.ai.openaiOauthDesktopOnly': 'Masuk dengan ChatGPT hanya tersedia di aplikasi desktop.',
+  'settings.ai.openaiOauthStartError':
+    'Tidak dapat memulai proses masuk ChatGPT. Coba lagi atau gunakan kunci API.',
+  'settings.ai.openaiOauthCompleteError':
+    'Proses masuk ChatGPT tidak selesai. Periksa URL pengalihan lalu coba lagi.',
+  'settings.ai.openaiOauthCallbackRequired': 'Tempel URL pengalihan dari browser setelah masuk.',
+  'settings.ai.openaiOauthDisconnectError': 'Tidak dapat memutuskan ChatGPT. Silakan coba lagi.',
   'memorySources.codingSessions.title': 'Sesi agen pemrograman',
   'memorySources.codingSessions.description':
     'Ubah keputusan dan koreksi Codex serta Claude Code menjadi memori persona pribadi.',
@@ -6951,6 +7004,8 @@ const messages: TranslationMap = {
   // Data Sync layered pipeline status (GH-4690)
   'sync.pipeline.ingestedOnly': 'Hanya diserap',
   'sync.pipeline.storedWithoutVectors': 'Disimpan tanpa vektor. Pencarian semantik tidak tersedia.',
+  'sync.pipeline.vectorsPending':
+    'Chunk yang menunggu vektor: {count}. Pencarian semantik akan segera mencakupnya.',
   'sync.pipeline.signInToEnable': 'Masuk untuk mengaktifkan',
   'sync.pipeline.extractionFailed': 'Ekstraksi struktur memori gagal. Wiki mungkin tidak lengkap.',
   'sync.pipeline.treeDegraded':

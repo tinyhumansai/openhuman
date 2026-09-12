@@ -24,6 +24,12 @@ export const WINDOW_DRAG_BAR_HEIGHT = 28;
  * through; that's a platform limit, not this band. The sidebar is intentionally
  * excluded — its header already drags in place.
  *
+ * The attribute is deliberately bare (React renders it as `="true"`). `drag.js`
+ * reads that as direct-hit-only — `el === composedPath[0]` — which is exactly
+ * right for a band with no children, since the pointer target always *is* this
+ * element. Keep it childless: a container needs `="deep"` instead, or only its
+ * own uncovered box drags. `SidebarHeader` and `AppSidebar` were that bug.
+ *
  * macOS-only: Windows/Linux keep their native decorated title bar (the
  * `Overlay` style is a no-op there), so reserving a band would only waste
  * vertical space. Outside the Tauri runtime (browser/iOS) there is no window to

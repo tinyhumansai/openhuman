@@ -355,6 +355,13 @@ export interface ChatSubagentSpawnedEvent {
   skill_id: string;
   message: string;
   round: number;
+  /**
+   * Per-request monotonic ordering key stamped by the core's progress bridge
+   * (`publish_seq_stamped`). `(request_id, seq)` is the event's identity: a
+   * Socket.IO redelivery carries the same pair, a genuinely new emission never
+   * does. Absent on cores that predate the stamping bridge.
+   */
+  seq?: number;
 }
 
 /** Emitted when a sub-agent completes or fails. */
@@ -366,6 +373,8 @@ export interface ChatSubagentDoneEvent {
   message: string;
   success: boolean;
   round: number;
+  /** Event identity with `request_id`; see {@link ChatSubagentSpawnedEvent.seq}. */
+  seq?: number;
   /** Per-event subagent detail. Mirrors `SubagentProgressDetail` in core. */
   subagent?: SubagentProgressDetail;
 }

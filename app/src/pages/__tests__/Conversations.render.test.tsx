@@ -23,8 +23,10 @@ import chatRuntimeReducer, {
   bumpInferenceHeartbeatForThread,
   markInferenceTurnStreaming,
   setInferenceStatusForThread,
+  setPendingPlanReviewForThread,
   setStreamingAssistantForThread,
   setToolTimelineForThread,
+  setWorkflowProposalForThread,
 } from '../../store/chatRuntimeSlice';
 import layoutReducer from '../../store/layoutSlice';
 import socketReducer from '../../store/socketSlice';
@@ -2102,5 +2104,122 @@ describe('Conversations — external-transfer disclosure card removed', () => {
     });
 
     expect(screen.queryByText('Leaving your device')).toBeNull();
+  });
+});
+
+/**
+ * The two turn gates the agent parks on. Both used to render only inside
+ * `legacyMainPanel`, which `/chat` never mounts — the text surface is
+ * assistant-ui and the two panels are an either/or — so a parked plan review
+ * hung the turn with nothing to decide, and a `propose_workflow` draft lost its
+ * only route to `flows_create`. They are now rendered from the shared
+ * `agentGateCards` fragment, which the assistant-ui composer header carries.
+ */
+describe('Conversations — turn gates on the assistant-ui surface', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    window.localStorage.clear();
+    mockGetThreads.mockResolvedValue({ threads: [], count: 0 });
+    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
+  });
+
+  async function renderGatedConversation() {
+    const thread = makeThread({ id: 'gate-thread', title: 'Gate Thread' });
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
+
+    let store: ReturnType<typeof buildStore> | undefined;
+    await act(async () => {
+      store = await renderConversations({
+        thread: selectedThreadState(thread),
+        socket: socketState('connected'),
+      });
+    });
+    // The default composer is 'text', so this is the assistant-ui panel — the
+    // legacy panel is not in the tree at all.
+    expect(screen.getByTestId('chat-message-input')).toBeInTheDocument();
+    return { thread, store: store! };
+  }
+
+  it('surfaces a parked plan review above the assistant-ui composer', async () => {
+    const { thread, store } = await renderGatedConversation();
+
+    await act(async () => {
+      store.dispatch(
+        setPendingPlanReviewForThread({
+          threadId: thread.id,
+          review: {
+            requestId: 'plan-req-1',
+            summary: 'Refactor the billing module',
+            steps: ['Read the invoices module', 'Extract the tax helper'],
+          },
+        })
+      );
+    });
+
+    const card = await screen.findByTestId('plan-review-card');
+    expect(card).toBeInTheDocument();
+    expect(within(card).getByText('Refactor the billing module')).toBeInTheDocument();
+    expect(within(card).getByText('Extract the tax helper')).toBeInTheDocument();
+  });
+
+  it('surfaces a drafted workflow proposal above the assistant-ui composer', async () => {
+    const { thread, store } = await renderGatedConversation();
+
+    await act(async () => {
+      store.dispatch(
+        setWorkflowProposalForThread({
+          threadId: thread.id,
+          proposal: {
+            name: 'Morning digest',
+            graph: { nodes: [], edges: [] },
+            requireApproval: false,
+            summary: {
+              trigger: 'schedule: 0 9 * * *',
+              steps: [{ kind: 'agent', name: 'Summarize inbox' }],
+            },
+          },
+        })
+      );
+    });
+
+    const card = await screen.findByTestId('workflow-proposal-card');
+    expect(card).toBeInTheDocument();
+    expect(within(card).getByText('Morning digest')).toBeInTheDocument();
+  });
+
+  it('keeps half-typed plan feedback across an unrelated host re-render', async () => {
+    const { thread, store } = await renderGatedConversation();
+
+    await act(async () => {
+      store.dispatch(
+        setPendingPlanReviewForThread({
+          threadId: thread.id,
+          review: { requestId: 'plan-req-2', summary: 'Ship it', steps: [] },
+        })
+      );
+    });
+
+    const feedback = await screen.findByTestId('plan-review-feedback');
+    await act(async () => {
+      fireEvent.change(feedback, { target: { value: 'use the staging bucket' } });
+    });
+    expect(screen.getByTestId('plan-review-feedback')).toHaveValue('use the staging bucket');
+
+    // Any unrelated re-render of Conversations rebuilds the composer-header
+    // node. The header is rendered by component type (`thread.tsx`), so a
+    // header component that closes over that node changes type every render and
+    // React remounts the whole subtree — silently wiping this textarea.
+    await act(async () => {
+      store.dispatch(bumpInferenceHeartbeatForThread({ threadId: thread.id }));
+      store.dispatch(
+        setStreamingAssistantForThread({
+          threadId: thread.id,
+          streaming: { requestId: 'req-x', content: 'thinking out loud', thinking: '' },
+        })
+      );
+    });
+
+    expect(screen.getByTestId('plan-review-feedback')).toHaveValue('use the staging bucket');
   });
 });

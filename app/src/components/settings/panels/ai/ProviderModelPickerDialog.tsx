@@ -3,8 +3,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { cn } from '../../../../lib/cn';
 import { useT } from '../../../../lib/i18n/I18nContext';
 import { listProviderModels, type ModelInfo } from '../../../../services/api/aiSettingsApi';
+import Alert from '../../../ui/Alert';
 import Button from '../../../ui/Button';
 import { ModalShell } from '../../../ui/ModalShell';
+import NativeSelect from '../../../ui/NativeSelect';
 import TextField from '../../../ui/TextField';
 import {
   CLAUDE_CODE_DEFAULT_MODEL,
@@ -17,6 +19,25 @@ import { ModelEntryField, useModelEntryMode } from './ModelEntryField';
 import { ProviderSwatch } from './ProviderListRow';
 
 type TFn = (key: string, fallback?: string) => string;
+
+/**
+ * `cloud_providers` slug of the managed backend. The picker models managed as
+ * its own `{kind:'managed'}` source (settings filters the raw `openhuman` row
+ * out of `cloudProviders`), but the core still addresses it by slug when
+ * listing models.
+ */
+const MANAGED_PROVIDER_SLUG = 'openhuman';
+
+/** `Display Name — $in/$out per 1M`, falling back to the bare id. */
+const managedOptionLabel = (m: ModelInfo): string => {
+  const name = m.display_name?.trim() || m.id;
+  const inPrice = m.input_per_1m;
+  const outPrice = m.output_per_1m;
+  if (typeof inPrice !== 'number' || typeof outPrice !== 'number') return name;
+  const fmt = (n: number) =>
+    n === 0 ? '$0' : `$${n < 1 ? n.toFixed(3).replace(/0+$/, '') : n.toFixed(2)}`;
+  return `${name} — ${fmt(inPrice)}/${fmt(outPrice)} per 1M`;
+};
 
 export interface ProviderModelSelection {
   source: CustomDialogSource;
@@ -116,6 +137,7 @@ export function ProviderModelPickerDialog({
   const [loading, setLoading] = useState(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [catalogRequest, setCatalogRequest] = useState(0);
+  const isLocalSource = source?.kind === 'local';
 
   const selectedCloudProvider =
     source?.kind === 'cloud'
@@ -127,16 +149,44 @@ export function ProviderModelPickerDialog({
     catalogIds: catalog.map(candidate => candidate.id),
   });
 
+  /**
+   * Slug whose `/models` listing backs the right-hand pane, or null when the
+   * pane is not remote-backed (local / claude-code).
+   *
+   * Derived as a plain string so the fetch effect below depends on a VALUE, not
+   * on the `source` object or the `localModels` array. Callers pass those
+   * inline (`localModels={[]}` in ModelQualityPill), so their identity changes
+   * on every render — with them in the dependency list the effect re-ran each
+   * render, which for managed meant one network fetch per render and a
+   * visibly thrashing dropdown.
+   */
+  const fetchSlug = useMemo(() => {
+    if (source?.kind === 'cloud') return source.providerSlug;
+    // Managed is fetched like a cloud provider: the core resolves the hosted
+    // API + session JWT for the `openhuman` slug and asks for the OpenRouter
+    // passthrough catalog. An empty result is expected and fine — the backend
+    // returns nothing when OPENROUTER_PASSTHROUGH_ENABLED is off — and the
+    // "Automatic" default keeps managed selectable either way.
+    if (source?.kind === 'managed') return MANAGED_PROVIDER_SLUG;
+    return null;
+  }, [source]);
+
+  // Local models are supplied by the host, not fetched. Kept separate so a new
+  // array identity re-mirrors the list without re-triggering a network call.
   useEffect(() => {
-    if (!source || source.kind !== 'cloud') {
-      setCatalog(source?.kind === 'local' ? localModels : []);
+    if (isLocalSource) setCatalog(localModels);
+  }, [isLocalSource, localModels]);
+
+  useEffect(() => {
+    if (!fetchSlug) {
+      if (!isLocalSource) setCatalog([]);
       return;
     }
     let active = true;
     setLoading(true);
     setCatalog([]);
     setCatalogError(null);
-    void listProviderModels(source.providerSlug)
+    void listProviderModels(fetchSlug)
       .then(models => {
         if (!active) return;
         setCatalog(models);
@@ -151,7 +201,7 @@ export function ProviderModelPickerDialog({
     return () => {
       active = false;
     };
-  }, [catalogRequest, localModels, source]);
+  }, [catalogRequest, fetchSlug, isLocalSource]);
 
   const filteredSources = sources.filter(candidate =>
     sourceLabel(candidate, cloudProviders, t)
@@ -191,7 +241,21 @@ export function ProviderModelPickerDialog({
             onClick={() => {
               if (!source) return;
               if (isManaged(source)) {
-                onSelect({ source, model: '', contextWindow: null });
+                // An empty model keeps the original contract (product routes
+                // per workload). A pinned catalog id is forwarded like any
+                // other model so the managed backend serves that exact model.
+                const pinned = model.trim();
+                const pinnedEntry = pinned
+                  ? catalog.find(candidate => candidate.id === pinned)
+                  : undefined;
+                onSelect({
+                  source,
+                  model: pinned,
+                  contextWindow:
+                    pinnedEntry && (pinnedEntry.context_window ?? 0) > 0
+                      ? pinnedEntry.context_window
+                      : null,
+                });
                 return;
               }
               const selectedModel = catalog.find(candidate => candidate.id === model.trim());
@@ -217,7 +281,7 @@ export function ProviderModelPickerDialog({
           autoFocus
         />
       </div>
-      <div className="grid min-h-80 grid-cols-1 divide-y divide-line-subtle md:grid-cols-[13rem_1fr] md:divide-x md:divide-y-0">
+      <div className="grid min-h-80 grid-cols-1 divide-y divide-line-subtle md:grid-cols-[15rem_1fr] md:divide-x md:divide-y-0">
         <div className="p-2">
           <p className="px-2 pb-2 text-xs font-medium text-content-muted">
             {t('settings.ai.picker.providersLabel')}
@@ -241,11 +305,21 @@ export function ProviderModelPickerDialog({
                     label={sourceLabel(candidate, cloudProviders, t)}
                     tone={slugTone(sourceSlug(candidate))}
                   />
-                  <span className="flex min-w-0 flex-col items-start gap-0.5">
-                    <span className="truncate text-sm font-medium">
+                  {/* `flex-1` + `min-w-0` is load-bearing, not cosmetic:
+                      without it this wrapper sizes to its content instead of
+                      shrinking, and a long provider name overflows the column
+                      into the detail pane instead of wrapping inside it.
+                      `min-w-0` alone does not shrink a flex item that was never
+                      told it may flex.
+
+                      The name wraps rather than truncating — a provider the
+                      user cannot fully read is not a provider they can choose
+                      between. The row is `h-auto`, so it grows to fit. */}
+                  <span className="flex min-w-0 flex-1 flex-col items-start gap-0.5">
+                    <span className="w-full text-left text-sm font-medium break-words whitespace-normal">
                       {sourceLabel(candidate, cloudProviders, t)}
                     </span>
-                    <span className="text-xs font-normal text-content-muted">
+                    <span className="w-full text-left text-xs font-normal break-words whitespace-normal text-content-muted">
                       {sourceDetail(candidate, t)}
                     </span>
                   </span>
@@ -256,8 +330,10 @@ export function ProviderModelPickerDialog({
         </div>
         <div className="min-w-0 p-4">
           {isManaged(source) ? (
-            // No model field: managed picks per workload and keeps that choice
-            // current, so there is nothing here for the user to fill in.
+            // Managed offers an OPTIONAL model pick. Leaving it on "Automatic"
+            // preserves the original contract (empty model id -> the product
+            // routes per workload); choosing a catalog entry pins that model,
+            // still billed through managed credits like any tier.
             <div data-testid="model-picker-managed-pane" className="space-y-2">
               <p className="text-sm font-medium text-content">
                 {t('settings.ai.managedSourceLabel')}
@@ -265,6 +341,34 @@ export function ProviderModelPickerDialog({
               <p className="text-xs leading-relaxed text-content-muted">
                 {t('settings.ai.routing.managedDesc')}
               </p>
+              {loading ? (
+                <NativeSelect disabled className="mt-1 w-full cursor-wait opacity-60">
+                  <option>{t('settings.ai.loadingModels', 'Loading models…')}</option>
+                </NativeSelect>
+              ) : catalog.length > 0 ? (
+                <NativeSelect
+                  aria-label={t('settings.ai.modelLabel')}
+                  data-testid="model-picker-managed-select"
+                  value={model}
+                  onChange={event => setModel(event.target.value)}
+                  className="mt-1 w-full">
+                  {/* Always present, unlike ModelEntryField's empty option, so a
+                      pinned model can be cleared back to automatic routing. */}
+                  <option value="">
+                    {t('settings.ai.picker.managedAutomatic', 'Automatic (recommended)')}
+                  </option>
+                  {catalog.map(candidate => (
+                    <option key={candidate.id} value={candidate.id}>
+                      {managedOptionLabel(candidate)}
+                    </option>
+                  ))}
+                </NativeSelect>
+              ) : null}
+              {catalogError ? (
+                <Alert variant="destructive" className="font-mono text-xs break-all">
+                  {catalogError}
+                </Alert>
+              ) : null}
             </div>
           ) : source?.kind === 'cloud' ? (
             <ModelEntryField

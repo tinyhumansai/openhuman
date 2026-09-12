@@ -31,6 +31,6 @@ pub use store::MemoryStoreTool;
 // The tools that came back from the extracted crate, re-exported flat so
 // `openhuman::tools`'s glob keeps every historical name in scope — the
 // registration sites in `tools/ops.rs` name them unqualified.
-pub use goals::{GoalsAddTool, GoalsDeleteTool, GoalsEditTool, GoalsListTool};
+pub use goals::GoalsTool;
 pub use raw_store::{MemoryStoreKindsTool, MemoryStoreRawChunksTool, MemoryStoreRawSearchTool};
 pub use search::{MemoryChunkContextTool, MemoryHybridSearchTool, MemoryVectorSearchTool};

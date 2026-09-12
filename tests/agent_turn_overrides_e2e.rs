@@ -25,6 +25,9 @@
 //! positive here.
 #![allow(clippy::await_holding_lock)]
 
+#[path = "support/noop_memory.rs"]
+mod noop_memory;
+
 use async_trait::async_trait;
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -35,7 +38,7 @@ use openhuman_core::openhuman::agent::dispatcher::{NativeToolDispatcher, XmlTool
 use openhuman_core::openhuman::agent::harness::session::TurnOverrides;
 use openhuman_core::openhuman::agent::tinyagents::thread_context::with_thread_id;
 use openhuman_core::openhuman::agent::Agent;
-use openhuman_core::openhuman::config::{AgentConfig, Config, ContextConfig, MemoryConfig};
+use openhuman_core::openhuman::config::{AgentConfig, ContextConfig};
 use openhuman_core::openhuman::threads::goals::{runtime as goal_runtime, store as goal_store};
 use openhuman_core::openhuman::tools::{
     PermissionLevel, Tool, ToolContent, ToolResult, ToolScope as RuntimeToolScope,
@@ -44,7 +47,6 @@ use tinyinference::message::Message;
 use tinyinference::model::{
     ChatModel, ModelProfile, ModelRequest, ModelResponse, ModelStream, ModelStreamItem,
 };
-use tinymemory_core::store as memory_store;
 
 // ─── Harness ────────────────────────────────────────────────────────────────
 
@@ -77,28 +79,6 @@ fn env_lock() -> std::sync::MutexGuard<'static, ()> {
         .get_or_init(|| Mutex::new(()))
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-static MEMORY_SEAMS_INIT: OnceLock<()> = OnceLock::new();
-
-/// `create_memory` requires the TinyMemory host seams and fails loudly when they
-/// are unwired — a deliberate choice, since an unwired embedding host would
-/// otherwise corrupt an embedding space quietly. Installed on a wide stack
-/// because the seam installer recurses deeply.
-fn ensure_memory_seams() {
-    MEMORY_SEAMS_INIT.get_or_init(|| {
-        std::thread::Builder::new()
-            .name("turn-overrides-e2e-seams".to_string())
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                openhuman_core::openhuman::memory::host_impls::install_memory_host_seams(Arc::new(
-                    Config::default(),
-                ));
-            })
-            .expect("spawn turn-overrides seam installer")
-            .join()
-            .expect("turn-overrides seam installer panicked");
-    });
 }
 
 /// The agent turn loop needs the wide worker stack the product gives it.
@@ -250,16 +230,6 @@ fn workspace(label: &str) -> (TempDir, PathBuf) {
     (temp, path)
 }
 
-fn memory_for_workspace(
-    path: &std::path::Path,
-) -> Arc<dyn openhuman_core::openhuman::memory::Memory> {
-    let cfg = MemoryConfig {
-        backend: "none".to_string(),
-        ..MemoryConfig::default()
-    };
-    Arc::from(memory_store::create_memory(&cfg, path).expect("create memory"))
-}
-
 fn agent_with(
     model: Arc<dyn ChatModel<()>>,
     tools: Vec<Box<dyn Tool>>,
@@ -269,7 +239,7 @@ fn agent_with(
     Agent::builder()
         .chat_model(model)
         .tools(tools)
-        .memory(memory_for_workspace(&workspace_path))
+        .memory(noop_memory::noop_memory())
         .tool_dispatcher(dispatcher)
         .workspace_dir(workspace_path)
         .event_context("turn-overrides-session", "turn-overrides-channel")
@@ -304,7 +274,6 @@ fn suppress_active_goal_keeps_the_thread_goal_out_of_the_prompt() {
 }
 
 async fn suppress_active_goal_keeps_the_thread_goal_out_of_the_prompt_inner() {
-    ensure_memory_seams();
     let _env = env_lock();
 
     // Control and measured agent get SEPARATE workspaces on purpose.
@@ -399,7 +368,6 @@ fn suppress_transcript_autoload_does_not_replay_a_prior_threads_transcript() {
 }
 
 async fn suppress_transcript_autoload_does_not_replay_a_prior_threads_transcript_inner() {
-    ensure_memory_seams();
     let _env = env_lock();
     let (_temp, workspace_path) = workspace("suppress-transcript-autoload");
     let _workspace_guard = EnvGuard::set_path("OPENHUMAN_WORKSPACE", &workspace_path);
@@ -502,7 +470,6 @@ fn turn_overrides_apply_to_exactly_one_turn_and_then_reset() {
 }
 
 async fn turn_overrides_apply_to_exactly_one_turn_and_then_reset_inner() {
-    ensure_memory_seams();
     let _env = env_lock();
     let (_temp, workspace_path) = workspace("overrides-reset");
     let _workspace_guard = EnvGuard::set_path("OPENHUMAN_WORKSPACE", &workspace_path);
@@ -561,7 +528,6 @@ fn thread_goal_complete_and_clear_stop_the_goal_reaching_later_turns() {
 }
 
 async fn thread_goal_complete_and_clear_stop_the_goal_reaching_later_turns_inner() {
-    ensure_memory_seams();
     let _env = env_lock();
 
     // Separate workspaces, for the same reason as

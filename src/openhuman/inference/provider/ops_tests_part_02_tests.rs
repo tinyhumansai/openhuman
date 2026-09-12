@@ -198,6 +198,9 @@ fn openai_codex_model_hints_are_merged_without_duplicates() {
         id: "gpt-5.4".to_string(),
         owned_by: Some("openai-codex".to_string()),
         context_window: Some(128000),
+        display_name: None,
+        input_per_1m: None,
+        output_per_1m: None,
     }];
 
     merge_openai_codex_model_hints(&mut models);

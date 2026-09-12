@@ -32,7 +32,8 @@ use crate::openhuman::agent::harness::subagent_runner::handoff::ResultHandoffCac
 use crate::openhuman::agent::harness::subagent_runner::subagent_iter_cap_with_autonomous_lift;
 use crate::openhuman::agent::harness::subagent_runner::tool_prep::{
     build_text_mode_tool_instructions, filter_tool_indices, is_subagent_spawn_tool,
-    load_prompt_source, top_k_for_toolkit,
+    load_prompt_source, select_actions_with_essentials, strip_spawn_tools_from_dynamic,
+    top_k_for_toolkit,
 };
 use crate::openhuman::agent::harness::subagent_runner::types::{
     SubagentMode, SubagentRunError, SubagentRunOptions, SubagentRunOutcome, SubagentRunStatus,
@@ -47,6 +48,8 @@ use crate::openhuman::memory::api::provider::retrieval::{FastRetrieveQuery, Retr
 use crate::openhuman::memory::source_scope::as_bus_scope;
 use crate::openhuman::tools::{Tool, ToolCategory, ToolSpec};
 use tinyagents_harness::tool::SandboxMode as TinyagentsSandboxMode;
+
+include!("runner_part_01.rs");
 use tinyagents_harness::workspace::WorkspaceDescriptor;
 
 use super::prompt::{
@@ -1004,53 +1007,69 @@ async fn run_typed_mode(
                 .iter()
                 .find(|ci| ci.connected && ci.toolkit.eq_ignore_ascii_case(tk))
             {
-                let fresh_actions = match &client_kind {
-                    Some(ComposioClientKind::Backend(client)) => {
-                        match crate::openhuman::integrations::composio::fetch_toolkit_actions(
-                            arc_config.as_ref(),
-                            client,
-                            tk,
-                            None,
-                        )
-                        .await
-                        {
-                            Ok(actions) if !actions.is_empty() => actions,
-                            Ok(_) => {
-                                tracing::debug!(
-                                    agent_id = %definition.id,
-                                    toolkit = %tk,
-                                    "[subagent_runner:typed] fresh list_tools returned empty; falling back to cached catalogue"
-                                );
-                                cached_integration.tools.clone()
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    agent_id = %definition.id,
-                                    toolkit = %tk,
-                                    error = %e,
-                                    "[subagent_runner:typed] fresh list_tools failed; falling back to cached catalogue"
-                                );
-                                cached_integration.tools.clone()
+                let fresh_actions = if !cached_integration.tools.is_empty() {
+                    tracing::debug!(
+                        agent_id = %definition.id,
+                        toolkit = %tk,
+                        cached_actions = cached_integration.tools.len(),
+                        "[subagent_runner:typed] using cached toolkit catalogue"
+                    );
+                    filter_cached_toolkit_actions_with_current_scope(
+                        &definition.id,
+                        tk,
+                        arc_config.as_ref(),
+                        &cached_integration.tools,
+                    )
+                    .await
+                } else {
+                    match &client_kind {
+                        Some(ComposioClientKind::Backend(client)) => {
+                            match crate::openhuman::integrations::composio::fetch_toolkit_actions(
+                                arc_config.as_ref(),
+                                client,
+                                tk,
+                                None,
+                            )
+                            .await
+                            {
+                                Ok(actions) if !actions.is_empty() => actions,
+                                Ok(_) => {
+                                    tracing::debug!(
+                                        agent_id = %definition.id,
+                                        toolkit = %tk,
+                                        "[subagent_runner:typed] fresh list_tools returned empty; falling back to cached catalogue"
+                                    );
+                                    cached_integration.tools.clone()
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        agent_id = %definition.id,
+                                        toolkit = %tk,
+                                        error = %e,
+                                        "[subagent_runner:typed] fresh list_tools failed; falling back to cached catalogue"
+                                    );
+                                    cached_integration.tools.clone()
+                                }
                             }
                         }
-                    }
-                    Some(ComposioClientKind::Direct(_)) => {
-                        tracing::info!(
-                            agent_id = %definition.id,
-                            toolkit = %tk,
-                            cached_actions = cached_integration.tools.len(),
-                            "[composio-direct] subagent_runner:typed: direct mode active — using cached catalogue, skipping backend list_tools refresh"
-                        );
-                        cached_integration.tools.clone()
-                    }
-                    None => {
-                        tracing::debug!(
-                            agent_id = %definition.id,
-                            toolkit = %tk,
-                            cached_actions = cached_integration.tools.len(),
-                            "[subagent_runner:typed] composio client unavailable; using cached catalogue"
-                        );
-                        cached_integration.tools.clone()
+                        Some(ComposioClientKind::Direct(_)) => {
+                            tracing::info!(
+                                agent_id = %definition.id,
+                                toolkit = %tk,
+                                cached_actions = cached_integration.tools.len(),
+                                "[composio-direct] subagent_runner:typed: direct mode active — using cached catalogue, skipping backend list_tools refresh"
+                            );
+                            cached_integration.tools.clone()
+                        }
+                        None => {
+                            tracing::debug!(
+                                agent_id = %definition.id,
+                                toolkit = %tk,
+                                cached_actions = cached_integration.tools.len(),
+                                "[subagent_runner:typed] composio client unavailable; using cached catalogue"
+                            );
+                            cached_integration.tools.clone()
+                        }
                     }
                 };
                 let integration = crate::openhuman::agent::context::prompt::ConnectedIntegration {
@@ -1072,15 +1091,26 @@ async fn run_typed_mode(
                 let selected: Vec<
                     &crate::openhuman::agent::context::prompt::ConnectedIntegrationTool,
                 > = if filter_hits.len() >= super::super::super::tool_filter::MIN_CONFIDENT_HITS {
+                    // The ranker's verb gate can drop every content-returning
+                    // action for a find/search prompt, so the toolkit's
+                    // essentials are reserved inside the same budget (#6033).
+                    let kept_idx =
+                        select_actions_with_essentials(tk, &integration.tools, &filter_hits, top_k);
+                    let kept: Vec<_> = kept_idx.iter().map(|&i| &integration.tools[i]).collect();
                     tracing::info!(
                         agent_id = %definition.id,
                         toolkit = %tk,
                         total = integration.tools.len(),
-                        kept = filter_hits.len(),
+                        kept = kept.len(),
                         top_k = top_k,
+                        kept_actions = %kept
+                            .iter()
+                            .map(|a| a.name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(","),
                         "[subagent_runner:typed] fuzzy tool filter narrowed toolkit"
                     );
-                    filter_hits.iter().map(|&i| &integration.tools[i]).collect()
+                    kept
                 } else {
                     tracing::info!(
                         agent_id = %definition.id,
@@ -1224,13 +1254,18 @@ async fn run_typed_mode(
         None
     };
 
+    // Dynamic tools never pass through `allowed_indices`, so the strip above has
+    // not seen them — the one route by which a spawn/delegate name can reach a
+    // child admitted (issue #6157). Strip before their five consumers below.
+    strip_spawn_tools_from_dynamic(&mut dynamic_tools, &definition.id);
+
     // Build provider-visible tool schemas in EXECUTION-PRECEDENCE order:
     // `dynamic_tools` (extra_tools at runtime) before parent specs.
     let mut filtered_specs: Vec<ToolSpec> = dynamic_tools.iter().map(|t| t.spec()).collect();
     filtered_specs.extend(
         allowed_indices
             .iter()
-            .map(|&i| parent.all_tool_specs[i].clone()),
+            .map(|&i| parent.all_tool_specs[i].as_ref().clone()),
     );
     let mut allowed_names: HashSet<String> = allowed_indices
         .iter()
