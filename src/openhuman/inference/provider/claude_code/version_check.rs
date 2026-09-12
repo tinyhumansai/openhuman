@@ -121,10 +121,16 @@ fn account_login_shell() -> Option<PathBuf> {
         .stderr(Stdio::null())
         .spawn()
         .ok()?;
-    let status = match child.wait_timeout(Duration::from_secs(2)).ok()? {
-        Some(status) => status,
-        None => {
+    let status = match child.wait_timeout(Duration::from_secs(2)) {
+        Ok(Some(status)) => status,
+        Ok(None) => {
             log::warn!("[claude-code][version] dscl timed out; killing child");
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+        Err(e) => {
+            log::warn!("[claude-code][version] dscl wait failed err={e}; killing child");
             let _ = child.kill();
             let _ = child.wait();
             return None;
