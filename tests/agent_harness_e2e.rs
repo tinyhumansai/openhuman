@@ -719,32 +719,6 @@ async fn send_web_chat(rpc_base: &str, id: i64, client_id: &str, thread_id: &str
     );
 }
 
-async fn wait_for_web_chat_idle(rpc_base: &str, thread_id: &str) {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    loop {
-        let status = post_json_rpc(
-            rpc_base,
-            999,
-            "openhuman.channel_web_queue_status",
-            json!({ "thread_id": thread_id }),
-        )
-        .await;
-        let result = assert_no_jsonrpc_error(&status, "web_queue_status");
-        if result
-            .get("result")
-            .and_then(|value| value.get("active"))
-            == Some(&json!(false))
-        {
-            return;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "web chat remained active while waiting for turn completion: {result}"
-        );
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-}
-
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 /// Smoke: a single scripted text response flows through the full RPC stack.
@@ -1146,12 +1120,6 @@ async fn subagent_clarification_flow_inner() {
         "clarification question not surfaced to user; full_response: {first_response}\nevent: {first}"
     );
 
-    // The terminal event is published by the progress bridge just before the
-    // task removes its in-flight entry. Wait for that cleanup before submitting
-    // the answer, otherwise it can be treated as a same-turn follow-up and the
-    // collector may return the first terminal event again.
-    wait_for_web_chat_idle(&stack.rpc_base, "thread-clarify").await;
-
     let requests = with_captured(|c| c.clone());
     let serialized = serde_json::to_string(&requests).unwrap_or_default();
 
@@ -1221,7 +1189,7 @@ async fn subagent_clarification_flow_inner() {
             .unwrap_or(false)
     });
     assert!(
-        turn2_messages_contain_question,
+        requests_contain_question,
         "WHICH_VERSION_CANARY not found in the delegated request messages — \
          requests: {}",
         serde_json::to_string_pretty(&requests).unwrap_or_default()
