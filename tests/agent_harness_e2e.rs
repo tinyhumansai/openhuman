@@ -1031,9 +1031,10 @@ async fn subagent_delegation_happy_path_inner() {
 //   scheduler_agent inner loop. The runtime recognizes this as an early-exit
 //   pause and surfaces the question to the user.
 //
-// Actual LLM request ordering (2 upstream calls total):
+// Actual LLM request ordering (3 upstream calls total):
 //   request[0] = orchestrator turn 1 → schedule_task delegation tool call returned
 //   request[1] = scheduler_agent → asks for clarification and pauses
+//   request[2] = orchestrator synthesis → relays the clarification question
 
 /// Orchestrator delegates to scheduler_agent via `schedule_task` (delegate_name);
 /// scheduler_agent's ask_user_clarification call pauses the delegated run and
@@ -1065,6 +1066,9 @@ async fn subagent_clarification_flow_inner() {
             "ask_user_clarification",
             json!({ "question": "WHICH_VERSION_CANARY?" }),
         ),
+        // request[2]: the orchestrator synthesizes the delegated pause into
+        // the response returned to the user.
+        text_completion("I need clarification: WHICH_VERSION_CANARY?"),
     ]);
     let stack = boot_stack().await;
 
@@ -1110,14 +1114,13 @@ async fn subagent_clarification_flow_inner() {
         serde_json::to_string_pretty(&requests).unwrap_or_default()
     );
 
-    // ── scheduler_agent actually ran (two upstream requests) ──
+    // ── scheduler_agent actually ran and the parent synthesized its result ──
     // request[0] = orchestrator (schedule_task call),
     // request[1] = scheduler_agent (ask_user_clarification pause),
-    // The paused child is resumed through continue_subagent, not a new web-chat
-    // message, so this channel exercise ends at the surfaced pause.
+    // request[2] = orchestrator synthesis of the delegated pause.
     assert!(
-        requests.len() >= 2,
-        "expected ≥2 upstream requests (orchestrator + scheduler_agent), \
+        requests.len() >= 3,
+        "expected ≥3 upstream requests (orchestrator + scheduler_agent + synthesis), \
          got {};\nall requests: {}",
         requests.len(),
         serde_json::to_string_pretty(&requests).unwrap_or_default()
