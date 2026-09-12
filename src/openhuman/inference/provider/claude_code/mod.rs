@@ -184,9 +184,11 @@ impl ClaudeCodeProvider {
             .map(|m| m.content.clone());
 
         // OpenHuman doesn't pass thread_id directly through ChatRequest yet
-        // (Phase 4 will). For Phase 2 we key sessions on a stable hash of
-        // the conversation so /resume kicks in across consecutive turns.
-        let thread_id = thread_key_from_messages(request.messages);
+        // (Phase 4 will). For Phase 2 we key sessions on a stable hash of the
+        // conversation *and* the system prompt, so /resume kicks in across
+        // consecutive turns without the services that share a thread landing
+        // on one another's session.
+        let thread_id = session_key_from_request(request.messages, append_system_prompt.as_deref());
 
         let model = model_override.unwrap_or(&self.model).to_string();
 
@@ -306,24 +308,52 @@ impl ChatModel<()> for ClaudeCodeProvider {
     }
 }
 
-/// Stable session key derived from the conversation's first user message.
+/// Stable session key for one conversation *as seen by one caller*.
+///
+/// Two inputs go in: the conversation's first user message, and the system
+/// prompt this turn runs with. The system prompt is what tells apart the
+/// services that share a thread: each renders its own archetype/persona plus
+/// the session-scoped tool-policy boundary (agent id, channel, entry point,
+/// risk level, allowed tools). Keying on the conversation alone hands the
+/// reasoning, coding and agentic services one `--resume` target between them,
+/// and every one of them then appends the same trailing user turn to it.
+///
+/// The key holds still across a session's turns because the rendered prompt
+/// is meant to: `DateTimeSection` keeps the live clock on the user message
+/// rather than the prefix, and the tool-policy boundary is appended rather
+/// than prepended, both so the backend's prefix cache keeps hitting. When a
+/// prompt input really does change mid-thread the key moves with it and the
+/// next turn opens a fresh CC session, which re-sends the history but never
+/// duplicates a turn.
+///
 /// Best-effort — Phase 4 will plumb the real OpenHuman thread id through
 /// `ChatRequest`.
 ///
 /// Uses SHA-256 (truncated) so the key is stable across Rust compiler
 /// versions (unlike `DefaultHasher` which may change between rustc
-/// releases, breaking persisted session lookups).
-fn thread_key_from_messages(messages: &[ChatMessage]) -> String {
+/// releases, breaking persisted session lookups). Each field is length-
+/// prefixed so no two different (message, prompt) pairs can hash to the same
+/// concatenation.
+fn session_key_from_request(messages: &[ChatMessage], system_prompt: Option<&str>) -> String {
     use sha2::{Digest, Sha256};
     let first = messages
         .iter()
         .find(|m| m.role == "user")
         .map(|m| m.content.as_str())
         .unwrap_or("");
-    let digest = Sha256::digest(first.as_bytes());
+    let mut conversation = Sha256::new();
+    conversation.update((first.len() as u64).to_be_bytes());
+    conversation.update(first.as_bytes());
+    let mut prompt = Sha256::new();
+    let field = system_prompt.unwrap_or("");
+    prompt.update((field.len() as u64).to_be_bytes());
+    prompt.update(field.as_bytes());
+    let conversation = conversation.finalize();
+    let prompt = prompt.finalize();
     format!(
-        "hash_{:032x}",
-        u128::from_be_bytes(digest[..16].try_into().unwrap())
+        "hash_{:032x}:prompt_{:032x}",
+        u128::from_be_bytes(conversation[..16].try_into().unwrap()),
+        u128::from_be_bytes(prompt[..16].try_into().unwrap())
     )
 }
 

@@ -698,7 +698,13 @@ async fn boot_stack() -> Stack {
     }
 }
 
-async fn send_web_chat(rpc_base: &str, id: i64, client_id: &str, thread_id: &str, message: &str) {
+async fn send_web_chat(
+    rpc_base: &str,
+    id: i64,
+    client_id: &str,
+    thread_id: &str,
+    message: &str,
+) -> String {
     let resp = post_json_rpc(
         rpc_base,
         id,
@@ -717,6 +723,57 @@ async fn send_web_chat(rpc_base: &str, id: i64, client_id: &str, thread_id: &str
         Some(&json!(true)),
         "web chat not accepted: {result}"
     );
+    result
+        .get("result")
+        .and_then(|value| value.get("request_id"))
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("web chat response missing request_id: {result}"))
+        .to_string()
+}
+
+async fn wait_for_web_chat_idle(rpc_base: &str, thread_id: &str) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let status = post_json_rpc(
+            rpc_base,
+            999,
+            "openhuman.channel_web_queue_status",
+            json!({ "thread_id": thread_id }),
+        )
+        .await;
+        let result = assert_no_jsonrpc_error(&status, "web_queue_status");
+        if result.get("result").and_then(|value| value.get("active")) == Some(&json!(false)) {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "web chat remained active while waiting for turn completion: {result}"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+async fn wait_for_terminal_request(
+    rx: &mut tokio::sync::mpsc::UnboundedReceiver<Value>,
+    request_id: &str,
+    timeout: Duration,
+) -> Value {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let event = match tokio::time::timeout(remaining, rx.recv()).await {
+            Ok(Some(event)) => event,
+            Ok(None) => panic!("SSE channel closed waiting for request {request_id}"),
+            Err(_) => panic!("timed out waiting for terminal request {request_id}"),
+        };
+        if matches!(
+            event.get("event").and_then(Value::as_str),
+            Some("chat_done") | Some("chat_error")
+        ) && event.get("request_id").and_then(Value::as_str) == Some(request_id)
+        {
+            return event;
+        }
+    }
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -1071,10 +1128,16 @@ async fn subagent_clarification_flow_inner() {
     let _lock = env_lock();
     reset_script(vec![
         // ── turn 1 ──
-        // request[0]: Orchestrator calls schedule_task (scheduler_agent's delegate_name).
+        // request[0]: Orchestrator reaches the packed scheduler delegate through
+        // use_skill. Packed delegate names are intentionally withheld from the
+        // orchestrator's direct schema, but remain executable through the pack.
         tool_call_completion(
-            "schedule_task",
-            json!({ "prompt": "Schedule a weekly reminder", "blocking": true }),
+            "use_skill",
+            json!({
+                "skill": "scheduling",
+                "tool": "schedule_task",
+                "args": { "prompt": "Schedule a weekly reminder", "blocking": true }
+            }),
         ),
         // request[1]: scheduler_agent first iter → tries ask_user_clarification.
         //   ask_user_clarification is NOT in all_tools_with_runtime (tools/ops.rs), so
@@ -1124,8 +1187,13 @@ async fn subagent_clarification_flow_inner() {
         "clarification question not surfaced to user; full_response: {first_response}\nevent: {first}"
     );
 
+    // The terminal event is published just before the task removes its
+    // in-flight entry. Wait for that cleanup before submitting the answer so
+    // it starts a new turn instead of being treated as a same-turn follow-up.
+    wait_for_web_chat_idle(&stack.rpc_base, "thread-clarify").await;
+
     // ── turn 2: resume with answer → final response must reach the user ──
-    send_web_chat(
+    let second_request_id = send_web_chat(
         &stack.rpc_base,
         401,
         "harness-clarify",
@@ -1133,7 +1201,8 @@ async fn subagent_clarification_flow_inner() {
         "version 2",
     )
     .await;
-    let second = wait_for_terminal(&mut events, Duration::from_secs(120)).await;
+    let second =
+        wait_for_terminal_request(&mut events, &second_request_id, Duration::from_secs(120)).await;
     assert_eq!(
         second.get("event").and_then(Value::as_str),
         Some("chat_done"),
@@ -1162,7 +1231,7 @@ async fn subagent_clarification_flow_inner() {
     );
 
     // ── scheduler_agent actually ran (≥4 upstream requests) ──
-    // request[0] = orchestrator (schedule_task call),
+    // request[0] = orchestrator (use_skill -> schedule_task call),
     // request[1] = scheduler_agent first iter (ask_user_clarification blocked),
     // request[2] = scheduler_agent second iter (text output with question),
     // request[3] = orchestrator turn-2 synthesis (turn-2 end).

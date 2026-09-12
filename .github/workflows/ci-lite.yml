@@ -61,6 +61,9 @@ jobs:
       docs: ${{ steps.filter.outputs.docs }}
       rust-core: ${{ steps.filter.outputs['rust-core'] }}
       rust-core-full: ${{ steps.filter.outputs['rust-core-full'] }}
+      # The vendored engine owns migrated memory tests; Cargo does not run
+      # dependency tests as part of the OpenHuman crate suite.
+      tinycortex: ${{ steps.filter.outputs.tinycortex }}
       # Shell-quoted list of changed src/ + tests/ files, consumed by
       # scripts/ci/rust-coverage-changed.sh (domain-scoped llvm-cov).
       rust-core-src-files: ${{ steps.filter.outputs['rust-core-src_files'] }}
@@ -200,6 +203,12 @@ jobs:
             rust-core-src:
               - 'src/**'
               - 'tests/**'
+            tinycortex:
+              - '.github/workflows/ci-lite.yml'
+              - '.github/workflows/test-reusable.yml'
+              - '.gitmodules'
+              - 'scripts/ci-cancel-aware.sh'
+              - 'vendor/tinymemory'
             rust-tauri:
               - '.github/workflows/ci-lite.yml'
               - 'Cargo.lock'
@@ -220,12 +229,8 @@ jobs:
               - '.github/workflows/ci-lite.yml'
               - 'scripts/mock-api/**'
               - 'scripts/*.mjs'
-              - 'scripts/__tests__/**'
-              # The release-notes generator has node --test coverage in
-              # scripts/__tests__/ but lives one directory down, so the
-              # 'scripts/*.mjs' glob above never armed this lane for it — its
-              # tests could not have caught the v0.63.21 git ENOBUFS regression.
               - 'scripts/release/*.mjs'
+              - 'scripts/__tests__/**'
               # Bash helpers with node --test coverage in scripts/__tests__/.
               - 'scripts/ci/assert-coverage-presence.sh'
               # Shared logic behind the gate CLIs, and the module-pin gate's own
@@ -519,20 +524,10 @@ jobs:
         #                       `openhuman.test_reset`, a destructive in-place
         #                       wipe, which is exactly why it must stay out of
         #                       every product lane — so a compile-only smoke
-        #                       check here is the right shape, not enabling it
-        #                       somewhere that ships.
+        #                       check here is the right shape.
         #
-        # Without this step those families rot silently — the same shape of
-        # failure as #4901, pointed at a gate instead of at the shipped app.
-        # `e2e-test-support` sat in this position from the day it was added
-        # until #6086 and was never `cargo check`ed by CI in either state.
-        #
-        # Checked in SEPARATE invocations on purpose: `--features tui,e2e-test-support`
-        # would let one gate compile only because the other pulled a dependency
-        # in, which is the false pass this lane exists to prevent.
-        #
-        # If a future gate lands in this same neither-set position, add it here
-        # AND to the list in CLAUDE.md's "gate in neither set" note.
+        # Checked in SEPARATE invocations so one gate cannot make the other
+        # compile only because it pulled in a shared dependency.
         run: |
           bash scripts/ci-cancel-aware.sh cargo check --manifest-path Cargo.toml --no-default-features --features tui
           bash scripts/ci-cancel-aware.sh cargo check --manifest-path Cargo.toml --no-default-features --features e2e-test-support
@@ -563,26 +558,6 @@ jobs:
           bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml \
             --no-default-features --features mcp --lib -- \
             mcp::server::resources::
-          # `test_support` is behind `e2e-test-support`, a gate in neither the
-          # contributor nor the product set, so no other lane RUNS these — the
-          # smoke check above only compiles them. That distinction is the whole
-          # point of this step: `resolve_workspace_relative`'s traversal guard
-          # (#6085) failed open for every path that did not exist, from the day
-          # it landed in #1892, and no `cargo check` anywhere could have caught
-          # it because the code compiled perfectly. These are the tests that
-          # would have.
-          #
-          # SCOPED TO `introspect::` ON PURPOSE, and this is a hole, not a
-          # tidy-up: the first run of the unscoped `test_support::` filter found
-          # `test_support::rpc::wipe_memory_tree_removes_content_dirs_and_reports_summary`
-          # already failing here —
-          #   "test_reset: memory_tree wipe failed: wipe_all: driver
-          #    'tinymemory' does not serve Maintenance"
-          # `memory-engine-seams` (= dep:tinymemory-core) is in `default` but not
-          # in product-features.txt, so it is off in this profile. Widening the
-          # feature list to go green would hide exactly what this lane exists to
-          # expose, so the filter is narrowed and the gap is named instead.
-          # Re-widen to `test_support::` once that is resolved.
           bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml \
             --no-default-features --features e2e-test-support --lib -- \
             test_support::introspect::
@@ -1147,6 +1122,15 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
+      - name: Fetch submodule tags for pin verification
+        run: |
+          for module in tinymemory tinyjuice tinyconnectors tinydocs tinymcp tinywallet tinyvoice tinyhosts tinybox tinyruntime; do
+            if test "$(git -C "vendor/$module" rev-parse --is-shallow-repository)" = true; then
+              git -C "vendor/$module" fetch --no-recurse-submodules --unshallow origin
+            fi
+            git -C "vendor/$module" fetch --no-recurse-submodules --tags --force origin
+          done
+
       # Nine subsystems load as downloaded cdylib modules and each is pinned
       # twice: once as a submodule (the contract compiled here) and once as a
       # version + digest in modules/registry.rs (the artifact loaded at runtime).
@@ -1195,6 +1179,39 @@ jobs:
       - name: Run install.ps1 unit tests
         run: pwsh -NoProfile -File scripts/tests/OpenHumanWindowsInstall.Tests.ps1
 
+  tinycortex-tests:
+    name: TinyCortex Memory Tests
+    needs: [changes]
+    if: needs.changes.outputs.tinycortex == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:latest
+    env:
+      CARGO_INCREMENTAL: "0"
+      RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Init tinycortex and tinymemory submodules
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git submodule update --init --recursive vendor/tinymemory
+
+      - name: Cache TinyCortex build artifacts
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: vendor/tinymemory/vendor/tinycortex -> vendor/tinymemory/vendor/tinycortex/target
+          cache-on-failure: true
+          key: tinycortex
+
+      - name: Run TinyCortex engine and Composio sync tests
+        run: bash scripts/ci-cancel-aware.sh cargo test --manifest-path vendor/tinymemory/vendor/tinycortex/Cargo.toml --features git-diff,sync,persona
+
   pr-ci-gate:
     name: PR CI Gate
     needs:
@@ -1207,6 +1224,7 @@ jobs:
       - test-inventory
       - toolchain-image-drift
       - pester-install
+      - tinycortex-tests
       - orch-ip-gate
       - feature-forwarding-gate
       - module-pin-gate
@@ -1227,6 +1245,7 @@ jobs:
             ["Test Inventory"]="${{ needs['test-inventory'].result }}"
             ["Toolchain Image Drift Guard"]="${{ needs['toolchain-image-drift'].result }}"
             ["PowerShell Install Test"]="${{ needs['pester-install'].result }}"
+            ["TinyCortex Memory Tests"]="${{ needs['tinycortex-tests'].result }}"
             ["Orchestration IP Gate"]="${{ needs['orch-ip-gate'].result }}"
             ["Feature Forwarding Gate"]="${{ needs['feature-forwarding-gate'].result }}"
             ["Module Pin Gate"]="${{ needs['module-pin-gate'].result }}"

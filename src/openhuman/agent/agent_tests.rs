@@ -29,7 +29,7 @@ use crate::openhuman::agent::dispatcher::{
 };
 use crate::openhuman::agent::harness::session::Agent;
 use crate::openhuman::agent::messages::{ChatMessage, ConversationMessage, ToolResultMessage};
-use crate::openhuman::config::{AgentConfig, MemoryConfig};
+use crate::openhuman::config::AgentConfig;
 use crate::openhuman::inference::provider::{ChatResponse, ToolCall};
 use crate::openhuman::memory::Memory;
 use crate::openhuman::tools::{Tool, ToolResult};

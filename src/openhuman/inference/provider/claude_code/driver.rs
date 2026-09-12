@@ -72,7 +72,7 @@ use crate::openhuman::util::text::utf8_safe_prefix_at_byte_boundary;
 
 use super::event_mapper::EventMapper;
 use super::input_builder::build_stdin;
-use super::session_store::{generate_uuid_v4, is_uuid_v4, SessionStore};
+use super::session_store::SessionStore;
 use super::stream_parser::{ClaudeCodeEvent, StreamJsonParser};
 use crate::openhuman::agent::messages::ChatMessage;
 use crate::openhuman::inference::provider::types::{ChatResponse, ProviderDelta};
@@ -307,25 +307,24 @@ fn append_system_prompt_args(
     ])
 }
 
+/// Resolve the CC session this turn runs against: reuse the one stored for
+/// `session_key`, or mint and persist a fresh UUID when there is none (or the
+/// stored value predates the v4 requirement). Returns the session id and
+/// whether it is new, which is what picks `--session-id` over `--resume` and
+/// decides how much history goes down stdin.
+///
+/// Split out of [`run_turn`] so the mapping from key to session can be tested
+/// without spawning the CLI.
+fn resolve_cc_session(store: &SessionStore, session_key: &str) -> (String, bool) {
+    let (scope, _) = session_key.split_once(':').unwrap_or((session_key, ""));
+    store.get_or_create(scope, session_key)
+}
+
 /// Run one turn against the `claude` CLI. Awaits process exit. Forwards
 /// `ProviderDelta`s through `ctx.stream` as they arrive and returns the
 /// aggregated `ChatResponse` when done.
 pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
-    let stored = ctx.session_store.get(&ctx.thread_id);
-    let is_new = !stored.as_deref().map(is_uuid_v4).unwrap_or(false);
-    let cc_session_id = if is_new {
-        let id = generate_uuid_v4();
-        if let Err(e) = ctx.session_store.set(&ctx.thread_id, &id) {
-            log::warn!(
-                "[claude-code][driver] failed to persist session uuid for thread {}: {}",
-                ctx.thread_id,
-                e
-            );
-        }
-        id
-    } else {
-        stored.expect("checked Some above")
-    };
+    let (cc_session_id, is_new) = resolve_cc_session(&ctx.session_store, &ctx.thread_id);
 
     // Set up a per-turn scratch dir for --mcp-config and any other transient
     // state. Best-effort cleanup at end of turn.

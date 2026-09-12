@@ -57,6 +57,34 @@ impl SessionStore {
         }
         std::fs::write(&self.path, serialized)
     }
+
+    /// Atomically reuse or create the session for a key. The lock is held
+    /// across the lookup, generation, and persistence so concurrent first
+    /// turns cannot mint competing sessions. Each session key retains its
+    /// own UUID, so switching keys does not discard continuity for either
+    /// key.
+    pub fn get_or_create(&self, scope: &str, key: &str) -> (String, bool) {
+        let _ = scope;
+        let mut guard = self.inner.lock().expect("session store mutex poisoned");
+        if let Some(existing) = guard.sessions.get(key).filter(|id| is_uuid_v4(id)) {
+            return (existing.clone(), false);
+        }
+
+        let id = generate_uuid_v4();
+        guard.sessions.insert(key.to_string(), id.clone());
+        if let Err(e) = self.persist(&guard) {
+            log::warn!("[claude-code][session-store] failed to persist session: {e}");
+        }
+        (id, true)
+    }
+
+    fn persist(&self, file: &StoreFile) -> std::io::Result<()> {
+        let serialized = serde_json::to_string_pretty(file).map_err(std::io::Error::other)?;
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&self.path, serialized)
+    }
 }
 
 /// Random RFC-4122 v4 UUID, formatted lower-case with hyphens.

@@ -1,4 +1,5 @@
 use super::*;
+use crate::openhuman::agent::turn_origin::{with_origin, AgentTurnOrigin};
 
 // ── build_capabilities smoke ────────────────────────────────────────────
 
@@ -17,13 +18,16 @@ fn build_capabilities_constructs_every_slot_without_panicking() {
 #[tokio::test]
 async fn http_adapter_blocks_loopback_host_as_capability_error() {
     let adapter = http_adapter(vec![]); // open allowlist mode
-    let err = adapter
-        .request(
-            json!({ "method": "GET", "url": "http://127.0.0.1:1/" }),
-            None,
-        )
-        .await
-        .expect_err("loopback host must be blocked by the SSRF guard");
+    let err = with_origin(AgentTurnOrigin::Cli, async {
+        adapter
+            .request(
+                json!({ "method": "GET", "url": "http://127.0.0.1:1/" }),
+                None,
+            )
+            .await
+            .expect_err("loopback host must be blocked by the SSRF guard")
+    })
+    .await;
     let msg = err.to_string();
     assert!(
         msg.to_lowercase().contains("private") || msg.to_lowercase().contains("local"),
@@ -34,13 +38,16 @@ async fn http_adapter_blocks_loopback_host_as_capability_error() {
 #[tokio::test]
 async fn http_adapter_rejects_host_outside_strict_allowlist() {
     let adapter = http_adapter(vec!["example.com".to_string()]);
-    let err = adapter
-        .request(
-            json!({ "method": "GET", "url": "https://not-allowed.test/" }),
-            None,
-        )
-        .await
-        .expect_err("host outside the strict allowlist must be rejected");
+    let err = with_origin(AgentTurnOrigin::Cli, async {
+        adapter
+            .request(
+                json!({ "method": "GET", "url": "https://not-allowed.test/" }),
+                None,
+            )
+            .await
+            .expect_err("host outside the strict allowlist must be rejected")
+    })
+    .await;
     assert!(
         err.to_string().contains("not-allowed.test")
             || err.to_string().to_lowercase().contains("allowed"),
