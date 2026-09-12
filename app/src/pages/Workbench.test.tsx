@@ -266,7 +266,7 @@ describe('Workbench', () => {
     await waitFor(() => expect(mockClient.ackAlert).toHaveBeenCalledTimes(1));
     const firstKey = mockClient.ackAlert.mock.calls[0]?.[1]?.idempotencyKey;
     expect(firstKey).toEqual(expect.stringContaining('youpet-workbench:ack:alert-1:'));
-    expect(storedIdempotencyKeys()['ack:alert-1']).toBe(firstKey);
+    expect(storedIdempotencyKeys()['ack:alert-1:']).toBe(firstKey);
 
     firstRender.unmount();
     render(<Workbench />);
@@ -275,7 +275,7 @@ describe('Workbench', () => {
     await waitFor(() => expect(mockClient.ackAlert).toHaveBeenCalledTimes(2));
 
     expect(mockClient.ackAlert.mock.calls[1]?.[1]?.idempotencyKey).toBe(firstKey);
-    expect(storedIdempotencyKeys()['ack:alert-1']).toBe(firstKey);
+    expect(storedIdempotencyKeys()['ack:alert-1:']).toBe(firstKey);
   });
 
   it('fails closed when there is no active user for scoped retry-key storage', async () => {
@@ -365,7 +365,7 @@ describe('Workbench', () => {
       idempotencyKey: expect.stringContaining('youpet-workbench:ack:alert-1:'),
     });
     await waitFor(() => expect(mockClient.listAlerts).toHaveBeenCalledTimes(2));
-    expect(storedIdempotencyKeys()['ack:alert-1']).toBeUndefined();
+    expect(storedIdempotencyKeys()['ack:alert-1:']).toBeUndefined();
     expect(await screen.findByText('acknowledged')).toBeInTheDocument();
   });
 
@@ -1042,7 +1042,7 @@ describe('Workbench', () => {
     await user.click(screen.getByRole('button', { name: 'Resolve' }));
 
     await waitFor(() => expect(mockClient.resolveAlert).toHaveBeenCalledTimes(1));
-    expect(storedIdempotencyKeys()['resolve:alert-1']).toEqual(
+    expect(storedIdempotencyKeys()['resolve:alert-1:']).toEqual(
       mockClient.resolveAlert.mock.calls[0]?.[1]?.idempotencyKey
     );
     expect(
