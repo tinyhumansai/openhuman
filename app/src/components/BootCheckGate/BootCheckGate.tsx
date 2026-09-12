@@ -630,6 +630,7 @@ export default function BootCheckGate({ children }: BootCheckGateProps) {
   // do not synchronously cascade — suppress the linter warning here.
 
   useEffect(() => {
+    if (getIsMobile()) return;
     if (coreMode.kind !== 'unset' && phase === 'checking') {
       void runCheck(coreMode);
     }
