@@ -1,5 +1,5 @@
 import debug from 'debug';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { useCoreState } from '../../../providers/CoreStateProvider';
@@ -62,6 +62,8 @@ const PrivacyPanel = () => {
     'loading'
   );
   const [learningSaving, setLearningSaving] = useState(false);
+  const currentUserIdRef = useRef(snapshot.auth.userId);
+  currentUserIdRef.current = snapshot.auth.userId;
 
   useEffect(() => {
     let cancelled = false;
@@ -120,9 +122,11 @@ const PrivacyPanel = () => {
   const handleToggleLearning = useCallback(async () => {
     if (learningSaving || learningLoadState !== 'ready') return;
     const next = !learningEnabled;
+    const savingUserId = snapshot.auth.userId;
     setLearningSaving(true);
     try {
       const settings = await learningApi.updateSettings(next);
+      if (currentUserIdRef.current !== savingUserId) return;
       trackAnalyticsEvent('learning_toggle_updated');
       setLearningEnabled(settings.enabled);
       log('[privacy] learning.enabled persisted', settings.enabled);
@@ -131,7 +135,7 @@ const PrivacyPanel = () => {
     } finally {
       setLearningSaving(false);
     }
-  }, [learningEnabled, learningLoadState, learningSaving]);
+  }, [learningEnabled, learningLoadState, learningSaving, snapshot.auth.userId]);
 
   return (
     <SettingsPanel
