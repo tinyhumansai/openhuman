@@ -77,6 +77,7 @@ const MobileTransportBootstrap: FC<{ children: React.ReactNode }> = ({ children 
   const [ready, setReady] = useState(false);
   const [bindingFailed, setBindingFailed] = useState(false);
   const managerRef = useRef<ReturnType<typeof createTransportManager> | null>(null);
+  const disposedRef = useRef(false);
 
   useEffect(() => {
     if (location.pathname === '/pair') {
@@ -84,8 +85,6 @@ const MobileTransportBootstrap: FC<{ children: React.ReactNode }> = ({ children 
       managerRef.current = null;
       void staleManager?.close();
       setActiveCoreTransport(null);
-      setBindingFailed(false);
-      setReady(true);
       return;
     }
 
@@ -105,16 +104,15 @@ const MobileTransportBootstrap: FC<{ children: React.ReactNode }> = ({ children 
       return;
     }
 
-    let disposed = false;
     const manager =
       managerRef.current ??
       (managerRef.current = createTransportManager(profile, { backendSocketUrl: BACKEND_URL }));
     void manager
       .getTransport()
       .then(transport => {
-        if (disposed) return;
+        if (disposedRef.current) return;
         return transport.isHealthy().then(healthy => {
-          if (disposed) return;
+          if (disposedRef.current) return;
           if (!healthy) throw new Error('persisted transport is unhealthy');
           setActiveCoreTransport(transport);
           setBindingFailed(false);
@@ -137,6 +135,7 @@ const MobileTransportBootstrap: FC<{ children: React.ReactNode }> = ({ children 
 
   useEffect(() => {
     return () => {
+      disposedRef.current = true;
       void managerRef.current?.close();
       managerRef.current = null;
       setActiveCoreTransport(null);
