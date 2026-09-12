@@ -80,6 +80,10 @@ const MobileTransportBootstrap: FC<{ children: React.ReactNode }> = ({ children 
 
   useEffect(() => {
     if (location.pathname === '/pair') {
+      const staleManager = managerRef.current;
+      managerRef.current = null;
+      void staleManager?.close();
+      setActiveCoreTransport(null);
       setBindingFailed(false);
       setReady(true);
       return;

@@ -118,6 +118,7 @@ describe('PairScreen', () => {
     const pairUrl = buildPairUrl();
     mockScan.mockResolvedValueOnce({ content: pairUrl });
     mockIsHealthy.mockResolvedValue(true);
+    mockCall.mockResolvedValue({ sessionToken: 'reconnect-token' });
     mockGetTransport.mockResolvedValue({
       kind: 'tunnel',
       isHealthy: mockIsHealthy,

@@ -135,7 +135,8 @@ export const PairScreen: FC = () => {
     // NOTE: Never log the private key value — log length only.
     log('[ios] device privkey_len=%d (not logged)', devicePrivkeyB64.length);
 
-    // 4. Build and persist profile
+    // 4. Build the profile. It is persisted only after the single-use pairing
+    // credential has been exchanged for a reconnect credential below.
     const profile: ConnectionProfile = {
       id: payload.channelId,
       label: t('iosPair.desktopLabel'),
@@ -147,9 +148,6 @@ export const PairScreen: FC = () => {
       devicePrivkey: devicePrivkeyB64,
       // sessionToken will be written after the tunnel handshake completes.
     };
-    saveProfile(profile);
-    log('[ios] profile saved id=%s kind=%s', profile.id, profile.kind);
-
     // 5. Probe transport health
     setState({ kind: 'connecting' });
     try {
