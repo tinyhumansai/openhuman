@@ -1,0 +1,7 @@
+[[permission]]
+identifier = "allow-claude-code-login"
+description = "Allow the main window to open the Claude Code CLI sign-in terminal."
+
+[permission.commands]
+allow = ["claude_code_login_launch"]
+deny = []

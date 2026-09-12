@@ -34,6 +34,8 @@ Applies to every release, all platforms.
 
 ### macOS
 
+- [ ] **Claude Code sign-in opens Terminal and reports launch failures** — In Connections > LLM > LLM Providers, use Claude Code Sign in. Allow the macOS Automation prompt and verify Terminal opens. On a separate fresh test account, deny Automation and verify the settings card reports a launch failure instead of success; the app must remain responsive. A permission prompt left unanswered must stop waiting within 30 seconds.
+
 - [ ] **Gatekeeper accepts the signed `.app` on first launch** — Double-click the `.app` from a fresh download (Quarantine attribute set). Expected: app opens without `"OpenHuman" cannot be opened because the developer cannot be verified` dialog. If it appears, the build is unsigned or the notarization stapler is missing.
 - [ ] **`codesign --verify --deep --strict <path-to-OpenHuman.app>` exits 0** — Run from terminal. Expected: no output, exit 0. Any `code object is not signed at all` or `invalid signature` output blocks the release.
 - [ ] **DMG drag-to-Applications flow works** — Mount the `.dmg`, drag `OpenHuman.app` to the `Applications` alias. Expected: copy completes; eject succeeds; first launch from `/Applications` does not re-prompt Gatekeeper.
