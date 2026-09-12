@@ -649,8 +649,6 @@ jobs:
           openhuman/flows/mod.rs
           openhuman/mcp/server/resources.rs
           openhuman/mcp/server/tools/mod.rs
-          openhuman/memory/people/mod.rs
-          openhuman/memory/people/mod_contacts_gate_tests_tests.rs
           openhuman/platform/socket/event_handlers.rs
           openhuman/platform/socket/ops.rs
           openhuman/skills/mod.rs
