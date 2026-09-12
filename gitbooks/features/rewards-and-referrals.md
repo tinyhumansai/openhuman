@@ -1,13 +1,13 @@
 ---
 description: >-
-  Invite friends, earn referral credit, redeem promo codes, and unlock Discord
-  community roles - the in-app Rewards & Referrals surface.
+  Invite friends, earn referral credit, and unlock Discord community roles in
+  OpenHuman. Promo-code redemption lives in the hosted billing dashboard.
 icon: gift
 ---
 
 # Rewards & Referrals
 
-OpenHuman bundles three loosely related growth mechanics behind one surface: a **referral program** (share a code, earn credit when friends convert), **promo coupons** (redeem a code for promotional credit), and a **community rewards** track (link Discord, unlock roles as you hit usage milestones). Invite-code management lives on its own screen.
+OpenHuman's Rewards surface bundles a **referral program** (share a code, earn credit when friends convert) and a **community rewards** track (link Discord, unlock roles as you hit usage milestones). Promo coupons are redeemed in the hosted TinyHumans billing dashboard, and invite-code management lives on its own screen.
 
 All of this requires a signed-in backend session. On a local-only session the Rewards page shows an empty state prompting you to sign in - none of these features work offline.
 
@@ -15,13 +15,12 @@ All of this requires a signed-in backend session. On a local-only session the Re
 
 ## The Rewards screen
 
-Lives at `/rewards` with three chip tabs. The middle **Rewards** (community) tab is selected by default.
+Lives at `/rewards` with two sidebar destinations. **Rewards** (community) is selected by default.
 
 | Tab           | What it does                                                      |
 | ------------- | ----------------------------------------------------------------- |
 | **Referrals** | Your referral code, earnings, and referred-user activity          |
 | **Rewards**   | Discord connection, progress ring, and unlockable community roles |
-| **Coupons**   | Redeem promo codes for promotional credit + redemption history    |
 
 ---
 
@@ -54,11 +53,11 @@ Both fail closed with `no backend session token` when no session is stored.
 
 ---
 
-## Coupons (Redeem)
+## Coupons
 
-The Coupons tab redeems **promo codes** for promotional credit - separate from referral rewards. Two tiles show your **promo credit balance** (USD) and the **count of redeemed codes**. Enter a code and redeem; redemption is either applied immediately or accepted as **pending** when it's conditional on a later action.
+Coupon redemption and redemption history now live at **TinyHumans Dashboard → Pay as you go**, alongside promotional-credit and top-up balances. OpenHuman's Settings → Billing screen shows the read-only account summary and opens that hosted dashboard for redemption and other billing changes.
 
-A **recent redemptions** table lists each code, its reward amount, status, and when it was redeemed.
+The hosted dashboard lists each code, its reward amount, status, and redemption time. Redemption is either applied immediately or accepted as **pending** when it is conditional on a later action.
 
 | Coupon status  | Meaning                                         |
 | -------------- | ----------------------------------------------- |

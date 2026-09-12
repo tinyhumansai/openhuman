@@ -1,7 +1,7 @@
 //! Personality-scoped path resolution and context for multi-agent sessions.
 
 use std::hash::{Hash, Hasher};
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
 use super::home::validate_profile_id;
 use super::types::AgentProfile;
@@ -44,6 +44,43 @@ pub fn session_raw_subdir_for_suffix(suffix: &str) -> String {
     } else {
         format!("session_raw{suffix}")
     }
+}
+
+/// The workspace file a profile's `soul_md_path` points at, or `None` when
+/// the profile names no file, the relative path is unsafe, or it escapes the
+/// workspace after canonicalization. Shared by [`resolve_personality_soul`]
+/// (which reads it) and the channel runtime's identity fingerprint (which
+/// stats it) so both agree on what "the soul file" is.
+///
+/// Synchronous fs calls are intentional — this runs during prompt construction
+/// on a blocking thread and the workspace is always local disk.
+pub(crate) fn soul_md_file_path(workspace_dir: &Path, profile: &AgentProfile) -> Option<PathBuf> {
+    let rel_path = profile.soul_md_path.as_deref()?;
+    let rel = Path::new(rel_path);
+    if !is_safe_relative_path(rel) {
+        tracing::debug!(
+            profile_id = %profile.id,
+            soul_md_path = %rel_path,
+            "[personality] rejected unsafe soul_md_path, trying inline"
+        );
+        return None;
+    }
+    let path = workspace_dir.join(rel);
+    // Guard against symlink traversal: a symlink inside the workspace can
+    // point outside it. Canonicalize both sides and reject if the resolved
+    // path escapes the workspace root.
+    if let (Ok(canonical_ws), Ok(canonical_p)) = (workspace_dir.canonicalize(), path.canonicalize())
+    {
+        if !canonical_p.starts_with(&canonical_ws) {
+            tracing::warn!(
+                path = %path.display(),
+                profile_id = %profile.id,
+                "[personality] soul_md_path escapes workspace after canonicalization, trying inline"
+            );
+            return None;
+        }
+    }
+    Some(path)
 }
 
 /// Resolve the SOUL.md content for a personality.
@@ -97,44 +134,16 @@ pub fn resolve_personality_soul(workspace_dir: &Path, profile: &AgentProfile) ->
         }
     }
 
-    if let Some(ref rel_path) = profile.soul_md_path {
-        let rel = Path::new(rel_path);
-        if !is_safe_relative_path(rel) {
-            tracing::debug!(
-                profile_id = %profile.id,
-                soul_md_path = %rel_path,
-                "[personality] rejected unsafe soul_md_path, trying inline"
-            );
-            // Fall through to inline check below.
+    if profile.soul_md_path.is_some() {
+        // An unsafe or escaping path is rejected (logged by the resolver) and
+        // falls through to the inline soul, as before.
+        let Some(path) = soul_md_file_path(workspace_dir, profile) else {
             return profile
                 .soul_md
                 .as_ref()
                 .filter(|s| !s.trim().is_empty())
                 .cloned();
-        }
-        let path = workspace_dir.join(rel);
-        // Guard against symlink traversal: a symlink inside the workspace can
-        // point outside it. Canonicalize both sides and reject if the resolved
-        // path escapes the workspace root.
-        // Note: synchronous fs calls here are intentional — soul_md is loaded
-        // during prompt construction on a tokio blocking thread; the workspace
-        // is always local disk (never a remote mount).
-        if let (Ok(canonical_ws), Ok(canonical_p)) =
-            (workspace_dir.canonicalize(), path.canonicalize())
-        {
-            if !canonical_p.starts_with(&canonical_ws) {
-                tracing::warn!(
-                    path = %path.display(),
-                    profile_id = %profile.id,
-                    "[personality] soul_md_path escapes workspace after canonicalization, trying inline"
-                );
-                return profile
-                    .soul_md
-                    .as_ref()
-                    .filter(|s| !s.trim().is_empty())
-                    .cloned();
-            }
-        }
+        };
         match std::fs::read_to_string(&path) {
             Ok(content) if !content.trim().is_empty() => {
                 tracing::debug!(

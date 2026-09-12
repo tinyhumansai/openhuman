@@ -5,8 +5,12 @@
 //! The first whitespace-delimited token is the semver string we compare
 //! against [`MIN_CLI_VERSION`].
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::Duration;
+
+use wait_timeout::ChildExt as _;
 
 use super::types::{CliStatus, MIN_CLI_VERSION};
 
@@ -62,12 +66,20 @@ fn well_known_candidates(home: Option<&Path>) -> Vec<PathBuf> {
             "Library/pnpm/claude",
             ".npm-global/bin/claude",
         ] {
-            candidates.push(home.join(suffix));
+            push_candidate_variants(&mut candidates, home.join(suffix));
         }
     }
-    candidates.push(PathBuf::from("/opt/homebrew/bin/claude"));
-    candidates.push(PathBuf::from("/usr/local/bin/claude"));
+    push_candidate_variants(&mut candidates, PathBuf::from("/opt/homebrew/bin/claude"));
+    push_candidate_variants(&mut candidates, PathBuf::from("/usr/local/bin/claude"));
     candidates
+}
+
+fn push_candidate_variants(candidates: &mut Vec<PathBuf>, candidate: PathBuf) {
+    candidates.push(candidate.clone());
+    #[cfg(windows)]
+    for suffix in [".exe", ".cmd", ".bat"] {
+        candidates.push(PathBuf::from(format!("{}{}", candidate.display(), suffix)));
+    }
 }
 
 /// Ask the user's login shell where `claude` lives.
@@ -81,24 +93,79 @@ fn login_shell_lookup() -> Option<PathBuf> {
     if cfg!(windows) {
         return None;
     }
-    let shell = std::env::var("SHELL")
+    let mut shells = Vec::new();
+    if let Ok(shell) = std::env::var("SHELL") {
+        if !shell.trim().is_empty() {
+            shells.push(PathBuf::from(shell));
+        }
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(shell) = account_login_shell() {
+        if !shells.iter().any(|candidate| candidate == &shell) {
+            shells.push(shell);
+        }
+    }
+    shells
+        .into_iter()
+        .find_map(|shell| login_shell_lookup_with(&shell))
+}
+
+#[cfg(target_os = "macos")]
+fn account_login_shell() -> Option<PathBuf> {
+    let user = std::env::var("USER")
         .ok()
-        .filter(|s| !s.trim().is_empty())?;
-    let output = Command::new(&shell)
-        .args(["-lc", "command -v claude"])
+        .filter(|u| !u.trim().is_empty())?;
+    let output = Command::new("/usr/bin/dscl")
+        .args([".", "-read", &format!("/Users/{user}"), "UserShell"])
         .output()
         .ok()?;
-    if !output.status.success() {
-        return None;
+    let shell = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .find_map(|line| line.strip_prefix("UserShell:").map(str::trim))?;
+    (!shell.is_empty()).then(|| PathBuf::from(shell))
+}
+
+fn login_shell_lookup_with(shell: &Path) -> Option<PathBuf> {
+    let mut child = Command::new(shell)
+        .args(["-lc", "command -v claude"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    match child.wait_timeout(Duration::from_secs(2)).ok()? {
+        Some(status) if status.success() => {
+            let output = child.wait_with_output().ok()?;
+            let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+            path.is_file().then(|| {
+                log::debug!(
+                    "[claude-code][version] resolved via login shell path={}",
+                    path.display()
+                );
+                path
+            })
+        }
+        Some(_) => None,
+        None => {
+            log::warn!(
+                "[claude-code][version] login shell timed out shell={}",
+                shell.display()
+            );
+            let _ = child.kill();
+            let _ = child.wait();
+            None
+        }
     }
-    let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
-    path.is_file().then(|| {
-        log::debug!(
-            "[claude-code][version] resolved via login shell path={}",
-            path.display()
-        );
-        path
-    })
+}
+
+/// Preserve the directory containing an off-PATH launcher for its shebang.
+/// npm launchers commonly use `/usr/bin/env node`, so finding the launcher
+/// alone is insufficient when a desktop app inherited a minimal PATH.
+pub(crate) fn path_with_binary_dir(binary: &Path) -> OsString {
+    let mut paths: Vec<PathBuf> = binary.parent().into_iter().map(PathBuf::from).collect();
+    if let Some(path) = std::env::var_os("PATH") {
+        paths.extend(std::env::split_paths(&path));
+    }
+    std::env::join_paths(paths).unwrap_or_else(|_| std::env::var_os("PATH").unwrap_or_default())
 }
 
 fn which_on_path(name: &str) -> Option<PathBuf> {
@@ -139,7 +206,11 @@ pub fn probe() -> CliStatus {
     };
     let path_str = path.display().to_string();
 
-    let output = match Command::new(&path).arg("--version").output() {
+    let output = match Command::new(&path)
+        .env("PATH", path_with_binary_dir(&path))
+        .arg("--version")
+        .output()
+    {
         Ok(o) => o,
         Err(e) => {
             log::warn!("[claude-code][version] spawn failed path={path_str} err={e}");

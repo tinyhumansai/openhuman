@@ -108,3 +108,5 @@ mod part_02_tests;
 mod part_03_tests;
 #[path = "load_tests_part_04_tests.rs"]
 mod part_04_tests;
+#[path = "load_tests_part_05_tests.rs"]
+mod part_05_tests;

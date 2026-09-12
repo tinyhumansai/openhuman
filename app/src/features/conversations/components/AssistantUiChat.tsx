@@ -9,11 +9,16 @@ import type { Attachment } from '../../../lib/attachments';
 import { useRegisterAction } from '../../../lib/commands/useRegisterAction';
 import { useSlashCommands } from '../../../lib/commands/useSlashCommands';
 import { useT } from '../../../lib/i18n/I18nContext';
+import type { TurnProcessTrail } from '../../../providers/assistantUiMessages';
 import { AssistantUiRuntimeProvider } from '../../../providers/AssistantUiRuntimeProvider';
 import { emptySessionTokenUsage } from '../../../store/chatRuntimeSlice';
 import { useAppSelector } from '../../../store/hooks';
 import { DEFAULT_MASCOT_COLOR } from '../../../store/mascotSlice';
 import { MascotChipAvatar } from '../../human/Mascot/MascotChipAvatar';
+import { AssistantUiInferenceStatus } from './AssistantUiInferenceStatus';
+import { SubagentDrawerHost } from './aui/subagentDrawerHost';
+import { TurnFooter } from './aui/TurnFooter';
+import { TurnFooterHost } from './aui/turnFooterHost';
 import { ChatToolFallback, ChatToolGroup } from './ChatToolParts';
 import { contextUsageFromTokenUsage, ContextWindowPill } from './composer/ContextWindowPill';
 import {
@@ -64,6 +69,7 @@ export function AssistantUiChat({
   modelContextWindow,
   onModelChange,
   composerHeader,
+  composerFooterExtras,
   inputValue,
   onInputValueChange,
   onEscape,
@@ -76,12 +82,21 @@ export function AssistantUiChat({
   onAttachmentOnlySend,
   onOpenHumanMode,
   onSwitchToMicCloud,
+  onOpenSubagent,
+  canOpenSubagent,
+  onOpenTurnProcess,
 }: {
   threadGoal: ThreadGoalController;
   model: string | null;
   modelContextWindow?: number | null;
   onModelChange: (value: string | null, contextWindow?: number | null) => void;
   composerHeader?: ReactNode;
+  /**
+   * Host controls for the composer's own toolbar row, beside the model pill —
+   * the assistant-ui equivalent of the legacy panel's footer row (the
+   * background-processes button and the thread files chip).
+   */
+  composerFooterExtras?: ReactNode;
   inputValue: string;
   onInputValueChange: (value: string) => void;
   onEscape?: () => void;
@@ -96,6 +111,16 @@ export function AssistantUiChat({
   onOpenHumanMode?: () => void;
   /** Switches to the existing microphone-first chat composer. */
   onSwitchToMicCloud?: () => void;
+  /**
+   * Opens the host's `SubagentDrawer` on a delegation, by spawn `taskId`.
+   * Handed down by context rather than by prop because the caller is a tool
+   * part rendered from inside the transcript; see `subagentDrawerHost`.
+   */
+  onOpenSubagent?: (taskId: string) => void;
+  /** Whether the host's drawer can resolve that delegation; see the same file. */
+  canOpenSubagent?: (taskId: string) => boolean;
+  /** Opens the host's process rail on one settled turn's trail (`TurnFooter`). */
+  onOpenTurnProcess?: (trail: TurnProcessTrail) => void;
 }) {
   const { t } = useT();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -134,6 +159,11 @@ export function AssistantUiChat({
   });
   const slashCommands = useSlashCommands();
 
+  // Read through a ref for the same reason `ComposerHeader` does below: the
+  // slot is rendered by type, so closing over the node would remount the whole
+  // row on every host render.
+  const composerFooterExtrasRef = useRef(composerFooterExtras);
+  composerFooterExtrasRef.current = composerFooterExtras;
   const ComposerExtras = useCallback(
     () => (
       <>
@@ -142,11 +172,25 @@ export function AssistantUiChat({
           <ThreadGoalEditorPanel ctl={threadGoal} />
         </div>
         <ThreadGoalFooterTrigger ctl={threadGoal} />
+        {composerFooterExtrasRef.current}
       </>
     ),
     [contextUsage, threadGoal]
   );
-  const ComposerHeader = useCallback(() => <>{composerHeader}</>, [composerHeader]);
+  // Stable component identity, latest node read through a ref.
+  //
+  // `<ComposerHeader />` is rendered by type (`thread.tsx:385`), so a callback
+  // that closes over `composerHeader` gives React a NEW type on every host
+  // render — the whole header subtree unmounts and remounts. That was invisible
+  // while the header only held an error string and the queued-followup strip,
+  // but the turn-gate cards it now carries (`PlanReviewCard`,
+  // `WorkflowProposalCard`) own local state: half-typed plan feedback and an
+  // in-flight "Save & enable" would be wiped by any unrelated re-render, e.g.
+  // a keystroke in the composer. Nothing in `thread.tsx` is memoized, so this
+  // subtree re-renders with its host and the ref is always current.
+  const composerHeaderRef = useRef(composerHeader);
+  composerHeaderRef.current = composerHeader;
+  const ComposerHeader = useCallback(() => <>{composerHeaderRef.current}</>, []);
   const ComposerAttachments = useCallback(
     () => (
       <AttachmentPreview
@@ -219,6 +263,12 @@ export function AssistantUiChat({
       ComposerExtras,
       ComposerHeader,
       ComposerIdleAction,
+      // Phase / reasoning round / active tool for the turn in flight. Reads the
+      // runtime's `extras`, so it needs no props and no dependency here.
+      RunningStatus: AssistantUiInferenceStatus,
+      // One-line process summary under a settled answer, and the only door to
+      // the reasoning / narration / tool detail that no longer renders inline.
+      TurnFooter,
       onSwitchToMicCloud,
       ...(attachmentsEnabled
         ? {
@@ -245,14 +295,18 @@ export function AssistantUiChat({
   return (
     <AssistantUiRuntimeProvider>
       <ComposerTextBridge value={inputValue} onChange={onInputValueChange} />
-      <Thread
-        components={components}
-        model={model}
-        onModelChange={onModelChange}
-        loadError={loadError}
-        onEscape={onEscape}
-        slashCommands={slashCommands}
-      />
+      <TurnFooterHost onOpenTurnProcess={onOpenTurnProcess}>
+        <SubagentDrawerHost onOpenSubagent={onOpenSubagent} canOpenSubagent={canOpenSubagent}>
+          <Thread
+            components={components}
+            model={model}
+            onModelChange={onModelChange}
+            loadError={loadError}
+            onEscape={onEscape}
+            slashCommands={slashCommands}
+          />
+        </SubagentDrawerHost>
+      </TurnFooterHost>
     </AssistantUiRuntimeProvider>
   );
 }

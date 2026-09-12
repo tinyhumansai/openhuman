@@ -1,13 +1,12 @@
 import createDebug from 'debug';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { LuGift, LuTicket, LuUsers } from 'react-icons/lu';
+import { LuGift, LuUsers } from 'react-icons/lu';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import EmptyStateCard from '../components/EmptyStateCard';
 import { SidebarContent } from '../components/layout/shell/SidebarSlot';
 import TwoPaneNav from '../components/layout/TwoPaneNav';
 import RewardsCommunityTab from '../components/rewards/RewardsCommunityTab';
-import RewardsRedeemTab from '../components/rewards/RewardsRedeemTab';
 import RewardsReferralsTab from '../components/rewards/RewardsReferralsTab';
 import SettingsTabbedPage from '../components/settings/layout/SettingsTabbedPage';
 import { useT } from '../lib/i18n/I18nContext';
@@ -17,14 +16,14 @@ import type { RewardsSnapshot } from '../types/rewards';
 import { isLocalSessionToken } from '../utils/localSession';
 
 /**
- * The three Rewards surfaces. Each is its own page with a sidebar entry rather
+ * The two Rewards surfaces. Each is its own page with a sidebar entry rather
  * than a chip tab on one page: they share no state and none of them is a
  * refinement of another, so a tab row was hiding two destinations behind a
  * third. `?view=` is the address so a page survives a reload and can be linked.
  */
-type RewardsView = 'rewards' | 'referrals' | 'redeem';
+type RewardsView = 'rewards' | 'referrals';
 
-const VIEWS: readonly RewardsView[] = ['rewards', 'referrals', 'redeem'] as const;
+const VIEWS: readonly RewardsView[] = ['rewards', 'referrals'] as const;
 
 function isRewardsView(value: string): value is RewardsView {
   return (VIEWS as readonly string[]).includes(value);
@@ -163,11 +162,6 @@ const Rewards = () => {
                     label: t('rewards.referrals'),
                     icon: <LuUsers className="h-4 w-4" />,
                   },
-                  {
-                    value: 'redeem',
-                    label: t('rewards.coupons'),
-                    icon: <LuTicket className="h-4 w-4" />,
-                  },
                 ],
               },
             ]}
@@ -214,25 +208,19 @@ const Rewards = () => {
           description: t('rewards.referralSection.subtitle'),
           body: <RewardsReferralsTab />,
         }
-      : view === 'redeem'
-        ? {
-            title: t('rewards.coupon.title'),
-            description: t('rewards.coupon.subtitle'),
-            body: <RewardsRedeemTab />,
-          }
-        : {
-            title: t('rewards.title'),
-            description: t('rewards.header.desc'),
-            body: (
-              <RewardsCommunityTab
-                error={error}
-                isLoading={isLoading}
-                onRetry={handleRetry}
-                onSilentRefresh={handleSilentRefresh}
-                snapshot={rewardsSnapshot}
-              />
-            ),
-          };
+      : {
+          title: t('rewards.title'),
+          description: t('rewards.header.desc'),
+          body: (
+            <RewardsCommunityTab
+              error={error}
+              isLoading={isLoading}
+              onRetry={handleRetry}
+              onSilentRefresh={handleSilentRefresh}
+              snapshot={rewardsSnapshot}
+            />
+          ),
+        };
 
   return (
     <>

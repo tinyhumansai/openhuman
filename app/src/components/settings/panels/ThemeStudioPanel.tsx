@@ -215,7 +215,7 @@ const ThemeStudioPanel = ({ embedded = false }: ThemeStudioPanelProps = {}) => {
       {/* ── Theme gallery: family tiles + one Light/Dark/Auto toggle ──── */}
       <div>
         <div className="mb-2 flex items-center justify-between px-1">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-content-faint">
+          <h3 className="font-title text-sm font-semibold text-content">
             {t('settings.theme.presetsHeading', 'Themes')}
           </h3>
           <ToggleGroupRoot
@@ -304,7 +304,7 @@ const ThemeStudioPanel = ({ embedded = false }: ThemeStudioPanelProps = {}) => {
                 </span>
                 <span className="flex items-center justify-between gap-1">
                   <span className="text-sm font-medium text-content truncate">{th.name}</span>
-                  <span className="text-[10px] uppercase tracking-wide text-content-faint">
+                  <span className="text-[11px] text-content-faint">
                     {t('settings.theme.customBadge', 'Custom')}
                   </span>
                 </span>
@@ -337,7 +337,9 @@ const ThemeStudioPanel = ({ embedded = false }: ThemeStudioPanelProps = {}) => {
       {/* ── Colour editor ──────────────────────────────────────────── */}
       {COLOR_GROUPS.map(group => (
         <SettingsSection key={group.id} title={t(group.i18nKey, humanize(group.id))}>
-          <div className="px-1">
+          {/* A ruled list, matching the billing panel: the hairlines do the
+              separating so each row needs no box of its own. */}
+          <div className="divide-y divide-line-subtle px-4">
             {group.keys.map(key => (
               <ColorTokenField
                 key={key}

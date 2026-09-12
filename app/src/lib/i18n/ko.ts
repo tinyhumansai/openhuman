@@ -528,6 +528,8 @@ const messages: TranslationMap = {
   'settings.developerMode.enabledByBuild': '개발 빌드에서 항상 활성화',
   'settings.clearAppData': '앱 데이터 삭제',
   'settings.clearAppDataDesc': '로그아웃하고 모든 로컬 앱 데이터를 영구적으로 삭제',
+  'settings.clearAppDataIrreversible': '되돌릴 수 없습니다.',
+  'settings.clearAppDataAction': '데이터 삭제',
   'settings.logOut': '로그아웃',
   'settings.logOutDesc': '계정에서 로그아웃',
   'settings.exitLocalSession': '로컬 세션 종료',
@@ -1368,7 +1370,7 @@ const messages: TranslationMap = {
   'settings.search.menuDesc':
     'OpenHuman 관리 검색을 기본값으로 사용하거나 API 키로 자체 제공업체를 연결하세요.',
   'settings.search.description':
-    '에이전트가 사용할 검색 엔진을 선택하거나 검색 도구를 완전히 비활성화합니다. 관리형은 OpenHuman의 백엔드를 사용합니다(설정 불필요). 병렬, Brave, Querit, Exa는 API 키를 사용하여 내 컴퓨터에서 직접 실행됩니다.',
+    '에이전트가 사용할 검색 엔진을 선택하거나 검색 도구를 완전히 비활성화합니다. 관리형은 OpenHuman의 백엔드를 사용합니다(설정 불필요). 병렬, Brave, Querit, Exa, Tavily는 API 키를 사용하여 내 컴퓨터에서 직접 실행됩니다.',
   'settings.search.engineAria': '검색 엔진',
   'settings.search.engineDisabledLabel': 'Disabled',
   'settings.search.engineDisabledDesc':
@@ -1377,7 +1379,7 @@ const messages: TranslationMap = {
   'settings.search.engineManagedDesc':
     '기본값입니다. OpenHuman 백엔드를 통해 라우팅되며 현재 Exa로 구동됩니다. API 키가 필요하지 않습니다.',
   'settings.search.localManagedUnavailable':
-    '로컬 사용자는 OpenHuman 관리 검색을 사용할 수 없습니다. 웹 검색을 활성화하려면 자체 Parallel, Brave, Querit 또는 Exa API 키를 추가하세요.',
+    '로컬 사용자는 OpenHuman 관리 검색을 사용할 수 없습니다. 웹 검색을 활성화하려면 자체 Parallel, Brave, Querit, Exa 또는 Tavily API 키를 추가하세요.',
   'settings.search.engineParallelLabel': 'Parallel',
   'settings.search.engineParallelDesc':
     '직접 Parallel API: 검색, 추출, 채팅, 리서치, 보강, 데이터셋 도구.',
@@ -1389,6 +1391,9 @@ const messages: TranslationMap = {
   'settings.search.engineExaLabel': 'Exa',
   'settings.search.engineExaDesc':
     'Exa 기반 신경망 검색. 본인의 Exa API 키가 필요합니다. 검색, 유사 페이지 찾기, 페이지 콘텐츠 도구를 추가합니다.',
+  'settings.search.engineTavilyLabel': 'Tavily',
+  'settings.search.engineTavilyDesc':
+    'Tavily 기반 웹, 뉴스, 금융 검색. 본인의 Tavily API 키가 필요합니다. 검색 및 페이지 콘텐츠 추출 도구를 추가합니다.',
   'settings.search.statusConfigured': '구성됨',
   'settings.search.statusNeedsKey': 'API 키 필요',
   'settings.search.fallbackToManaged':
@@ -1410,6 +1415,8 @@ const messages: TranslationMap = {
   'settings.search.placeholderBrave': 'BSA...',
   'settings.search.placeholderQuerit': 'Querit API 키',
   'settings.search.placeholderExa': 'Exa API 키를 붙여넣으세요…',
+  'settings.search.tavilyKeyLabel': 'Tavily API 키',
+  'settings.search.placeholderTavily': 'tvly-...',
   'settings.search.allowedSitesLabel': '허용된 웹사이트',
   'settings.search.allowedSitesHint':
     '리서치 중 어시스턴트가 열고 읽을 수 있는 웹사이트입니다(한 줄에 호스트 하나, 예: reuters.com). 호스트에는 하위 도메인도 포함됩니다. 모든 웹 접근을 차단하려면 비워 두세요.',
@@ -2581,6 +2588,8 @@ const messages: TranslationMap = {
   'memorySources.comingSoon': '출시 예정',
   'memorySources.composioListFailed': 'Composio 연결을 불러오지 못했습니다.',
   'memorySources.browse': '찾아보기…',
+  'memorySources.folderPathUnavailable':
+    '해당 폴더의 위치를 확인할 수 없습니다. 대신 전체 경로를 입력하세요.',
   'memorySources.folderPathPlaceholder': '/Users/you/notes',
   'memorySources.globPatternPlaceholder': '**/*.md',
   'memorySources.repoUrlPlaceholder': 'https://github.com/org/repo',
@@ -2603,6 +2612,8 @@ const messages: TranslationMap = {
   'memorySources.sync.itemsSynced': '항목 동기화됨',
   'memorySources.sync.upToDate': '최신 상태',
   'memorySources.sync.failedLabel': '실패',
+  'memorySources.sync.morePending': '동기화할 항목이 더 있습니다. 동기화를 다시 클릭하세요',
+  'memorySources.sync.budgetSpent': '오늘의 요청 한도를 모두 사용했습니다. 내일 다시 시도하세요',
   'time.justNow': '방금 전',
   'time.secondsAgoSuffix': '초 전',
   'time.minutesAgoSuffix': '분 전',
@@ -2645,6 +2656,18 @@ const messages: TranslationMap = {
   'memorySources.allIn.allFailed':
     '동기화를 하나도 시작할 수 없습니다. 각 소스에서 원인을 확인하세요.',
   'memorySources.allIn.partial': '시작된 동기화: {triggered}. 시작하지 못함: {failed}.',
+  'memorySources.repair.button': '이전 기억 복구',
+  'memorySources.repair.title': '이전 기억을 복구할까요?',
+  'memorySources.repair.message':
+    '최대 {scanned}개의 동기화된 문서가 메모리 트리 정리 수정 이전에 저장되어 메모리 그래프에 표시되지 않습니다. 정리하려면 임베딩 크레딧이 사용됩니다. 이미 트리에 있는 문서는 건너뜁니다.',
+  'memorySources.repair.confirm': '복구',
+  'memorySources.repair.cancel': '나중에',
+  'memorySources.repair.nothing':
+    '복구할 항목이 없습니다. 정리를 기다리는 동기화된 문서가 없습니다.',
+  'memorySources.repair.success':
+    '{ingested}개를 메모리 트리에 정리했습니다 ({already}개 이미 있음, {skipped}개 건너뜀).',
+  'memorySources.repair.morePending': '남은 항목이 있습니다. 이전 기억 복구를 다시 클릭하세요.',
+  'memorySources.repair.failed': '이전 기억을 복구하지 못했습니다.',
   'memorySources.settings.button': '설정',
   'memorySources.settings.title': '동기화 설정',
   'memorySources.settings.maxPrs': '최대 풀 리퀘스트 수',
@@ -2658,7 +2681,6 @@ const messages: TranslationMap = {
   'memorySources.settings.unlimited': '무제한',
   'memorySources.settings.unlimitedTooltip':
     '{toolkit}에 대해 최대로 동기화하도록 선택했습니다. 여기에서 한도를 변경할 수 있습니다.',
-  'memorySources.settings.maxed': '최대',
   'memorySources.settings.save': '저장',
   'memorySources.settings.saving': '저장 중…',
   'memorySources.settings.saved': '설정이 저장되었습니다',
@@ -3315,6 +3337,10 @@ const messages: TranslationMap = {
   'conversations.subagent.statusFailed': '실패',
   'conversations.subagent.statusAwaitingUser': '사용자 대기 중',
   'conversations.subagent.statusCancelled': '취소됨',
+  'conversations.subagent.awaitingTitle': '답변을 기다리는 중',
+  'conversations.subagent.answerPlaceholder': '답변을 입력하세요',
+  'conversations.subagent.answerSend': '답변 보내기',
+  'conversations.subagent.answerSent': '답변을 보냈습니다',
   'conversations.agentTaskInsights.title': '에이전트 작업 인사이트',
   'conversations.agentTaskInsights.response': '응답',
   'conversations.agentTaskInsights.processSourceTitle': '에이전트 프로세스 소스',
@@ -4291,7 +4317,7 @@ const messages: TranslationMap = {
   'settings.ai.claudeCode.signIn': 'Claude로 로그인',
   'settings.ai.claudeCode.reconnect': '다시 연결',
   'settings.ai.claudeCode.loginHint':
-    'claude login을 실행하는 터미널을 엽니다. 완료된 후 다시 확인을 클릭하세요.',
+    'claude auth login --claudeai을 실행하는 터미널을 엽니다. 완료된 후 다시 확인을 클릭하세요.',
   'settings.ai.claudeCode.loginError': '로그인 터미널을 열 수 없습니다. 다시 시도해 주세요.',
   'settings.ai.claudeCode.fullAccess': '전체 액세스',
   'settings.ai.claudeCode.fullAccessOn':
@@ -4867,6 +4893,9 @@ const messages: TranslationMap = {
   'settings.developerMenu.eventLog.title': '이벤트 로그',
   'settings.developerMenu.eventLog.desc':
     '모든 에이전트, 도구, 시스템 이벤트를 색상으로 구분해 실시간으로 표시합니다.',
+  'settings.developerMenu.eventLog.workspaceScope': '워크스페이스 범위',
+  'settings.developerMenu.eventLog.workspaceScopeActive': '현재 워크스페이스',
+  'settings.developerMenu.eventLog.workspaceScopeAll': '모든 워크스페이스',
   'settings.developerMenu.eventLog.allTypes': '모든 유형',
   'settings.developerMenu.eventLog.filterAgent': '필터...',
   'settings.developerMenu.eventLog.download': '다운로드',
@@ -4874,6 +4903,9 @@ const messages: TranslationMap = {
   'settings.developerMenu.eventLog.live': '실시간',
   'settings.developerMenu.eventLog.disconnected': '연결 끊김',
   'settings.developerMenu.eventLog.waiting': '이벤트 대기 중...',
+  'settings.developerMenu.eventLog.waitingHint':
+    '에이전트, 도구, 시스템이 작업하면 여기에 이벤트가 나타납니다. 아직 아무 일도 없었습니다.',
+  'settings.developerMenu.eventLog.notConnectedHint': '스트림을 재개하려면 코어에 다시 연결하세요.',
   'settings.developerMenu.eventLog.notConnected': '코어에 연결되지 않음',
   'settings.developerMenu.eventLog.jumpToLatest': '최신으로 이동',
   'settings.developerMenu.eventLog.badge.tool': 'TOOL',
@@ -5985,6 +6017,7 @@ const messages: TranslationMap = {
   'settings.agents.editor.modelHints': '라우트 힌트',
   'settings.agents.editor.modelTiers': '모델 등급',
   'settings.agents.editor.modelCustom': '사용자 정의 모델 ID…',
+  'settings.agents.editor.modelManaged': '관리형 모델',
   'settings.agents.editor.modelCustomPlaceholder': '예: anthropic/claude-sonnet-4',
   'settings.agents.editor.selectTools': '도구 추가',
   'settings.agents.editor.toolsAllSelected': '모든 도구',
@@ -6131,6 +6164,8 @@ const messages: TranslationMap = {
   'keyring.settings.storageMode': '비밀 저장 모드',
   'keyring.settings.mode.osKeychain': 'OS 키체인',
   'keyring.settings.mode.encryptedFile': '로컬 암호화',
+  'keyring.settings.mode.localEncryptedFile': '암호화된 파일',
+  'keyring.settings.mode.localPlaintextFile': '암호화되지 않은 파일',
   'keyring.settings.mode.consentPending': '구성되지 않음',
   'keyring.settings.mode.declined': '거부됨',
   'keyring.settings.availability': '키체인 가용성',
@@ -6458,6 +6493,9 @@ const messages: TranslationMap = {
   'userErrors.localModelUnavailable.title': '로컬 모델을 사용할 수 없음',
   'userErrors.localModelUnavailable.body':
     '구성된 엔드포인트에서 Ollama에 연결할 수 없거나 필요한 모델이 그곳에 설치되어 있지 않습니다. Ollama를 실행하고 해당 엔드포인트에 모델을 내려받거나, 이 작업을 클라우드 제공업체로 전환하세요.',
+  'userErrors.replyDeliveryFailed.title': '답변을 표시하지 못했습니다',
+  'userErrors.replyDeliveryFailed.body':
+    '에이전트가 이 턴을 마쳤지만 답변을 저장하거나 다시 읽어올 수 없었습니다. 다시 물어보면 답변을 되풀이합니다.',
   'userErrors.memoryStoreCorrupt.title': '메모리 인덱스가 손상되었습니다',
   'userErrors.memoryStoreCorrupt.body':
     '메모리 트리의 데이터베이스가 손상되었습니다. 손상된 파일은 메모리 데이터 옆에 보존되었고 빈 인덱스가 다시 생성되었습니다. 메모리 소스를 다시 동기화하여 채워 주세요.',
@@ -6502,6 +6540,25 @@ const messages: TranslationMap = {
   'flows.delete.confirm': '삭제',
   'flows.delete.deleting': '삭제 중…',
   'flows.canvas.renameLabel': '워크플로 이름 바꾸기',
+  'settings.ai.openaiOauthTitle': 'ChatGPT로 로그인',
+  'settings.ai.openaiOauthDescription':
+    'API 키 없이 OpenAI 모델을 사용하려면 ChatGPT 계정으로 로그인하세요.',
+  'settings.ai.openaiOauthConnect': 'ChatGPT로 로그인',
+  'settings.ai.openaiOauthConnected': 'ChatGPT에 연결됨',
+  'settings.ai.openaiOauthOpening': '로그인 페이지를 여는 중…',
+  'settings.ai.openaiOauthCallbackHint':
+    '로그인 후 브라우저의 전체 리디렉션 URL을 붙여넣으세요(http://127.0.0.1:1455/ 로 시작).',
+  'settings.ai.openaiOauthCallbackPlaceholder':
+    'http://127.0.0.1:1455/auth/callback?code=...&state=...',
+  'settings.ai.openaiOauthFinish': 'ChatGPT 로그인 완료',
+  'settings.ai.openaiOauthDisconnect': 'ChatGPT 연결 해제',
+  'settings.ai.openaiOauthDesktopOnly': 'ChatGPT 로그인은 데스크톱 앱에서만 사용할 수 있습니다.',
+  'settings.ai.openaiOauthStartError':
+    'ChatGPT 로그인을 시작할 수 없습니다. 다시 시도하거나 API 키를 사용하세요.',
+  'settings.ai.openaiOauthCompleteError':
+    'ChatGPT 로그인이 완료되지 않았습니다. 리디렉션 URL을 확인하고 다시 시도하세요.',
+  'settings.ai.openaiOauthCallbackRequired': '로그인 후 브라우저의 리디렉션 URL을 붙여넣으세요.',
+  'settings.ai.openaiOauthDisconnectError': 'ChatGPT 연결을 해제할 수 없습니다. 다시 시도하세요.',
   'memorySources.codingSessions.title': '코딩 에이전트 세션',
   'memorySources.codingSessions.description':
     'Codex와 Claude Code의 결정 및 수정 사항을 비공개 페르소나 메모리로 변환합니다.',
@@ -6538,6 +6595,7 @@ const messages: TranslationMap = {
   // Data Sync layered pipeline status (GH-4690)
   'sync.pipeline.ingestedOnly': '수집만 완료',
   'sync.pipeline.storedWithoutVectors': '벡터 없이 저장됨. 의미 검색을 사용할 수 없습니다.',
+  'sync.pipeline.vectorsPending': '벡터를 기다리는 청크: {count}개. 곧 시맨틱 검색에 포함됩니다.',
   'sync.pipeline.signInToEnable': '사용하려면 로그인하세요',
   'sync.pipeline.extractionFailed': '메모리 구조 추출에 실패했습니다. 위키가 불완전할 수 있습니다.',
   'sync.pipeline.treeDegraded':

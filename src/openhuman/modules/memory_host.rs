@@ -1,9 +1,11 @@
 //! Host-owned callbacks used by the separately compiled TinyMemory module.
 //!
-//! This file is the bus-served twin of `memory/host_impls.rs`. That file
-//! installs the engine's seam traits as process globals, which only works while
-//! the engine is compiled into this binary; these interfaces serve the same
-//! capabilities to an engine that is *not*, over the module's connection.
+//! This file was the bus-served twin of `memory/host_impls.rs`, and is now the
+//! only one of the pair. That file installed the engine's seam traits as
+//! process globals, which only works while the engine is compiled into this
+//! binary — so it went when the engine left the test build too
+//! (openhuman#6161). These interfaces serve the same capabilities to an engine
+//! that is *not* compiled in, over the module's connection.
 //!
 //! # Which seams are here, and why only these
 //!
@@ -75,7 +77,18 @@ impl EmbeddingCallbacks {
             )
             .map_err(method_error)?;
         let borrowed: Vec<&str> = texts.iter().map(String::as_str).collect();
-        embedder.embed(&borrowed).await.map_err(method_error)
+        // Timed because this is one of the two host round trips behind every
+        // per-turn memory lookup (the other is `extract_spacy` below); the
+        // `[auto_recall]` line reports the total, these report the split.
+        let started = std::time::Instant::now();
+        let result = embedder.embed(&borrowed).await.map_err(method_error);
+        log::debug!(
+            "[memory_host] embed provider={provider} texts={} elapsed_ms={} ok={}",
+            borrowed.len(),
+            started.elapsed().as_millis(),
+            result.is_ok()
+        );
+        result
     }
 }
 
@@ -158,10 +171,10 @@ fn resolve_chat_model(
 /// the sync layer treats that as *skip silently* — the exact
 /// looks-empty-rather-than-broken failure the seam exists to prevent.
 ///
-/// `memory/host_impls.rs` gets liveness a cheaper way: its async methods
-/// re-read from disk, and its two synchronous probes recover the caller's
-/// config, which the engine's own loops keep fresh. With no caller config to
-/// recover, a fresh read is what "current as of the call" costs here. It is
+/// `memory/host_impls.rs` got liveness a cheaper way while it existed: its
+/// async methods re-read from disk, and its two synchronous probes recovered
+/// the caller's config, which the engine's own loops kept fresh. With no caller
+/// config to recover, a fresh read is what "current as of the call" costs here. It is
 /// bounded — the probes sit on periodic sync paths, a handful of reads per
 /// tick, next to network calls that dominate them.
 ///
@@ -427,9 +440,22 @@ impl RuntimeCallbacks {
     }
 
     async fn extract_spacy(&self, text: String) -> tinybus::Result<SpacyResponse> {
+        // The module asks for this on every query it retrieves for, so its
+        // latency lands directly on the chat turn. Timed for the same reason
+        // `embed` above is; the first call after boot also carries the Python
+        // server start and the model load, which is what the boot warm-up in
+        // `memory::auto_recall::warm` exists to pay early.
+        let started = std::time::Instant::now();
         let response = crate::openhuman::runtime::python_server::extract_spacy(&self.0, &text)
             .await
-            .map_err(method_error)?;
+            .map_err(method_error);
+        log::debug!(
+            "[memory_host] extract_spacy chars={} elapsed_ms={} ok={}",
+            text.chars().count(),
+            started.elapsed().as_millis(),
+            response.is_ok()
+        );
+        let response = response?;
         serde_json::from_value(serde_json::to_value(response).map_err(method_error)?)
             .map_err(method_error)
     }

@@ -62,7 +62,6 @@ async fn turn_without_override_offers_tools_and_resets_after_a_suppressed_turn()
 /// greeting is a SINGLE provider call with no "## Memory agent context" block.
 #[tokio::test]
 async fn turn_override_suppress_memory_agent_skips_memory_trigger() {
-    crate::openhuman::memory::host_impls::install_for_tests();
     crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins()
         .expect("built-in agent definitions should load");
 
@@ -80,14 +79,12 @@ async fn turn_override_suppress_memory_agent_skips_memory_trigger() {
     let workspace = tempfile::TempDir::new().expect("temp workspace");
     let workspace_path = workspace.path().to_path_buf();
     let _workspace_env = WorkspaceEnvGuard::set(&workspace_path);
-    let memory_cfg = crate::openhuman::config::MemoryConfig {
+    let _memory_cfg = crate::openhuman::config::MemoryConfig {
         backend: "none".into(),
         ..crate::openhuman::config::MemoryConfig::default()
     };
     // The embedding seam, as above.
-    crate::openhuman::memory::host_impls::install_for_tests();
-    let mem: Arc<dyn Memory> =
-        Arc::from(tinymemory_core::store::create_memory(&memory_cfg, &workspace_path).unwrap());
+    let mem: Arc<dyn Memory> = crate::openhuman::memory::test_support::noop_memory();
 
     let mut agent = Agent::builder()
         .chat_model(provider)

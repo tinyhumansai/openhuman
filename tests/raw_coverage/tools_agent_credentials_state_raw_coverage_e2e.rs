@@ -348,7 +348,7 @@ fn response(text: Option<&str>, tool_calls: Vec<ToolCall>) -> ModelResponse {
 
 fn parent_context(workspace: PathBuf, provider: Arc<ScriptedModel>) -> ParentExecutionContext {
     let tools: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool)];
-    let tool_specs = tools.iter().map(|tool| tool.spec()).collect();
+    let tool_specs = tools.iter().map(|tool| Arc::new(tool.spec())).collect();
     ParentExecutionContext {
         agent_definition_id: "orchestrator".into(),
         allowed_subagent_ids: [
@@ -363,6 +363,10 @@ fn parent_context(workspace: PathBuf, provider: Arc<ScriptedModel>) -> ParentExe
         ),
         all_tools: Arc::new(tools),
         all_tool_specs: Arc::new(tool_specs),
+        // #6145: empty means "same surface as `all_tool_specs`" — the
+        // catalogue falls back to it, so these stubs keep the behaviour
+        // they had before the parent's visible set became its own field.
+        visible_tool_specs: Arc::new(Vec::new()),
         visible_tool_names: std::collections::HashSet::new(),
         subagent_tool_ceiling_names: std::collections::HashSet::new(),
         model_name: "round16-model".to_string(),
@@ -956,4 +960,180 @@ async fn round16_app_state_config_and_session_snapshot_edges() {
     .value;
     assert!(cleared.encryption_key.is_none());
     assert!(cleared.onboarding_tasks.is_none());
+}
+
+/// #5847 — the one behaviour deliberately kept when TinyPlace was deleted.
+///
+/// The removal took ~49,600 lines but retained a single entry on the
+/// workspace-internal denylist, because an upgraded profile can still hold
+/// `tinyplace/` state written by an older version — encrypted identity and
+/// session material. Nothing in any e2e lane asserted it, which makes the entry
+/// look like a leftover reference to a deleted domain rather than the guard it
+/// is: exactly the line a future cleanup deletes as dead.
+///
+/// Driven through the agent file tools rather than `is_workspace_internal_path`
+/// directly, because the question is not whether the predicate is right — the
+/// unit suite covers that — but whether the tools an agent actually calls sit
+/// behind it, at the most permissive autonomy tier there is.
+///
+/// `redirect_links` and `codegraph` are asserted alongside it: all three are
+/// retained-after-removal entries with the same rationale, so one regression
+/// would take all three and a test naming only `tinyplace` would miss it.
+#[tokio::test]
+async fn file_tools_cannot_reach_retained_legacy_state_in_the_workspace() {
+    use openhuman_core::openhuman::config::AutonomyConfig;
+    use openhuman_core::openhuman::security::AutonomyLevel;
+    use openhuman_core::openhuman::tools::{FileReadTool, FileWriteTool};
+
+    let tmp = tempdir();
+    let workspace = tmp.path().to_path_buf();
+    std::fs::create_dir_all(&workspace).expect("workspace");
+
+    // Full autonomy, and the workspace is also the action dir — the most
+    // permissive shape a real install can take. If the guard holds here it
+    // holds everywhere.
+    let security = Arc::new(SecurityPolicy::from_config(
+        &AutonomyConfig {
+            level: AutonomyLevel::Full,
+            max_actions_per_hour: 10_000,
+            ..Default::default()
+        },
+        &workspace,
+        &workspace,
+    ));
+    let read = FileReadTool::new(security.clone());
+    let write = FileWriteTool::new(security.clone());
+
+    // Paths are workspace-relative on purpose: `workspace_only` is on by
+    // default and rejects every absolute path outright
+    // (`security/policy/path_checks.rs:88`), so an absolute path would be
+    // refused for a reason that has nothing to do with the denylist under test.
+    // Relative is also what an agent actually sends — file tools resolve them
+    // from `action_dir`.
+    //
+    // A control: an ordinary workspace file must stay reachable, so a passing
+    // test cannot be explained by everything being blocked.
+    std::fs::write(workspace.join("notes.md"), "reachable\n").expect("write control file");
+    let control = read
+        .execute(json!({"path": "notes.md"}))
+        .await
+        .expect("control read");
+    assert!(
+        !control.is_error && control.output().contains("reachable"),
+        "an ordinary workspace file must remain readable: {}",
+        control.output()
+    );
+
+    for legacy in ["tinyplace", "redirect_links", "codegraph"] {
+        let dir = workspace.join(legacy);
+        std::fs::create_dir_all(&dir).expect("legacy dir");
+        let secret = dir.join("session.json");
+        let original = format!("{{\"legacy\":\"{legacy}\",\"token\":\"do-not-read\"}}");
+        std::fs::write(&secret, &original).expect("seed legacy state");
+
+        let relative = format!("{legacy}/session.json");
+        let attempted_read = read
+            .execute(json!({"path": relative}))
+            .await
+            .expect("read returns a ToolResult");
+        assert!(
+            attempted_read.is_error,
+            "{legacy}: agent read of retained legacy state succeeded: {}",
+            attempted_read.output()
+        );
+        assert!(
+            !attempted_read.output().contains("do-not-read"),
+            "{legacy}: the secret leaked into the tool output: {}",
+            attempted_read.output()
+        );
+
+        let attempted_write = write
+            .execute(json!({"path": format!("{legacy}/session.json"), "content": "clobbered"}))
+            .await
+            .expect("write returns a ToolResult");
+        assert!(
+            attempted_write.is_error,
+            "{legacy}: agent write into retained legacy state succeeded: {}",
+            attempted_write.output()
+        );
+        // The refusal must not itself disclose what it is protecting. A write
+        // path that echoes the existing file back in its error would satisfy
+        // the flag and the byte-comparison below while still leaking the
+        // secret (CodeRabbit, #5974).
+        assert!(
+            !attempted_write.output().contains("do-not-read"),
+            "{legacy}: the write refusal leaked the file it refused to touch: {}",
+            attempted_write.output()
+        );
+        // The refusal has to be a refusal, not a message printed after the fact.
+        assert_eq!(
+            std::fs::read_to_string(&secret).expect("legacy file still present"),
+            original,
+            "{legacy}: the file was modified despite the tool reporting an error"
+        );
+    }
+}
+
+/// #5807 — a driver deliberately given `class = "null"` is named as such, not
+/// blamed on a build that has no memory module.
+///
+/// `admit` accepts a non-built-in driver id carrying `class = "null"` verbatim
+/// (the `built_in_class` consistency check is skipped for ids that are not
+/// built in), so the binding reports `class = Null` with a `driver_id` that is
+/// not `"null"`. Keying the refusal reason on that id put this config in the
+/// modules-off arm and told a user with a working modules build to go and
+/// investigate their build flags.
+///
+/// Driven through `migration_helpers::rpc::migrate_openclaw` — the function the
+/// `config.openclaw` RPC handler calls — rather than the private wrapper the
+/// unit test uses, and with an explicit `Config` so the assertion does not
+/// depend on process-global config state shared with the rest of this binary.
+///
+/// This runs in every feature configuration on purpose: the misdirection it
+/// guards against is one a *modules-enabled* build hits.
+#[tokio::test]
+async fn openclaw_import_names_a_null_classed_driver_rather_than_the_build() {
+    use openhuman_core::openhuman::config::migration_helpers::rpc as migration_rpc;
+    use openhuman_core::openhuman::config::schema::{MemoryDriverConfig, MemorySubsystemConfig};
+
+    let tmp = tempdir();
+    let mut config = Config::default();
+    config.workspace_dir = tmp.path().join("workspace");
+    config.config_path = tmp.path().join("config.toml");
+    std::fs::create_dir_all(&config.workspace_dir).expect("workspace");
+
+    let mut drivers = std::collections::BTreeMap::new();
+    drivers.insert(
+        "mynull".to_string(),
+        MemoryDriverConfig {
+            class: Some("null".to_string()),
+            ..Default::default()
+        },
+    );
+    config.subsystems.memory = MemorySubsystemConfig {
+        driver: "mynull".to_string(),
+        drivers,
+        ..Default::default()
+    };
+
+    let source = tmp.path().join("openclaw-src");
+    std::fs::create_dir_all(&source).expect("source workspace");
+    std::fs::write(source.join("MEMORY.md"), "# Note\nkeep me").expect("seed source");
+
+    let err = migration_rpc::migrate_openclaw(&config, Some(source), false)
+        .await
+        .expect_err("importing into a null-classed driver must refuse");
+
+    // `contains("null")` alone would be satisfied by the driver id `mynull`,
+    // so this asserts the *quoted* class value the message renders — which a
+    // generic class-validation error could not produce (CodeRabbit, #5974).
+    assert!(
+        err.contains("mynull") && err.contains("class") && err.contains("\"null\""),
+        "the refusal must name the configured driver and its `class = \"null\"`; got: {err}"
+    );
+    assert!(
+        !err.contains("no memory module compiled in"),
+        "a deliberately null-classed driver must not be reported as a modules-off \
+         build — that is the misdirection #5807 fixed; got: {err}"
+    );
 }

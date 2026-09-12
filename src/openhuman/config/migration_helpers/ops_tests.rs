@@ -5,7 +5,6 @@ fn test_config(tmp: &TempDir) -> Config {
     // Apply-mode migrations create unified-memory entries. The memory
     // engine's host seams are explicit, so install the test wiring before
     // constructing a configuration that can exercise that path.
-    crate::openhuman::memory::host_impls::install_for_tests();
     Config {
         workspace_dir: tmp.path().join("workspace"),
         action_dir: tmp.path().join("workspace"),
@@ -60,7 +59,6 @@ async fn migrate_openclaw_apply_imports_markdown_entries_into_target_workspace()
     // seam installed. In the default build another test installs the
     // process-global host first; under `--no-default-features` those tests
     // are gated out, so this test must install it itself (idempotent).
-    crate::openhuman::memory::host_impls::install_for_tests();
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
 
@@ -248,7 +246,6 @@ async fn migrate_hermes_dry_run_on_empty_source_returns_report() {
 async fn migrate_hermes_apply_imports_markdown_entries() {
     // Apply does real memory work; install the embedding host seam so this
     // test stands on its own under `--no-default-features` (idempotent).
-    crate::openhuman::memory::host_impls::install_for_tests();
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
 

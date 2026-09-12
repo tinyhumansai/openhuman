@@ -226,7 +226,8 @@ pub fn model_vision_enabled(model: &str, config: &crate::openhuman::config::Conf
 /// - **Managed OpenHuman tiers** consult the hardcoded per-tier map
 ///   ([`crate::openhuman::inference::provider::factory::oh_tier_supports_vision`]) —
 ///   the remote backend does not advertise per-tier capability, so the core owns
-///   it. Currently only `reasoning-v1` is vision-capable.
+///   it. Currently `reasoning-v1` and `vision-v1` — plus their `hint:reasoning`
+///   / `hint:vision` aliases — are vision-capable; every other tier is not.
 /// - **Custom/BYOK models** consult the user-set `model_registry.vision` flag
 ///   ([`model_vision_enabled`]).
 pub fn model_supports_vision(model: &str, config: &crate::openhuman::config::Config) -> bool {

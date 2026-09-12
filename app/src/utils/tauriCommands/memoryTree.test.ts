@@ -10,6 +10,7 @@ import { callCoreRpc } from '../../services/coreRpcClient';
 import {
   memoryNamespaceSummaries,
   memorySyncStatusList,
+  memoryTreeBackfillConnectorTrees,
   memoryTreeBackfillStatus,
   memoryTreeChunkScore,
   memoryTreeDeleteChunk,
@@ -523,5 +524,53 @@ describe('memoryNamespaceSummaries', () => {
     const out = await memoryNamespaceSummaries();
 
     expect(out).toEqual({ namespaces: [], total_documents: 0 });
+  });
+});
+
+describe('memoryTreeBackfillConnectorTrees', () => {
+  test('sends dry_run and omits limit when none is given', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({
+      result: {
+        executed: false,
+        scanned: 12,
+        ingested: 0,
+        already_present: 0,
+        skipped: 0,
+        more_pending: false,
+        notes: [],
+      },
+      logs: ['stub'],
+    });
+
+    const out = await memoryTreeBackfillConnectorTrees({ dryRun: true });
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'openhuman.memory_tree_backfill_connector_trees',
+        params: { dry_run: true },
+      })
+    );
+    expect(out.executed).toBe(false);
+    expect(out.scanned).toBe(12);
+  });
+
+  test('forwards a limit and unwraps a bare (non-envelope) reply', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({
+      executed: true,
+      scanned: 5,
+      ingested: 4,
+      already_present: 1,
+      skipped: 0,
+      more_pending: true,
+      notes: [],
+    });
+
+    const out = await memoryTreeBackfillConnectorTrees({ dryRun: false, limit: 5 });
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith(
+      expect.objectContaining({ params: { dry_run: false, limit: 5 } })
+    );
+    expect(out.ingested).toBe(4);
+    expect(out.more_pending).toBe(true);
   });
 });

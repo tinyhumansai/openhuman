@@ -97,11 +97,16 @@ describe('<Feedback />', () => {
   });
 
   it('surfaces a load error without also showing the empty state', async () => {
-    mockList.mockRejectedValueOnce(new Error('boom'));
+    mockList.mockRejectedValueOnce({
+      success: false,
+      error: 'Feedback is temporarily unavailable.',
+    });
 
     renderWithProviders(<Feedback />, { initialEntries: ['/?view=main'] });
 
-    await waitFor(() => expect(screen.getByText('boom')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText('Feedback is temporarily unavailable.')).toBeInTheDocument()
+    );
     // The empty-state copy must not render alongside the error banner.
     expect(
       screen.queryByText('No feedback yet. Be the first to share an idea.')

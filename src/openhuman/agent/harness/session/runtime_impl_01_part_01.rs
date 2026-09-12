@@ -42,27 +42,72 @@ impl Agent {
         self.turn_model_source.clone()
     }
 
-    /// Borrow the agent's tools as a slice. Used by the sub-agent runner
-    /// to filter the parent's tool registry per-archetype.
+    /// Borrow the agent's durable tool registry as a slice. Used by the
+    /// sub-agent runner to filter the parent's tool registry per-archetype.
+    ///
+    /// This is **not** the agent's whole callable surface — the synthesised
+    /// delegation tools live in their own `Arc`. Use [`Self::all_tool_refs`]
+    /// when you mean "every tool this agent can run".
     pub fn tools(&self) -> &[Box<dyn Tool>] {
         self.tools.as_slice()
     }
 
-    /// Clone the agent's tools `Arc` for sharing with sub-agents.
+    /// Clone the agent's durable tools `Arc` for sharing with sub-agents.
+    ///
+    /// Deliberately excludes [`Self::synthesized_tools_arc`]: a sub-agent must
+    /// never be handed a `delegate_*` tool, which the harness re-asserts at
+    /// registration time (issue #4452).
     pub fn tools_arc(&self) -> Arc<Vec<Box<dyn Tool>>> {
         Arc::clone(&self.tools)
+    }
+
+    /// Clone the agent's synthesised delegation tools `Arc`.
+    ///
+    /// Replaced wholesale on every [`Agent::refresh_delegation_tools`], so a
+    /// clone taken here is a stable snapshot for the rest of the caller's turn
+    /// even if the connection set changes underneath it.
+    pub fn synthesized_tools_arc(&self) -> Arc<Vec<Box<dyn Tool>>> {
+        Arc::clone(&self.synthesized_tools)
+    }
+
+    /// Every tool this agent can execute: the durable registry first, then the
+    /// synthesised delegation set — the same order as [`Self::tool_specs`] and
+    /// turn dispatch.
+    ///
+    /// Borrowed rather than materialised as a `Vec<Box<dyn Tool>>` because
+    /// `Box<dyn Tool>` is not cloneable — the two sets can be read together but
+    /// never merged into one owned slice.
+    pub fn all_tool_refs(&self) -> Vec<&dyn Tool> {
+        self.tools
+            .iter()
+            .chain(self.synthesized_tools.iter())
+            .map(|t| t.as_ref())
+            .collect()
     }
 
     /// Borrow the agent's tool specs (pre-serialised). Captured at
     /// turn-start so sub-agents can pass byte-identical schemas to the
     /// provider for prefix-cache reuse.
-    pub fn tool_specs(&self) -> &[ToolSpec] {
+    pub fn tool_specs(&self) -> &[Arc<ToolSpec>] {
         self.tool_specs.as_slice()
     }
 
-    /// Clone the agent's tool specs `Arc` for sharing with sub-agents.
-    pub fn tool_specs_arc(&self) -> Arc<Vec<ToolSpec>> {
+    /// Clone the agent's full tool specs `Arc` (durable and synthesised).
+    pub fn tool_specs_arc(&self) -> Arc<Vec<Arc<ToolSpec>>> {
         Arc::clone(&self.tool_specs)
+    }
+
+    /// Clone the agent's provider-facing spec list: visible, policy-allowed,
+    /// de-duplicated, synthesised delegates included.
+    pub fn visible_tool_specs_arc(&self) -> Arc<Vec<Arc<ToolSpec>>> {
+        Arc::clone(&self.visible_tool_specs)
+    }
+
+    /// Clone the specs of the durable registry alone, index for index with
+    /// [`Self::tools_arc`] — the pair a sub-agent is handed, so a child never
+    /// sees a spec for a synthesised delegate it holds no instance for.
+    pub fn durable_tool_specs_arc(&self) -> Arc<Vec<Arc<ToolSpec>>> {
+        Arc::clone(&self.durable_tool_specs)
     }
 
     #[cfg(test)]
@@ -372,12 +417,17 @@ impl Agent {
     }
 
     pub(super) fn rebuild_tool_policy_session(&mut self) {
-        self.tool_policy_session = ToolPolicyEngine::build_session(
+        // Classify the synthesised delegates too: they are advertised to the
+        // provider and callable, so a policy snapshot built from the durable
+        // registry alone would leave every `delegate_*` tool with no decision
+        // at all.
+        let all_tools = self.all_tool_refs();
+        self.tool_policy_session = ToolPolicyEngine::build_session_from_refs(
             &self.agent_definition_name,
             &self.event_channel,
             "session",
             &self.config.channel_permissions,
-            self.tools.as_slice(),
+            &all_tools,
             &self.visible_tool_names,
         );
         let visible_specs = super::builder::visible_tool_specs_for_policy(

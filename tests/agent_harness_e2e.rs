@@ -176,6 +176,35 @@ fn error_completion(status: u16, message: &str) -> Value {
 // wait expires and never sets [`CANARY_OVERLAP`].
 
 /// Canary substrings whose worker requests must overlap. Empty = disarmed.
+/// Milliseconds every scripted upstream reply is held before it is served, or
+/// `0` for "answer immediately". Armed by the per-model-call ceiling test
+/// (#5766/#5767): the ceiling can only be observed against a call that is still
+/// in flight when the ceiling elapses, and it must apply to *every* attempt —
+/// a queue entry would stall only the first, and the retry would be answered
+/// instantly by the default completion, hiding the timeout.
+static SCRIPTED_STALL_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Arms the stall and disarms it on drop.
+///
+/// The guard exists because the atomic is process-global and the env lock is
+/// deliberately recovered from poisoning: if a test panicked between arming and
+/// a bare `disarm`, every later test sharing this scripted handler would inherit
+/// a 25s delay on every completion, turning one failure into a cascade of
+/// unrelated timeouts.
+struct ScriptedStallGuard;
+
+impl Drop for ScriptedStallGuard {
+    fn drop(&mut self) {
+        SCRIPTED_STALL_MS.store(0, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+#[must_use = "the stall is disarmed when the guard drops; binding it to `_` disarms it immediately"]
+fn arm_scripted_stall(ms: u64) -> ScriptedStallGuard {
+    SCRIPTED_STALL_MS.store(ms, std::sync::atomic::Ordering::SeqCst);
+    ScriptedStallGuard
+}
+
 static CANARY_BARRIER: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 /// Worker requests currently parked at the barrier.
 static CANARY_IN_FLIGHT: OnceLock<Mutex<std::collections::HashSet<String>>> = OnceLock::new();
@@ -274,6 +303,13 @@ async fn scripted_chat_completions(
             "body": body.clone(),
         }))
     });
+
+    // Hold every reply while the stall is armed, so a model call is still
+    // in flight when a per-call ceiling elapses (#5766/#5767).
+    let stall_ms = SCRIPTED_STALL_MS.load(std::sync::atomic::Ordering::SeqCst);
+    if stall_ms > 0 {
+        tokio::time::sleep(Duration::from_millis(stall_ms)).await;
+    }
 
     // Park an armed fan-out worker before it is answered, so a peer has a
     // chance to arrive. Before the queue pop, not after: holding the popped
@@ -634,9 +670,6 @@ async fn boot_stack() -> Stack {
     // The transport-only router does not create a Core runtime context. Install
     // the explicit tinymemory host seams before handlers service memory-backed
     // agent turns, matching normal startup wiring.
-    openhuman_core::openhuman::memory::host_impls::install_memory_host_seams(std::sync::Arc::new(
-        openhuman_core::openhuman::config::Config::default(),
-    ));
 
     let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
     let rpc_base = format!("http://{rpc_addr}");
@@ -2330,7 +2363,7 @@ mod streaming_support {
     use async_trait::async_trait;
     use openhuman_core::openhuman::agent::dispatcher::NativeToolDispatcher;
     use openhuman_core::openhuman::agent::Agent;
-    use openhuman_core::openhuman::config::{AgentConfig, ContextConfig, MemoryConfig};
+    use openhuman_core::openhuman::config::{AgentConfig, ContextConfig};
     use openhuman_core::openhuman::memory::Memory;
     use openhuman_core::openhuman::tools::traits::ToolCallOptions;
     use openhuman_core::openhuman::tools::{
@@ -2348,7 +2381,6 @@ mod streaming_support {
     };
     use tinyinference::tool::ToolCall;
     use tinyinference::usage::Usage;
-    use tinymemory_core::store as memory_store;
 
     // ── ScriptedProvider ────────────────────────────────────────────────────
     // Copied (minimal) from tests/agent_session_turn_raw_coverage_e2e.rs:76-152.
@@ -2444,12 +2476,76 @@ mod streaming_support {
         (temp, path)
     }
 
-    fn memory_for_workspace_s(path: &Path) -> Arc<dyn Memory> {
-        let cfg = MemoryConfig {
-            backend: "none".to_string(),
-            ..MemoryConfig::default()
-        };
-        Arc::from(memory_store::create_memory(&cfg, path).unwrap())
+    /// A memory that stores nothing, which is what this helper always built.
+    ///
+    /// It used to ask the engine's factory for `backend: "none"` — an engine
+    /// call whose whole purpose was to get back something that does not store.
+    /// The agent under test needs *a* memory to be constructed with; it never
+    /// reads one back. So the no-op is not a downgrade from what was here, it
+    /// is the same behaviour without linking 133k lines to obtain it.
+    #[derive(Debug)]
+    struct NoMemory;
+
+    #[async_trait::async_trait]
+    impl Memory for NoMemory {
+        fn name(&self) -> &str {
+            "none"
+        }
+        async fn store(
+            &self,
+            _namespace: &str,
+            _key: &str,
+            _content: &str,
+            _category: openhuman_core::openhuman::memory::api::types::MemoryCategory,
+            _session_id: Option<&str>,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn recall(
+            &self,
+            _query: &str,
+            _limit: usize,
+            _opts: openhuman_core::openhuman::memory::api::recall::RecallOpts<'_>,
+        ) -> anyhow::Result<Vec<openhuman_core::openhuman::memory::api::types::MemoryEntry>>
+        {
+            Ok(Vec::new())
+        }
+        async fn get(
+            &self,
+            _namespace: &str,
+            _key: &str,
+        ) -> anyhow::Result<Option<openhuman_core::openhuman::memory::api::types::MemoryEntry>>
+        {
+            Ok(None)
+        }
+        async fn list(
+            &self,
+            _namespace: Option<&str>,
+            _category: Option<&openhuman_core::openhuman::memory::api::types::MemoryCategory>,
+            _session_id: Option<&str>,
+        ) -> anyhow::Result<Vec<openhuman_core::openhuman::memory::api::types::MemoryEntry>>
+        {
+            Ok(Vec::new())
+        }
+        async fn forget(&self, _namespace: &str, _key: &str) -> anyhow::Result<bool> {
+            Ok(false)
+        }
+        async fn namespace_summaries(
+            &self,
+        ) -> anyhow::Result<Vec<openhuman_core::openhuman::memory::api::types::NamespaceSummary>>
+        {
+            Ok(Vec::new())
+        }
+        async fn count(&self) -> anyhow::Result<usize> {
+            Ok(0)
+        }
+        async fn health_check(&self) -> bool {
+            true
+        }
+    }
+
+    fn memory_for_workspace_s(_path: &Path) -> Arc<dyn Memory> {
+        Arc::new(NoMemory)
     }
 
     pub fn agent_with_s(
@@ -3040,4 +3136,340 @@ async fn provider_sse_tool_args_accumulation() {
     );
 
     server.abort();
+}
+
+// ─── Per-model-call wall-clock ceiling (#5766 / PR #5767) ────────────────────
+//
+// Before #5767 a model call was bounded only by the *turn's remaining* wall
+// clock, so hang detection rode the turn deadline: a turn that had legitimately
+// spent most of its budget across many successful calls handed the next call
+// whatever was left and died. #5767 demoted the turn deadline to a runaway
+// guard (600s → 3600s) and introduced a per-call ceiling
+// (`RunLimits::max_model_call_ms`, default 900s,
+// `OPENHUMAN_MODEL_CALL_TIMEOUT_SECS`, `0` disables) that is recomputed afresh
+// for every call and every retry attempt.
+//
+// The harness names which bound fired in the timeout message
+// (`tinyagents-harness/src/agent_loop/model_call.rs:11,17` —
+// "per-model-call ceiling" vs "remaining wall-clock budget") precisely so field
+// triage can tell "this one call wedged" from "the run is out of time". That
+// label is what this test asserts on: it is the only externally visible signal
+// that distinguishes the two ceilings, so asserting merely "the turn failed"
+// would pass with the fix reverted.
+
+/// A wedged model call is cut off by the PER-CALL ceiling, not by the turn
+/// deadline: with a 2s per-call ceiling under a 600s turn deadline, an upstream
+/// that never answers in time must terminate the turn in seconds, and the
+/// terminal event must name the per-call bound.
+#[test]
+fn model_call_ceiling_bounds_a_wedged_call_below_the_turn_deadline() {
+    run_on_agent_stack(
+        "model_call_ceiling",
+        model_call_ceiling_bounds_a_wedged_call_below_the_turn_deadline_inner,
+    );
+}
+
+async fn model_call_ceiling_bounds_a_wedged_call_below_the_turn_deadline_inner() {
+    let _lock = env_lock();
+
+    // Per-call ceiling far tighter than the turn deadline, so whichever bound
+    // fires is unambiguous. Both are read per turn by `run_policy_for`.
+    let _per_call = EnvVarGuard::set("OPENHUMAN_MODEL_CALL_TIMEOUT_SECS", "2");
+    let _turn = EnvVarGuard::set("OPENHUMAN_AGENT_TURN_TIMEOUT_SECS", "600");
+    // There is a THIRD wall clock, and pinning only the two above leaves this
+    // test's conclusion resting on the ambient environment. `web_turn_deadline()`
+    // (`web_chat/ops_part_01.rs:79`) applies its own backstop from
+    // `OPENHUMAN_WEB_TURN_TIMEOUT_SECS`, and the web layer maps every harness
+    // `Timeout` onto the same generic `turn_timeout` copy — so an inherited
+    // value below the 8s bound asserted here would fire first, produce an
+    // identical terminal, and let the whole test pass with the per-call ceiling
+    // unwired. Cleared, not set, so it falls back to its 900s default and can
+    // play no part in the outcome.
+    let _web_backstop = EnvVarGuard::unset("OPENHUMAN_WEB_TURN_TIMEOUT_SECS");
+
+    // Every upstream reply is held for 25s — comfortably past the 2s per-call
+    // ceiling and comfortably short of the 600s turn deadline. Armed globally
+    // so retry attempts stall too.
+    let _stall = arm_scripted_stall(25_000);
+    reset_script(vec![text_completion(
+        "this reply is never delivered in time",
+    )]);
+    let stack = boot_stack().await;
+
+    let mut events = spawn_sse_collector(format!(
+        "{}/events?client_id=harness-call-ceiling",
+        stack.rpc_base
+    ));
+    let started = std::time::Instant::now();
+    send_web_chat(
+        &stack.rpc_base,
+        910,
+        "harness-call-ceiling",
+        "thread-call-ceiling",
+        "stall please",
+    )
+    .await;
+
+    // 120s is a generous outer bound: the point is that the turn ends long
+    // before its own 600s deadline, and this wait would itself expire if the
+    // per-call ceiling were not in force.
+    // 120s is a generous outer bound: the point is that the turn ends long
+    // before its own 600s deadline, and this wait would itself expire if the
+    // per-call ceiling were not in force.
+    let terminal = wait_for_terminal(&mut events, Duration::from_secs(120)).await;
+    let elapsed = started.elapsed();
+
+    // The turn is stopped rather than completing.
+    assert_eq!(
+        terminal.get("event").and_then(Value::as_str),
+        Some("chat_error"),
+        "a wedged model call must terminate the turn; got: {terminal}"
+    );
+    assert_eq!(
+        terminal.get("error_type").and_then(Value::as_str),
+        Some("turn_timeout"),
+        "the stop must be a timeout, not some other failure; got: {terminal}"
+    );
+
+    // THE assertion, and the one that distinguishes the two ceilings. The
+    // upstream holds every reply for 25s. Bounded only by the turn's remainder
+    // — the pre-#5767 behaviour — that stall completes well inside the 600s
+    // budget and the turn SUCCEEDS. Only a per-call ceiling can stop it at ~2s.
+    // Measured: 2.4s with the ceiling wired, 25.5s with it reverted.
+    // 8s, not a looser bound: the ceiling under test is 2s, so anything up to
+    // ~4x it still fails while leaving room for boot and SSE delivery. A 15s
+    // bound would also admit an implementation that ignored
+    // `OPENHUMAN_MODEL_CALL_TIMEOUT_SECS` and used a fixed 10s ceiling.
+    assert!(
+        elapsed < Duration::from_secs(8),
+        "the turn must be cut off by the 2s per-call ceiling, not by the 25s \
+         upstream stall completing under the 600s turn deadline; took {elapsed:?}"
+    );
+
+    // Deliberately NOT asserted: that the event names *which* ceiling fired.
+    // The harness distinguishes them internally ("per-model-call ceiling" vs
+    // "remaining wall-clock budget", `model_call.rs:11,17`) precisely so field
+    // triage can tell "this one call wedged" from "the run is out of time", but
+    // the host collapses both into `turn_timeout` with a message that says the
+    // turn "ran past its time budget" and blames a stalled tool or sub-agent.
+    // Here the turn had 598 of its 600 seconds left and no tool ran at all.
+    // Pinning that text would pin a misattribution — see W5-test-findings.md.
+
+    stack.shutdown();
+}
+
+// ── #5821: the tool-policy boundary is APPENDED, not prepended ──────────────
+//
+// Lives here rather than in `tests/raw_coverage/`: `raw_coverage_all` declares
+// `required-features = ["voice", "inference"]` (`Cargo.toml:117`), so a test
+// placed there is silently SKIPPED by any default-feature run — including the
+// one a contributor does locally. This target has no required features, so the
+// assertion actually executes.
+//
+// Self-contained rather than built on `streaming_support::agent_with_s`: that
+// helper resolves a real memory store, which needs an `EmbeddingHost` seam a
+// `tests/` binary cannot install (`host_impls::install_for_tests` is
+// `#[cfg(test)]`, visible only to the crate's own unit tests). The prompt path
+// under test never touches memory, so a stub is both sufficient and steadier.
+mod tool_policy_boundary_placement {
+    use anyhow::Result;
+    use async_trait::async_trait;
+    use openhuman_core::openhuman::agent::context::prompt::LearnedContextData;
+    use openhuman_core::openhuman::agent::dispatcher::NativeToolDispatcher;
+    use openhuman_core::openhuman::agent::Agent;
+    use openhuman_core::openhuman::config::AgentConfig;
+    use openhuman_core::openhuman::memory::{
+        Memory, MemoryCategory, MemoryEntry, NamespaceSummary as MemoryNamespaceSummary, RecallOpts,
+    };
+    use openhuman_core::openhuman::tools::{PermissionLevel, Tool, ToolResult};
+    use std::collections::VecDeque;
+    use std::sync::{Arc, Mutex};
+
+    use super::streaming_support::ScriptedProvider;
+    use tinyinference::model::{ChatModel, ModelProfile};
+
+    struct StubMemory;
+
+    #[async_trait]
+    impl Memory for StubMemory {
+        async fn store(
+            &self,
+            _namespace: &str,
+            _key: &str,
+            _content: &str,
+            _category: MemoryCategory,
+            _session_id: Option<&str>,
+        ) -> Result<()> {
+            Ok(())
+        }
+        async fn recall(
+            &self,
+            _query: &str,
+            _limit: usize,
+            _opts: RecallOpts<'_>,
+        ) -> Result<Vec<MemoryEntry>> {
+            Ok(Vec::new())
+        }
+        async fn get(&self, _namespace: &str, _key: &str) -> Result<Option<MemoryEntry>> {
+            Ok(None)
+        }
+        async fn list(
+            &self,
+            _namespace: Option<&str>,
+            _category: Option<&MemoryCategory>,
+            _session_id: Option<&str>,
+        ) -> Result<Vec<MemoryEntry>> {
+            Ok(Vec::new())
+        }
+        async fn forget(&self, _namespace: &str, _key: &str) -> Result<bool> {
+            Ok(false)
+        }
+        async fn namespace_summaries(&self) -> Result<Vec<MemoryNamespaceSummary>> {
+            Ok(Vec::new())
+        }
+        async fn count(&self) -> Result<usize> {
+            Ok(0)
+        }
+        async fn health_check(&self) -> bool {
+            true
+        }
+        fn name(&self) -> &str {
+            "boundary-placement-memory"
+        }
+    }
+
+    /// Two tools at different permission levels. A `read_only` channel
+    /// permission blocks the write one, and that restriction is what makes the
+    /// boundary render at all — `render_tool_policy_boundary` returns `None`
+    /// unless `session.has_restrictions()` (`tools/agent_policy/prompt.rs:12`).
+    struct ScopedTool {
+        name: &'static str,
+        level: PermissionLevel,
+    }
+
+    #[async_trait]
+    impl Tool for ScopedTool {
+        fn name(&self) -> &str {
+            self.name
+        }
+        fn description(&self) -> &str {
+            "tool-policy placement fixture"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({ "type": "object", "properties": {} })
+        }
+        fn permission_level(&self) -> PermissionLevel {
+            self.level
+        }
+        async fn execute(&self, _args: serde_json::Value) -> Result<ToolResult> {
+            Ok(ToolResult::success("ok"))
+        }
+    }
+
+    fn restricted_prompt() -> String {
+        let workspace = tempfile::TempDir::new().expect("temp workspace");
+        let provider: Arc<dyn ChatModel<()>> = Arc::new(ScriptedProvider {
+            responses: Mutex::new(VecDeque::new()),
+            stream_events: Vec::new(),
+            profile: ModelProfile::default(),
+        });
+        let mut config = AgentConfig::default();
+        config
+            .channel_permissions
+            .insert("boundary-channel".to_string(), "read_only".to_string());
+
+        let agent = Agent::builder()
+            .chat_model(provider)
+            .tools(vec![
+                Box::new(ScopedTool {
+                    name: "boundary_read",
+                    level: PermissionLevel::ReadOnly,
+                }),
+                Box::new(ScopedTool {
+                    name: "boundary_write",
+                    level: PermissionLevel::Write,
+                }),
+            ])
+            .memory(Arc::new(StubMemory))
+            .tool_dispatcher(Box::new(NativeToolDispatcher))
+            .workspace_dir(workspace.path().to_path_buf())
+            .event_context("boundary-session", "boundary-channel")
+            .config(config)
+            .build()
+            .expect("complete builder should succeed");
+
+        agent
+            .build_system_prompt(LearnedContextData::default())
+            .expect("system prompt builds")
+    }
+
+    /// #5821 (closes #5704). Every line of the boundary block is session-scoped
+    /// — agent id, channel, entry point, risk level, allowed tools — so putting
+    /// it first moves the prompt's first diverging byte to offset 0 and costs
+    /// the inference backend's automatic prefix cache everything behind it. It
+    /// also replaced each agent's opening persona line with a constant heading.
+    ///
+    /// This drives the real `Agent::build_system_prompt`. The four tests #5821
+    /// shipped exercise the extracted pure helper `append_tool_policy_boundary`
+    /// and would all still pass if `build_system_prompt` stopped calling it; the
+    /// one existing test that goes through the builder,
+    /// `turn_tests_part_01_tests::system_prompt_includes_tool_policy_boundary`,
+    /// asserts the block is PRESENT and says nothing about where.
+    #[test]
+    fn system_prompt_appends_the_tool_policy_boundary_after_the_body() {
+        let prompt = restricted_prompt();
+
+        let boundary_at = prompt
+            .find("## Tool Policy Boundary")
+            .expect("a restricted channel must render the boundary block");
+
+        assert!(
+            boundary_at > 0,
+            "the boundary must not open the prompt — prepending it moves the \
+             first diverging byte to offset 0 and defeats the backend's prefix \
+             cache (#5704). Prompt begins: {:?}",
+            prompt.chars().take(160).collect::<String>()
+        );
+        assert!(
+            !prompt.starts_with("## Tool Policy Boundary"),
+            "prepending replaced every agent's opening line with a constant heading"
+        );
+        assert!(
+            !prompt[..boundary_at].trim().is_empty(),
+            "there must be prompt body BEFORE the boundary"
+        );
+    }
+
+    /// The placement's payoff, stated exactly: the block is the LAST thing in
+    /// the prompt, so every stable byte precedes it. That is the property a
+    /// prefix cache keys on, and the one a revert to prepending destroys.
+    ///
+    /// `render_tool_policy_boundary` emits `- Restricted tools: N omitted by
+    /// policy` last whenever anything is restricted, so asserting the prompt
+    /// ENDS with that line pins the whole block to the tail rather than merely
+    /// somewhere after offset 0.
+    #[test]
+    fn the_tool_policy_boundary_is_the_last_block_in_the_prompt() {
+        let prompt = restricted_prompt();
+        let trimmed = prompt.trim_end();
+        let tail: String = trimmed
+            .chars()
+            .rev()
+            .take(220)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+
+        assert!(
+            trimmed.contains("- Restricted tools:"),
+            "the fixture must actually restrict a tool, or this asserts nothing; tail: {tail}"
+        );
+        assert!(
+            trimmed.ends_with("omitted by policy"),
+            "the boundary block must be the prompt's FINAL block — prepending \
+             puts it first and leaves the stable body trailing it (#5704). \
+             Prompt ends: {tail}"
+        );
+    }
 }

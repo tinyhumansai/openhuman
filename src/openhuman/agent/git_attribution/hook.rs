@@ -89,6 +89,7 @@ fn build_hook_env(
         }
     }
     parameters.push(b'\'');
+    push_neutralised_config(&mut parameters);
 
     HashMap::from([
         (OsString::from("OPENHUMAN_GIT_ATTRIBUTION"), TRAILER.into()),
@@ -105,6 +106,38 @@ fn build_hook_env(
 #[cfg(not(unix))]
 pub fn hook_env() -> HashMap<std::ffi::OsString, std::ffi::OsString> {
     HashMap::new()
+}
+
+/// Append the shell-safe git config overrides to a `GIT_CONFIG_PARAMETERS`
+/// buffer.
+///
+/// `GIT_CONFIG_PARAMETERS` is how git itself propagates `-c` to child
+/// processes, so these land at `-c` precedence: above the repository's own
+/// config, which in an agent-writable workspace is the thing an attacker gets
+/// to author. Several git config keys name a command git then runs —
+/// `core.fsmonitor` on `git status`, `core.pager` and `core.editor` on the
+/// commands that use them — and until `git_operations` moved behind a tool
+/// pack, `shell git` was the one path that got none of that hardening.
+///
+/// The list, and the reasoning about what is deliberately left out of it,
+/// lives with the rest of the policy in `tools::impl::filesystem`.
+///
+/// Later entries win, so this is appended after the hooks path rather than
+/// before: nothing here sets `core.hooksPath`, but the ordering is the
+/// contract and worth keeping explicit.
+#[cfg(unix)]
+fn push_neutralised_config(parameters: &mut Vec<u8>) {
+    for entry in crate::openhuman::tools::implementations::filesystem::SHELL_NEUTRALISED_CONFIG {
+        let Some((key, value)) = entry.split_once('=') else {
+            continue;
+        };
+        parameters.push(b' ');
+        parameters.push(b'\'');
+        parameters.extend_from_slice(key.as_bytes());
+        parameters.extend_from_slice(b"'='");
+        parameters.extend_from_slice(value.as_bytes());
+        parameters.push(b'\'');
+    }
 }
 
 #[cfg(unix)]

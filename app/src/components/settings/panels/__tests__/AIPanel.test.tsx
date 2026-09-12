@@ -21,9 +21,11 @@ import {
   upsertModelRegistryVision,
 } from '../../../../services/api/aiSettingsApi';
 import { creditsApi } from '../../../../services/api/creditsApi';
+import { callCoreRpc } from '../../../../services/coreRpcClient';
 import { renderWithProviders } from '../../../../test/test-utils';
 import { connectOpenRouterViaOAuth } from '../../../../utils/openrouterOAuth';
 import { openUrl } from '../../../../utils/openUrl';
+import { isTauri } from '../../../../utils/tauriCommands/common';
 // Lazy import so the typed mock is available to individual tests.
 import { openhumanUpdateLocalAiSettings as openhumanUpdateLocalAiSettingsMock } from '../../../../utils/tauriCommands/config';
 import AIPanel, {
@@ -109,6 +111,15 @@ vi.mock('../../../../utils/tauriCommands/config', async () => {
 
 vi.mock('../../../../utils/openrouterOAuth', () => ({ connectOpenRouterViaOAuth: vi.fn() }));
 vi.mock('../../../../utils/openUrl', () => ({ openUrl: vi.fn() }));
+
+vi.mock('../../../../services/coreRpcClient', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../../../services/coreRpcClient')>()),
+  callCoreRpc: vi.fn(),
+}));
+vi.mock('../../../../utils/tauriCommands/common', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../../../utils/tauriCommands/common')>()),
+  isTauri: vi.fn(() => false),
+}));
 
 const baseSettings = {
   cloudProviders: [
@@ -239,6 +250,7 @@ const baseConnections = [
 describe('AIPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(isTauri).mockReturnValue(false);
     vi.mocked(loadAISettings).mockResolvedValue(baseSettings);
     vi.mocked(loadLocalProviderSnapshot).mockResolvedValue(baseLocalSnapshot);
     vi.mocked(loadProviderAuthErrors).mockResolvedValue([]);
@@ -967,6 +979,82 @@ describe('AIPanel', () => {
     expect(
       within(dialog).queryByRole('button', { name: /Sign in with ChatGPT \/ Codex/i })
     ).not.toBeInTheDocument();
+    expect(within(dialog).getByTestId('settings-openai-oauth-section')).toBeInTheDocument();
+    expect(within(dialog).getByTestId('settings-openai-oauth-connect')).toBeInTheDocument();
+  });
+
+  it('registers OpenAI after completing ChatGPT sign-in in the provider dialog', async () => {
+    vi.mocked(isTauri).mockReturnValue(true);
+    vi.mocked(saveAISettings).mockResolvedValue(undefined);
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+    vi.mocked(callCoreRpc)
+      .mockResolvedValueOnce({ result: { connected: false } })
+      .mockResolvedValueOnce({ result: { authUrl: 'https://auth.openai.com/oauth/authorize' } })
+      .mockResolvedValueOnce({ result: {} });
+
+    renderWithProviders(<AIPanel />);
+    await openProviderConnectDialog('openai');
+    fireEvent.click(await screen.findByTestId('settings-openai-oauth-connect'));
+    const input = await screen.findByTestId('settings-openai-oauth-callback-input');
+    const callbackUrl = 'http://localhost:1455/auth/callback?code=test&state=test';
+    fireEvent.change(input, { target: { value: callbackUrl } });
+    fireEvent.click(screen.getByTestId('settings-openai-oauth-complete'));
+
+    await waitFor(() => expect(saveAISettings).toHaveBeenCalledTimes(1));
+    expect(callCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.inference_openai_oauth_complete',
+      params: { callback_url: callbackUrl },
+    });
+    const [previousSettings, nextSettings] = vi.mocked(saveAISettings).mock.calls[0];
+    expect(nextSettings.cloudProviders).toEqual([expect.objectContaining({ slug: 'openai' })]);
+    expect(nextSettings.routing).toEqual(previousSettings.routing);
+    expect(setCloudProviderKey).not.toHaveBeenCalled();
+    await waitFor(() => expect(clearCloudProviderKey).toHaveBeenCalledWith('openai'));
+    await waitFor(() =>
+      expect(screen.queryByTestId('settings-openai-oauth-section')).not.toBeInTheDocument()
+    );
+  });
+
+  it('removes OpenAI and its workload routes after disconnecting ChatGPT', async () => {
+    vi.mocked(isTauri).mockReturnValue(true);
+    vi.mocked(saveAISettings).mockResolvedValue(undefined);
+    vi.mocked(loadAISettings).mockResolvedValue({
+      ...baseSettings,
+      cloudProviders: [
+        ...baseSettings.cloudProviders,
+        {
+          id: 'openai',
+          slug: 'openai',
+          label: 'OpenAI',
+          endpoint: 'https://api.openai.com/v1',
+          auth_style: 'bearer',
+          has_api_key: false,
+        },
+      ],
+      routing: {
+        ...baseSettings.routing,
+        chat: { kind: 'cloud', providerSlug: 'openai', model: 'gpt-5' },
+      },
+    });
+    vi.mocked(callCoreRpc)
+      .mockResolvedValueOnce({ result: { connected: true } })
+      .mockResolvedValueOnce({ result: {} });
+
+    renderWithProviders(<AIPanel />);
+    await openProviderRowAction('openai', /Replace API key/i);
+    fireEvent.click(await screen.findByTestId('settings-openai-oauth-disconnect'));
+
+    await waitFor(() => expect(saveAISettings).toHaveBeenCalledTimes(1));
+    expect(callCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.inference_openai_oauth_disconnect',
+      params: {},
+    });
+    const [, nextSettings] = vi.mocked(saveAISettings).mock.calls[0];
+    expect(nextSettings.cloudProviders.map(provider => provider.slug)).toEqual(['openhuman']);
+    expect(nextSettings.routing.chat).toEqual({ kind: 'default' });
+    await waitFor(() =>
+      expect(screen.getByTestId('settings-openai-oauth-connect')).toBeInTheDocument()
+    );
   });
 
   it('#5339: keeps a valid key and saves the provider when the add-time probe fails for a non-auth reason', async () => {

@@ -216,6 +216,9 @@ pub(crate) struct BootstrapJobPlan {
     /// Proactive task pollers (`task_sources::start_periodic_poll` +
     /// `agent::task_dispatcher::start_board_poller`).
     pub proactive_task_pollers: bool,
+    /// Eager native-module preload (`modules::boot::load_declared_modules`):
+    /// the memory module resolving at boot, off the request path.
+    pub module_preload: bool,
 }
 
 /// Pure flag→job mapping for [`start_bootstrap_jobs`]. No side effects.
@@ -230,6 +233,9 @@ pub(crate) fn bootstrap_job_plan(services: &ServiceSet) -> BootstrapJobPlan {
         composio_integration_sync: services.integrations,
         workspace_memory_sync: services.memory_sync,
         proactive_task_pollers: services.cron,
+        // The memory module is the only eager module, so its preload is memory
+        // background work and rides the same flag as the queue.
+        module_preload: services.memory_queue,
     }
 }
 
@@ -245,16 +251,24 @@ pub(crate) fn bootstrap_job_plan(services: &ServiceSet) -> BootstrapJobPlan {
 /// silently lost all of them (#5028) — so they now sit behind `integrations` /
 /// `memory_sync` instead.
 ///
-/// `config` is unread as of openhuman#5560 — the engine's `queue::start` was
-/// this function's only consumer of it, and the loaded TinyMemory module starts
-/// that pool itself now. The parameter is **kept** rather than dropped: every
-/// other job here is one config read away from needing it again (the periodic
-/// sync loops below already re-load config internally), and removing it would
-/// churn every embedder that calls `start_bootstrap_jobs` for no gain. Named
-/// `_config` so the compiler does not have to be told to ignore it.
-pub fn start_bootstrap_jobs(services: ServiceSet, _config: &Config) {
+/// `config` feeds the native-module preload and nothing else here: the
+/// engine's `queue::start` was this function's other consumer of it, and the
+/// loaded TinyMemory module starts that pool itself now (openhuman#5560).
+pub fn start_bootstrap_jobs(services: ServiceSet, config: &Config) {
     let plan = bootstrap_job_plan(&services);
     log::debug!("[runtime.bootstrap] starting bootstrap jobs with plan {plan:?}");
+
+    // Native modules the registry marks eager — today TinyMemory, when the
+    // memory driver is module-backed. Off the boot path: the first launch on a
+    // machine downloads the release, and becoming RPC-ready must not wait on
+    // the network. A warm launch maps the cached library in milliseconds, so
+    // the first memory call finds it serving instead of starting the load
+    // itself and waiting behind it.
+    if plan.module_preload {
+        spawn_module_preload(config);
+    } else {
+        log::debug!("[runtime.bootstrap] native module preload disabled by ServiceSet");
+    }
 
     // ── The queue pool moved into the module, and must NOT be started here ──
     //
@@ -345,6 +359,23 @@ pub fn start_bootstrap_jobs(services: ServiceSet, _config: &Config) {
     log::debug!("[runtime.bootstrap] bootstrap job dispatch complete");
 }
 
+/// Resolve every eager native module in the background.
+#[cfg(feature = "modules")]
+fn spawn_module_preload(config: &Config) {
+    let config = config.clone();
+    tokio::spawn(async move {
+        log::debug!("[runtime.bootstrap] native module preload started");
+        crate::openhuman::modules::boot::load_declared_modules(&config).await;
+        log::debug!("[runtime.bootstrap] native module preload finished");
+    });
+}
+
+/// Without the module host compiled in there is nothing to preload.
+#[cfg(not(feature = "modules"))]
+fn spawn_module_preload(_config: &Config) {
+    log::debug!("[runtime.bootstrap] native module preload skipped: modules are compiled out");
+}
+
 /// Runs startup migrations, then starts one-shot boot background work selected
 /// by [`ServiceSet`].
 ///
@@ -353,6 +384,10 @@ pub fn start_bootstrap_jobs(services: ServiceSet, _config: &Config) {
 /// publishes readiness.
 pub async fn start_boot_once_jobs(services: ServiceSet, config: &Config) {
     run_legacy_migrations(config).await;
+
+    // The orphaned-run sweep does NOT live here. It runs in
+    // `CoreBuilder::build`, which every runtime goes through — these jobs only
+    // run from `serve()`, so a build-only embedder would never be swept.
 
     if services.harness_init {
         let cfg_for_init = config.clone();
@@ -474,7 +509,7 @@ pub fn spawn_socket_auto_connect(
                 }
             };
             let api_url = crate::api::config::effective_backend_api_url(&config.api_url);
-            let _initial_token = match crate::api::jwt::get_session_token(&config) {
+            let initial_token = match crate::api::jwt::get_session_token(&config) {
                 Ok(Some(t)) => t,
                 Ok(None) => {
                     log::info!(
@@ -496,6 +531,27 @@ pub fn spawn_socket_auto_connect(
             // changed since CoreRuntime::build(), so the build-time Config is
             // not authoritative here.
             let _rebind = socket_mgr.lock_identity_rebind().await;
+            // The renderer's `socket_connect_with_session` RPC connects the same
+            // core to the same backend with the same token. Whichever path runs
+            // second used to tear the other's live socket down and redo the
+            // handshake (#6181); if it is already up for this identity there is
+            // nothing to rebind.
+            if socket_mgr.is_live_for(&api_url, &initial_token) {
+                // The socket is reusable, the bridge is not: it is pinned to the
+                // `Config` resolved above, which a workspace switch invalidates.
+                // `set_workflow_bridge` re-advertises over a live socket by
+                // design, so reinstall and skip only the handshake.
+                #[cfg(feature = "flows")]
+                if _flows_enabled {
+                    crate::openhuman::flows::medulla_bridge::install(std::sync::Arc::clone(
+                        &config,
+                    ));
+                }
+                log::info!(
+                    "[socket] Auto-connect: {api_url} already connected with this session — refreshed the workflow bridge, kept the socket"
+                );
+                return;
+            }
             if let Err(e) = socket_mgr.disconnect().await {
                 log::error!("[socket] Auto-connect could not stop the prior connection: {e}");
                 return;
@@ -548,6 +604,7 @@ mod tests {
                 composio_integration_sync: true,
                 workspace_memory_sync: true,
                 proactive_task_pollers: true,
+                module_preload: true,
             }
         );
     }
@@ -560,6 +617,7 @@ mod tests {
             composio_integration_sync: false,
             workspace_memory_sync: false,
             proactive_task_pollers: false,
+            module_preload: false,
         };
         assert_eq!(bootstrap_job_plan(&ServiceSet::none()), empty);
         assert_eq!(bootstrap_job_plan(&ServiceSet::headless_api()), empty);
@@ -582,6 +640,18 @@ mod tests {
         let plan = bootstrap_job_plan(&memory_sync);
         assert!(plan.workspace_memory_sync);
         assert!(!plan.composio_integration_sync);
+        assert!(!plan.module_preload);
+
+        // The module preload is memory background work: it follows the queue
+        // flag and no other.
+        let mut memory_queue = ServiceSet::none();
+        memory_queue.memory_queue = true;
+        let plan = bootstrap_job_plan(&memory_queue);
+        assert!(plan.module_preload);
+        assert!(plan.memory_queue);
+        assert!(!plan.workspace_memory_sync);
+        assert!(!plan.composio_integration_sync);
+        assert!(!plan.proactive_task_pollers);
     }
 
     /// From desktop(), disabling exactly one concern flag disables only its job.

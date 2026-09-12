@@ -4,6 +4,7 @@ mod ops;
 // standalone `presentation` provider — it is the web channel's delivery formatter).
 pub mod presentation;
 mod progress_bridge;
+mod reply_persistence;
 mod run_task;
 mod schemas;
 mod session;
@@ -21,7 +22,7 @@ pub(crate) use web_errors::{
 
 // Public API — event bus
 pub use event_bus::{
-    publish_web_channel_event, register_approval_surface_subscriber,
+    approval_request_event, publish_web_channel_event, register_approval_surface_subscriber,
     register_artifact_surface_subscriber, register_egress_surface_subscriber,
     subscribe_web_channel_events,
 };

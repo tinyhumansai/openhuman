@@ -83,16 +83,25 @@ fn normalize_local_session_user(user: serde_json::Value, local_user_id: &str) ->
 
 pub async fn clear_session(config: &Config) -> Result<RpcOutcome<serde_json::Value>, String> {
     let mut logs = Vec::new();
-    // Flip the scheduler-gate override first so any background worker that
-    // is mid-iteration (or wakes up while we tear down) stalls at its next
-    // `wait_for_capacity()` call instead of firing requests at a backend
-    // we're about to invalidate. Idempotent.
-    crate::openhuman::cron::scheduler_gate::set_signed_out(true);
+    let removed = {
+        let _session_mutation_lock = crate::openhuman::desktop::app_state::
+            CURRENT_USER_SESSION_MUTATION_LOCK
+            .lock()
+            .await;
+        // Flip the scheduler-gate override first so any background worker that
+        // is mid-iteration (or wakes up while we tear down) stalls at its next
+        // `wait_for_capacity()` call instead of firing requests at a backend
+        // we're about to invalidate. Idempotent.
+        crate::openhuman::cron::scheduler_gate::set_signed_out(true);
 
-    let auth = AuthService::from_config(config);
-    let removed = auth
-        .remove_profile(APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME)
-        .map_err(|e| e.to_string())?;
+        // Invalidate before removing the profile so a pending revalidation cannot
+        // recreate it after logout has finished the removal.
+        crate::openhuman::desktop::app_state::forget_current_user_caches();
+
+        let auth = AuthService::from_config(config);
+        auth.remove_profile(APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME)
+            .map_err(|e| e.to_string())?
+    };
 
     // The core process stays alive on logout. Tear down its authenticated
     // Socket.IO transport and the user-pinned workflow bridge so neither can

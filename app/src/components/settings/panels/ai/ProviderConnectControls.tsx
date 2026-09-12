@@ -11,6 +11,7 @@ import Button from '../../../ui/Button';
 import { DialogContent, DialogRoot } from '../../../ui/Dialog';
 import Label from '../../../ui/Label';
 import TextField from '../../../ui/TextField';
+import OpenAiOAuthConnect from '../../oauth/OpenAiOAuthConnect';
 import { builtinCloudProvider } from '../builtinCloudProviders';
 import { presentProviderSetupError, ProviderSetupErrorNotice } from '../ProviderSetupErrorNotice';
 import { defaultEndpointFor, formatI18n, KIMI_PLATFORM_URL } from './aiPanelTypes';
@@ -33,6 +34,7 @@ export const ProviderKeyDialog = ({
   initialValue,
   initialKeyValue,
   oauthAction,
+  openAiOAuth,
   onCancel,
   onSubmit,
 }: {
@@ -51,6 +53,11 @@ export const ProviderKeyDialog = ({
   /** Pre-populate the API key field in `endpointKeyMode`. */
   initialKeyValue?: string;
   oauthAction?: { label: string; description?: string; onClick: () => Promise<void> | void } | null;
+  /** Register or remove the provider after the core OAuth operation succeeds. */
+  openAiOAuth?: {
+    onCompleted: () => Promise<void> | void;
+    onDisconnected: () => Promise<void> | void;
+  } | null;
   onCancel: () => void;
   /** Returns the entered value(s). For plain local runtimes this is the
    *  endpoint URL; for cloud providers it's the API key. In `endpointKeyMode`
@@ -260,6 +267,17 @@ export const ProviderKeyDialog = ({
           ) : null}
           {error ? <ProviderSetupErrorNotice error={error} /> : null}
         </div>
+
+        {openAiOAuth ? (
+          <div className="mt-4">
+            <OpenAiOAuthConnect
+              testIdPrefix="settings-openai-oauth"
+              allowDisconnect
+              onCompleted={openAiOAuth.onCompleted}
+              onDisconnected={openAiOAuth.onDisconnected}
+            />
+          </div>
+        ) : null}
 
         {oauthAction ? (
           <div className="mt-4 rounded-xl border border-line bg-surface-muted dark:bg-surface-muted/50 p-3">

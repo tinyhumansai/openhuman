@@ -236,6 +236,41 @@ async fn execute_real_file() {
     let _ = tokio::fs::remove_dir_all(&dir).await;
 }
 
+/// A decompression-bomb-shaped PNG (a header claiming an enormous canvas,
+/// backed by a file well under `MAX_IMAGE_BYTES`) must not blow up memory or
+/// hang: `extract_dimensions` reads four fixed IHDR bytes and never inflates
+/// pixel data, so the claimed 60000x60000 canvas is read as fast as any other
+/// header and no allocation is proportional to it.
+#[tokio::test]
+async fn execute_reports_a_bomb_shaped_header_without_decoding_pixels() {
+    let dir = std::env::temp_dir().join("openhuman_image_info_bomb");
+    let _ = tokio::fs::create_dir_all(&dir).await;
+    let png_path = dir.join("bomb.png");
+
+    let mut bytes = vec![
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // signature
+        0x00, 0x00, 0x00, 0x0D, // IHDR length
+        0x49, 0x48, 0x44, 0x52, // "IHDR"
+        0x00, 0x00, 0xEA, 0x60, // width: 60000
+        0x00, 0x00, 0xEA, 0x60, // height: 60000
+    ];
+    bytes.extend_from_slice(&[0u8; 10]); // pad past the 24 bytes IHDR parsing reads
+    tokio::fs::write(&png_path, &bytes).await.unwrap();
+
+    let tool = ImageInfoTool::new(test_security());
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        tool.execute(json!({"path": png_path.to_string_lossy()})),
+    )
+    .await
+    .expect("image-info execution must settle within two seconds")
+    .unwrap();
+    assert!(!result.is_error, "{}", result.output());
+    assert!(result.output().contains("Dimensions: 60000x60000"));
+
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+}
+
 #[tokio::test]
 async fn execute_with_base64() {
     let dir = std::env::temp_dir().join("openhuman_image_info_b64");

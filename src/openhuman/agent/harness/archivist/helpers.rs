@@ -4,6 +4,30 @@ use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hasher};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Whether `text` carries tool-call markup rather than (only) prose.
+///
+/// This is the single place the marker vocabulary is written down. The
+/// archivist uses it to decide whether stripping is needed at all; the
+/// delegation return path uses it to notice a sub-agent that emitted a
+/// tool call instead of executing one (#6033).
+pub(crate) fn looks_like_unexecuted_tool_call(text: &str) -> bool {
+    contains_tool_call_payload(text) || text.contains("\"tool_use\"")
+}
+
+/// Whether `text` carries a **call-shaped** payload — an XML tool-call span
+/// or a `tool_calls` JSON key.
+///
+/// Narrower than [`looks_like_unexecuted_tool_call`] on purpose: `"tool_use"`
+/// alone appears in ordinary prose about the protocol, which is fine for
+/// deciding whether stripping is worth attempting but not for deciding that
+/// a sub-agent produced no answer.
+///
+/// The JSON key is matched without assuming it opens the object, so a
+/// pretty-printed `{\n  "tool_calls": [...]\n}` is recognised too.
+pub(crate) fn contains_tool_call_payload(text: &str) -> bool {
+    text.contains("<tool_call>") || text.contains("\"tool_calls\"")
+}
+
 /// Strip tool-call JSON blocks from an assistant response, leaving only the
 /// prose text.
 ///
@@ -17,13 +41,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// raw JSON objects that begin with `{"tool_calls":`. The output may be empty
 /// if the entire response was tool-call markup — callers should handle that
 /// case (empty text → no-op ingest).
-pub(super) fn strip_tool_calls_from_response(response: &str) -> String {
+pub(crate) fn strip_tool_calls_from_response(response: &str) -> String {
     // Fast path: if the response contains no obvious tool-call markers, return
     // it unchanged to avoid unnecessary allocation.
-    if !response.contains("<tool_call>")
-        && !response.contains("{\"tool_calls\"")
-        && !response.contains("\"tool_use\"")
-    {
+    if !looks_like_unexecuted_tool_call(response) {
         return response.to_string();
     }
 

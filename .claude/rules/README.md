@@ -5,7 +5,6 @@ This directory is intentionally near-empty.
 Authoritative docs for AI agents and contributors:
 
 - **[`AGENTS.md`](../../AGENTS.md)** — all project conventions, commands, architecture, testing, patterns. (`CLAUDE.md` redirects here.)
-- **[`.claude/memory.md`](../memory.md)** — project memory: fixes, gotchas, strict rules, workflow notes.
 - **[`gitbooks/developing/architecture.md`](../../gitbooks/developing/architecture.md)** — narrative architecture, dual-socket sync.
 - **[`gitbooks/developing/architecture/frontend.md`](../../gitbooks/developing/architecture/frontend.md)** — frontend layout.
 - **[`gitbooks/developing/architecture/tauri-shell.md`](../../gitbooks/developing/architecture/tauri-shell.md)** — Tauri shell.

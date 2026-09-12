@@ -521,3 +521,81 @@ fn cron_add_tool_schema_requires_name_and_schedule() {
         "'schedule' must appear in CronAddTool schema required list"
     );
 }
+
+#[tokio::test]
+async fn rejects_agent_job_scheduled_tighter_than_five_minutes() {
+    let tmp = TempDir::new().unwrap();
+    let cfg = test_config(&tmp).await;
+    let tool = CronAddTool::new(cfg.clone(), test_security(&cfg));
+
+    for schedule in [
+        json!({ "kind": "every", "every_ms": 60_000 }),
+        json!({ "kind": "cron", "expr": "*/3 * * * *" }),
+        // Bare-string shorthand; irregular, judged by its :01 → :02 pair.
+        json!("1,2,30 * * * *"),
+    ] {
+        let result = tool
+            .execute(json!({
+                "name": "too_eager",
+                "schedule": schedule,
+                "job_type": "agent",
+                "prompt": "check my inbox"
+            }))
+            .await
+            .unwrap();
+        assert!(
+            result.is_error,
+            "{schedule} must be rejected, got {:?}",
+            result.output()
+        );
+        assert!(
+            result
+                .output()
+                .contains("agent jobs must run at least 5 minutes apart"),
+            "{:?}",
+            result.output()
+        );
+    }
+    assert!(cron::list_jobs(&cfg).unwrap().is_empty());
+
+    // Shell jobs keep the old contract: any interval above zero.
+    let shell = tool
+        .execute(json!({
+            "name": "tick",
+            "schedule": { "kind": "every", "every_ms": 60_000 },
+            "job_type": "shell",
+            "command": "echo tick"
+        }))
+        .await
+        .unwrap();
+    assert!(!shell.is_error, "{:?}", shell.output());
+}
+
+#[tokio::test]
+async fn accepts_agent_job_at_exactly_five_minutes() {
+    let tmp = TempDir::new().unwrap();
+    let cfg = test_config(&tmp).await;
+    let tool = CronAddTool::new(cfg.clone(), test_security(&cfg));
+
+    let result = tool
+        .execute(json!({
+            "name": "inbox",
+            "schedule": { "kind": "cron", "expr": "*/5 * * * *" },
+            "job_type": "agent",
+            "prompt": "check my inbox"
+        }))
+        .await
+        .unwrap();
+    assert!(!result.is_error, "{:?}", result.output());
+}
+
+#[test]
+fn schema_and_description_document_the_agent_floor() {
+    let tool = CronAddTool::new(
+        Arc::new(Config::default()),
+        Arc::new(SecurityPolicy::default()),
+    );
+    assert!(tool.description().contains("at least 5 minutes apart"));
+    let schema = tool.parameters_schema().to_string();
+    assert!(schema.contains("at least 300000 = 5 minutes"), "{schema}");
+}

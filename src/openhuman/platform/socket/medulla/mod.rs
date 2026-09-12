@@ -410,7 +410,7 @@ async fn build_agent(agent_id: &str, task_id: &str, session_id: &str) -> Result<
     // per-thread `set_agent_definition_name`).
     agent.set_agent_definition_name(medulla_session_key(agent_id, session_id));
     agent.fetch_connected_integrations().await;
-    let _ = agent.refresh_delegation_tools();
+    agent.refresh_delegation_tools();
     Ok(agent)
 }
 

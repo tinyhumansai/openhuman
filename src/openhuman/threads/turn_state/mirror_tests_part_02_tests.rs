@@ -209,3 +209,280 @@ fn finish_first_turn_without_transcript_is_noop() {
     assert_eq!(listed.lifecycle, TurnLifecycle::Interrupted);
     assert_eq!(listed.streaming_text, "orphan partial");
 }
+
+/// A sub-agent's child tool call must persist the arguments it was invoked
+/// with. Live, the `subagent_tool_call` socket event carries them; before
+/// #5987 the snapshot did not, so a reloaded child row came back with no
+/// "Input" block at all.
+#[test]
+fn subagent_tool_call_persists_its_arguments() {
+    let (_d, mut m) = fresh("t");
+    m.observe(&AgentProgress::SubagentSpawned {
+        agent_id: "researcher".into(),
+        task_id: "sub-1".into(),
+        mode: "typed".into(),
+        dedicated_thread: false,
+        prompt_chars: 10,
+        prompt: String::new(),
+        worker_thread_id: None,
+        display_name: Some("Researcher".into()),
+    });
+    m.observe(&AgentProgress::SubagentToolCallStarted {
+        agent_id: "researcher".into(),
+        task_id: "sub-1".into(),
+        call_id: "c1".into(),
+        tool_name: "tool".into(),
+        arguments: serde_json::json!({ "query": "openhuman turn state" }),
+        iteration: 1,
+        display_label: None,
+        display_detail: None,
+    });
+
+    let activity = m.snapshot().tool_timeline[0]
+        .subagent
+        .as_ref()
+        .expect("activity")
+        .clone();
+    assert_eq!(
+        activity.tool_calls[0].args,
+        Some(serde_json::json!({ "query": "openhuman turn state" })),
+        "child arguments must reach the snapshot verbatim"
+    );
+
+    // The payload is stored exactly once. `output` and `failure` already live
+    // only on the call row and are grafted onto the transcript item by
+    // `call_id` on the frontend; `args` deliberately follows them rather than
+    // duplicating up to 16 KiB into every full-file snapshot rewrite.
+    let json = serde_json::to_string(m.snapshot()).expect("serialize");
+    assert_eq!(
+        json.matches("\"args\"").count(),
+        1,
+        "arguments must be persisted once, on the call row only"
+    );
+}
+
+/// A `Value::Null` payload must serialize away rather than persist a
+/// meaningless "Input: null" row. This is the state *at start* on the
+/// tinyagents path; the arguments arrive later and are backfilled by
+/// `tinyagents_path_backfills_arguments_from_the_completion_event`.
+#[test]
+fn null_child_arguments_are_not_persisted_at_start() {
+    let (_d, mut m) = fresh("t");
+    m.observe(&AgentProgress::SubagentSpawned {
+        agent_id: "researcher".into(),
+        task_id: "sub-1".into(),
+        mode: "typed".into(),
+        dedicated_thread: false,
+        prompt_chars: 10,
+        prompt: String::new(),
+        worker_thread_id: None,
+        display_name: Some("Researcher".into()),
+    });
+    m.observe(&AgentProgress::SubagentToolCallStarted {
+        agent_id: "researcher".into(),
+        task_id: "sub-1".into(),
+        call_id: "c1".into(),
+        tool_name: "search".into(),
+        arguments: serde_json::Value::Null,
+        iteration: 1,
+        display_label: Some("Searching".into()),
+        display_detail: None,
+    });
+
+    let activity = m.snapshot().tool_timeline[0]
+        .subagent
+        .as_ref()
+        .expect("activity")
+        .clone();
+    assert_eq!(activity.tool_calls[0].args, None);
+    let json = serde_json::to_string(m.snapshot()).expect("serialize");
+    assert!(
+        !json.contains("\"args\""),
+        "a null payload must not occupy a field in the snapshot"
+    );
+}
+
+/// The snapshot file is rewritten in full at every tool boundary, so one
+/// `write_file`-shaped payload must not dominate it. An oversized argument
+/// blob degrades to a truncated string carrying the same marker shape a
+/// truncated tool output uses.
+#[test]
+fn oversized_child_arguments_are_truncated() {
+    let (_d, mut m) = fresh("t");
+    m.observe(&AgentProgress::SubagentSpawned {
+        agent_id: "writer".into(),
+        task_id: "sub-1".into(),
+        mode: "typed".into(),
+        dedicated_thread: false,
+        prompt_chars: 10,
+        prompt: String::new(),
+        worker_thread_id: None,
+        display_name: Some("Writer".into()),
+    });
+    let huge = "x".repeat(32 * 1024);
+    let arguments = serde_json::json!({ "path": "notes.md", "content": huge });
+    m.observe(&AgentProgress::SubagentToolCallStarted {
+        agent_id: "writer".into(),
+        task_id: "sub-1".into(),
+        call_id: "c1".into(),
+        tool_name: "write_file".into(),
+        arguments: arguments.clone(),
+        iteration: 1,
+        display_label: Some("Writing file".into()),
+        display_detail: None,
+    });
+
+    let activity = m.snapshot().tool_timeline[0]
+        .subagent
+        .as_ref()
+        .expect("activity")
+        .clone();
+    let args = activity.tool_calls[0].args.clone().expect("args persisted");
+    let text = args.as_str().expect("oversized args degrade to a string");
+    assert!(
+        text.len() <= 16 * 1024,
+        "truncated arguments must stay within the cap, got {}",
+        text.len()
+    );
+    assert!(
+        text.contains("…[truncated"),
+        "truncation must be visible to the reader"
+    );
+    // What is kept is a genuine prefix of the real arguments, not a summary —
+    // that leading slice is what tells the reader what the call was doing.
+    // Asserted against the serialized head rather than a specific key so the
+    // test does not depend on JSON object ordering.
+    let kept = text.split('\n').next().expect("prefix line");
+    assert!(
+        arguments.to_string().starts_with(kept),
+        "the persisted text must be the head of the real arguments"
+    );
+}
+
+/// `args` is additive: a snapshot written before #5987 has no such field and
+/// must still deserialize, leaving the row without an input rather than
+/// failing the whole thread's rehydration.
+#[test]
+fn legacy_subagent_tool_call_without_args_deserializes() {
+    let legacy = r#"{
+        "callId": "c1",
+        "toolName": "search",
+        "status": "success",
+        "iteration": 1,
+        "elapsedMs": 12,
+        "outputChars": 6,
+        "displayName": "Searching",
+        "output": "3 hits"
+    }"#;
+    let call: SubagentToolCall = serde_json::from_str(legacy).expect("legacy row must load");
+    assert_eq!(call.args, None);
+    assert_eq!(call.call_id, "c1");
+    assert_eq!(call.output.as_deref(), Some("3 hits"));
+}
+
+/// The ordinary sub-agent tool path — the common case, and the one #5987 was
+/// actually reported against. `observability_part_02.rs` emits
+/// `SubagentToolCallStarted.arguments` as `Value::Null` there and only supplies
+/// the captured input on `SubagentToolCallCompleted.arguments`, so persisting
+/// the start event alone leaves these calls with no input after a reload.
+#[test]
+fn tinyagents_path_backfills_arguments_from_the_completion_event() {
+    let (_d, mut m) = fresh("t");
+    m.observe(&AgentProgress::SubagentSpawned {
+        agent_id: "researcher".into(),
+        task_id: "sub-1".into(),
+        mode: "typed".into(),
+        dedicated_thread: false,
+        prompt_chars: 10,
+        prompt: String::new(),
+        worker_thread_id: None,
+        display_name: Some("Researcher".into()),
+    });
+    // Start carries no arguments — exactly what the tinyagents bridge sends.
+    m.observe(&AgentProgress::SubagentToolCallStarted {
+        agent_id: "researcher".into(),
+        task_id: "sub-1".into(),
+        call_id: "c1".into(),
+        tool_name: "web_search".into(),
+        arguments: serde_json::Value::Null,
+        iteration: 1,
+        display_label: Some("Searching the web".into()),
+        display_detail: None,
+    });
+    m.observe(&AgentProgress::SubagentToolCallCompleted {
+        agent_id: "researcher".into(),
+        task_id: "sub-1".into(),
+        call_id: "c1".into(),
+        tool_name: "web_search".into(),
+        success: true,
+        output_chars: 6,
+        output: "3 hits".into(),
+        arguments: Some(serde_json::json!({ "query": "latest rust release" })),
+        elapsed_ms: 12,
+        iteration: 1,
+        failure: None,
+    });
+
+    let activity = m.snapshot().tool_timeline[0]
+        .subagent
+        .as_ref()
+        .expect("activity")
+        .clone();
+    assert_eq!(
+        activity.tool_calls[0].args,
+        Some(serde_json::json!({ "query": "latest rust release" })),
+        "completion arguments must backfill a call the start event left empty"
+    );
+}
+
+/// The backfill only fills a gap. A start event that already supplied the
+/// arguments stays authoritative, so a completion payload cannot rewrite the
+/// input the row was actually invoked with.
+#[test]
+fn completion_arguments_do_not_overwrite_arguments_captured_at_start() {
+    let (_d, mut m) = fresh("t");
+    m.observe(&AgentProgress::SubagentSpawned {
+        agent_id: "researcher".into(),
+        task_id: "sub-1".into(),
+        mode: "typed".into(),
+        dedicated_thread: false,
+        prompt_chars: 10,
+        prompt: String::new(),
+        worker_thread_id: None,
+        display_name: Some("Researcher".into()),
+    });
+    m.observe(&AgentProgress::SubagentToolCallStarted {
+        agent_id: "researcher".into(),
+        task_id: "sub-1".into(),
+        call_id: "c1".into(),
+        tool_name: "web_search".into(),
+        arguments: serde_json::json!({ "query": "from start" }),
+        iteration: 1,
+        display_label: Some("Searching the web".into()),
+        display_detail: None,
+    });
+    m.observe(&AgentProgress::SubagentToolCallCompleted {
+        agent_id: "researcher".into(),
+        task_id: "sub-1".into(),
+        call_id: "c1".into(),
+        tool_name: "web_search".into(),
+        success: true,
+        output_chars: 6,
+        output: "3 hits".into(),
+        arguments: Some(serde_json::json!({ "query": "from completion" })),
+        elapsed_ms: 12,
+        iteration: 1,
+        failure: None,
+    });
+
+    let activity = m.snapshot().tool_timeline[0]
+        .subagent
+        .as_ref()
+        .expect("activity")
+        .clone();
+    assert_eq!(
+        activity.tool_calls[0].args,
+        Some(serde_json::json!({ "query": "from start" })),
+        "arguments captured at start must not be rewritten on completion"
+    );
+}

@@ -40,13 +40,13 @@ fn build_prompt(context_input: &str, first_run: bool) -> String {
     let mode = if first_run {
         "The goals list is currently EMPTY. This is the first run — populate \
          an initial set of the user's durable long-term goals (max ~8) from \
-         the context below. Start by calling goals_list to confirm, then use \
-         goals_add for each goal."
+         the context below. Start with the `goals` tool at op `list` to \
+         confirm, then op `add` for each goal."
     } else {
-        "Maintain the existing goals list. Call goals_list first, then make \
-         the MINIMAL set of changes (goals_add / goals_edit / goals_delete) \
-         justified by the context below. Do not churn goals that are still \
-         valid."
+        "Maintain the existing goals list. Call the `goals` tool at op `list` \
+         first, then make the MINIMAL set of changes (ops `add` / `edit` / \
+         `delete`) justified by the context below. Do not churn goals that are \
+         still valid."
     };
 
     format!(

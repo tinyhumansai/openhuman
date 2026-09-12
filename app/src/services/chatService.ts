@@ -89,6 +89,14 @@ export interface TurnUsageWire {
 export interface ChatDoneEvent {
   thread_id: string;
   request_id?: string;
+  /**
+   * Socket.IO client that owns the turn. `"system"` marks a turn the core ran
+   * on its own behalf (autonomous task sessions, background sub-agent result
+   * delivery, cron/flow agents); such turns are broadcast to every client.
+   * Always on the wire (`WebChannelEvent.client_id`); declared here for the
+   * consumers that key off it.
+   */
+  client_id?: string;
   /** Per-request monotonic ordering key stamped by the core progress bridge. */
   seq?: number;
   full_response: string;
@@ -165,6 +173,14 @@ export interface ChatInterimEvent {
 export interface ChatErrorEvent {
   thread_id: string;
   request_id?: string;
+  /**
+   * Socket.IO client that owns the turn. `"system"` marks a turn the core ran
+   * on its own behalf (autonomous task sessions, background sub-agent result
+   * delivery, cron/flow agents); such turns are broadcast to every client.
+   * Always on the wire (`WebChannelEvent.client_id`); declared here for the
+   * consumers that key off it.
+   */
+  client_id?: string;
   message: string;
   error_type:
     | 'network'
@@ -339,6 +355,13 @@ export interface ChatSubagentSpawnedEvent {
   skill_id: string;
   message: string;
   round: number;
+  /**
+   * Per-request monotonic ordering key stamped by the core's progress bridge
+   * (`publish_seq_stamped`). `(request_id, seq)` is the event's identity: a
+   * Socket.IO redelivery carries the same pair, a genuinely new emission never
+   * does. Absent on cores that predate the stamping bridge.
+   */
+  seq?: number;
 }
 
 /** Emitted when a sub-agent completes or fails. */
@@ -350,6 +373,8 @@ export interface ChatSubagentDoneEvent {
   message: string;
   success: boolean;
   round: number;
+  /** Event identity with `request_id`; see {@link ChatSubagentSpawnedEvent.seq}. */
+  seq?: number;
   /** Per-event subagent detail. Mirrors `SubagentProgressDetail` in core. */
   subagent?: SubagentProgressDetail;
 }

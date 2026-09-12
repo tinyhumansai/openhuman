@@ -2,7 +2,7 @@
 
 Thank you for your interest in contributing to OpenHuman. This guide is the fast path for getting a fresh checkout running locally, validating changes, and opening a pull request without having to piece together setup notes from multiple files.
 
-> **New to open source or coding?** Start with [`CONTRIBUTING-BEGINNERS.md`](CONTRIBUTING-BEGINNERS.md) — it walks you through every step from installing tools to opening your first PR.
+> **New to open source or coding?** Start with [`docs/CONTRIBUTING-BEGINNERS.md`](docs/CONTRIBUTING-BEGINNERS.md) — it walks you through every step from installing tools to opening your first PR.
 
 For deeper architecture and subsystem references, use the GitBook under [`gitbooks/developing/`](gitbooks/developing/). For coding-agent and repository-specific implementation rules, see [`AGENTS.md`](AGENTS.md) and [`CLAUDE.md`](CLAUDE.md).
 
@@ -26,7 +26,7 @@ This project adheres to the [Contributor Covenant Code of Conduct](CODE_OF_CONDU
 - Read the [README](README.md) for product context.
 - Use [`gitbooks/developing/architecture.md`](gitbooks/developing/architecture.md) for the current system architecture.
 - Check [open issues](https://github.com/tinyhumansai/openhuman/issues) and [Discussions](https://github.com/tinyhumansai/openhuman/discussions) before starting work.
-- Stuck rather than fixing something? [SUPPORT.md](SUPPORT.md) routes questions, install trouble, memory behavior, and model problems to the right category; [`docs/community/discussions.md`](docs/community/discussions.md) explains how those threads are triaged.
+- Stuck rather than fixing something? [`docs/SUPPORT.md`](docs/SUPPORT.md) routes questions, install trouble, memory behavior, and model problems to the right category; [`docs/community/discussions.md`](docs/community/discussions.md) explains how those threads are triaged.
 - For security issues, follow [SECURITY.md](SECURITY.md) and do not file public issues.
 
 ## Development Setup

@@ -7,8 +7,10 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    default_state, invoke_method, is_session_expired_error, is_unconfirmed_unauthorized_error,
-    params_to_object, parse_json_params, type_name, DomainSubscriberPlan,
+    default_state, group_first_time, group_first_time_when_bus_ready, invoke_method,
+    is_session_expired_error, is_unconfirmed_unauthorized_error,
+    learning_first_time_when_bus_ready, params_to_object, parse_json_params, type_name,
+    DomainSubscriberPlan,
 };
 // These are the `http-server`-gated RPC-surface symbols (#5048); the tests that
 // name them below carry the same `#[cfg]` so the disabled-build test compile
@@ -92,6 +94,103 @@ fn domain_subscriber_plan_harness_gates_by_owning_group() {
         "harness must skip hosted orchestration ingest"
     );
     assert!(!plan.mcp, "harness must skip mcp_registry bus init");
+}
+
+#[test]
+fn domain_subscriber_registration_retries_after_bus_becomes_ready() {
+    use crate::core::all::DomainGroup;
+    use std::collections::HashSet;
+    use std::sync::Mutex;
+
+    let completed = Mutex::new(HashSet::new());
+
+    assert!(!group_first_time_when_bus_ready(
+        &completed,
+        DomainGroup::Flows,
+        false,
+    ));
+    assert!(
+        completed.lock().expect("registry lock").is_empty(),
+        "a deferred attempt must not mark the group complete"
+    );
+
+    assert!(group_first_time_when_bus_ready(
+        &completed,
+        DomainGroup::Flows,
+        true,
+    ));
+    assert!(
+        completed
+            .lock()
+            .expect("registry lock")
+            .contains(&DomainGroup::Flows),
+        "the ready retry must mark the group complete"
+    );
+}
+
+#[test]
+fn domain_subscriber_registration_is_idempotent_after_success() {
+    use crate::core::all::DomainGroup;
+    use std::collections::HashSet;
+    use std::sync::Mutex;
+
+    let completed = Mutex::new(HashSet::new());
+
+    assert!(group_first_time_when_bus_ready(
+        &completed,
+        DomainGroup::Channels,
+        true,
+    ));
+    assert!(!group_first_time_when_bus_ready(
+        &completed,
+        DomainGroup::Channels,
+        true,
+    ));
+    assert_eq!(
+        completed.lock().expect("registry lock").len(),
+        1,
+        "a completed group must be recorded exactly once"
+    );
+}
+
+#[test]
+fn learning_subscriber_registration_retries_after_bus_becomes_ready() {
+    let completed = std::sync::Mutex::new(false);
+
+    assert!(!learning_first_time_when_bus_ready(&completed, false));
+    assert!(
+        !*completed.lock().expect("registry lock"),
+        "a deferred learning attempt must not consume its token"
+    );
+
+    assert!(learning_first_time_when_bus_ready(&completed, true));
+    assert!(
+        *completed.lock().expect("registry lock"),
+        "the ready retry must consume the learning token"
+    );
+}
+
+#[test]
+fn learning_subscriber_registration_is_idempotent_after_success() {
+    let completed = std::sync::Mutex::new(false);
+
+    assert!(learning_first_time_when_bus_ready(&completed, true));
+    assert!(!learning_first_time_when_bus_ready(&completed, true));
+}
+
+/// The wrapper reads readiness off the process-wide `BUS` singleton. Unit
+/// tests never stand that bus up (see `core::bus::init` on runtime affinity),
+/// so the observable contract here is the deferred case: with no bus the
+/// token is *not* consumed, and a later call can still claim it. The
+/// consumed/not-consumed transitions are pinned above through
+/// `group_first_time_when_bus_ready`.
+#[test]
+fn domain_subscriber_registration_wrapper_defers_without_a_global_bus() {
+    use crate::core::all::DomainGroup;
+
+    assert!(crate::core::bus::BUS.get().is_none());
+    assert!(!group_first_time(DomainGroup::Media));
+    assert!(!group_first_time(DomainGroup::Media));
 }
 
 /// #5027 — the tool-execution timeout must be seeded on the always-on core boot
@@ -498,7 +597,7 @@ fn http_schema_dump_includes_openhuman_and_core_methods() {
     assert!(
         methods
             .iter()
-            .any(|m| m.method == "openhuman.billing_get_current_plan"),
+            .any(|m| m.method == "openhuman.billing_get_summary"),
         "schema dump should include billing methods"
     );
 
@@ -515,6 +614,18 @@ async fn billing_get_current_plan_rejects_unknown_param() {
     let err = invoke_method(
         default_state(),
         "openhuman.billing_get_current_plan",
+        json!({ "extra": true }),
+    )
+    .await
+    .expect_err("unknown param should fail");
+    assert!(err.contains("unknown param 'extra'"));
+}
+
+#[tokio::test]
+async fn billing_get_summary_rejects_unknown_param() {
+    let err = invoke_method(
+        default_state(),
+        "openhuman.billing_get_summary",
         json!({ "extra": true }),
     )
     .await
@@ -688,6 +799,7 @@ async fn schema_dump_includes_new_billing_and_team_methods() {
     let dump = build_http_schema_dump();
     let methods: Vec<&str> = dump.methods.iter().map(|m| m.method.as_str()).collect();
     for expected in &[
+        "openhuman.billing_get_summary",
         "openhuman.billing_get_current_plan",
         "openhuman.billing_purchase_plan",
         "openhuman.billing_create_portal_session",

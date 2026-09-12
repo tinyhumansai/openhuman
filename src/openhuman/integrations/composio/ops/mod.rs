@@ -28,6 +28,7 @@ mod direct_mode;
 mod error_utils;
 mod execute;
 mod memory_cleanup;
+mod pass_budget;
 mod providers_ops;
 mod toolkits;
 mod tools_ops;
@@ -43,14 +44,17 @@ pub use execute::composio_execute;
 #[cfg(test)]
 pub(crate) use providers_ops::{
     completed_sync_detail, completed_sync_detail_for_test, next_pass_budget,
+    pick_source_sync_depth_days,
 };
 pub use providers_ops::{
     composio_get_user_profile, composio_refresh_all_identities, composio_sync,
     composio_sync_budgeted, composio_sync_for_source, RefreshIdentitiesReport, SYNC_PASS_MAX_ITEMS,
 };
-// The tinyconnectors-mediated sync pass, shared with
-// `memory::sync::composio::providers::slack::rpc` — see its doc comment.
-pub(crate) use providers_ops::run_sync_pass;
+// The tinyconnectors-mediated sync pass, repeated within one call's item
+// budget for the entry points that sync once per invocation (periodic tick,
+// manual provider sync, `connection_created`, the Slack ingest RPC) — see
+// `pass_budget`'s doc comment.
+pub(crate) use pass_budget::run_sync_within_budget;
 pub use toolkits::{
     composio_list_agent_ready_toolkits, composio_list_capabilities, composio_list_toolkits,
 };
@@ -102,15 +106,11 @@ pub(crate) use crate::openhuman::integrations::composio::providers::SyncReason;
 pub(crate) use connections::enrich_connections_with_identity;
 #[cfg(test)]
 pub(crate) use error_utils::{
-    classify_composio_failure_tag, direct_mode_without_key, extract_backend_returned_status,
-    resolve_client,
+    backend_mode_without_session, classify_composio_failure_tag, direct_mode_without_key,
+    extract_backend_returned_status, resolve_client,
 };
 #[cfg(test)]
-pub(crate) use memory_cleanup::{composio_memory_targets_for_connection, MemoryCleanupTarget};
-#[cfg(test)]
 pub(crate) use providers_ops::parse_sync_reason;
-#[cfg(test)]
-pub(crate) use tinymemory_core::store::MemoryClient;
 
 #[cfg(test)]
 #[path = "../ops_tests.rs"]

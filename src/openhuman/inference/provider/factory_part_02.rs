@@ -58,7 +58,7 @@ fn create_chat_model_with_model_id_inner(
 /// Whether `role` resolves to the managed OpenHuman backend (vs BYOK / local /
 /// claude-code). Uses the same empty/`cloud`/`openhuman` normalization as
 /// [`create_chat_model_from_string`] so every managed role shares one path.
-fn resolves_to_managed_backend(role: &str, config: &Config) -> bool {
+pub(crate) fn resolves_to_managed_backend(role: &str, config: &Config) -> bool {
     let mut resolved = provider_for_role(role, config);
     let trimmed = resolved.trim();
     if trimmed.is_empty() || trimmed == "cloud" {

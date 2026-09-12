@@ -10,8 +10,8 @@
 //! (kernel.md §5). A *memory* crate must not be the source of generic kernel
 //! vocabulary, and a third-party driver must be able to depend on the contract
 //! crate without pulling in the host. The contract crate states both halves of
-//! that rule itself (`vendor/tinycortex/api/src/lib.rs`, module docs of
-//! `vendor/tinycortex/api/src/health.rs`).
+//! that rule itself (`vendor/tinymemory/vendor/tinycortex/api/src/lib.rs`,
+//! module docs of `vendor/tinymemory/vendor/tinycortex/api/src/health.rs`).
 //!
 //! So the contract carries `MemoryHealth` / `Capabilities`, this module carries
 //! the kernel's equivalents, and the **memory adapter converts at the

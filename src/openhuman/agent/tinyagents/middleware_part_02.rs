@@ -251,6 +251,32 @@ impl Middleware<()> for ToolOutputMiddleware {
 /// letting it short-circuit cleanly. Tool-*internal* security (path/command
 /// policy via `live_policy`) stays inside each tool — it needs tool-specific
 /// operation semantics the harness boundary can't reconstruct generically.
+const COMPOSIO_EXECUTE_TOOL: &str = "composio_execute";
+const INVALID_COMPOSIO_APPROVAL_NAME: &str = "composio_execute:<invalid-action>";
+
+/// Stable identity used by persistent approval grants.
+///
+/// `composio_execute` multiplexes every Composio action through one outer tool
+/// name. Keying "Always allow" by that name would let approval for one action
+/// authorize every later action, so use the namespaced action slug instead.
+fn approval_tool_name<'a>(
+    tool_name: &'a str,
+    args: &'a serde_json::Value,
+) -> std::borrow::Cow<'a, str> {
+    if tool_name != COMPOSIO_EXECUTE_TOOL {
+        return std::borrow::Cow::Borrowed(tool_name);
+    }
+    let slug = args
+        .get("tool")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|slug| !slug.is_empty());
+    match slug {
+        Some(slug) => std::borrow::Cow::Owned(format!("{COMPOSIO_EXECUTE_TOOL}:{slug}")),
+        None => std::borrow::Cow::Borrowed(INVALID_COMPOSIO_APPROVAL_NAME),
+    }
+}
+
 pub(super) struct ApprovalSecurityMiddleware {
     /// The same `Arc`-shared tool sets the runner registers, used to resolve a
     /// call's OpenHuman `Tool` by name so `external_effect_with_args` can gate.
@@ -298,14 +324,16 @@ impl ToolMiddleware<()> for ApprovalSecurityMiddleware {
         );
         if has_ext {
             if let Some(gate) = ApprovalGate::try_global() {
+                let approval_name = approval_tool_name(&call.name, &call.arguments);
                 tracing::debug!(
                     tool = %call.name,
+                    approval_name = %approval_name,
                     "[tinyagents::mw] routing external-effect tool through approval gate"
                 );
                 let summary = summarize_action(&call.name, &call.arguments);
                 let redacted = redact_args(&call.arguments);
                 let (outcome, request_id) =
-                    gate.intercept_audited(&call.name, &summary, redacted).await;
+                    gate.intercept_audited(approval_name.as_ref(), &summary, redacted).await;
                 match outcome {
                     GateOutcome::Deny { reason } => {
                         tracing::warn!(
@@ -410,218 +438,5 @@ impl ToolMiddleware<()> for CliRpcOnlyMiddleware {
             }));
         }
         next.run(ctx, state, call).await
-    }
-}
-
-/// `wrap_tool`: scrub credential-shaped secrets out of every tool result before
-/// it leaves the tool boundary (issue #4453). The legacy engine ran
-/// `scrub_credentials` over **every** tool output before it entered model
-/// context (`engine/tools.rs`); the tinyagents path dropped that call site, so
-/// secrets in tool output (env dumps, config reads, API responses, shell output)
-/// reached model context, on-disk `session_raw` transcripts, worker-thread
-/// mirrors, and the tool-outcome capture sink — violating "Never log secrets or
-/// full PII".
-///
-/// Installed as the **innermost** tool wrap (pushed last), so it observes the
-/// RAW tool result first and scrubs it before any outer wrap, the `after_tool`
-/// chain (summarization/caps in [`ToolOutputMiddleware`]), the transcript push,
-/// or the [`ToolOutcomeCaptureMiddleware`] sink can see the unredacted content.
-/// Scrubbing here — rather than inside `execute_openhuman_tool` — covers the
-/// parent chat path, sub-agent paths, the persisted transcript, and
-/// `ToolCallOutcome` records by construction, since every path runs the same
-/// `assemble_turn_harness` seam.
-pub(super) struct CredentialScrubMiddleware;
-
-impl CredentialScrubMiddleware {
-    pub(super) fn new() -> Self {
-        Self
-    }
-}
-
-#[async_trait]
-impl ToolMiddleware<()> for CredentialScrubMiddleware {
-    fn name(&self) -> &str {
-        "credential_scrub"
-    }
-
-    async fn wrap_tool(
-        &self,
-        ctx: &mut RunContext<()>,
-        state: &(),
-        call: TaToolCall,
-        next: ToolHandler<'_, (), ()>,
-    ) -> TaResult<MiddlewareToolOutcome> {
-        let tool_name = call.name.clone();
-        let outcome = next.run(ctx, state, call).await?;
-        // `MiddlewareToolOutcome` is `#[non_exhaustive]`; today it only carries a
-        // `Result`, but match rather than irrefutable-let so a future variant
-        // fails loud instead of silently bypassing scrubbing.
-        let mut result = match outcome {
-            MiddlewareToolOutcome::Result(result) => result,
-            other => return Ok(other),
-        };
-
-        let scrubbed_content =
-            crate::openhuman::agent::harness::credentials::scrub_credentials(&result.content);
-        if scrubbed_content != result.content {
-            tracing::warn!(
-                tool = %tool_name,
-                "[tinyagents::mw] credential_scrub redacted secret(s) from tool result content"
-            );
-            result.content = scrubbed_content;
-        }
-
-        if let Some(err) = result.error.as_ref() {
-            let scrubbed_err =
-                crate::openhuman::agent::harness::credentials::scrub_credentials(err);
-            if &scrubbed_err != err {
-                tracing::warn!(
-                    tool = %tool_name,
-                    "[tinyagents::mw] credential_scrub redacted secret(s) from tool result error"
-                );
-                result.error = Some(scrubbed_err);
-            }
-        }
-
-        // Raw JSON payloads (rarely populated on this path) can carry the same
-        // secrets — walk their string leaves so a scrubbed `content` isn't
-        // undermined by an unredacted `raw` mirror.
-        if let Some(raw) = result.raw.take() {
-            result.raw = Some(scrub_json_credentials(raw));
-        }
-
-        Ok(MiddlewareToolOutcome::Result(result))
-    }
-}
-
-/// Recursively scrub credential-shaped string leaves inside a JSON value.
-fn scrub_json_credentials(value: serde_json::Value) -> serde_json::Value {
-    use serde_json::Value;
-    match value {
-        Value::String(s) => {
-            Value::String(crate::openhuman::agent::harness::credentials::scrub_credentials(&s))
-        }
-        Value::Array(items) => {
-            Value::Array(items.into_iter().map(scrub_json_credentials).collect())
-        }
-        Value::Object(map) => Value::Object(
-            map.into_iter()
-                .map(|(k, v)| (k, scrub_json_credentials(v)))
-                .collect(),
-        ),
-        other => other,
-    }
-}
-
-/// `wrap_tool`: enforce the agent's builder-configured [`ToolPolicy`] at the tool
-/// boundary (issue #4249). The in-house engine ran this check in
-/// `agent_tool_exec` (`ctx.tool_policy.check(...)`); the tinyagents path bypassed
-/// it, so a `.tool_policy()` deny/require-approval silently no-opped and the tool
-/// executed anyway — a security regression. This middleware restores it: a
-/// blocking decision short-circuits with a model-consumable result carrying the
-/// same `"Tool '<name>' <denied|requires approval> by policy '<policy>': <reason>"`
-/// wording the engine produced.
-pub(super) struct ToolPolicyMiddleware {
-    policy: Arc<dyn crate::openhuman::agent::tool_policy::ToolPolicy>,
-    /// The session's channel-permission snapshot — enforces the per-channel deny
-    /// + per-call permission-level ceiling the engine ran in `agent_tool_exec`.
-    session: crate::openhuman::tools::agent_policy::ToolPolicySession,
-    /// Shared tool sets (same `Arc`s the runner registers) so a call's OpenHuman
-    /// `Tool` can be resolved for its generated-tool runtime context and its
-    /// per-call permission level.
-    tool_sets: Vec<Arc<Vec<Box<dyn Tool>>>>,
-    session_id: String,
-    channel: String,
-    agent_definition_id: String,
-}
-
-impl ToolPolicyMiddleware {
-    pub(super) fn new(
-        policy: Arc<dyn crate::openhuman::agent::tool_policy::ToolPolicy>,
-        session: crate::openhuman::tools::agent_policy::ToolPolicySession,
-        tool_sets: Vec<Arc<Vec<Box<dyn Tool>>>>,
-        session_id: String,
-        channel: String,
-        agent_definition_id: String,
-    ) -> Self {
-        Self {
-            policy,
-            session,
-            tool_sets,
-            session_id,
-            channel,
-            agent_definition_id,
-        }
-    }
-
-    fn resolve_tool(&self, name: &str) -> Option<&Box<dyn Tool>> {
-        self.tool_sets
-            .iter()
-            .flat_map(|set| set.iter())
-            .find(|t| t.name() == name)
-    }
-
-    /// The channel-permission gate the engine ran before the builder policy: a
-    /// session-level deny, then a per-call permission-level ceiling check. Returns
-    /// the blocking message when the call must not execute.
-    fn channel_permission_block(&self, call: &TaToolCall) -> Option<String> {
-        let decision = self.session.decision_for(&call.name);
-        if decision.is_denied() {
-            return Some(
-                PolicyDenial::SessionForbidden {
-                    tool: &call.name,
-                    required: decision.required_permission,
-                    allowed: decision.allowed_permission,
-                    channel: &self.channel,
-                }
-                .render(),
-            );
-        }
-        let tool = self.resolve_tool(&call.name)?;
-        let call_required = tool.permission_level_with_args(&call.arguments);
-        if call_required > decision.allowed_permission {
-            return Some(
-                PolicyDenial::PermissionTooLow {
-                    tool: &call.name,
-                    required: call_required,
-                    allowed: decision.allowed_permission,
-                    channel: &self.channel,
-                }
-                .render(),
-            );
-        }
-        // For `use_skill`, also validate the resolved inner tool against the
-        // session allowlist. Role-hidden packed tools are not checked by the
-        // outer policy name; without this check `use_skill` would bypass the
-        // session's effective allowlist for any packed tool.
-        if call.name == "use_skill" {
-            if let Some(inner_tool) = call
-                .arguments
-                .get("tool")
-                .and_then(serde_json::Value::as_str)
-            {
-                let inner_decision = self.session.decision_for(inner_tool);
-                if inner_decision.is_denied() {
-                    return Some(format!(
-                        "Tool `{inner_tool}` is not allowed in the current session and cannot be used through `use_skill`."
-                    ));
-                }
-            }
-        }
-        None
-    }
-
-    fn generated_context(
-        &self,
-        name: &str,
-        args: &serde_json::Value,
-    ) -> Option<crate::openhuman::agent::tool_policy::GeneratedToolRuntimeContext> {
-        self.tool_sets
-            .iter()
-            .flat_map(|set| set.iter())
-            .find(|t| t.name() == name)
-            .and_then(|t| {
-                crate::openhuman::tools::traits::generated_runtime_context(t.as_ref(), args)
-            })
     }
 }

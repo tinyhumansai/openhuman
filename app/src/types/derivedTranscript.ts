@@ -6,7 +6,7 @@
  * The Rust core projects the append-only `session_raw/*.jsonl` source of truth
  * into typed **display items** in the frontend's chat vocabulary. Phase C maps
  * these onto the existing settled-turn renderers (`PastTurnInsights` /
- * `ProcessingTranscriptView` / `ToolTimelineBlock` / `SubagentActivityBlock`)
+ * `ProcessingTranscriptView` / assistant-ui tool and delegation cards)
  * via `features/conversations/derived/mapDisplayItems.ts`.
  *
  * Serde is camelCase on the wire, so every field here is camelCase and mirrors

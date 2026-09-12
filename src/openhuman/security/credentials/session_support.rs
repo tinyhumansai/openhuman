@@ -211,26 +211,41 @@ pub fn require_live_session_token(config: &Config) -> Result<String, String> {
             Err("no backend session token; run auth_store_session first".to_string())
         }
         SessionTokenCheck::Expired => {
-            // Dedupe the publish via the scheduler gate so N parallel authed
-            // callers in one tick don't emit N SessionExpired events.
-            if !crate::openhuman::cron::scheduler_gate::is_signed_out() {
-                tracing::info!(
-                    domain = "credentials",
-                    operation = "require_live_session_token",
-                    "[credentials] app-session token expired locally — publishing SessionExpired before any backend call"
-                );
-                crate::core::bus::BUS.publish(crate::core::events::DomainEvent::SessionExpired {
-                    source: "credentials.local_expiry_precheck".to_string(),
-                    reason: "backend session token expired locally — re-authentication required"
-                        .to_string(),
-                });
-            }
+            publish_local_session_expiry("require_live_session_token");
             Err(
                 "SESSION_EXPIRED: backend session token expired locally — re-authentication required"
                     .to_string(),
             )
         }
     }
+}
+
+/// Announce a locally-detected session expiry on the bus so
+/// `SessionExpiredSubscriber` clears credentials and the UI re-authenticates,
+/// exactly as it would on a real network 401.
+///
+/// Callers that classify the session themselves — rather than going through
+/// [`require_live_session_token`] — MUST call this on the
+/// [`SessionTokenCheck::Expired`] arm. Classifying without publishing leaves an
+/// expired token in the store with the scheduler gate still open, so nothing
+/// ever prompts a re-auth (that regression was caught in review on #6206).
+///
+/// `operation` names the calling site for the log line only.
+pub fn publish_local_session_expiry(operation: &'static str) {
+    // Dedupe the publish via the scheduler gate so N parallel authed
+    // callers in one tick don't emit N SessionExpired events.
+    if crate::openhuman::cron::scheduler_gate::is_signed_out() {
+        return;
+    }
+    tracing::info!(
+        domain = "credentials",
+        operation = operation,
+        "[credentials] app-session token expired locally — publishing SessionExpired before any backend call"
+    );
+    crate::core::bus::BUS.publish(crate::core::events::DomainEvent::SessionExpired {
+        source: "credentials.local_expiry_precheck".to_string(),
+        reason: "backend session token expired locally — re-authentication required".to_string(),
+    });
 }
 
 /// Load the `app-session` profile once. Callers that need both the

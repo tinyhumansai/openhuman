@@ -320,7 +320,8 @@ pub async fn start_chat(
     let task_cancel_token = cancel_token.clone();
 
     let user_message = message.clone();
-    let handle = tokio::spawn(async move {
+    let handle = tokio::spawn(crate::core::runtime::context::CoreContext::propagate(
+        async move {
         let approval_ctx = crate::openhuman::security::approval::ApprovalChatContext {
             thread_id: thread_id_task.clone(),
             client_id: client_id_task.clone(),
@@ -385,6 +386,9 @@ pub async fn start_chat(
                     &user_message,
                     &chat_result.citations,
                     chat_result.usage.as_ref(),
+                    // The workspace the turn ran in, so the reply is stored
+                    // there before it is announced (#6034).
+                    Some(chat_result.workspace_dir.as_path()),
                 )
                 .await;
             }
@@ -479,7 +483,8 @@ pub async fn start_chat(
             );
             dispatch_followups(followups);
         }
-    });
+        },
+    ));
 
     {
         let mut in_flight = IN_FLIGHT.lock().await;
@@ -499,7 +504,8 @@ pub async fn start_chat(
 
 fn dispatch_followups(followups: Vec<crate::openhuman::agent::harness::run_queue::QueuedMessage>) {
     for fup in followups {
-        tokio::spawn(async move {
+        tokio::spawn(crate::core::runtime::context::CoreContext::propagate(
+            async move {
             if let Err(err) = start_chat(
                 &fup.client_id,
                 &fup.thread_id,
@@ -519,6 +525,7 @@ fn dispatch_followups(followups: Vec<crate::openhuman::agent::harness::run_queue
                     err
                 );
             }
-        });
+            },
+        ));
     }
 }

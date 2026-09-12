@@ -35,7 +35,7 @@ pub(super) struct StreamState {
     pub(super) url: String,
     pub(super) parser: SseParser,
     pub(super) dedup: SeqDedup,
-    pub(super) pending: VecDeque<Result<EventEnvelope>>,
+    pub(super) pending: VecDeque<Result<WireEventEnvelope>>,
     pub(super) body: Option<futures::stream::BoxStream<'static, reqwest::Result<Vec<u8>>>>,
     pub(super) first_connect: bool,
 }

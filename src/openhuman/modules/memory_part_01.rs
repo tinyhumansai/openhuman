@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use tinymemory_api::capabilities::{Capabilities, Capability};
 
@@ -7,7 +8,7 @@ use tinymemory_api::capabilities::{Capabilities, Capability};
 /// Checked against the registry pin by `the_capability_list_matches_the_pinned_release`,
 /// so bumping the pin without re-reading the list is a red test rather than a
 /// silent over-claim.
-pub(crate) const ARTIFACT_CAPABILITIES_PIN: &str = "1.13.7";
+pub(crate) const ARTIFACT_CAPABILITIES_PIN: &str = "1.16.0";
 
 /// The capability families the **pinned artifact** actually serves.
 ///
@@ -73,6 +74,39 @@ pub(crate) const ARTIFACT_CAPABILITIES: &[Capability] = &[
     // and embedder identification, served by the module's engine and forwarded
     // by `MemoryScoring for ModuleMemoryProvider` below.
     Capability::Scoring,
+    // Re-read at tag `v1.15.1` (tinymemory#142), one commit past v1.15.0. The
+    // CortexDB adapter now asks `v1/scopes/list` for every scope instead of
+    // accepting the engine's undocumented first fifty, which had been
+    // truncating namespace enumeration — a live instance holding 93 listed 50,
+    // and everything downstream of `namespace_summaries` reported success on
+    // the subset. Behaviour inside a hosted adapter, not the module's surface:
+    // `git diff v1.15.0..v1.15.1 -- crates/tinymemory-api/src/capabilities.rs
+    // crates/tinymemory-bus/src/capabilities.rs crates/tinymemory-bus/src/names.rs`
+    // is empty and `crates/tinymemory-module/` moves only its `Cargo.lock`, so
+    // the module declares the same members it did and the list below is
+    // unchanged — only the pin advances.
+    //
+    // Re-read at tag `v1.15.0` (tinymemory#141, openhuman#6025). The connector
+    // sink now embeds a whole `accept_source_items` batch together and the
+    // vendored engine claims a due `reembed_backfill` ahead of the extraction
+    // backlog (tinycortex#168). Behaviour inside `Sources`/`Maintenance`, no
+    // new bus member and no new family: `git diff v1.14.1..v1.15.0 --
+    // crates/tinymemory-bus/src/capabilities.rs crates/tinymemory-bus/src/names.rs`
+    // is empty, so the list below is unchanged and only the pin moves.
+    //
+    // Re-read at tag `v1.14.1` (tinymemory#136 + #137, openhuman#6012). It adds a bus
+    // *member*, `BackfillConnectorTrees`, and no capability: `Capability` is the
+    // family enum, and the member is a method inside `Maintenance`, which this
+    // build already advertises. `git diff v1.13.8..v1.14.1 --
+    // crates/tinymemory-bus/src/capabilities.rs` is empty, so nothing below moves.
+    //
+    // Re-read at tag `v1.13.8` (tinymemory#134, openhuman#6007): the connector
+    // sync path now routes its items into the memory-tree ingest funnel, and
+    // `forget_source` sweeps the per-item tree rows it creates. Behaviour inside
+    // `Sources`/`Maintenance`, not a new family —
+    // `git diff v1.13.7..v1.13.8 -- crates/tinymemory-api/src/capabilities.rs`
+    // returns empty, so the list below is unchanged and only the pin moves.
+    //
     // v1.13.7 (tinymemory#125 + #127): the typed ingestion round and the
     // answer surface, served and advertised by the pinned artifact.
     Capability::DocumentIngest,
@@ -131,11 +165,11 @@ use tinymemory_api::chunks::Chunk;
 use tinymemory_api::error::MemoryError;
 use tinymemory_api::goals::GoalsDoc;
 use tinymemory_api::health::MemoryHealth;
-use tinymemory_api::provider::operations::{
-    AnswerRequest, AnswerResponse, MemoryAnswer, MemoryConversationIngest,
-    MemoryDocumentIngest, MemoryEventIngest, MemoryLearningIngest, RawMemoryEvent,
-};
 use tinymemory_api::learning::LearningCandidate;
+use tinymemory_api::provider::operations::{
+    AnswerRequest, AnswerResponse, MemoryAnswer, MemoryConversationIngest, MemoryDocumentIngest,
+    MemoryEventIngest, MemoryLearningIngest, RawMemoryEvent,
+};
 use tinymemory_api::provider::sessions::{
     CodingSessionIngestReport, CodingSessionIngestRequest, CodingSessionSource,
 };
@@ -144,8 +178,9 @@ use tinymemory_api::provider::sync::{
     SyncRunOutcome,
 };
 use tinymemory_api::provider::types::{
-    ChunkEntityOccurrence, DiffReport, EntityHit, EntityOccurrence, ExportPage, ExportRecord,
-    FlushOutcome, ForgetOutcome, ForgetSelector, ImportOutcome, IngestItem, IngestOutcome,
+    BackfillTreesOutcome, BackfillTreesRequest, ChunkEntityOccurrence, DiffReport, EntityHit,
+    EntityOccurrence, ExportPage, ExportRecord, FlushOutcome, ForgetOutcome, ForgetSelector,
+    ImportOutcome, IngestItem, IngestOutcome,
     MaintenanceReport, PurgeOutcome, QueueFailure, QueueStats, ResetOutcome, SnapshotRef,
     SourceItem, SourceScope, StoreStats,
 };
@@ -218,6 +253,153 @@ pub(crate) fn policy() -> Option<&'static Arc<Config>> {
     MODULES_POLICY.get()
 }
 
+/// How long a bounded memory call waits for the module before reporting it as
+/// still loading.
+///
+/// A warm launch maps the cached library in well under a second and the
+/// module's own initialisation is capped at five by tinybus, so this is
+/// comfortably past the whole happy path while staying well inside the
+/// desktop's thirty-second RPC deadline — the caller learns "loading", not
+/// "timed out".
+const MODULE_LOADING_GRACE: Duration = Duration::from_secs(8);
+
+/// The operations a caller may stop waiting for. **Everything else waits.**
+///
+/// A write that gives up is lost work: the message a chat turn autosaves, the
+/// turn the archivist records after the fact, a sync an operator kicked off,
+/// the shutdown that releases queue locks. None of those has a retry above it,
+/// so a `Unavailable` answer during a cold load does not delay the write — it
+/// discards it. Reads are the other case: a page or a turn is better served by
+/// "memory is loading" now than by the right answer three minutes from now.
+///
+/// # Why this names the reads and not the writes
+///
+/// It was the other way round first, and that was a bug. Listing the *writes*
+/// makes every unlisted member a read, so the default for anything the list
+/// forgets — or anything a future contract adds — is to drop the call. The
+/// first version of this list named nine operations out of seventy and
+/// silently classified `ingest_document`, `ingest_chat`, `insert_turn`,
+/// `set_goals`, `append` and two dozen other mutations as reads.
+///
+/// Naming the reads inverts the failure: a member nobody classified waits for
+/// the module, which costs a slow first call on a cold launch and loses
+/// nothing. Add a read here only when it genuinely cannot mutate — when in
+/// doubt, leave it out and it waits.
+///
+/// # The list is total, and that is checked
+///
+/// Naming the reads is only safe from lost writes; it is not automatically
+/// *complete*. The first pass named thirty-seven of the hundred and forty-one
+/// members, so `entities`, `relations`, `summary_forest`, `retrieve_children`
+/// and thirty-seven other genuine reads still waited out the whole download —
+/// the tree, graph and sources panels this change exists to unblock. The
+/// guard test partitions every dispatch label in the sources into this list
+/// or its counterpart, so a new member fails the build until someone
+/// classifies it.
+const BOUNDED_READ_OPERATIONS: &[&str] = &[
+    "answer",
+    "backfill_in_progress",
+    "chunk_detail",
+    "chunk_embeddings",
+    "chunk_entities",
+    "chunk_score",
+    "coding_session_status",
+    "count_chunks",
+    "cover_window",
+    "degraded_state",
+    "diagnose",
+    "diff",
+    "doctor",
+    "drill_down",
+    "embed_text",
+    "embedder_slug",
+    "entities",
+    "entity_chunk_ids",
+    "entity_edges",
+    "estimate_sync_cost_usd",
+    "export_page",
+    "extract_entities",
+    "facets_by_type",
+    "fast_retrieve",
+    "flavour_profile",
+    "get",
+    "get_chunk",
+    "get_document",
+    "get_facet",
+    "get_person",
+    "goals",
+    "health",
+    "is_toolkit_syncable",
+    "kv_get",
+    "kv_list",
+    "latest_queue_failure",
+    "list",
+    "list_active_facets",
+    "list_all_facets",
+    "list_chunk_details",
+    "list_chunks",
+    "list_documents",
+    "list_namespaces",
+    "list_people",
+    "namespaces",
+    "query_documents",
+    "query_source",
+    "queue_stats",
+    "raw_archive_coverage",
+    "recall",
+    "recall_documents",
+    "recall_namespace_recent",
+    "recall_namespace_scored",
+    "recent_leaves",
+    "relations",
+    "resolve_handle",
+    "retrieve_children",
+    "retrieve_leaves",
+    "retrieve_source",
+    "root_summaries_with_caps",
+    "runtime_read_children",
+    "runtime_read_node",
+    "runtime_tree_status",
+    "score_person",
+    "search_entities",
+    // #6186. Selects closed segments with no summary; it writes nothing.
+    // The write it leads to is `set_segment_summary`, classified separately.
+    "segments_pending_summary",
+    "session_turns",
+    "snapshots",
+    "source_ingest_status",
+    "source_sync_state",
+    "source_totals",
+    "storage_kinds",
+    "store_stats",
+    "summary_forest",
+    "sync_audit_log",
+    "sync_statuses",
+    "tool_rules",
+    "top_entities",
+    "workflow_identity_matches",
+];
+
+/// Install the host-side callbacks the module reaches for while it loads.
+///
+/// Idempotent and process-wide. Both the lazy path ([`ModuleMemoryProvider`]'s
+/// first call) and the eager path (boot) go through here, because a module
+/// admitted before these exist resolves no embedding provider and cannot be
+/// repaired without a restart.
+///
+/// # Errors
+///
+/// Returns a message when the module bus cannot start or the callbacks cannot
+/// be served on it.
+pub async fn install_host_callbacks(config: Arc<Config>) -> Result<(), String> {
+    let runtime = host::runtime()
+        .await
+        .map_err(|error| format!("the module bus is not running: {error}"))?;
+    super::memory_host::install(runtime.connection(), config)
+        .await
+        .map_err(|error| format!("the memory module host callbacks are unavailable: {error}"))
+}
+
 /// A memory driver served by the loaded `tinymemory` module.
 pub struct ModuleMemoryProvider {
     /// The id reported by [`MemoryProvider::driver_id`].
@@ -239,6 +421,10 @@ pub struct ModuleMemoryProvider {
     memory_subdir: Option<String>,
     /// Object path resolved for [`Self::memory_subdir`], once asked for.
     resolved_path: tokio::sync::OnceCell<String>,
+    /// How long a bounded call waits for the module to load — see
+    /// [`MODULE_LOADING_GRACE`]. Overridable so a test can observe the loading
+    /// state without waiting eight seconds for it.
+    loading_grace: Duration,
 }
 
 impl std::fmt::Debug for ModuleMemoryProvider {
@@ -278,6 +464,25 @@ impl ModuleMemoryProvider {
             verified: std::sync::OnceLock::new(),
             memory_subdir: None,
             resolved_path: tokio::sync::OnceCell::new(),
+            loading_grace: MODULE_LOADING_GRACE,
+        }
+    }
+
+    /// Bound how long a read waits for the module to load.
+    #[must_use]
+    pub fn with_loading_grace(mut self, grace: Duration) -> Self {
+        self.loading_grace = grace;
+        self
+    }
+
+    /// How long `operation` may wait for the module: `None` waits it out.
+    ///
+    /// Unrecognised operations wait — see [`BOUNDED_READ_OPERATIONS`].
+    fn loading_grace(&self, operation: &str) -> Option<Duration> {
+        if BOUNDED_READ_OPERATIONS.contains(&operation) {
+            Some(self.loading_grace)
+        } else {
+            None
         }
     }
 
@@ -334,20 +539,16 @@ impl ModuleMemoryProvider {
                  cannot be loaded; call modules::memory::set_modules_policy during boot"
             ))
         })?;
-        let runtime = host::runtime().await.map_err(|error| {
-            MemoryError::Other(anyhow::anyhow!("the module bus is not running: {error}"))
-        })?;
-        super::memory_host::install(runtime.connection(), Arc::clone(config))
-            .await
-            .map_err(|error| {
-                MemoryError::Other(anyhow::anyhow!(
-                    "the memory module host callbacks are unavailable: {error}"
-                ))
-            })?;
         // TinyMemory resolves its embedding provider while the native library
         // is admitted. Host callbacks must therefore exist before loading,
         // including in tests and explicit-path overrides where no boot policy
         // was available when the shared module runtime first started.
+        install_host_callbacks(Arc::clone(config))
+            .await
+            .map_err(|message| MemoryError::Other(anyhow::anyhow!(message)))?;
+        let runtime = host::runtime().await.map_err(|error| {
+            MemoryError::Other(anyhow::anyhow!("the module bus is not running: {error}"))
+        })?;
         // A load failure is terminal for the process (the loader caches it),
         // so every memory member would otherwise return the loader's raw
         // message — release URLs, digest text, "restart the app" repeated per
@@ -355,15 +556,36 @@ impl ModuleMemoryProvider {
         // user_error broadcast (once per process, metadata only) plus a
         // stable, actionable error for the caller. The raw reason goes to the
         // log, where an operator can act on it.
-        ops::ensure_loaded(config, MODULE_ID).await.map_err(|message| {
-            crate::openhuman::memory::tree::health::user_error::notice_memory_module_unavailable_once(
-                &message,
-            );
-            MemoryError::Backend(
-                "memory is unavailable: the memory module failed to load. Restart the app to                  retry; the reason is in the log."
-                    .to_string(),
-            )
-        })?;
+        //
+        // A load still in progress is different: nothing failed, the caller
+        // simply asked before the download or the initialisation finished. A
+        // read reports that as `Unavailable` — the retryable class — after its
+        // grace instead of hanging into the caller's own deadline; everything
+        // else waits it out (see `BOUNDED_READ_OPERATIONS`).
+        let grace = self.loading_grace(operation);
+        match ops::ensure_loaded_within(config, MODULE_ID, grace).await {
+            Ok(()) => {}
+            Err(ops::LoadError::StillLoading) => {
+                log::info!(
+                    "[modules:memory] operation={operation} module still loading after {grace:?}; \
+                     answering unavailable"
+                );
+                return Err(MemoryError::Unavailable(
+                    "memory is still starting: the memory module is loading; try again in a moment"
+                        .to_string(),
+                ));
+            }
+            Err(ops::LoadError::Failed(message)) => {
+                crate::openhuman::memory::tree::health::user_error::notice_memory_module_unavailable_once(
+                    &message,
+                );
+                return Err(MemoryError::Backend(
+                    "memory is unavailable: the memory module failed to load. Restart the app to \
+                     retry; the reason is in the log."
+                        .to_string(),
+                ));
+            }
+        }
 
         let record = registry::find(MODULE_ID)
             .ok_or_else(|| MemoryError::Other(anyhow::anyhow!("unknown module '{MODULE_ID}'")))?;
@@ -430,267 +652,6 @@ fn from_bus(error: &tinybus::Error) -> MemoryError {
     wire::from_wire(error.wire_name(), &error.to_string())
 }
 
-#[async_trait]
-impl MemoryProvider for ModuleMemoryProvider {
-    fn driver_id(&self) -> &str {
-        &self.driver_id
-    }
-
-    /// The families the **pinned artifact** serves — not the whole contract.
-    ///
-    /// # This couples to the registry pin, and the coupling IS enforced
-    ///
-    /// `Capabilities::all()` grows whenever a family is added to the contract,
-    /// but the *artifact* only grows when a release is cut and
-    /// [`registry`](super::registry) is re-pinned to it. Returning `all()`
-    /// between those two moments over-claimed: the host said it could do
-    /// something the loaded binary could not, and [`Self::verify`] noticed and
-    /// logged it without narrowing the advertised set. The failure mode was a
-    /// call that reached the module and came back `UnknownMethod` (#5598)
-    /// rather than a family that cleanly reported itself absent.
-    ///
-    /// [`ARTIFACT_CAPABILITIES`] is now the source of truth, and
-    /// `the_capability_list_matches_the_pinned_release` fails if it is widened
-    /// without moving [`ARTIFACT_CAPABILITIES_PIN`] and the registry pin
-    /// together.
-    ///
-    /// The kernel filters its RPC surface and agent-tool assembly from this set,
-    /// and the guard builds one family decorator per `provides()`, so an
-    /// over-claim here is precisely what turns an absent family into a live
-    /// method that answers `UnknownMethod`.
-    fn capabilities(&self) -> Capabilities {
-        artifact_capabilities()
-    }
-
-    async fn health(&self) -> MemoryHealth {
-        // An unreachable module is a *health* answer, not an error: that is the
-        // question this method exists to answer, and returning `Down` is how
-        // status output shows an unsupported platform or a refused artifact.
-        match self.proxy("health").await {
-            Ok(proxy) => proxy
-                .call::<MemoryHealth>("Health", ())
-                .await
-                .unwrap_or_else(|error| MemoryHealth::down(error.to_string())),
-            Err(error) => MemoryHealth::down(error.to_string()),
-        }
-    }
-
-    async fn shutdown(&self) -> Result<(), MemoryError> {
-        // Deliberately does not load the module in order to shut it down: a
-        // shutdown on a driver that was never used should be a no-op, not a
-        // download. tinybus never unloads a library anyway, so this releases
-        // backend resources only.
-        if self.verified.get().is_none() {
-            return Ok(());
-        }
-        let proxy = self.proxy("shutdown").await?;
-        proxy
-            .call::<()>(methods::SHUTDOWN, ())
-            .await
-            .map_err(|error| from_bus(&error))
-    }
-
-    fn as_ingest(&self) -> Option<&dyn MemoryIngest> {
-        Some(self)
-    }
-    fn as_documents(&self) -> Option<&dyn MemoryDocuments> {
-        Some(self)
-    }
-    fn as_tree(&self) -> Option<&dyn MemoryTree> {
-        Some(self)
-    }
-    fn as_entities(&self) -> Option<&dyn MemoryEntities> {
-        Some(self)
-    }
-    fn as_graph(&self) -> Option<&dyn MemoryGraph> {
-        Some(self)
-    }
-    fn as_diff(&self) -> Option<&dyn MemoryDiff> {
-        Some(self)
-    }
-    fn as_goals(&self) -> Option<&dyn MemoryGoals> {
-        Some(self)
-    }
-    fn as_tool_memory(&self) -> Option<&dyn MemoryToolMemory> {
-        Some(self)
-    }
-    fn as_sources(&self) -> Option<&dyn MemorySourceSink> {
-        Some(self)
-    }
-    fn as_maintenance(&self) -> Option<&dyn MemoryMaintenance> {
-        Some(self)
-    }
-    // The four families below are gated on the pinned artifact rather than
-    // returning `Some(self)` unconditionally. `provides()` derives from these
-    // accessors, the guard builds its decorators from `provides()`, and every
-    // caller already writes a clean "driver does not support the X family"
-    // error on `None` — so gating here converts a deep `UnknownMethod` into an
-    // early, accurate refusal at every call site at once (#5598).
-    fn as_people(&self) -> Option<&dyn MemoryPeople> {
-        artifact_serves(Capability::People).then_some(self as &dyn MemoryPeople)
-    }
-    fn as_chunks(&self) -> Option<&dyn MemoryChunks> {
-        artifact_serves(Capability::Chunks).then_some(self as &dyn MemoryChunks)
-    }
-    fn as_retrieval(&self) -> Option<&dyn MemoryRetrieval> {
-        artifact_serves(Capability::Retrieval).then_some(self as &dyn MemoryRetrieval)
-    }
-    fn as_profile(&self) -> Option<&dyn MemoryProfile> {
-        artifact_serves(Capability::Profile).then_some(self as &dyn MemoryProfile)
-    }
-
-    fn as_source_sync(&self) -> Option<&dyn MemorySourceSync> {
-        artifact_serves(Capability::SourceSync).then_some(self as &dyn MemorySourceSync)
-    }
-
-    fn as_coding_sessions(&self) -> Option<&dyn MemoryCodingSessions> {
-        artifact_serves(Capability::CodingSessions).then_some(self as &dyn MemoryCodingSessions)
-    }
-    fn as_episodic(&self) -> Option<&dyn MemoryEpisodic> {
-        artifact_serves(Capability::Episodic).then_some(self as &dyn MemoryEpisodic)
-    }
-    fn as_scoring(&self) -> Option<&dyn MemoryScoring> {
-        artifact_serves(Capability::Scoring).then_some(self as &dyn MemoryScoring)
-    }
-    fn as_document_ingest(&self) -> Option<&dyn MemoryDocumentIngest> {
-        artifact_serves(Capability::DocumentIngest).then_some(self as &dyn MemoryDocumentIngest)
-    }
-    fn as_conversation_ingest(&self) -> Option<&dyn MemoryConversationIngest> {
-        artifact_serves(Capability::ConversationIngest)
-            .then_some(self as &dyn MemoryConversationIngest)
-    }
-    fn as_learning_ingest(&self) -> Option<&dyn MemoryLearningIngest> {
-        artifact_serves(Capability::LearningIngest).then_some(self as &dyn MemoryLearningIngest)
-    }
-    fn as_event_ingest(&self) -> Option<&dyn MemoryEventIngest> {
-        artifact_serves(Capability::EventIngest).then_some(self as &dyn MemoryEventIngest)
-    }
-    fn as_answer(&self) -> Option<&dyn MemoryAnswer> {
-        artifact_serves(Capability::Answer).then_some(self as &dyn MemoryAnswer)
-    }
-}
-
-#[async_trait]
-impl MemoryCore for ModuleMemoryProvider {
-    async fn store(
-        &self,
-        namespace: &str,
-        key: &str,
-        content: &str,
-        category: MemoryCategory,
-        session_id: Option<&str>,
-        taint: MemoryTaint,
-    ) -> Result<(), MemoryError> {
-        // No log line carries `namespace`, `key` or `content`: all three are user
-        // memory content.
-        self.proxy("store")
-            .await?
-            .call::<()>(
-                methods::STORE,
-                (
-                    namespace,
-                    key,
-                    content,
-                    category,
-                    session_id.map(str::to_string),
-                    taint,
-                ),
-            )
-            .await
-            .map_err(|error| from_bus(&error))
-    }
-
-    async fn get(&self, namespace: &str, key: &str) -> Result<Option<MemoryEntry>, MemoryError> {
-        self.proxy("get")
-            .await?
-            .call(methods::GET, (namespace, key))
-            .await
-            .map_err(|error| from_bus(&error))
-    }
-
-    async fn forget(&self, namespace: &str, key: &str) -> Result<bool, MemoryError> {
-        self.proxy("forget")
-            .await?
-            .call(methods::FORGET, (namespace, key))
-            .await
-            .map_err(|error| from_bus(&error))
-    }
-
-    async fn list(
-        &self,
-        namespace: Option<&str>,
-        category: Option<&MemoryCategory>,
-        session_id: Option<&str>,
-    ) -> Result<Vec<MemoryEntry>, MemoryError> {
-        self.proxy("list")
-            .await?
-            .call(
-                methods::LIST,
-                (
-                    namespace.map(str::to_string),
-                    category.cloned(),
-                    session_id.map(str::to_string),
-                ),
-            )
-            .await
-            .map_err(|error| from_bus(&error))
-    }
-
-    async fn namespaces(&self) -> Result<Vec<NamespaceSummary>, MemoryError> {
-        self.proxy("namespaces")
-            .await?
-            .call(methods::NAMESPACES, ())
-            .await
-            .map_err(|error| from_bus(&error))
-    }
-}
-
-#[async_trait]
-impl MemoryRecall for ModuleMemoryProvider {
-    async fn recall(
-        &self,
-        query: &str,
-        limit: usize,
-        opts: &OwnedRecallOpts,
-        scope: Option<&SourceScope>,
-    ) -> Result<Vec<MemoryEntry>, MemoryError> {
-        // `scope` crosses as a value because the driver must apply it as a query
-        // predicate internally; narrowing the result here instead would let the
-        // module spend its `limit` on entries the caller may not see.
-        self.proxy("recall")
-            .await?
-            .call(methods::RECALL, (query, limit, opts, scope.cloned()))
-            .await
-            .map_err(|error| from_bus(&error))
-    }
-}
-
-#[async_trait]
-impl MemoryPortability for ModuleMemoryProvider {
-    async fn export_page(
-        &self,
-        cursor: Option<&str>,
-        limit: usize,
-    ) -> Result<ExportPage, MemoryError> {
-        self.proxy("export_page")
-            .await?
-            .call(methods::EXPORT_PAGE, (cursor.map(str::to_string), limit))
-            .await
-            .map_err(|error| from_bus(&error))
-    }
-
-    async fn import_records(
-        &self,
-        records: Vec<ExportRecord>,
-    ) -> Result<ImportOutcome, MemoryError> {
-        self.proxy("import_records")
-            .await?
-            .call(methods::IMPORT_RECORDS, (records,))
-            .await
-            .map_err(|error| from_bus(&error))
-    }
-}
-
 macro_rules! module_call {
     ($self:expr, $operation:literal, $method:expr, $args:expr) => {
         $self
@@ -720,17 +681,4 @@ macro_rules! module_call_slow {
             .await
             .map_err(|error| from_bus(&error))
     };
-}
-
-#[async_trait]
-impl MemoryIngest for ModuleMemoryProvider {
-    async fn ingest_document(&self, item: IngestItem) -> Result<IngestOutcome, MemoryError> {
-        module_call!(self, "ingest_document", methods::INGEST_DOCUMENT, (item,))
-    }
-    async fn ingest_chat(&self, messages: Vec<IngestItem>) -> Result<IngestOutcome, MemoryError> {
-        module_call_slow!(self, "ingest_chat", methods::INGEST_CHAT, (messages,))
-    }
-    async fn ingest_email(&self, messages: Vec<IngestItem>) -> Result<IngestOutcome, MemoryError> {
-        module_call_slow!(self, "ingest_email", methods::INGEST_EMAIL, (messages,))
-    }
 }

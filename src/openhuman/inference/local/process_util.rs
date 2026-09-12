@@ -17,7 +17,6 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[cfg(windows)]
 pub(crate) fn apply_no_window(cmd: &mut tokio::process::Command) {
-    use std::os::windows::process::CommandExt;
     cmd.creation_flags(CREATE_NO_WINDOW);
 }
 

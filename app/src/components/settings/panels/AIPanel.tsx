@@ -10,7 +10,7 @@
  *
  * This file is a thin composition — every section lives in `./ai/*`.
  */
-import { useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import {
@@ -51,6 +51,7 @@ import { useCloudProviderEditorSubmit } from './ai/useCloudProviderEditorSubmit'
 import { useProviderConnect } from './ai/useProviderConnect';
 import { WorkloadRow } from './ai/WorkloadRow';
 import { WorkloadTable } from './ai/WorkloadTable';
+import { routingWithProviderRemoved } from './aiRouting';
 import { useReembedBackfillModal } from './useReembedBackfillModal';
 
 export type { CloudProvider, ProviderRef, RoutingMap } from './ai/aiPanelTypes';
@@ -125,6 +126,42 @@ const AIPanel = ({
       setPendingLocalLabel(null);
     },
   });
+
+  const handleOpenAiOAuthCompleted = useCallback(async () => {
+    try {
+      await connectProvider({ slug: 'openai', value: 'oauth', credentialMode: 'codex_oauth' });
+      console.debug('[ai-settings:openai-oauth] provider registration succeeded', {
+        provider: 'openai',
+      });
+    } catch (err) {
+      console.warn('[ai-settings:openai-oauth] provider registration failed', {
+        provider: 'openai',
+      });
+      await reload();
+      throw err;
+    }
+  }, [connectProvider, reload]);
+
+  const handleOpenAiOAuthDisconnected = useCallback(async () => {
+    const existing = draft.cloudProviders.find(cp => cp.slug === 'openai');
+    if (!existing) return;
+    const remaining = draft.cloudProviders.filter(cp => cp.id !== existing.id);
+    const nextRouting = routingWithProviderRemoved(
+      draft.routing,
+      { slug: existing.slug, isLocalRuntime: false },
+      remaining
+    );
+    try {
+      await persist({ ...draft, cloudProviders: remaining, routing: nextRouting });
+      console.debug('[ai-settings:openai-oauth] provider removal succeeded', {
+        provider: 'openai',
+      });
+    } catch (err) {
+      console.warn('[ai-settings:openai-oauth] provider removal failed', { provider: 'openai' });
+      await reload();
+      throw err;
+    }
+  }, [draft, persist, reload]);
 
   const submitCloudProviderEdit = useCloudProviderEditorSubmit({
     editing,
@@ -249,7 +286,7 @@ const AIPanel = ({
                       saved={inferSharedModelRef(saved.routing)}
                       cloudProviders={draft.cloudProviders}
                       localModels={installed}
-                      ollamaRunning={ollama.state === 'running'}
+                      ollamaRunning={ollama.state === 'running' || ollama.state === 'degraded'}
                       modelRegistry={draft.modelRegistry}
                       onApply={async (next, vision) => {
                         const reg =
@@ -390,7 +427,7 @@ const AIPanel = ({
               initial={current}
               cloudProviders={draft.cloudProviders}
               localModels={installed}
-              ollamaRunning={ollama.state === 'running'}
+              ollamaRunning={ollama.state === 'running' || ollama.state === 'degraded'}
               modelRegistry={draft.modelRegistry}
               onClose={() => setPickerFor(null)}
               onSubmit={(next, vision) => {
@@ -454,6 +491,14 @@ const AIPanel = ({
                       }
                     }
                   },
+                }
+              : null
+          }
+          openAiOAuth={
+            keyDialogFor === 'openai' && !pendingLocalLabel
+              ? {
+                  onCompleted: handleOpenAiOAuthCompleted,
+                  onDisconnected: handleOpenAiOAuthDisconnected,
                 }
               : null
           }

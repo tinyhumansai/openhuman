@@ -81,23 +81,82 @@ pub fn check_secret_access() -> PolicyDecision {
     }
 }
 
+/// Backend identifiers as [`crate::openhuman::security::keyring::backend_name`]
+/// reports them. Kept here rather than matched as bare literals so the mapping
+/// below reads as a table and a rename upstream fails in one place.
+const BACKEND_OS: &str = "os";
+const BACKEND_ENCRYPTED_FILE: &str = "encrypted_file";
+const BACKEND_FILE: &str = "file";
+const BACKEND_MOCK: &str = "mock";
+
+/// Translate a recorded consent decision into the mode it selected.
+///
+/// Only meaningful on the `os` path: consent is asked for exactly when the OS
+/// keyring was the intended store and could not be used.
+fn consent_mode(cached: Option<&ConsentPreference>) -> StorageMode {
+    match cached {
+        Some(p) if p.storage_mode == "local_encrypted" => StorageMode::LocalEncrypted,
+        Some(p) if p.storage_mode == "declined" => StorageMode::Declined,
+        _ => StorageMode::ConsentPending,
+    }
+}
+
+/// Decide what [`StorageMode`] describes this process, from the **backend
+/// identity** first and availability second.
+///
+/// Split out of [`current_status`] as a pure function so every combination can
+/// be asserted without touching the process-global backend `OnceLock` (which
+/// `force_backend_for_test` can only set once per test binary).
+///
+/// This used to branch on `available` alone, which was wrong for every
+/// non-`os` backend: `probe_availability` short-circuits to `true` for `file`,
+/// `mock` and `encrypted_file`, so all three reported `os_keyring` beside a
+/// `backend_name` that said otherwise, and a recorded `declined` decision could
+/// not move it (#6076). In staging and production — where `encrypted_file` is
+/// the default — that told the user their secrets were in the OS keychain while
+/// they were in `{workspace}/secrets.enc`.
+fn active_mode_for(
+    available: bool,
+    backend_name: &str,
+    cached: Option<&ConsentPreference>,
+) -> StorageMode {
+    match backend_name {
+        // The only backend that actually stores secrets in the OS credential
+        // store — and only while its probe passes.
+        BACKEND_OS => {
+            if available {
+                StorageMode::OsKeyring
+            } else {
+                consent_mode(cached)
+            }
+        }
+        // Operator-configured backends. No consent was ever asked for, so the
+        // consent cache says nothing about where these secrets are.
+        BACKEND_ENCRYPTED_FILE => StorageMode::LocalEncryptedFile,
+        BACKEND_FILE | BACKEND_MOCK => StorageMode::LocalPlaintextFile,
+        // A backend added without extending this table. Reporting `os_keyring`
+        // is exactly the bug above, so claim nothing instead: `backend_name`
+        // still ships in the payload and names it.
+        other => {
+            warn!(
+                "{LOG_PREFIX} unrecognised keyring backend '{other}': reporting \
+                 active_mode=consent_pending rather than guessing where secrets live"
+            );
+            StorageMode::ConsentPending
+        }
+    }
+}
+
 /// Build the current keyring status for RPC / snapshot consumption.
 pub fn current_status() -> KeyringStatus {
     let available = crate::openhuman::security::keyring::is_available();
     let backend_name = crate::openhuman::security::keyring::backend_name();
+    let cached = CONSENT_CACHE.read().clone();
 
-    let (active_mode, failure_reason) = if available {
-        (StorageMode::OsKeyring, None)
-    } else {
-        let reason = classify_failure_reason(&backend_name);
-        let cached = CONSENT_CACHE.read().clone();
-        let mode = match cached {
-            Some(ref p) if p.storage_mode == "local_encrypted" => StorageMode::LocalEncrypted,
-            Some(ref p) if p.storage_mode == "declined" => StorageMode::Declined,
-            _ => StorageMode::ConsentPending,
-        };
-        (mode, Some(reason))
-    };
+    let active_mode = active_mode_for(available, &backend_name, cached.as_ref());
+    // `failure_reason` stays tied to the probe, not to the mode: a file backend
+    // is genuinely available, it just is not the OS keyring.
+    let failure_reason = (!available).then(|| classify_failure_reason(&backend_name));
 
     KeyringStatus {
         available,

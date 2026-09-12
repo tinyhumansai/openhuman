@@ -36,7 +36,7 @@
 //!
 //! **Real store, not a stub.** `memory` here is the process-global
 //! `MemoryClient` (`crate::openhuman::memory::global`), bound to the shared
-//! temp workspace `memory::ops::test_support::ensure_shared_memory_client`
+//! temp workspace `memory::ops::test_support::shared_memory_test_workspace`
 //! already uses for every other `memory::ops` real-store test — the SAME
 //! on-disk `UnifiedMemory`-backed store `flows_run` writes to in production.
 //! Serialized against sibling tests with `GLOBAL_MEMORY_TEST_LOCK`, exactly
@@ -50,7 +50,6 @@ use tinyflows::model::{Edge, Node, NodeKind, WorkflowGraph};
 
 use crate::openhuman::agent::turn_origin::{self, AgentTurnOrigin, TrustedAutomationSource};
 use crate::openhuman::config::Config;
-use crate::openhuman::flows::flow_namespace;
 use crate::openhuman::flows::memory_tools::FlowMemoryRecallTool;
 use crate::openhuman::security::AutonomyLevel;
 use crate::openhuman::tools::traits::Tool;
@@ -65,7 +64,7 @@ use super::build_capabilities;
 /// One on-disk SQLite store is shared across every test thread in this
 /// binary (`memory::global` is a process-global `OnceLock`), so concurrent
 /// `init`/read/write from sibling tests races on schema init and can bleed
-/// data across tests. `GLOBAL_MEMORY_TEST_LOCK` + `ensure_shared_memory_client`
+/// data across tests. `GLOBAL_MEMORY_TEST_LOCK` + `shared_memory_test_workspace`
 /// is the crate's existing, proven pattern for this (see
 /// `memory::ops::documents::tests::ensure_memory_client` and
 /// `composio::ops_tests::init_memory_client`) — reused verbatim here rather
@@ -74,7 +73,7 @@ async fn lock_shared_memory() -> tokio::sync::MutexGuard<'static, ()> {
     let guard = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
         .lock()
         .await;
-    crate::openhuman::memory::ops::ensure_shared_memory_client();
+    crate::openhuman::memory::ops::shared_memory_test_workspace();
     guard
 }
 
@@ -264,24 +263,34 @@ async fn memory_node_remember_then_recall_round_trips_through_the_real_engine_an
     );
 }
 
-// ── 3. security invariant end-to-end: scope:"user" writes are rejected,
-// and the user's real memory store is never touched ────────────────────────
+// ── 3. security invariant end-to-end: scope:"user" writes are rejected ─────
 
+/// A `remember` node asking for `scope: "user"` is refused twice over.
+///
+/// This test used to assert a third thing: that the user's real
+/// `GLOBAL_NAMESPACE` store held nothing under the key afterwards. That layer
+/// needed `tinymemory_core::global::client_if_ready()` and
+/// `tinycortex::memory::GLOBAL_NAMESPACE` — an in-process engine — and went
+/// with it (openhuman#6161). It is not replaced here, and pretending otherwise
+/// would be worse than saying so: the fake driver this crate now binds has no
+/// user store to leave untouched, so an assertion against it would pass
+/// whether or not the guard held.
+///
+/// The two layers that remain are the ones that do the refusing, and neither
+/// needed an engine to begin with. Deleting them along with the third was the
+/// mistake this restores.
 #[tokio::test]
-async fn memory_node_remember_user_scope_is_rejected_and_never_touches_user_memory() {
+async fn memory_node_remember_user_scope_is_rejected_before_it_can_write() {
     let _serial = lock_shared_memory().await;
     let (_tmp, config) = full_autonomy_config();
     let flow_id = unique_flow_id("e2e-security");
     let caps = build_capabilities(config, format!("flow:{flow_id}"));
-
-    // A unique key so this assertion can't collide with real content any
-    // other test in this shared workspace may have written under
-    // GLOBAL_NAMESPACE.
     let forbidden_key = format!("forbidden-{}", uuid::Uuid::new_v4());
 
     // ── (a) validate-time rejection: tinyflows' own structural validator
-    // rejects a `remember`/`scope: "user"` node BEFORE compile ever
-    // succeeds, so a graph shaped this way can never even reach a run. ──
+    // rejects a `remember`/`scope: "user"` node BEFORE compile ever succeeds,
+    // so a graph shaped this way can never reach a run. Nothing else in this
+    // crate asserts the compiler half. ──
     let user_scope_graph = trigger_to_memory(json!({
         "operation": "remember",
         "scope": "user",
@@ -295,10 +304,15 @@ async fn memory_node_remember_user_scope_is_rejected_and_never_touches_user_memo
         "expected the validator's scope:\"user\" rejection, got: {compile_err}"
     );
 
-    // ── (b) defense-in-depth: even bypassing tinyflows' validator entirely
-    // and calling straight through to the adapter build_capabilities wired
-    // (the exact instance a real run would dispatch to), OpenHumanMemory's
-    // own remember() hard-refuses anything but scope: "flow". ──
+    // ── (b) defense-in-depth: even bypassing tinyflows' validator entirely and
+    // calling straight through to the adapter `build_capabilities` wired — the
+    // exact instance a real run would dispatch to — `OpenHumanMemory::remember`
+    // independently refuses anything but scope: "flow".
+    //
+    // `memory_adapter_tests::remember_rejects_user_scope` covers the same
+    // refusal on a directly-constructed adapter. This one is not redundant with
+    // it: what is under test here is that the capability a real run receives is
+    // that adapter, rather than something assembled differently on the way. ──
     let direct_err = turn_origin::with_origin(
         workflow_origin(&flow_id),
         caps.memory
@@ -311,46 +325,22 @@ async fn memory_node_remember_user_scope_is_rejected_and_never_touches_user_memo
     assert!(direct_err
         .to_string()
         .contains("only supports scope \"flow\""));
-
-    // ── (c) the user's real, durable GLOBAL_NAMESPACE store is untouched by
-    // either attempt above. ──
-    let memory = tinymemory_core::global::client_if_ready()
-        .expect("global memory client must be initialized by lock_shared_memory")
-        .memory_handle();
-    let entry = memory
-        .get(tinycortex::memory::GLOBAL_NAMESPACE, &forbidden_key)
-        .await
-        .expect("get should not error");
-    assert!(
-        entry.is_none(),
-        "the memory node must never write to the user's GLOBAL_NAMESPACE store, found: {entry:?}"
-    );
 }
 
-// ── 4. dry_run_workflow still works with a memory node: MockMemory returns
-// shaped data without ever touching the real store ─────────────────────────
+// ── 4. dry_run_workflow still works with a memory node ─────────────────────
 
+/// A graph containing a `memory` node dry-runs end to end against the mock
+/// capabilities `DryRunWorkflowTool` wires, and comes back with `MockMemory`'s
+/// shaped echo rather than store content.
+///
+/// The two assertions that read the real on-disk store before and after — "the
+/// dry run never wrote there" — needed an in-process engine and went with it
+/// (openhuman#6161). What survives still distinguishes the two paths, because
+/// the echo is `MockMemory`'s and no real adapter produces it: a dry run that
+/// had reached the real store would fail the `mem_1` assertion rather than
+/// pass it quietly.
 #[tokio::test]
-async fn memory_node_dry_run_uses_mock_memory_and_never_touches_the_real_store() {
-    let _serial = lock_shared_memory().await;
-    let flow_id = unique_flow_id("e2e-dryrun");
-
-    let memory = tinymemory_core::global::client_if_ready()
-        .expect("global memory client must be initialized by lock_shared_memory")
-        .memory_handle();
-
-    // Nothing under this flow's namespace exists yet.
-    assert!(memory
-        .get(&flow_namespace(&flow_id), "item-42")
-        .await
-        .unwrap()
-        .is_none());
-
-    // The SAME round-trip graph shape as the real-adapter test above, but
-    // run against `tinyflows::caps::mock::mock_capabilities()` — exactly
-    // what `DryRunWorkflowTool::execute` wires (`Capabilities::memory`
-    // defaults to `MockMemory` there; see the crate's own doc comment on
-    // `mock_capabilities`).
+async fn memory_node_dry_run_uses_mock_memory_end_to_end() {
     let mock_caps = tinyflows::caps::mock::mock_capabilities();
 
     let remember_graph = trigger_to_memory(json!({
@@ -369,19 +359,6 @@ async fn memory_node_dry_run_uses_mock_memory_and_never_touches_the_real_store()
         json!(true)
     );
 
-    // The real store never saw this write — MockMemory::remember is a no-op.
-    assert!(
-        memory
-            .get(&flow_namespace(&flow_id), "item-42")
-            .await
-            .unwrap()
-            .is_none(),
-        "dry_run_workflow's MockMemory must never touch the real on-disk store"
-    );
-
-    // recall through the same mock returns MockMemory's fixed shaped echo —
-    // proving a graph containing a `memory` node still dry-runs cleanly end
-    // to end, without ever reaching the real adapter or store.
     let recall_graph = trigger_to_memory(json!({
         "operation": "recall",
         "scope": "flow",

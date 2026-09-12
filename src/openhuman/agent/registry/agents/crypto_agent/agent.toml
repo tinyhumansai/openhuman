@@ -25,31 +25,38 @@ hint = "burst"
 # file_write, no broad HTTP, no integration delegation. Wallet names line up
 # with the wallet RPC controllers in `src/openhuman/web3/wallet/schemas.rs`
 # (read: status/balances/supported_assets/chain_status + tx_status/tx_receipt/
-# lookup_tx; quote/prepare: prepare_transfer; execute: execute_prepared). The
-# higher-level swap/bridge/dapp surface lives in the `web3_*` tools, which
-# build on the wallet's signing primitives. Tools that aren't yet registered
-# are silently dropped by the tool filter at spawn time, so this list also
-# describes the agent's *intended* tool surface as wallet + exchange tools land.
+# lookup_tx; quote/prepare: prepare_transfer). The higher-level swap/bridge/dapp
+# surface lives in the `web3_*` tools, which build on the wallet's signing
+# primitives.
+#
+# This list holds ONLY names that resolve to a registered tool. An unregistered
+# name is silently dropped by the tool filter at spawn time
+# (`ToolScope::Named`, `harness/subagent_runner/tool_prep.rs`), so it never
+# reaches the model and an aspirational entry buys nothing — it only misleads
+# the next reader, and the prompt that was written against it described calls
+# that could never resolve.
+#
+# NOT LISTED, deliberately — these exist as `wallet.*` RPC methods
+# (`web3/wallet/schemas.rs`) with working backing functions, but have no agent
+# Tool wrapper, so the agent cannot call them:
+#   wallet_balances, wallet_network_defaults, wallet_supported_assets,
+#   wallet_encode_erc20_transfer, wallet_execute_prepared
+# Exposing `wallet_execute_prepared` in particular is a money-path decision
+# (it signs and broadcasts): it belongs in a change that argues for it, not in
+# an allowlist entry. Until then the agent prepares transfers and the user
+# completes them in the wallet UI — see hard rule 3 in `prompt.md`.
 named = [
     # Read-only wallet inspection.
     "wallet_status",
-    "wallet_balances",
-    "wallet_network_defaults",
-    "wallet_supported_assets",
     "wallet_chain_status",
-    "wallet_encode_erc20_transfer",
     # Transaction inspection — status / receipt / raw lookup by hash.
     "wallet_tx_status",
     "wallet_tx_receipt",
     "wallet_lookup_tx",
-    # Quote / prepare a native or token transfer. MUST be called before
-    # wallet_execute_prepared — returns a deterministic transaction blob
-    # plus fee estimate the agent shows the user for confirmation.
+    # Quote / prepare a native or token transfer. Returns a deterministic
+    # transaction blob plus a fee estimate the agent shows the user. NOTE:
+    # nothing in this surface executes it — see the block above.
     "wallet_prepare_transfer",
-    # Sign + broadcast a previously-prepared blob. Refuses to fabricate
-    # parameters — only consumes a `quoteId` returned by the matching
-    # wallet_prepare_* call earlier in this turn.
-    "wallet_execute_prepared",
     # High-level web3: swaps (same-chain), bridges (cross-chain), and
     # generic EVM dapp calls. Each quote/call returns a quoteId that MUST
     # be confirmed via the matching web3_*_execute before broadcast.
@@ -66,7 +73,7 @@ named = [
     "stock_exchange_rate",
     "stock_crypto_series",
     # Confirmation gate — the agent MUST call this before any
-    # wallet_execute_prepared / write-side exchange order. The runtime
+    # web3_*_execute / write-side exchange order. The runtime
     # routes the prompt to the user and blocks until they reply.
     "ask_user_clarification",
     # Time grounding for "as of <when>" framing and freshness checks on

@@ -607,3 +607,110 @@ async fn fetch_learned_context_returns_empty_when_both_flags_off() {
     assert!(learned.patterns.is_empty());
     assert!(learned.reflections.is_empty());
 }
+
+/// Issue #6014: a capped turn concludes from **inside** the loop.
+///
+/// The turn used to exit on the cap and then make a second, out-of-band call
+/// asking for a checkpoint. That call ran with none of the loop's context
+/// management and failed silently into a digest of tool names — on the very
+/// turns that had gathered the most. The last permitted model call now does the
+/// concluding itself: tools withdrawn, wrap-up instruction appended, answer
+/// produced by an ordinary loop iteration.
+///
+/// Pinned here: the tool schemas really are withdrawn on that call (not merely
+/// discouraged in prose), the loop's own text becomes the reply, the turn still
+/// reports as capped, and — the whole point — no extra provider call is made.
+#[tokio::test]
+async fn a_capped_turn_concludes_inside_the_loop_without_a_second_call() {
+    let recorded = Arc::new(SequenceProvider {
+        responses: AsyncMutex::new(vec![
+            // Call 1 spends the turn's only tool round.
+            Ok(ChatResponse {
+                text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
+                tool_calls: vec![],
+                usage: None,
+                reasoning_content: None,
+            }),
+            // Call 2 is the last permitted one, so the middleware turns it into
+            // the conclusion. A third response is deliberately NOT scripted: if
+            // anything still made an out-of-band wrap-up call, the provider
+            // would run dry and the turn would fail.
+            Ok(ChatResponse {
+                text: Some("The echo tool returned `hello`, which answers the question.".into()),
+                tool_calls: vec![],
+                usage: None,
+                reasoning_content: None,
+            }),
+        ]),
+        requests: AsyncMutex::new(Vec::new()),
+        tool_counts: AsyncMutex::new(Vec::new()),
+    });
+    let provider: Arc<dyn ChatModel<()>> = recorded.clone();
+
+    let mut agent = make_agent_with_builder(
+        provider,
+        vec![Box::new(EchoTool)],
+        vec![],
+        crate::openhuman::config::AgentConfig {
+            // Two, not one: a single-call budget would make the FIRST call the
+            // concluding one, so the turn could never run a tool at all — which
+            // the middleware treats as a misconfiguration and declines to touch.
+            max_tool_iterations: 2,
+            ..crate::openhuman::config::AgentConfig::default()
+        },
+        crate::openhuman::config::ContextConfig::default(),
+    );
+
+    let reply = agent
+        .turn("what does echo say?")
+        .await
+        .expect("a capped turn should conclude, not error");
+
+    // The loop's own final text is the reply — it reports the RESULT, which is
+    // what the old process-shaped checkpoint could not do.
+    assert!(
+        reply.contains("returned `hello`"),
+        "the in-loop conclusion should be the reply, got: {reply}"
+    );
+
+    let tool_counts = recorded.tool_counts.lock().await.clone();
+    assert_eq!(
+        tool_counts.len(),
+        2,
+        "exactly two provider calls: the tool round and the conclusion — an out-of-band wrap-up \
+         would make a third, {tool_counts:?}"
+    );
+    assert!(
+        tool_counts[0] > 0,
+        "the first call must be offered the tool belt, got {tool_counts:?}"
+    );
+    assert_eq!(
+        tool_counts[1], 0,
+        "the concluding call must be offered NO tools — the instruction alone is a request the \
+         model may ignore, {tool_counts:?}"
+    );
+
+    // Still reported as a pause, so callers that render a "continue" affordance
+    // (and the workflow runner, which must not settle a capped node as
+    // finished) keep the signal they read today.
+    assert!(
+        agent.last_turn_hit_cap(),
+        "a turn that concluded at its cap is still a capped turn"
+    );
+
+    // The transcript ends on that conclusion exactly once: it came from the
+    // loop, so it is already folded in via the run's conversation, and the cap
+    // branch must not append a second copy.
+    let conclusions = agent
+        .history
+        .iter()
+        .filter(|message| {
+            matches!(message, ConversationMessage::Chat(msg)
+                if msg.role == "assistant" && msg.content.contains("returned `hello`"))
+        })
+        .count();
+    assert_eq!(
+        conclusions, 1,
+        "the conclusion should appear once in history, not be re-pushed by the cap branch"
+    );
+}

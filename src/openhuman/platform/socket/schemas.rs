@@ -6,6 +6,7 @@ use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
 use super::manager::global_socket_manager;
+use crate::api::models::socket::{ConnectionStatus, SocketState};
 
 // ---------------------------------------------------------------------------
 // Schema catalog
@@ -159,6 +160,29 @@ fn require_manager() -> Result<&'static std::sync::Arc<super::SocketManager>, St
         .ok_or_else(|| "SocketManager not initialized — runtime not bootstrapped".to_string())
 }
 
+/// Serialise a [`ConnectionStatus`] the way every other surface publishes it.
+///
+/// `socket_state` (`serde_json::to_value(state)`) and `connectivity_diag` both go through
+/// `ConnectionStatus`' `#[serde(rename_all = "lowercase")]`, so the lifecycle handlers below use
+/// the same encoding instead of `format!("{:?}", …)` (#6111). `Debug` and serde disagree —
+/// `"Disconnected"` vs `"disconnected"` — and one namespace publishing a field two ways is a
+/// contract a caller cannot rely on.
+fn status_payload(state: &SocketState) -> Value {
+    json!({ "status": Value::String(status_slug(state.status)) })
+}
+
+/// The serde spelling of `status`, as a plain string.
+///
+/// Goes through `serde_json::to_value` rather than a hand-written match so the mapping cannot
+/// drift from the `rename_all` attribute that `socket_state` relies on. `ConnectionStatus` is a
+/// unit-variant enum, so this cannot fail; the fallback keeps the function total.
+fn status_slug(status: ConnectionStatus) -> String {
+    serde_json::to_value(status)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_else(|| format!("{status:?}").to_lowercase())
+}
+
 fn handle_connect(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let mgr = require_manager()?;
@@ -172,7 +196,7 @@ fn handle_connect(params: Map<String, Value>) -> ControllerFuture {
             .ok_or("missing required param 'token'")?;
 
         let state = super::ops::connect_static(mgr, url, token).await?;
-        Ok(json!({ "status": format!("{:?}", state.status) }))
+        Ok(status_payload(&state))
     })
 }
 
@@ -180,7 +204,7 @@ fn handle_disconnect(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let mgr = require_manager()?;
         let state = super::ops::disconnect(mgr).await?;
-        Ok(json!({ "status": format!("{:?}", state.status) }))
+        Ok(status_payload(&state))
     })
 }
 
@@ -212,7 +236,7 @@ fn handle_connect_with_session(_params: Map<String, Value>) -> ControllerFuture 
     Box::pin(async move {
         let mgr = require_manager()?;
         let state = super::ops::connect_with_session(mgr).await?;
-        Ok(json!({ "status": format!("{:?}", state.status) }))
+        Ok(status_payload(&state))
     })
 }
 

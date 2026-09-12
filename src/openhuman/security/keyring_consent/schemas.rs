@@ -40,7 +40,7 @@ fn keyring_consent_schema(function: &str) -> ControllerSchema {
             outputs: vec![FieldSchema {
                 name: "result",
                 ty: TypeSchema::Json,
-                comment: "Structured keyring status.",
+                comment: "Structured keyring status: { available, activeMode, backendName, failureReason? }. activeMode says where secrets actually are and is derived from the backend, not from availability — os_keyring (working OS credential store) | local_encrypted (OS keyring failed, user consented to the local encrypted fallback) | local_encrypted_file (encrypted_file backend: {workspace}/secrets.enc) | local_plaintext_file (file/mock backend: plaintext dev-keychain.json) | consent_pending | declined. available reports whether the active backend is usable, which is true for the file backends.",
                 required: true,
             }],
         },
@@ -69,7 +69,7 @@ fn keyring_consent_schema(function: &str) -> ControllerSchema {
             outputs: vec![FieldSchema {
                 name: "result",
                 ty: TypeSchema::Json,
-                comment: "Updated keyring status after re-probe.",
+                comment: "Updated keyring status after re-probe, same shape as keyring_consent.status. Only the os backend can change here: the file backends always probe available, so their activeMode is unaffected by a re-probe.",
                 required: true,
             }],
         },

@@ -31,18 +31,34 @@ fn schemas_remove_has_job_id_input_and_result_output() {
 }
 
 #[test]
-fn schemas_run_result_contains_status_and_duration_fields() {
+fn schemas_run_result_declares_only_the_enqueue_acknowledgement() {
     let s = schemas("run");
-    // Status is an enum with ok/error — clients rely on this shape.
-    if let TypeSchema::Object { fields } = &s.outputs[0].ty {
-        let names: Vec<_> = fields.iter().map(|f| f.name).collect();
-        assert!(names.contains(&"status"));
-        assert!(names.contains(&"duration_ms"));
-        assert!(names.contains(&"output"));
-        assert!(names.contains(&"job_id"));
-    } else {
+    // `cron_run` spawns the execution and returns immediately, so the declared
+    // output is the enqueue acknowledgement — `job_id` plus a `status` that is
+    // always "queued". `duration_ms` / `output` belong to the terminal record
+    // in `cron_runs` and must not be promised here.
+    let TypeSchema::Object { fields } = &s.outputs[0].ty else {
         panic!("expected object output type");
-    }
+    };
+    let names: Vec<_> = fields.iter().map(|f| f.name).collect();
+    assert_eq!(names, vec!["job_id", "status"]);
+
+    let status = fields.iter().find(|f| f.name == "status").unwrap();
+    assert!(
+        matches!(&status.ty, TypeSchema::Enum { variants } if variants.as_slice() == ["queued"]),
+        "status must declare exactly the variant the handler emits, got {:?}",
+        status.ty
+    );
+}
+
+#[test]
+fn schemas_run_description_points_at_cron_runs_for_the_terminal_record() {
+    let s = schemas("run");
+    assert!(
+        s.description.contains("cron_runs"),
+        "the description must tell a client where the terminal outcome lives, got: {}",
+        s.description
+    );
 }
 
 #[test]

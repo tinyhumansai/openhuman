@@ -24,12 +24,13 @@ pub use tinytools::{
     ToolCategory, ToolContent, ToolResult, ToolRunContext, ToolScope, ToolSpec, ToolTimeout,
 };
 
+use crate::openhuman::agent::orchestration::tools::DelegationTarget;
 use crate::openhuman::agent::tool_policy::GeneratedToolRuntimeContext;
 use crate::openhuman::tools::toolpacks::PackRegistryHandle;
 
 /// Reads a tool's pack-registry handle back out of the erased host extension.
 ///
-/// `load_skill` / `use_skill` read the registry they themselves live in, so
+/// `use_skill` reads the registry it itself lives in, so
 /// they cannot be handed it at construction; `toolpacks::bind_pack_registry`
 /// finds them in an already-built registry and hands them a `Weak` view of it.
 ///
@@ -40,6 +41,22 @@ use crate::openhuman::tools::toolpacks::PackRegistryHandle;
 pub fn pack_registry_handle(tool: &dyn Tool) -> Option<&PackRegistryHandle> {
     tool.host_extension()
         .and_then(|any| any.downcast_ref::<PackRegistryHandle>())
+}
+
+/// Reads the agent a synthesised `delegate_*` tool routes to.
+///
+/// The toolpack route hint uses this to answer "which of this pack's owner
+/// agents can this session actually reach, and under what tool name?" without
+/// keeping a second copy of every agent's `delegate_name`. Asking the session's
+/// own tool set is what makes the answer trustworthy: a delegate the session was
+/// not built with simply is not there to find, so a hint can never name a call
+/// the model cannot make.
+///
+/// Erased for the same reason as [`pack_registry_handle`].
+pub fn delegation_target(tool: &dyn Tool) -> Option<&str> {
+    tool.host_extension()
+        .and_then(|any| any.downcast_ref::<DelegationTarget>())
+        .map(|target| target.0.as_str())
 }
 
 /// Reads a tool's generated-tool runtime metadata back out of the erased

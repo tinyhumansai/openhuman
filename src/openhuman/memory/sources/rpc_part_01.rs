@@ -502,6 +502,88 @@ pub struct SyncResponse {
     pub source_id: String,
 }
 
+/// Which sync path a source row belongs to.
+///
+/// Extracted because there are **two** callers and they disagreed. The per-row
+/// Sync button ([`sync_rpc`]) special-cased Composio; the Apply-all sweep
+/// ([`apply_all_in_rpc`]) dispatched every enabled row through
+/// `MemorySourceSync`, which the driver refuses for Composio ("… is synced
+/// through the connector module, not this engine"). So "sync everything" failed
+/// for exactly the rows a user most expects it to fix (openhuman#6007). Two call
+/// sites open-coding one rule is how that happened; both now match on this.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SyncDispatch {
+    /// Connector-mediated. tinymemory v1.13.4 removed the engine's in-process
+    /// Composio sync, so the connector-backed run IS the sync for this kind —
+    /// the same entry point the `openhuman.composio_sync` RPC uses, which reads
+    /// the connected account through the module and ingests through this same
+    /// binding.
+    Connector {
+        connection_id: String,
+        max_items: Option<u32>,
+    },
+    /// The memory driver's own source pipeline — folder, git, RSS, and every
+    /// other tree-coupled kind.
+    Driver,
+}
+
+/// Resolve a source row to its sync path.
+///
+/// The only failure is a Composio row carrying no `connection_id`: the connector
+/// call is addressed *by* connection, so there is nothing to sync and nothing to
+/// guess. That is a malformed row rather than a transient fault, which is why the
+/// message says to remove and re-add rather than to retry.
+pub(crate) fn sync_dispatch(entry: &MemorySourceEntry) -> Result<SyncDispatch, String> {
+    if entry.kind != tinymemory_sources::types::SourceKind::Composio {
+        return Ok(SyncDispatch::Driver);
+    }
+    let connection_id = entry.connection_id.clone().ok_or_else(|| {
+        format!(
+            "composio source '{}' has no connection_id; remove and re-add the source",
+            entry.id
+        )
+    })?;
+    Ok(SyncDispatch::Connector {
+        connection_id,
+        max_items: entry.max_items,
+    })
+}
+
+/// Turn a source-sync failure into something a reader can act on.
+///
+/// A `NotFound` from the driver is ambiguous: either nobody ever registered the
+/// id, or the driver is reading a different registry than the host is writing.
+/// The second happens because the memory module is loaded once per process and
+/// tinybus never unloads a library (`modules/ops.rs`), so the `config_path` it
+/// is handed at load is the one it keeps for the life of the process. Boot
+/// signed out, log in, and the host starts writing `[[memory_sources]]` into
+/// the new profile's `config.toml` while the module still reads the pre-login
+/// one — every id the host registers is then unknown to it, permanently.
+///
+/// The host can tell the two apart, because at this point it holds both halves
+/// of the contradiction: `host_has_source` is its own registry's answer for the
+/// same id. When the host has it and the driver does not, the registries
+/// disagree, and the only in-process remedy is a restart — the same remedy
+/// `ops` already states for a module that failed to load.
+///
+/// Every other failure is returned exactly as the driver stated it; inventing a
+/// diagnosis for those would send the reader down the wrong path.
+fn describe_source_sync_failure(
+    source_id: &str,
+    host_has_source: bool,
+    error: &crate::openhuman::memory::api::error::MemoryError,
+) -> String {
+    match error {
+        crate::openhuman::memory::api::error::MemoryError::NotFound(_) if host_has_source => format!(
+            "the memory module cannot see source '{source_id}', but this profile has it \
+             registered. The module is bound to a different profile's source registry — it \
+             reads the config it was given when it first loaded, and that binding cannot be \
+             changed while the app is running. Restart the app to rebind it."
+        ),
+        other => other.to_string(),
+    }
+}
+
 pub async fn sync_rpc(req: SyncRequest) -> Result<RpcOutcome<SyncResponse>, String> {
     tracing::info!(source_id = %req.source_id, "[memory_sources] sync_rpc: entry");
 
@@ -518,30 +600,28 @@ pub async fn sync_rpc(req: SyncRequest) -> Result<RpcOutcome<SyncResponse>, Stri
     // that refuse a disabled entry, and this RPC is the third caller, the one
     // behind the user's Sync button. Same words as `sync_source` so the UI
     // reads one message (#5820).
-    if let Some(entry) = super::registry::get_source_in(&config, &req.source_id)? {
+    // Kept past the `if let` because the failure path below needs the host's own
+    // answer for this id: a driver `NotFound` means something different when the
+    // host has the source than when it does not.
+    let host_entry = super::registry::get_source_in(&config, &req.source_id)?;
+    if let Some(entry) = &host_entry {
         if !entry.enabled {
             return Err(format!("source '{}' is disabled", entry.id));
         }
-        // Composio rows never reach the memory driver's pipeline: v1.13.4
-        // removed the engine's in-process Composio sync, and the driver now
-        // answers this id with "synced through the connector module, not this
-        // pipeline". The connector-backed run IS the sync for this kind, so
-        // the one Sync button dispatches there — same entry point the
-        // `openhuman.composio_sync` RPC uses, which reads the connected
-        // account through the module and ingests through this same binding.
-        if entry.kind == tinymemory_sources::types::SourceKind::Composio {
-            let connection_id = entry.connection_id.as_deref().ok_or_else(|| {
-                format!(
-                    "composio source '{}' has no connection_id; remove and re-add the source",
-                    entry.id
-                )
-            })?;
+        // Composio rows never reach the memory driver's pipeline — see
+        // [`SyncDispatch`], which both this button and the Apply-all sweep read
+        // the rule from.
+        if let SyncDispatch::Connector {
+            connection_id,
+            max_items,
+        } = sync_dispatch(entry)?
+        {
             crate::openhuman::integrations::composio::ops::composio_sync_budgeted(
                 &config,
-                connection_id,
+                &connection_id,
                 Some("manual".to_string()),
                 Some(entry.id.clone()),
-                entry.max_items,
+                max_items,
             )
             .await?;
             return Ok(RpcOutcome::new(
@@ -565,7 +645,9 @@ pub async fn sync_rpc(req: SyncRequest) -> Result<RpcOutcome<SyncResponse>, Stri
     })?;
     sync.run_source_sync(&req.source_id)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| {
+            describe_source_sync_failure(&req.source_id, host_entry.is_some(), &error)
+        })?;
 
     Ok(RpcOutcome::new(
         SyncResponse {

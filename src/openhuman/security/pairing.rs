@@ -4,9 +4,10 @@
 // a bearer token. Tokens can be persisted in config so restarts don't require
 // re-pairing.
 
-use std::io::Write as _;
 use std::path::Path;
 
+#[cfg(unix)]
+use std::io::Write as _;
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt as _;
 

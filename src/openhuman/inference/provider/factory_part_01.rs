@@ -249,10 +249,11 @@ pub(crate) fn is_raw_passthrough_model(model: &str) -> bool {
 /// constants and their `hint:*` forms (callers may pass either pre- or
 /// post-resolution).
 ///
-/// `reasoning-v1` is multimodal; the rest return `false` — flip an individual
-/// arm to `true` once that tier is confirmed multimodal on the backend. This is
-/// the **only** place to change managed-model vision; BYOK/custom models are
-/// handled separately by the user-set `model_registry.vision` flag
+/// `reasoning-v1` and the dedicated `vision-v1` tier are multimodal; every
+/// other tier returns `false` — flip an individual arm to `true` once that tier
+/// is confirmed multimodal on the backend. This is the **only** place to change
+/// managed-model vision; BYOK/custom models are handled separately by the
+/// user-set `model_registry.vision` flag
 /// ([`crate::openhuman::inference::model_context::model_vision_enabled`]).
 pub(crate) fn oh_tier_supports_vision(model: &str) -> bool {
     use crate::openhuman::config::{
@@ -291,9 +292,8 @@ fn configured_route_for_role<'a>(role: &str, config: &'a Config) -> Option<&'a s
         // If unset, it falls through to the managed backend and is pinned to
         // `burst-v1` by `managed_tier_for_role`.
         "burst" => config.agentic_provider.as_deref(),
-        // Tier-specific multimodal model; like `agentic` it is NOT part of the
-        // chat-tier BYOK inheritance below — when unset it falls through to
-        // `primary_cloud` (→ managed `vision-v1`).
+        // Tier-specific multimodal model; when unset it falls through to
+        // `primary_cloud` (→ managed `vision-v1`), as every unset route now does.
         "vision" => config.vision_provider.as_deref(),
         // `memory_provider` covers both the memory-tree extract path and
         // the summarizer sub-agent (whose definition declares
@@ -327,17 +327,25 @@ pub(crate) fn role_uses_implicit_cloud_fallback(role: &str, config: &Config) -> 
 
 /// Return the configured provider string for a named workload role.
 ///
-/// Empty / `"cloud"` resolves through BYOK fallback first for the three
-/// chat-tier roles (`chat`, `reasoning`, `coding`), then `primary_cloud`.
-/// When a BYOK cloud provider is detected on any workload, unset chat-tier
-/// routes inherit it rather than silently falling back to the managed backend.
+/// Empty / `"cloud"` resolves through `primary_cloud`. **Every** role behaves
+/// this way, and no role uses a sibling's BYOK provider as a fallback.
 ///
-/// Only `chat`, `reasoning`, and `coding` participate in BYOK inheritance.
-/// Background workloads (`memory`, `embeddings`, `heartbeat`, `learning`,
-/// `subconscious`) and the `agentic`/`burst` workloads always fall through to
-/// `primary_cloud` when their explicit provider route is unset — they use
-/// tier-specific models that BYOK providers don't understand, and their
-/// providers are configured independently.
+/// "Resolves through `primary_cloud`" is not the same as "goes to the managed
+/// backend": [`resolve_primary_cloud_provider_string`] may yield a legacy
+/// external `inference_url` (see below), or the fail-closed sentinel for a
+/// half-migrated BYOK config. The guarantee here is narrower and exact — an
+/// unset route does not borrow a *sibling's* configured provider.
+///
+/// The deliberate *aliases* in [`configured_route_for_role`] are unaffected and
+/// remain: `burst` reads `agentic_provider` and `summarization` reads
+/// `memory_provider`. Those are two names for one configured route, which is a
+/// different thing from an unset route borrowing a set one.
+///
+/// Until #6109 the three chat-tier roles (`chat`, `reasoning`, `coding`) took a
+/// configured BYOK provider from *any* sibling first, so setting one route moved
+/// the other two onto that key — a user who pointed only `coding_provider` at
+/// their own OpenRouter account found ordinary chat billed there too, with no
+/// setting saying so. Each route now stands alone.
 ///
 /// For backwards compatibility, a legacy external `inference_url` takes
 /// precedence when `primary_cloud` still points at OpenHuman because
@@ -347,21 +355,12 @@ pub fn provider_for_role(role: &str, config: &Config) -> String {
     let opt = configured_route_for_role(role, config);
     let s = opt.unwrap_or("").trim();
     if s.is_empty() || s == "cloud" {
-        // BYOK inheritance is scoped to the three chat-tier roles only.
-        // Background workloads (memory, embeddings, heartbeat, learning,
-        // subconscious) and the agentic/burst workloads must stay on the managed
-        // backend when unset — they use tier-specific models that BYOK providers
-        // don't understand, and their providers are configured separately.
-        if matches!(role, "chat" | "reasoning" | "coding") {
-            if let Some(byok) = resolve_byok_fallback_provider_string(config) {
-                log::debug!(
-                    "[providers][byok-fallback] role={} inheriting BYOK provider string={}",
-                    role,
-                    byok
-                );
-                return byok;
-            }
-        }
+        // #6109: an unset chat-tier route no longer inherits a sibling's BYOK
+        // provider. Setting only `coding_provider` used to move `chat` and
+        // `reasoning` onto that key too — ordinary conversations silently billed
+        // to the user's own account, with no settings field saying so. Each
+        // route now stands alone and an unset one falls through to the managed
+        // backend, the same as every other workload.
 
         let resolved = resolve_primary_cloud_provider_string(config);
 
@@ -462,48 +461,6 @@ fn route_has_usable_credentials(resolved: &str, config: &Config) -> bool {
     false
 }
 
-/// Find the first BYOK cloud provider string configured across all workload
-/// routes, skipping local providers and managed-backend sentinels
-/// ("openhuman", "cloud", empty).
-///
-/// Returns `None` when no BYOK cloud provider is configured, in which case
-/// the caller should fall through to `resolve_primary_cloud_provider_string`.
-///
-/// Priority order: chat → reasoning → agentic → coding (user-facing workloads
-/// first so the most prominent setting wins for unset background workloads).
-pub(crate) fn resolve_byok_fallback_provider_string(config: &Config) -> Option<String> {
-    let candidates = [
-        config.chat_provider.as_deref(),
-        config.reasoning_provider.as_deref(),
-        config.agentic_provider.as_deref(),
-        config.coding_provider.as_deref(),
-    ];
-    for candidate in candidates.iter().flatten() {
-        let s = candidate.trim();
-        if s.is_empty() || s == "cloud" || s == PROVIDER_OPENHUMAN {
-            continue;
-        }
-        // Skip local providers — they are not suitable fallbacks for agentic
-        // or background workloads that run on the managed backend.
-        if s.starts_with(OLLAMA_PROVIDER_PREFIX)
-            || s.starts_with(LM_STUDIO_PROVIDER_PREFIX)
-            || s.starts_with(MLX_PROVIDER_PREFIX)
-            || s.starts_with(OMLX_PROVIDER_PREFIX)
-            || s.starts_with(LOCAL_OPENAI_PROVIDER_PREFIX)
-        {
-            continue;
-        }
-        // Any remaining non-empty string with a colon is a BYOK cloud slug.
-        if s.contains(':') {
-            log::debug!(
-                "[providers][byok-fallback] resolve_byok_fallback found candidate={}",
-                s
-            );
-            return Some(s.to_string());
-        }
-    }
-    None
-}
 
 /// Human-readable label for an *external* provider string, used in the
 /// LocalOnly privacy-mode block message so the user knows what was refused.

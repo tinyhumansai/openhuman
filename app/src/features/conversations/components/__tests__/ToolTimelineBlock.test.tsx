@@ -4,8 +4,19 @@ import { Provider } from 'react-redux';
 import { describe, expect, it, vi } from 'vitest';
 
 import { store } from '../../../../store';
-import type { ToolTimelineEntry } from '../../../../store/chatRuntimeSlice';
-import { SubagentActivityBlock, ToolTimelineBlock } from '../ToolTimelineBlock';
+import type { SubagentActivity, ToolTimelineEntry } from '../../../../store/chatRuntimeSlice';
+import { AssistantUiSubagentCall } from '../AssistantUiSubagentCall';
+import { ToolTimelineBlock } from '../ToolTimelineBlock';
+
+function SubagentActivityBlock({
+  subagent,
+  onView,
+}: {
+  subagent: SubagentActivity;
+  onView?: () => void;
+}) {
+  return <AssistantUiSubagentCall activity={subagent} onView={onView} defaultOpen />;
+}
 
 // #1122 — guards the parent-thread live subagent rendering. The block
 // always expands subagent rows so the activity stays visible while the
@@ -16,6 +27,34 @@ function renderInStore(ui: React.ReactNode) {
 }
 
 describe('SubagentActivityBlock', () => {
+  it('derives its lifecycle from the activity when no running prop is passed', () => {
+    // Most call sites (AgentProcessSourcePanel, PastTurnInsights, this block)
+    // pass no `running` prop at all. The old `running = false` default reported
+    // an in-flight delegation as finished, with a success check.
+    renderInStore(
+      <SubagentActivityBlock
+        subagent={{ taskId: 't', agentId: 'researcher', status: 'running', toolCalls: [] }}
+      />
+    );
+
+    expect(screen.getByText('running')).toBeInTheDocument();
+  });
+
+  it('marks a failed delegation as failed rather than complete', () => {
+    renderInStore(
+      <SubagentActivityBlock
+        subagent={{ taskId: 't', agentId: 'researcher', status: 'failed', toolCalls: [] }}
+      />
+    );
+
+    expect(screen.getByTestId('assistant-ui-subagent-call')).toHaveAttribute(
+      'data-status',
+      'failed'
+    );
+    expect(screen.getByText('failed')).toBeInTheDocument();
+    expect(screen.queryByText('running')).not.toBeInTheDocument();
+  });
+
   it('renders mode + dedicated-thread + child-turn pills', () => {
     renderInStore(
       <SubagentActivityBlock
@@ -78,19 +117,69 @@ describe('SubagentActivityBlock', () => {
         }}
       />
     );
-    const calls = screen.getAllByTestId('subagent-tool-call');
+    const calls = screen.getAllByTestId('assistant-ui-tool-call');
     expect(calls).toHaveLength(3);
     // Human labels + timing, with status as a tinted "Done" / "Failed" /
     // "Running" tag instead of a bare ✓/✕ glyph or the raw lowercase word.
-    expect(calls[0].textContent).toContain('Searching the web');
-    expect(calls[0].textContent).toContain('Done');
+    expect(calls[0].textContent).toContain('Searched the web');
+    expect(calls[0].textContent?.toLowerCase()).toContain('done');
     expect(calls[0].textContent).toContain('312ms');
     expect(calls[1].textContent).toContain('Composio Execute');
-    expect(calls[1].textContent).toContain('Running');
+    expect(calls[1].textContent?.toLowerCase()).toContain('running');
     expect(calls[1].textContent).not.toContain('·t2');
     expect(calls[2].textContent).toContain('Reading file');
-    expect(calls[2].textContent).toContain('Failed');
+    expect(calls[2].textContent?.toLowerCase()).toContain('failed');
     expect(calls[2].textContent).toContain('50ms');
+  });
+
+  it('renders subagent web output as Markdown instead of raw JSON', async () => {
+    renderInStore(
+      <SubagentActivityBlock
+        subagent={{
+          taskId: 't',
+          agentId: 'researcher',
+          toolCalls: [],
+          transcript: [
+            {
+              kind: 'tool',
+              callId: 'search-1',
+              toolName: 'web_search_tool',
+              status: 'success',
+              result: JSON.stringify({ content: '**Formal Conjectures**\n\n- OEIS Open' }),
+            },
+          ],
+        }}
+      />
+    );
+
+    expect(screen.getByText('Searched the web')).toBeInTheDocument();
+    const call = screen.getByTestId('assistant-ui-tool-call');
+    await userEvent.click(within(call).getByRole('button'));
+    expect(screen.getByTestId('assistant-ui-tool-output')).toHaveTextContent('Formal Conjectures');
+    expect(screen.getByRole('strong')).toHaveTextContent('Formal Conjectures');
+    expect(screen.queryByText(/"content"/)).not.toBeInTheDocument();
+  });
+
+  it('infers a descriptive search label for a degraded subagent tool name', () => {
+    renderInStore(
+      <SubagentActivityBlock
+        subagent={{
+          taskId: 't',
+          agentId: 'researcher',
+          toolCalls: [
+            {
+              callId: 'generic-search',
+              toolName: 'tool',
+              status: 'success',
+              args: { query: 'world news' },
+              result: '# Search results\n\n- Headline',
+            },
+          ],
+        }}
+      />
+    );
+
+    expect(screen.getByTestId('assistant-ui-tool-call')).toHaveTextContent('Searched the web');
   });
 
   it('labels cancelled / awaiting-user calls distinctly (not the green "Done" pill)', () => {
@@ -106,13 +195,13 @@ describe('SubagentActivityBlock', () => {
         }}
       />
     );
-    const calls = screen.getAllByTestId('subagent-tool-call');
+    const calls = screen.getAllByTestId('assistant-ui-tool-call');
     expect(calls).toHaveLength(2);
     // A cancelled / awaiting-user call must NOT read as a successful "Done" step.
-    expect(calls[0].textContent).toContain('Cancelled');
-    expect(calls[0].textContent).not.toContain('Done');
-    expect(calls[1].textContent).toContain('Awaiting input');
-    expect(calls[1].textContent).not.toContain('Done');
+    expect(calls[0].textContent?.toLowerCase()).toContain('cancelled');
+    expect(calls[0].textContent?.toLowerCase()).not.toContain('done');
+    expect(calls[1].textContent?.toLowerCase()).toContain('awaiting input');
+    expect(calls[1].textContent?.toLowerCase()).not.toContain('done');
   });
 
   it('prefers the server-supplied label + contextual detail for a child tool call', () => {
@@ -133,7 +222,7 @@ describe('SubagentActivityBlock', () => {
         }}
       />
     );
-    const row = screen.getByTestId('subagent-tool-call');
+    const row = screen.getByTestId('assistant-ui-tool-call');
     expect(row.textContent).toContain('Reading messages');
     expect(row.textContent).toContain('steven@gmail.com');
     // Never the raw snake_case slug.
@@ -182,8 +271,8 @@ describe('SubagentActivityBlock', () => {
     // Order is preserved: thought → tool → thought.
     expect(rows[0]).toHaveAttribute('data-testid', 'subagent-thought');
     expect(rows[0].textContent).toContain('I should search the web first');
-    expect(rows[1]).toHaveAttribute('data-testid', 'subagent-tool-call');
-    expect(rows[1].textContent).toContain('Searching the web');
+    expect(rows[1]).toHaveAttribute('data-testid', 'assistant-ui-tool-call');
+    expect(rows[1].textContent).toContain('Searched the web');
     expect(rows[2]).toHaveAttribute('data-testid', 'subagent-thought');
     expect(rows[2].textContent).toContain('Found three relevant results');
   });
@@ -860,7 +949,7 @@ describe('ToolTimelineBlock — coalescing repeated rows', () => {
 });
 
 describe('ToolTimelineBlock — subagent rendering', () => {
-  it('expands a subagent row even without prompt detail and shows child tool calls', () => {
+  it('shows child tool calls after the collapsed subagent row is opened', () => {
     const entry: ToolTimelineEntry = {
       id: 'tid:subagent:sub-1:researcher',
       name: 'subagent:researcher',
@@ -878,7 +967,11 @@ describe('ToolTimelineBlock — subagent rendering', () => {
     };
     renderInStore(<ToolTimelineBlock entries={[entry]} />);
 
-    const calls = screen.getAllByTestId('subagent-tool-call');
+    const subagent = screen.getByTestId('assistant-ui-subagent-call');
+    const trigger = within(subagent).getByRole('button');
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(trigger);
+    const calls = screen.getAllByTestId('assistant-ui-tool-call');
     expect(calls).toHaveLength(1);
     expect(calls[0].textContent).toContain('Searching the web');
     expect(screen.getByTestId('subagent-activity').textContent).toContain('turn 1/5');
@@ -983,7 +1076,7 @@ describe('ToolTimelineBlock — compact chat mode (onViewDetails)', () => {
     },
   ];
 
-  it('collapses finished steps to a "View details" link but keeps the running step expanded inline', () => {
+  it('collapses finished steps to a link and keeps the running delegation card inline', () => {
     const onViewDetails = vi.fn();
     renderInStore(<ToolTimelineBlock entries={entries} onViewDetails={onViewDetails} />);
 
@@ -991,8 +1084,12 @@ describe('ToolTimelineBlock — compact chat mode (onViewDetails)', () => {
     const links = screen.getAllByTestId('view-details');
     expect(links).toHaveLength(1);
 
-    // The currently-running sub-agent stays expanded inline in the main UI
-    // (its activity is visible) — and shows no "View details" link itself.
+    // The running delegation remains inline but its assistant-ui disclosure is
+    // collapsed by default like every other delegation card.
+    const subagent = screen.getByTestId('assistant-ui-subagent-call');
+    const trigger = within(subagent).getByRole('button');
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(trigger);
     const activity = screen.getByTestId('subagent-activity');
     expect(activity.textContent).toContain('pondering');
     // The finished step SUCCEEDED, so its raw output is no longer duplicated
@@ -1035,7 +1132,9 @@ describe('ToolTimelineBlock — compact chat mode (onViewDetails)', () => {
 
   it('still expands inline (no compact link) when onViewDetails is omitted (panel mode)', () => {
     renderInStore(<ToolTimelineBlock entries={entries} expandAllRows />);
-    // Panel/expandable path: sub-agent activity is shown, no "View details" link.
+    const subagent = screen.getByTestId('assistant-ui-subagent-call');
+    fireEvent.click(within(subagent).getByRole('button'));
+    // Panel path uses the same delegation card, with no compact details link.
     expect(screen.getByTestId('subagent-activity')).toBeInTheDocument();
     expect(screen.queryByTestId('view-details')).toBeNull();
   });
@@ -1348,19 +1447,23 @@ describe('ToolTimelineBlock — sub-agent activity survives the transcript path'
     expect(screen.getByTestId('processing-transcript')).toBeInTheDocument();
     // …and the nested child run is present, not collapsed to one line.
     expect(screen.getByTestId('processing-subagent')).toBeInTheDocument();
-    const calls = screen.getAllByTestId('subagent-tool-call');
+    const subagent = screen.getByTestId('assistant-ui-subagent-call');
+    fireEvent.click(within(subagent).getByRole('button'));
+    const calls = screen.getAllByTestId('assistant-ui-tool-call');
     expect(calls).toHaveLength(2);
-    expect(calls[0].textContent).toContain('Searching the web');
-    expect(calls[0].textContent).toContain('Done');
+    expect(calls[0].textContent).toContain('Searched the web');
+    expect(calls[0].textContent?.toLowerCase()).toContain('done');
     // Human label, not the raw `web_fetch` slug.
     expect(calls[1].textContent).toContain('Fetching');
-    expect(calls[1].textContent).toContain('Running');
+    expect(calls[1].textContent?.toLowerCase()).toContain('running');
   });
 
   it('still renders child tool calls on the legacy row path (no transcript)', () => {
     renderInStore(<ToolTimelineBlock entries={[subagentEntry]} turnActive />);
     expect(screen.queryByTestId('processing-transcript')).toBeNull();
-    expect(screen.getAllByTestId('subagent-tool-call')).toHaveLength(2);
+    const subagent = screen.getByTestId('assistant-ui-subagent-call');
+    fireEvent.click(within(subagent).getByRole('button'));
+    expect(screen.getAllByTestId('assistant-ui-tool-call')).toHaveLength(2);
   });
 
   // The nested child run must live INSIDE the windowed viewport, and must not

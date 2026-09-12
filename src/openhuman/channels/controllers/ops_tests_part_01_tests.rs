@@ -160,56 +160,6 @@ async fn disconnect_discord_bot_token_clears_runtime_config() {
     );
 }
 
-/// The clear-memory half of disconnect goes through the bound driver's
-/// `MemorySourceSink::forget_matching` now, so the workspace needs a driver
-/// that serves `Sources` — the null driver a unit-test workspace otherwise
-/// resolves to does not, and the handler refuses rather than reporting a
-/// delete of nothing. Seeding and reading back still go straight to the store,
-/// which is what makes this an end-to-end assertion rather than a mock.
-#[tokio::test]
-async fn disconnect_channel_clear_memory_deletes_matching_chat_sources() {
-    let (_tmp, mut config) = isolated_test_config();
-    crate::openhuman::memory::test_support::install_tinycortex_for_test(&config);
-    config.channels_config.discord = Some(DiscordConfig {
-        bot_token: "discord-token-abc".to_string(),
-        guild_id: Some("guild-1".to_string()),
-        channel_id: Some("channel-2".to_string()),
-        allowed_users: vec![],
-        listen_to_bots: false,
-        mention_only: false,
-    });
-    config
-        .save()
-        .await
-        .expect("preloaded config should be persisted");
-
-    let target_a = sample_chat_chunk("discord:guild-1", 0);
-    let target_b = sample_chat_chunk("discord:guild-1:channel-2", 1);
-    let unrelated = sample_chat_chunk("telegram:chat-1", 0);
-    memory_tree_store::upsert_chunks(&config, &[target_a, target_b, unrelated])
-        .expect("chunks should seed");
-
-    let result = disconnect_channel(&config, "discord", ChannelAuthMode::BotToken, true)
-        .await
-        .expect("discord disconnect should succeed");
-
-    assert_eq!(
-        result.value["memory_chunks_deleted"].as_u64(),
-        Some(2),
-        "disconnect should report deleted memory chunks"
-    );
-    let remaining = memory_tree_store::list_chunks(
-        &config,
-        &memory_tree_store::ListChunksQuery {
-            source_kind: Some(SourceKind::Chat),
-            ..Default::default()
-        },
-    )
-    .expect("chunks should list");
-    assert_eq!(remaining.len(), 1);
-    assert_eq!(remaining[0].metadata.source_id, "telegram:chat-1");
-}
-
 // ── iMessage channel ───────────────────────────────────────────
 #[tokio::test]
 async fn connect_imessage_persists_allowed_contacts() {

@@ -543,7 +543,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "claude_code_settings" => ControllerSchema {
             namespace: "inference",
             function: "claude_code_settings",
-            description: "Read the persisted Claude Code provider settings (currently just the full-access toggle). Self-contained per-install state stored under the workspace, not in the central config.",
+            description: "Read the persisted Claude Code provider settings (currently just the full-access toggle). Self-contained per-install state kept in its own claude_code_settings.json beside config.toml in the OpenHuman config directory — not inside the central config file, and not under the internal workspace dir (config.workspace_dir).",
             inputs: vec![],
             outputs: vec![json_output(
                 "settings",
@@ -648,8 +648,10 @@ fn handle_inference_resolve_model(params: Map<String, Value>) -> ControllerFutur
         );
         // Whether the resolved model accepts image input — drives the chat UI's
         // image-attachment affordance. Managed OpenHuman tiers consult the
-        // core-owned per-tier map (currently all `false`); custom/BYOK models are
-        // covered by the user's per-model `model_registry.vision` flag.
+        // core-owned per-tier map, which returns `true` for the reasoning and
+        // vision tiers (and their `hint:` aliases) and `false` for every other
+        // tier; custom/BYOK models are covered by the user's per-model
+        // `model_registry.vision` flag.
         let vision =
             crate::openhuman::inference::model_context::model_supports_vision(&resolved, &config);
         to_json(RpcOutcome::new(
