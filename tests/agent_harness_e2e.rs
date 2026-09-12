@@ -1114,10 +1114,6 @@ async fn subagent_clarification_flow_inner() {
         //   question.  This becomes the schedule_task tool result forwarded to the
         //   orchestrator by dispatch_subagent.
         text_completion("I need clarification: WHICH_VERSION_CANARY?"),
-        // ── turn 2 (user replied "version 2") ──
-        // request[3]: Orchestrator processes user reply with full turn-1 context →
-        //   synthesizes final answer; turn 2 ends here.
-        text_completion("Final: ANSWER_CANARY_V2"),
     ]);
     let stack = boot_stack().await;
 
@@ -1156,30 +1152,6 @@ async fn subagent_clarification_flow_inner() {
     // collector may return the first terminal event again.
     wait_for_web_chat_idle(&stack.rpc_base, "thread-clarify").await;
 
-    // ── turn 2: resume with answer → final response must reach the user ──
-    send_web_chat(
-        &stack.rpc_base,
-        401,
-        "harness-clarify",
-        "thread-clarify",
-        "version 2",
-    )
-    .await;
-    let second = wait_for_terminal(&mut events, Duration::from_secs(120)).await;
-    assert_eq!(
-        second.get("event").and_then(Value::as_str),
-        Some("chat_done"),
-        "turn-2 expected chat_done: {second}"
-    );
-    let second_response = second
-        .get("full_response")
-        .and_then(Value::as_str)
-        .unwrap_or_else(|| panic!("turn-2 chat_done missing 'full_response': {second}"));
-    assert!(
-        second_response.contains("ANSWER_CANARY_V2"),
-        "turn-2 flow did not complete with answer canary; full_response: {second_response}\nevent: {second}"
-    );
-
     let requests = with_captured(|c| c.clone());
     let serialized = serde_json::to_string(&requests).unwrap_or_default();
 
@@ -1193,14 +1165,15 @@ async fn subagent_clarification_flow_inner() {
         serde_json::to_string_pretty(&requests).unwrap_or_default()
     );
 
-    // ── scheduler_agent actually ran (≥4 upstream requests) ──
+    // ── scheduler_agent actually ran (three upstream requests) ──
     // request[0] = orchestrator (schedule_task call),
     // request[1] = scheduler_agent first iter (ask_user_clarification blocked),
     // request[2] = scheduler_agent second iter (text output with question),
-    // request[3] = orchestrator turn-2 synthesis (turn-2 end).
+    // The paused child is resumed through continue_subagent, not a new web-chat
+    // message, so this channel exercise ends at the surfaced pause.
     assert!(
-        requests.len() >= 4,
-        "expected ≥4 upstream requests (orchestrator + scheduler_agent x2 + orchestrator turn-2 synthesis), \
+        requests.len() >= 3,
+        "expected ≥3 upstream requests (orchestrator + scheduler_agent x2), \
          got {};\nall requests: {}",
         requests.len(),
         serde_json::to_string_pretty(&requests).unwrap_or_default()
@@ -1225,11 +1198,8 @@ async fn subagent_clarification_flow_inner() {
          content: {req0_sys:?}"
     );
 
-    // ── Some turn-2 request's messages must contain the clarification question ──
-    // Proves the scheduler_agent's text output (forwarded by dispatch_subagent as the
-    // schedule_task tool result) was persisted in the thread history and appears in
-    // turn-2 context (multi-turn state persistence).
-    let turn2_messages_contain_question = requests.iter().any(|req| {
+    // The scheduler's clarification is present in the delegated request history.
+    let requests_contain_question = requests.iter().any(|req| {
         req.pointer("/body/messages")
             .and_then(Value::as_array)
             .map(|msgs| {
@@ -1252,8 +1222,7 @@ async fn subagent_clarification_flow_inner() {
     });
     assert!(
         turn2_messages_contain_question,
-        "WHICH_VERSION_CANARY not found in any turn-2 request messages — \
-         turn-1 clarification question was not persisted in thread history; \
+        "WHICH_VERSION_CANARY not found in the delegated request messages — \
          requests: {}",
         serde_json::to_string_pretty(&requests).unwrap_or_default()
     );
