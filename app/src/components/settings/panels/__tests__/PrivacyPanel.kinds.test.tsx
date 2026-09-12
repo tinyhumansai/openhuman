@@ -26,7 +26,7 @@ vi.mock('../../../../utils/tauriCommands/aboutApp', () => ({ listCapabilities: v
 const setAnalyticsEnabledMock = vi.fn();
 vi.mock('../../../../providers/CoreStateProvider', () => ({
   useCoreState: () => ({
-    snapshot: { analyticsEnabled: false },
+    snapshot: { analyticsEnabled: false, auth: { userId: 'test-user' } },
     setAnalyticsEnabled: (v: boolean) => setAnalyticsEnabledMock(v),
   }),
 }));
