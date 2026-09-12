@@ -60,24 +60,7 @@ use super::provider::{
     resolve_subagent_source, user_is_signed_in_to_composio, LazyToolkitResolver,
 };
 
-/// Runtime spawn-hierarchy gate decision for one delegation hop.
-///
-/// `parent_def` is the resolved parent agent definition (looked up from the
-/// global registry by its definition id) or `None` when the parent can't be
-/// resolved — e.g. a dynamically-named agent (model-council juror) or a custom
-/// agent absent from the registry, or any context where the registry isn't
-/// initialised. A `None` parent yields `Ok(())`: we skip rather than mask, the
-/// same defensive posture the loader takes for unknown child ids.
-///
-/// A **worker** parent is also exempted. At runtime a worker only reaches the
-/// spawn chokepoint via the documented collapsed `delegate_to_integrations_agent`
-/// path (→ `integrations_agent`, itself a worker) — a shape the loader
-/// intentionally leaves untouched. Re-denying it here would turn valid custom
-/// worker agents that use `{ skills = "*" }` into runtime failures. The
-/// worker-leaf authoring rule stays enforced statically at boot, and the
-/// per-parent allowlist gate blocks any other worker spawn.
-///
-/// For chat / reasoning parents the hop is checked against
+/// Validate the runtime spawn-hierarchy gate for one delegation hop.
 /// [`validate_tier_transition`] (the single source of truth shared with the
 /// boot loader walk); a forbidden hop is logged and becomes a
 /// [`SubagentRunError::TierViolation`]. Logging lives here (rather than at the

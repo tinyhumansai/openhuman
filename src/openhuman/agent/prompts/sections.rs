@@ -94,9 +94,6 @@ pub struct AgentsInstructionsSection;
 /// Renders the canonical grounding / anti-hallucination contract
 /// ([`GROUNDING_BODY`]). Always included; never gated.
 pub struct GroundingSection;
-// Connected-integration guidance remains agent-owned because its voice and
-// available actions vary by agent. The generic installed-skills catalogue is
-// shared below and is gated by each definition's `omit_skills_catalog` flag.
 pub struct WorkspaceSection;
 pub struct RuntimeSection;
 pub struct DateTimeSection;
@@ -119,18 +116,6 @@ pub struct UserReflectionsSection;
 /// identifying fields ship.
 pub struct UserIdentitySection;
 
-/// Injects the user-specific, session-frozen workspace files
-/// (`PROFILE.md` + `MEMORY.md`), each capped at [`USER_FILE_MAX_CHARS`].
-///
-/// Separate from [`IdentitySection`] so agents that strip the project-
-/// context preamble (`omit_identity = true` — welcome, orchestrator,
-/// the trigger pair) still get their user-file injection at runtime via
-/// [`super::builder::SystemPromptBuilder::for_subagent`], which skips
-/// `IdentitySection` entirely when `omit_identity` is on.
-///
-/// Cache-stability: static per session — the whole point of the
-/// 2000-char cap and the load-once rule documented on
-/// [`AgentDefinition::omit_profile`] / `omit_memory_md`.
 pub struct UserFilesSection;
 
 /// Renders the installed skills catalogue for agent definitions that opt in.
