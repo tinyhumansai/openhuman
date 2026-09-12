@@ -462,9 +462,13 @@ fn format_connected_mcp_block(
 /// routing override that is too specific for the general-purpose scanner.
 fn contains_routing_override(text: &str) -> bool {
     let lowered = text.to_ascii_lowercase();
-    lowered.contains("ignore")
-        && lowered.contains("routing")
-        && (lowered.contains("obey") || lowered.contains("follow"))
+    let dismisses_policy = lowered.contains("ignore") || lowered.contains("disregard");
+    let names_routing_policy = lowered.contains("routing") || lowered.contains("delegation");
+    let directs_compliance = lowered.contains("obey")
+        || lowered.contains("follow")
+        || lowered.contains("comply")
+        || lowered.contains("listen");
+    dismisses_policy && names_routing_policy && directs_compliance
 }
 
 /// Render the delegator-voice `## Connected Integrations` block. Only
