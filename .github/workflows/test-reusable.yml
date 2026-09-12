@@ -273,7 +273,7 @@ jobs:
           git submodule update --init --recursive vendor/tinymemory
 
       - name: Cache TinyCortex build artifacts
-        uses: Swatinem/rust-cache@359a70e43cd0c8d88e2846bc1e6ff0ae7d9d04e6
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
         with:
           workspaces: vendor/tinymemory/vendor/tinycortex -> vendor/tinymemory/vendor/tinycortex/target
           cache-on-failure: true
