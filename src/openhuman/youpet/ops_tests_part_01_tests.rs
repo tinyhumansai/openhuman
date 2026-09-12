@@ -156,7 +156,7 @@ async fn trace_404_is_expected_user_state() {
 #[tokio::test]
 async fn ack_generates_idempotency_key_when_omitted() {
     let requests: Requests = Default::default();
-    let route = format!("/api/v1/alerts/{TEST_ALERT_ID}/ack");
+    let route = format!("/api/v1/workbench/alerts/{TEST_ALERT_ID}/ack");
     let app = Router::new()
         .route(&route, post(capture))
         .with_state(requests.clone());
@@ -289,7 +289,7 @@ async fn ack_trims_supplied_idempotency_key_before_sending() {
 #[tokio::test]
 async fn resolve_honors_supplied_idempotency_key() {
     let requests: Requests = Default::default();
-    let route = format!("/api/v1/alerts/{TEST_ALERT_ID}/resolve");
+    let route = format!("/api/v1/workbench/alerts/{TEST_ALERT_ID}/resolve");
     let app = Router::new()
         .route(&route, post(capture))
         .with_state(requests.clone());

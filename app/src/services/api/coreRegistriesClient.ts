@@ -717,7 +717,7 @@ function buildCursorParams(params?: RegistryCursorListParams): Record<string, un
 
   if ('limit' in next) {
     const limit = next.limit;
-    if (!Number.isInteger(limit) || Number(limit) < 1 || Number(limit) > 200) {
+    if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > 200) {
       throw new Error('limit must be an integer between 1 and 200');
     }
   }

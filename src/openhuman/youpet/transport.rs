@@ -103,7 +103,14 @@ async fn send_request<T: DeserializeOwned>(
         .header("X-Actor-Id", actor_id)
         .send()
         .await
-        .map_err(|_| transport_error())?;
+        .map_err(|error| {
+            structured_error(
+                "YouPet Core request failed",
+                "YouPetCoreTransport",
+                json!({ "detail": error.to_string() }),
+                false,
+            )
+        })?;
     parse_response(response).await
 }
 

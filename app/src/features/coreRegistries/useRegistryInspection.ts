@@ -562,7 +562,7 @@ export function useRegistryInspection(
         return;
       }
 
-      await runCollectionRequest(tab, collection, current.tabs[tab].generation, {
+      await runCollectionRequest(tab, collection, collectionState.restartGeneration ?? current.tabs[tab].generation, {
         append: true,
         cursor: collectionState.nextCursor,
       });
@@ -626,7 +626,10 @@ export function useRegistryInspection(
     void ensureTabLoaded(initialUrlState.tab);
 
     const onPopState = () => {
-      const nextUrlState = parseRegistryUrlState(window.location.search);
+      const nextSearch = window.location.hash.includes('?')
+        ? window.location.hash.slice(window.location.hash.indexOf('?'))
+        : window.location.search;
+      const nextUrlState = parseRegistryUrlState(nextSearch);
       dispatch({ type: 'tab_selected', tab: nextUrlState.tab, source: 'history' });
 
       void ensureTabLoaded(nextUrlState.tab).then(async () => {
