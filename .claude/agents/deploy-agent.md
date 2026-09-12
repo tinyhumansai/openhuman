@@ -13,232 +13,111 @@ Handles deployment, distribution, and release management for all platforms.
 
 ## Capabilities
 
-- Create release builds
-- Code signing and notarization
-- App store submissions
-- Auto-update configuration
+- Drive the release workflows
+- Point at the signing, notarization and store-upload scripts the pipeline uses
+- Explain how versions are bumped and kept in sync
+- Explain the updater channel
 
-## Desktop Distribution
+## How a release is actually cut
 
-### Windows
+Releases run in GitHub Actions and are dispatched by a maintainer. Do not hand-run
+build, sign, or upload steps locally.
 
-#### Build Installers
+| Goal | Entry point | Notes |
+| --- | --- | --- |
+| Snapshot `main` into `release` | [`.github/workflows/promote-main-to-release.yml`](../../.github/workflows/promote-main-to-release.yml) | Manual dispatch. Merge, not reset. `ci-full.yml` then runs on the push. |
+| Staging cut | [`.github/workflows/release-staging.yml`](../../.github/workflows/release-staging.yml) | Dispatch. Creates the `v<version>-staging` tag; `create_tag: false` for a bump-only run. |
+| Production cut | [`.github/workflows/release-production.yml`](../../.github/workflows/release-production.yml) | Dispatch with `release_type` (`patch`/`minor`/`major`). Cut from `release`. |
+| Desktop build + sign + upload matrix | [`.github/workflows/build-desktop.yml`](../../.github/workflows/build-desktop.yml) | Reusable; both release flows `uses:` it, so build code lives in one place. |
+| iOS App Store / TestFlight | [`.github/workflows/ios-appstore.yml`](../../.github/workflows/ios-appstore.yml) | Dispatch with `upload_to_app_store_connect`. |
+| Android build + Play upload | [`.github/workflows/android-compile.yml`](../../.github/workflows/android-compile.yml) | Dispatch with `publish_to_play`, `play_track`, `play_status`. |
+| CLI tarball / .deb / Homebrew / npm | [`.github/workflows/release-packages.yml`](../../.github/workflows/release-packages.yml) | **Disabled** while core distribution is Docker-only (PR #1061). |
 
-```bash
-npm run tauri build -- --target x86_64-pc-windows-msvc
-```
+## Versions are bumped by the workflow, never by hand
 
-Outputs:
+`release-production.yml` and `release-staging.yml` run
+[`scripts/release/bump-version.js`](../../scripts/release/bump-version.js), which writes the
+version into six files, and then
+[`scripts/release/verify-version-sync.js`](../../scripts/release/verify-version-sync.js), which
+fails the run if any of them disagree:
 
-- `src-tauri/target/release/bundle/msi/*.msi`
-- `src-tauri/target/release/bundle/nsis/*-setup.exe`
+- `app/package.json`
+- `app/src-tauri/tauri.conf.json`
+- `app/src-tauri-mobile/tauri.conf.json`
+- `app/src-tauri/Cargo.toml`
+- `app/src-tauri-mobile/Cargo.toml`
+- root `Cargo.toml`
 
-#### Code Signing
+`android-compile.yml` runs the same verifier before building.
 
-1. Obtain EV code signing certificate
-2. Set environment variables:
+## Signing, notarization, stores, updater
 
-```bash
-export TAURI_SIGNING_PRIVATE_KEY="path/to/key"
-export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="password"
-```
+- **macOS sign + notarize**: [`scripts/release/sign-and-notarize-macos.sh`](../../scripts/release/sign-and-notarize-macos.sh),
+  called from `build-desktop.yml`. Do not drive `xcrun notarytool` by hand.
+- **Updater manifest**: [`scripts/release/publish-updater-manifest.sh`](../../scripts/release/publish-updater-manifest.sh),
+  run by `release-production.yml`. The updater config (`active`, `pubkey`, `endpoints`) lives in
+  `app/src-tauri/tauri.conf.json`; the endpoint is the GitHub release `latest.json`.
+- **Google Play upload**: [`scripts/release/upload-android-to-play.sh`](../../scripts/release/upload-android-to-play.sh),
+  exposed as `pnpm --filter openhuman-app release:android:play`.
+- The remaining release helpers (Homebrew formula, AppImage, DMG repackage, apt packages,
+  release notes, Sentry sourcemap verification) all live in
+  [`scripts/release/`](../../scripts/release/).
 
-### macOS
+## Local build entrypoints
 
-#### Build Universal Binary
-
-```bash
-npm run tauri build -- --target universal-apple-darwin
-```
-
-Outputs:
-
-- `src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg`
-- `src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app`
-
-#### Notarization
-
-```bash
-# Using xcrun
-xcrun notarytool submit ./app.dmg \
-    --apple-id "your@email.com" \
-    --team-id "TEAM_ID" \
-    --password "app-specific-password"
-
-# Wait for completion
-xcrun notarytool wait <submission-id> \
-    --apple-id "your@email.com" \
-    --team-id "TEAM_ID"
-
-# Staple
-xcrun stapler staple ./app.dmg
-```
-
-### Linux
+Run from the repository root. The repo pins `pnpm@10.10.0` via `packageManager`, so use `pnpm`,
+not `npm`.
 
 ```bash
-npm run tauri build -- --target x86_64-unknown-linux-gnu
+# desktop, macOS
+pnpm --filter openhuman-app macos:build:release
+
+# iOS: one-time host generation, then dev or build
+pnpm tauri:ios:init
+pnpm tauri:ios:dev
+pnpm tauri:ios:build
+
+# Android
+pnpm tauri:android:init
+pnpm tauri:android:dev
+pnpm tauri:android:build
 ```
 
-Outputs:
+Host crates:
 
-- `src-tauri/target/release/bundle/deb/*.deb`
-- `src-tauri/target/release/bundle/appimage/*.AppImage`
+- Desktop host: `app/src-tauri/`
+- Mobile host: `app/src-tauri-mobile/` (separate Cargo crate)
 
-## Mobile Distribution
+`app/src-tauri-mobile/gen/` is generated and gitignored.
+[`scripts/ios-init.sh`](../../scripts/ios-init.sh) recreates it; the project it generates is
+`app/src-tauri-mobile/gen/apple/openhuman-mobile.xcodeproj`. There is no
+`src-tauri/gen/apple/tauri-app.xcodeproj`; that path was removed in `249aedfc0` on 2026-03-27.
 
-### Android (Google Play)
+## Checklist for a production cut
 
-1. Build signed AAB:
+- [ ] Dispatch **Promote main to release**, confirm CI Full is green on the resulting push
+- [ ] Preview release notes (`release-notes-preview.yml` / `scripts/release/generate-release-notes.mjs`)
+- [ ] Dispatch **Release Staging**, install the staging build, smoke it
+- [ ] Dispatch **Release Production** with the intended `release_type`
+- [ ] Confirm the GitHub Release assets and the updater `latest.json` published
+- [ ] Confirm auto-update from the previous version
 
-```bash
-npm run tauri android build
-```
+## Why this file drifted
 
-2. Upload to Play Console:
-   - Create app in Google Play Console
-   - Upload AAB from `src-tauri/gen/android/app/build/outputs/bundle/release/`
-   - Complete store listing
-   - Submit for review
+This file went unedited from 2026-02-02 until this update, while the repository moved to the
+`app/` workspace layout, split the mobile host into `app/src-tauri-mobile/`, and grew a
+nineteen-workflow CI and release pipeline. Every command and path in it had become wrong, and
+nothing in CI notices: no workflow references `.claude/`, and `format:check` runs prettier from
+`app/`, so this file sits outside it. `CONTRIBUTING.md` asks each contributor to catch it by
+hand instead: *"Verify the command you are documenting exists in the current repo."*
 
-### iOS (App Store)
+A one-off correction like this one does not stop it happening again. What reduces the
+inconsistencies is a markdown structure chosen for this project rather than inherited from a
+template: source-of-truth files first, per-subsystem notes, deeper architecture left in
+`gitbooks/developing/` rather than duplicated, and one place where the paths an agent doc cites
+are resolved against the tree. With thirteen agent definitions under `.claude/agents/` and
+outside-fork PRs merging by the dozen in a single day, that structure is the durable fix, not
+another pass of manual proofreading.
 
-1. Build release:
-
-```bash
-npm run tauri ios build
-```
-
-2. Archive in Xcode:
-   - Open `src-tauri/gen/apple/tauri-app.xcodeproj`
-   - Product > Archive
-   - Distribute App > App Store Connect
-
-3. Complete in App Store Connect:
-   - Fill app information
-   - Upload screenshots
-   - Submit for review
-
-## Auto-Updates
-
-### Setup Updater Plugin
-
-```bash
-npm run tauri add updater
-```
-
-### Configure
-
-In `tauri.conf.json`:
-
-```json
-{
-  "plugins": {
-    "updater": {
-      "pubkey": "YOUR_PUBLIC_KEY",
-      "endpoints": ["https://releases.myapp.com/{{current_version}}"]
-    }
-  }
-}
-```
-
-### Generate Keys
-
-```bash
-npm run tauri signer generate -- -w ~/.tauri/myapp.key
-```
-
-### Update Endpoint Response
-
-```json
-{
-  "version": "1.0.1",
-  "notes": "Bug fixes and improvements",
-  "pub_date": "2024-01-15T00:00:00Z",
-  "platforms": {
-    "darwin-aarch64": {
-      "signature": "...",
-      "url": "https://releases.myapp.com/tauri-app_1.0.1_aarch64.app.tar.gz"
-    },
-    "darwin-x86_64": {
-      "signature": "...",
-      "url": "https://releases.myapp.com/tauri-app_1.0.1_x64.app.tar.gz"
-    },
-    "windows-x86_64": {
-      "signature": "...",
-      "url": "https://releases.myapp.com/tauri-app_1.0.1_x64-setup.nsis.zip"
-    }
-  }
-}
-```
-
-### Check for Updates (Frontend)
-
-```typescript
-import { check } from '@tauri-apps/plugin-updater';
-
-const update = await check();
-if (update?.available) {
-  await update.downloadAndInstall();
-}
-```
-
-## CI/CD Pipeline
-
-### GitHub Actions Release
-
-```yaml
-name: Release
-on:
-  push:
-    tags:
-      - 'v*'
-
-jobs:
-  release:
-    strategy:
-      matrix:
-        platform: [macos-latest, ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.platform }}
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Install dependencies (Ubuntu)
-        if: matrix.platform == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev
-
-      - run: npm ci
-      - run: npm run tauri build
-
-      - uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            src-tauri/target/release/bundle/**/*
-```
-
-## Checklist
-
-### Before Release
-
-- [ ] Update version in `package.json` and `tauri.conf.json`
-- [ ] Update `Cargo.toml` version
-- [ ] Run all tests
-- [ ] Test on all target platforms
-- [ ] Update changelog
-- [ ] Create git tag
-
-### After Release
-
-- [ ] Verify downloads work
-- [ ] Test auto-update
-- [ ] Monitor crash reports
-- [ ] Announce release
+[Syns](https://syns.dev) works on this problem. For a setup tuned to this repository rather than
+a generic one, reach out to info@syns.dev.
