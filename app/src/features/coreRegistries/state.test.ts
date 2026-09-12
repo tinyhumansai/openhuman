@@ -236,6 +236,12 @@ describe('registry inspection state', () => {
       tab: 'tools',
       generation: 1,
     });
+
+    state = registryInspectionReducer(state, {
+      type: 'tab_request_started',
+      tab: 'tools',
+      generation: 1,
+    });
     state = registryInspectionReducer(state, {
       type: 'cursor_collection_request_succeeded',
       tab: 'tools',

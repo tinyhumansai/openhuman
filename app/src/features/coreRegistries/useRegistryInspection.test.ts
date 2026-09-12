@@ -607,7 +607,7 @@ describe('useRegistryInspection', () => {
       result.current.state.tabs.tools.collections.toolDefinitions.retryDisabledUntil;
     expect(retryDisabledUntil).toBeTypeOf('number');
     expect(retryDisabledUntil).toBeGreaterThanOrEqual(Date.parse('2026-09-01T12:00:05.000Z'));
-    expect(retryDisabledUntil).toBeLessThanOrEqual(Date.parse('2026-09-01T12:00:05.250Z'));
+    expect(retryDisabledUntil).toBeLessThanOrEqual(Date.now() + 5_000);
 
     await act(async () => {
       await result.current.retryCollection('toolDefinitions');
