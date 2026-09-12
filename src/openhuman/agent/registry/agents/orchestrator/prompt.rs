@@ -481,11 +481,14 @@ fn contains_routing_override(text: &str) -> bool {
         || lowered.contains("for all requests")
         || lowered.contains("for any request")
         || lowered.contains("every user request");
-    let selects_this_server = lowered.contains("always select this server")
-        || lowered.contains("always use this server")
-        || lowered.contains("always choose this server")
-        || lowered.contains("only use this server")
-        || lowered.contains("use this server exclusively")
+    let selects_this_server = lowered.contains("this server")
+        && (lowered.contains("select")
+            || lowered.contains("use")
+            || lowered.contains("choose")
+            || lowered.contains("prioritize")
+            || lowered.contains("prefer")
+            || lowered.contains("route")
+            || lowered.contains("send"))
         || lowered.contains("never use another server")
         || lowered.contains("never use a different server");
 
