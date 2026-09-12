@@ -351,6 +351,9 @@ pub struct PromptContext<'a> {
     /// Id of the agent this prompt is being built for.
     pub agent_id: &'a str,
     pub tools: &'a [PromptTool<'a>],
+    /// Installed skill metadata. The skills domain historically calls these
+    /// entries `Workflow`; this is the catalog rendered by
+    /// [`SkillsCatalogSection`], not a list of runtime workflow definitions.
     pub workflows: &'a [Workflow],
     pub dispatcher_instructions: &'a str,
     /// Pre-fetched learned context (empty when learning is disabled).
@@ -429,6 +432,7 @@ pub struct SubagentRenderOptions {
     pub include_identity: bool,
     pub include_profile: bool,
     pub include_memory_md: bool,
+    pub include_skills_catalog: bool,
 }
 
 impl SubagentRenderOptions {
@@ -444,12 +448,14 @@ impl SubagentRenderOptions {
         omit_safety_preamble: bool,
         omit_profile: bool,
         omit_memory_md: bool,
+        omit_skills_catalog: bool,
     ) -> Self {
         Self {
             include_identity: !omit_identity,
             include_safety_preamble: !omit_safety_preamble,
             include_profile: !omit_profile,
             include_memory_md: !omit_memory_md,
+            include_skills_catalog: !omit_skills_catalog,
         }
     }
 }

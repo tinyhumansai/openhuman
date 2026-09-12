@@ -11,7 +11,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::openhuman::agent::context::prompt::{
-    render_subagent_system_prompt_with_format, PromptContext, PromptTool, SubagentRenderOptions,
+    render_subagent_system_prompt_with_format_and_workflows, PromptContext, PromptTool,
+    SubagentRenderOptions,
 };
 use crate::openhuman::agent::file_state::with_file_state_agent_id;
 use crate::openhuman::agent::harness::agent_graph::{AgentTurnRequest, AgentTurnUsage};
@@ -59,24 +60,7 @@ use super::provider::{
     resolve_subagent_source, user_is_signed_in_to_composio, LazyToolkitResolver,
 };
 
-/// Runtime spawn-hierarchy gate decision for one delegation hop.
-///
-/// `parent_def` is the resolved parent agent definition (looked up from the
-/// global registry by its definition id) or `None` when the parent can't be
-/// resolved — e.g. a dynamically-named agent (model-council juror) or a custom
-/// agent absent from the registry, or any context where the registry isn't
-/// initialised. A `None` parent yields `Ok(())`: we skip rather than mask, the
-/// same defensive posture the loader takes for unknown child ids.
-///
-/// A **worker** parent is also exempted. At runtime a worker only reaches the
-/// spawn chokepoint via the documented collapsed `delegate_to_integrations_agent`
-/// path (→ `integrations_agent`, itself a worker) — a shape the loader
-/// intentionally leaves untouched. Re-denying it here would turn valid custom
-/// worker agents that use `{ skills = "*" }` into runtime failures. The
-/// worker-leaf authoring rule stays enforced statically at boot, and the
-/// per-parent allowlist gate blocks any other worker spawn.
-///
-/// For chat / reasoning parents the hop is checked against
+/// Validate the runtime spawn-hierarchy gate for one delegation hop.
 /// [`validate_tier_transition`] (the single source of truth shared with the
 /// boot loader walk); a forbidden hop is logged and becomes a
 /// [`SubagentRunError::TierViolation`]. Logging lives here (rather than at the
@@ -1295,6 +1279,7 @@ async fn run_typed_mode(
         definition.omit_safety_preamble,
         definition.omit_profile,
         definition.omit_memory_md,
+        definition.omit_skills_catalog,
     );
 
     let narrowed_integrations: Vec<crate::openhuman::agent::context::prompt::ConnectedIntegration> =
@@ -1400,14 +1385,21 @@ async fn run_typed_mode(
 
     let system_prompt = match &definition.system_prompt {
         PromptSource::Dynamic(build) => {
-            build(&prompt_ctx).map_err(|e| SubagentRunError::PromptLoad {
+            let mut body = build(&prompt_ctx).map_err(|e| SubagentRunError::PromptLoad {
                 path: format!("<dynamic:{}>", definition.id),
                 source: std::io::Error::other(e.to_string()),
-            })?
+            })?;
+            if !definition.omit_skills_catalog {
+                body.push_str("\n\n");
+                body.push_str(&crate::openhuman::agent::prompts::render_skills_catalog(
+                    &parent.workflows,
+                ));
+            }
+            body
         }
         PromptSource::Inline(_) | PromptSource::File { .. } => {
             let archetype_prompt_body = load_prompt_source(&definition.system_prompt, &prompt_ctx)?;
-            render_subagent_system_prompt_with_format(
+            render_subagent_system_prompt_with_format_and_workflows(
                 &parent.workspace_dir,
                 &model,
                 &allowed_indices,
@@ -1417,6 +1409,7 @@ async fn run_typed_mode(
                 render_options,
                 parent.tool_call_format,
                 &narrowed_integrations,
+                &parent.workflows,
                 agents_md.global.as_deref(),
                 agents_md.local.as_deref(),
             )

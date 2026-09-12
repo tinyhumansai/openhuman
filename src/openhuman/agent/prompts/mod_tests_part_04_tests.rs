@@ -77,7 +77,7 @@ fn agents_md_section_registered_in_dynamic_builder() {
 #[test]
 fn agents_md_section_registered_in_subagent_builder() {
     let ctx = agents_md_ctx(None, Some("SUBAGENT_BUILDER_MARKER".into()));
-    let builder = SystemPromptBuilder::for_subagent("role body".into(), true, true);
+    let builder = SystemPromptBuilder::for_subagent("role body".into(), true, true, false);
     let rendered = builder.build(&ctx).unwrap();
     assert!(
         rendered.contains("## Project instructions (AGENTS.md)"),
@@ -145,4 +145,82 @@ fn subagent_renderer_omits_agents_md_when_none() {
         !rendered.contains("## Project instructions (AGENTS.md)"),
         "public wrapper passes None/None and must emit no AGENTS.md block"
     );
+}
+
+#[test]
+fn skills_catalog_is_rendered_for_dynamic_and_subagent_builders() {
+    let workflows = vec![crate::openhuman::skills::Workflow {
+        name: "Release helper".into(),
+        dir_name: "release-helper".into(),
+        description: "Publishes a release".into(),
+        ..Default::default()
+    }];
+    let ctx = PromptContext {
+        workspace_dir: Path::new("/tmp"),
+        model_name: "test-model",
+        agent_id: "",
+        tools: &[],
+        workflows: &workflows,
+        dispatcher_instructions: "",
+        learned: LearnedContextData::default(),
+        visible_tool_names: &NO_FILTER,
+        tool_call_format: ToolCallFormat::PFormat,
+        connected_integrations: &[],
+        connected_identities_md: String::new(),
+        include_profile: false,
+        include_memory_md: false,
+        curated_snapshot: None,
+        user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
+        agents_md_global: None,
+        agents_md_local: None,
+    };
+
+    fn dynamic_body(_ctx: &PromptContext<'_>) -> anyhow::Result<String> {
+        Ok("dynamic body".into())
+    }
+    let dynamic = SystemPromptBuilder::from_dynamic_with_skills_catalog(dynamic_body, true)
+        .build(&ctx)
+        .unwrap();
+    assert!(dynamic.contains("## Available Skills"));
+    assert!(dynamic.contains("release-helper"));
+
+    let subagent = SystemPromptBuilder::for_subagent("inline body".into(), true, true, true)
+        .build(&ctx)
+        .unwrap();
+    assert!(subagent.contains("## Available Skills"));
+    assert!(subagent.contains("Publishes a release"));
+}
+
+#[test]
+fn workflow_catalog_targets_generated_workspace_heading() {
+    let workflows = vec![crate::openhuman::skills::Workflow {
+        name: "Catalog skill".into(),
+        description: "Catalog description".into(),
+        ..Default::default()
+    }];
+    let rendered = render_subagent_system_prompt_with_format_and_workflows(
+        Path::new("/tmp"),
+        "test-model",
+        &[],
+        &[],
+        &[],
+        "An example:\n```markdown\n## Workspace\n```",
+        SubagentRenderOptions {
+            include_skills_catalog: true,
+            ..SubagentRenderOptions::narrow()
+        },
+        ToolCallFormat::PFormat,
+        &[],
+        &workflows,
+        None,
+        None,
+    );
+    let catalog = rendered.find("## Available Skills").unwrap();
+    let workspace = rendered.rfind("## Workspace").unwrap();
+    assert!(catalog > rendered.find("```markdown").unwrap());
+    assert!(catalog < workspace);
+    assert!(rendered.contains("Catalog description"));
 }

@@ -87,6 +87,7 @@ pub fn definition_from_registry_entry(entry: &AgentRegistryEntry) -> AgentDefini
         omit_identity: true,
         omit_memory_context: true,
         omit_safety_preamble: true,
+        omit_skills_catalog: true,
         omit_profile: true,
         omit_memory_md: true,
         model: registry_value_to_model_spec(entry.model.as_deref()),

@@ -242,8 +242,11 @@ compile_raw_coverage_target() {
 run_full() {
   log "running FULL instrumented suite (reason: $1)"
   llvm_cov clean --workspace
-  llvm_cov --no-report --no-fail-fast -p openhuman --lib
-  llvm_cov --no-report --no-fail-fast -p openhuman --bins
+  # The full lib/bin suites share process-global configuration, event-bus, and
+  # provider state. Keep them isolated just like the integration targets below
+  # so parallel libtest cases cannot leak state into one another.
+  llvm_cov --no-report --no-fail-fast -p openhuman --lib -- --test-threads=1
+  llvm_cov --no-report --no-fail-fast -p openhuman --bins -- --test-threads=1
   while IFS= read -r target; do
     [ -n "${target}" ] || continue
     log "running full-suite integration target: ${target}"
@@ -407,7 +410,7 @@ llvm_cov clean --workspace
 if [ "${#lib_filters[@]}" -gt 0 ]; then
   log "running scoped lib unit tests with filters: ${lib_filters[*]}"
   # libtest ORs multiple positional filters — one run covers all domains.
-  run_counted llvm_cov --no-report --no-fail-fast -p openhuman --lib -- "${lib_filters[@]}"
+  run_counted llvm_cov --no-report --no-fail-fast -p openhuman --lib -- "${lib_filters[@]}" --test-threads=1
 fi
 
 if [ "${#test_targets[@]}" -gt 0 ]; then

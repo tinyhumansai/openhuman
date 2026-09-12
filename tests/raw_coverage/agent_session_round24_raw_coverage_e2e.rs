@@ -623,6 +623,7 @@ fn prompt_sections_cover_dynamic_roster_identity_and_subagent_edges() {
             include_safety_preamble: true,
             include_profile: false,
             include_memory_md: true,
+            include_skills_catalog: false,
         },
         ToolCallFormat::Json,
         &[] as &[ConnectedIntegration],

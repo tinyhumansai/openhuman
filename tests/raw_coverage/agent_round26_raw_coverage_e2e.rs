@@ -332,6 +332,7 @@ fn prompt_renderers_cover_user_memory_identity_tools_and_subagent_variants() -> 
             include_identity: true,
             include_profile: true,
             include_memory_md: true,
+            include_skills_catalog: false,
         },
         ToolCallFormat::Json,
         &[],

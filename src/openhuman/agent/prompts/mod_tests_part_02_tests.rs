@@ -70,7 +70,7 @@ fn render_subagent_system_prompt_renders_workspace_tail() {
 fn subagent_render_options_invert_definition_flags() {
     // (omit_identity, omit_safety_preamble,
     //  omit_profile, omit_memory_md)
-    let options = SubagentRenderOptions::from_definition_flags(true, false, false, false);
+    let options = SubagentRenderOptions::from_definition_flags(true, false, false, false, true);
     assert!(!options.include_identity);
     assert!(options.include_safety_preamble);
     assert!(options.include_profile);
@@ -110,6 +110,7 @@ fn render_subagent_system_prompt_honors_identity_safety_and_skills_flags() {
             include_safety_preamble: true,
             include_profile: false,
             include_memory_md: false,
+            include_skills_catalog: false,
         },
         ToolCallFormat::Json,
         &[],
@@ -193,6 +194,7 @@ fn render_subagent_system_prompt_injects_profile_md_even_when_identity_omitted()
             include_safety_preamble: false,
             include_profile: true,
             include_memory_md: false,
+            include_skills_catalog: false,
         },
         ToolCallFormat::PFormat,
         &[],
@@ -292,6 +294,7 @@ fn render_subagent_system_prompt_frames_memory_md_as_background() {
             include_safety_preamble: false,
             include_profile: false,
             include_memory_md: true,
+            include_skills_catalog: false,
         },
         ToolCallFormat::PFormat,
         &[],
@@ -340,6 +343,7 @@ fn render_subagent_system_prompt_omits_memory_framing_when_no_memory_content() {
             include_safety_preamble: false,
             include_profile: false,
             include_memory_md: true,
+            include_skills_catalog: false,
         },
         ToolCallFormat::PFormat,
         &[],
@@ -379,6 +383,7 @@ fn render_subagent_system_prompt_injects_profile_md_when_identity_included() {
             include_safety_preamble: false,
             include_profile: true,
             include_memory_md: false,
+            include_skills_catalog: false,
         },
         ToolCallFormat::PFormat,
         &[],
@@ -452,6 +457,7 @@ fn narrow_agent_with_omit_identity_still_loads_profile_md() {
         true,  // omit_safety_preamble
         false, // omit_profile   — opts IN to PROFILE.md
         false, // omit_memory_md — opts IN to MEMORY.md too
+        true,  // omit_skills_catalog
     );
 
     let tools: Vec<Box<dyn Tool>> = vec![Box::new(TestTool)];
@@ -498,7 +504,7 @@ fn narrow_subagent_definition_flags_skip_profile_md() {
     .unwrap();
 
     // Mirrors e.g. `critic/agent.toml` — all omit_* default-true.
-    let options = SubagentRenderOptions::from_definition_flags(true, true, true, true);
+    let options = SubagentRenderOptions::from_definition_flags(true, true, true, true, true);
 
     let tools: Vec<Box<dyn Tool>> = vec![Box::new(TestTool)];
     let rendered = render_subagent_system_prompt(
@@ -553,6 +559,7 @@ fn render_subagent_system_prompt_injects_memory_md_when_enabled() {
             include_safety_preamble: false,
             include_profile: false,
             include_memory_md: true,
+            include_skills_catalog: false,
         },
         ToolCallFormat::PFormat,
         &[],

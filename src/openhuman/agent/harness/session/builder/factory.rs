@@ -525,11 +525,17 @@ impl Agent {
         // body and get wrapped by [`SystemPromptBuilder::for_subagent`].
         let mut prompt_builder = match target_def {
             Some(def) => match &def.system_prompt {
-                PromptSource::Dynamic(build) => SystemPromptBuilder::from_dynamic(*build),
+                PromptSource::Dynamic(build) => {
+                    SystemPromptBuilder::from_dynamic_with_skills_catalog(
+                        *build,
+                        !def.omit_skills_catalog,
+                    )
+                }
                 PromptSource::Inline(text) => SystemPromptBuilder::for_subagent(
                     text.clone(),
                     def.omit_identity,
                     def.omit_safety_preamble,
+                    !def.omit_skills_catalog,
                 ),
                 PromptSource::File { path } => {
                     let prompt_root = config.workspace_dir.join("agent").join("prompts");
@@ -566,6 +572,7 @@ impl Agent {
                         body_text,
                         def.omit_identity,
                         def.omit_safety_preamble,
+                        !def.omit_skills_catalog,
                     )
                 }
             },

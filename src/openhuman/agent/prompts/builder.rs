@@ -120,6 +120,7 @@ impl SystemPromptBuilder {
         archetype_prompt_text: String,
         omit_identity: bool,
         omit_safety_preamble: bool,
+        include_skills_catalog: bool,
     ) -> Self {
         let mut sections: Vec<Box<dyn PromptSection>> =
             vec![Box::new(ArchetypePromptSection::new(archetype_prompt_text))];
@@ -143,12 +144,9 @@ impl SystemPromptBuilder {
         if !omit_safety_preamble {
             sections.push(Box::new(SafetySection));
         }
-        // Skills catalogue and connected integrations are rendered by
-        // the individual agent's `prompt.rs` when that agent needs
-        // them (integrations_agent for the skill-executor voice,
-        // orchestrator/welcome for the delegator voice). The shared
-        // builder intentionally does not emit them — keeping
-        // agent-specific prose scoped to the agent that owns it.
+        if include_skills_catalog {
+            sections.push(Box::new(SkillsCatalogSection));
+        }
         sections.push(Box::new(WorkspaceSection));
 
         Self { sections }
@@ -182,26 +180,25 @@ impl SystemPromptBuilder {
     pub fn from_dynamic(
         builder: crate::openhuman::agent::harness::definition::PromptBuilder,
     ) -> Self {
-        Self {
-            sections: vec![
-                Box::new(DynamicPromptSection::new(builder)),
-                // Project instructions (AGENTS.md). The ~26 dynamic
-                // `agents/<id>/prompt.rs` builders (orchestrator / main chat,
-                // welcome, integrations_agent, …) hand-assemble their own body
-                // via the `render_*` helpers and none of them individually call
-                // `render_agents_md`, so the pre-loaded AGENTS.md layers on
-                // `PromptContext` would otherwise be silently dropped for the
-                // primary agent. Inject the shared section centrally here —
-                // mirroring how `build()` appends the grounding contract for all
-                // dynamic builders — so every dynamic agent inherits the same
-                // AGENTS.md injection as the `with_defaults` / `for_subagent`
-                // chains. Rendered after the agent's own body (as trailing
-                // standing guidance) and before the central grounding suffix.
-                // Empty (skipped) when neither layer carries content or the
-                // `agents_md_enabled` gate is off.
-                Box::new(AgentsInstructionsSection),
-            ],
+        Self::from_dynamic_with_skills_catalog(builder, false)
+    }
+
+    /// Build a dynamic prompt and optionally append the shared skills catalog.
+    ///
+    /// Dynamic built-in agents are normally responsible for assembling their
+    /// own prompt body, so the catalog gate must be carried from the agent
+    /// definition into this wrapper rather than inferred from the body.
+    pub fn from_dynamic_with_skills_catalog(
+        builder: crate::openhuman::agent::harness::definition::PromptBuilder,
+        include_skills_catalog: bool,
+    ) -> Self {
+        let mut sections: Vec<Box<dyn PromptSection>> =
+            vec![Box::new(DynamicPromptSection::new(builder))];
+        if include_skills_catalog {
+            sections.push(Box::new(SkillsCatalogSection));
         }
+        sections.push(Box::new(AgentsInstructionsSection));
+        Self { sections }
     }
 
     pub fn add_section(mut self, section: Box<dyn PromptSection>) -> Self {

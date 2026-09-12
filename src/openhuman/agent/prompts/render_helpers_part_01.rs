@@ -504,6 +504,51 @@ pub fn render_subagent_system_prompt_with_format(
     out
 }
 
+/// Workflow-aware sub-agent renderer used when the parent has an installed
+/// skills catalog. The existing renderer remains the compatibility surface;
+/// this wrapper inserts the catalog at the same point as the section builder.
+#[allow(clippy::too_many_arguments)]
+pub fn render_subagent_system_prompt_with_format_and_workflows(
+    workspace_dir: &Path,
+    model_name: &str,
+    allowed_indices: &[usize],
+    parent_tools: &[Box<dyn crate::openhuman::tools::Tool>],
+    extra_tools: &[Box<dyn crate::openhuman::tools::Tool>],
+    archetype_body: &str,
+    options: SubagentRenderOptions,
+    tool_call_format: ToolCallFormat,
+    connected_integrations: &[ConnectedIntegration],
+    workflows: &[crate::openhuman::skills::Workflow],
+    agents_md_global: Option<&str>,
+    agents_md_local: Option<&str>,
+) -> String {
+    let mut rendered = render_subagent_system_prompt_with_format(
+        workspace_dir,
+        model_name,
+        allowed_indices,
+        parent_tools,
+        extra_tools,
+        archetype_body,
+        options,
+        tool_call_format,
+        connected_integrations,
+        agents_md_global,
+        agents_md_local,
+    );
+    if options.include_skills_catalog {
+        let catalog = super::sections::render_skills_catalog(workflows);
+        // Match the renderer-owned workspace block so a workspace path that
+        // contains the heading text cannot become the insertion point.
+        if let Some(position) = rendered.rfind("\n## Workspace\n\nWorking directory:") {
+            rendered.insert_str(position + 1, &catalog);
+        } else {
+            rendered.push_str("\n\n");
+            rendered.push_str(&catalog);
+        }
+    }
+    rendered
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Workspace-file I/O helpers
 // ─────────────────────────────────────────────────────────────────────────────
