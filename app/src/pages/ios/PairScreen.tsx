@@ -160,23 +160,18 @@ export const PairScreen: FC = () => {
         return;
       }
 
-      // Pairing credentials are single-use. Exchange the freshly paired
-      // tunnel for the core's reconnect credential before persisting the
-      // profile, so a cold launch does not try to authenticate with a spent
-      // pairing token.
-      const snapshot = (await transport.call<{ sessionToken?: unknown }>(
-        'openhuman.app_state_snapshot',
-        {}
-      )) as { sessionToken?: unknown } | undefined;
-      const sessionToken =
-        typeof snapshot?.sessionToken === 'string' && snapshot.sessionToken.length > 0
-          ? snapshot.sessionToken
-          : undefined;
+      // Pairing credentials are single-use. The tunnel:connected event carries
+      // the per-device reconnect credential; never use the desktop app session
+      // token from app_state_snapshot for this profile.
+      const sessionToken = transport.getReconnectToken?.() ?? undefined;
       if (sessionToken) {
         saveProfile({ ...profile, sessionToken, pairingToken: undefined });
         log('[ios] persisted reconnect credential id=%s', profile.id);
       } else {
         logErr('[ios] paired core returned no reconnect credential id=%s', profile.id);
+        await manager.close();
+        setState({ kind: 'error', message: t('iosPair.error.connectionFailed') });
+        return;
       }
       setActiveCoreTransport(transport);
       log('[ios] transport healthy kind=%s; navigating to /human', transport.kind);

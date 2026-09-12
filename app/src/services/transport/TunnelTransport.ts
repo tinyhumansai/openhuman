@@ -55,6 +55,7 @@ export class TunnelTransport implements CoreTransport {
   private staticDhKey: Uint8Array | null = null; // bootstrap key for handshake ack
   private clientEphemeralKeypair: TunnelKeypair | null = null;
   private cipher: TunnelCipher | null = null; // derived after handshake ack
+  private reconnectToken: string | null = null;
   private deviceKeypair: TunnelKeypair | null = null;
   private handshakeAck: {
     resolve: () => void;
@@ -116,7 +117,16 @@ export class TunnelTransport implements CoreTransport {
         });
       });
 
-      socket.on('tunnel:connected', () => {
+      socket.on('tunnel:connected', (data: unknown) => {
+        const ack = data as Record<string, unknown> | null;
+        const token = [
+          ack?.sessionToken,
+          ack?.session_token,
+          ack?.reconnectToken,
+          ack?.reconnect_token,
+          ack?.token,
+        ].find((value): value is string => typeof value === 'string' && value.length > 0);
+        this.reconnectToken = token ?? null;
         log('[tunnel] tunnel:connected ack received, performing handshake');
         // Send sealed handshake frame.
         void this.sendHandshake().then(resolve).catch(reject);
@@ -138,6 +148,7 @@ export class TunnelTransport implements CoreTransport {
         this.staticDhKey = null;
         this.clientEphemeralKeypair = null;
         this.cipher = null;
+        this.reconnectToken = null;
         this._connectPromise = null;
       });
 
@@ -149,6 +160,11 @@ export class TunnelTransport implements CoreTransport {
     });
 
     return this._connectPromise;
+  }
+
+  /** Return the reconnect credential issued by the tunnel handshake. */
+  getReconnectToken(): string | null {
+    return this.reconnectToken;
   }
 
   // -- handshake -------------------------------------------------------------

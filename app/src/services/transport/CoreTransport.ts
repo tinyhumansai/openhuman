@@ -35,4 +35,7 @@ export interface CoreTransport {
 
   /** Tear down the transport. */
   close(): Promise<void>;
+
+  /** Return a transport-specific reconnect credential, when one was issued. */
+  getReconnectToken?(): string | null;
 }

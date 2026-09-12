@@ -47,7 +47,7 @@ const MobileShell: FC<{ children: React.ReactNode }> = ({ children }) => (
 
 /** Bounces to /pair when no profile exists; otherwise renders children. */
 const RequirePairing: FC<{ children: React.ReactNode }> = ({ children }) => {
-  if (!isPaired() || !getActiveCoreTransport()) {
+  if (!isPaired()) {
     log('[mobile] no pairing — redirecting to /pair');
     return <Navigate to="/pair" replace />;
   }
@@ -80,11 +80,19 @@ const MobileTransportBootstrap: FC<{ children: React.ReactNode }> = ({ children 
   const disposedRef = useRef(false);
 
   useEffect(() => {
+    disposedRef.current = false;
     if (location.pathname === '/pair') {
       const staleManager = managerRef.current;
       managerRef.current = null;
-      void staleManager?.close();
+      void staleManager?.close().catch(error => {
+        log(
+          '[mobile] stale transport close failed: %s',
+          error instanceof Error ? error.message : 'unknown error'
+        );
+      });
       setActiveCoreTransport(null);
+      setBindingFailed(false);
+      setReady(false);
       return;
     }
 
