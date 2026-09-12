@@ -293,7 +293,7 @@ function summarizeTab(state: RegistryInspectionState, tab: RegistryTab): Registr
     collection => collection?.observation.kind === 'stale'
   ).length;
   if (staleCount > 0) {
-    return collections.length === 1 ? 'stale' : 'partial';
+    return staleCount === collections.length ? 'stale' : 'partial';
   }
 
   if (collections.some(collection => collection?.observation.kind === 'loading')) {

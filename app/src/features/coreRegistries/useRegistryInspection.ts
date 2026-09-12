@@ -611,7 +611,10 @@ export function useRegistryInspection(
   );
 
   useEffect(() => {
-    const initialUrlState = parseRegistryUrlState(window.location.search);
+    const initialSearch = window.location.hash.includes('?')
+      ? window.location.hash.slice(window.location.hash.indexOf('?'))
+      : window.location.search;
+    const initialUrlState = parseRegistryUrlState(initialSearch);
     const canonical = serializeRegistryUrlState(initialUrlState);
     if (!(window.location.search === '' && canonical === 'tab=agents')) {
       const normalizedSearch = canonical ? `?${canonical}` : '';
@@ -620,19 +623,7 @@ export function useRegistryInspection(
       }
     }
 
-    void ensureTabLoaded(initialUrlState.tab).then(async () => {
-      if (
-        initialUrlState.detail &&
-        !stateRef.current.surfaceError &&
-        browserSelectsDetail(initialUrlState.tab, initialUrlState.detail)
-      ) {
-        await runDetailRequest(
-          initialUrlState.tab,
-          initialUrlState.detail,
-          stateRef.current.tabs[initialUrlState.tab].generation
-        );
-      }
-    });
+    void ensureTabLoaded(initialUrlState.tab);
 
     const onPopState = () => {
       const nextUrlState = parseRegistryUrlState(window.location.search);
