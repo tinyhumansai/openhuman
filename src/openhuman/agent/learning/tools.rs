@@ -464,6 +464,21 @@ impl Tool for LearningRebuildCacheTool {
 
     async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
         log::debug!("[tool][learning] rebuild_cache invoked");
+        let config = config_rpc::load_config_with_timeout()
+            .await
+            .map_err(|e| anyhow::anyhow!("learning_rebuild_cache: config load failed: {e}"))?;
+        if !config.learning.enabled {
+            log::info!("[tool][learning] rebuild_cache skipped because learning.enabled=false");
+            return Ok(ToolResult::success(
+                serde_json::to_string(&json!({
+                    "added": 0,
+                    "evicted": 0,
+                    "kept": 0,
+                    "total_size": 0,
+                    "skipped": true,
+                }))?,
+            ));
+        }
         let cache = get_cache().await?;
         let detector = StabilityDetector::new(cache);
         let now = SystemTime::now()
