@@ -537,7 +537,10 @@ pub fn render_subagent_system_prompt_with_format_and_workflows(
     );
     if options.include_skills_catalog {
         let catalog = super::sections::render_skills_catalog(workflows);
-        if let Some(position) = rendered.find("## Workspace") {
+        // The generated workspace block is the final such heading, because
+        // archetype and AGENTS.md content may contain examples with the same
+        // heading. Use the last occurrence to target our renderer-owned block.
+        if let Some(position) = rendered.rfind("## Workspace") {
             rendered.insert_str(position, &catalog);
         } else {
             rendered.push_str("\n\n");
