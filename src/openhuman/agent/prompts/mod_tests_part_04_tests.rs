@@ -155,7 +155,7 @@ fn skills_catalog_is_rendered_for_dynamic_and_subagent_builders() {
         description: "Publishes a release".into(),
         ..Default::default()
     }];
-    let mut ctx = PromptContext {
+    let ctx = PromptContext {
         workspace_dir: Path::new("/tmp"),
         model_name: "test-model",
         agent_id: "",
