@@ -96,6 +96,7 @@ const MobileTransportBootstrap: FC<{ children: React.ReactNode }> = ({ children 
       .then(transport => {
         if (disposed) return;
         return transport.isHealthy().then(healthy => {
+          if (disposed) return;
           if (!healthy) throw new Error('persisted transport is unhealthy');
           setActiveCoreTransport(transport);
           setBindingFailed(false);
