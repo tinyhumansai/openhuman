@@ -36,7 +36,10 @@ fn get_or_create_is_atomic_for_concurrent_first_turns() {
             store.get_or_create("conversation", "conversation:prompt")
         }));
     }
-    let results: Vec<_> = workers.into_iter().map(|worker| worker.join().unwrap()).collect();
+    let results: Vec<_> = workers
+        .into_iter()
+        .map(|worker| worker.join().unwrap())
+        .collect();
     assert_eq!(results.iter().filter(|(_, is_new)| *is_new).count(), 1);
     assert!(results.windows(2).all(|pair| pair[0].0 == pair[1].0));
 }

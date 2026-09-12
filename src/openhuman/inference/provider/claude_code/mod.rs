@@ -351,9 +351,11 @@ fn session_key_from_request(messages: &[ChatMessage], system_prompt: Option<&str
     }
     let conversation = conversation.finalize();
     let prompt = prompt.finalize();
-    format!("hash_{:032x}:prompt_{:032x}",
+    format!(
+        "hash_{:032x}:prompt_{:032x}",
         u128::from_be_bytes(conversation[..16].try_into().unwrap()),
-        u128::from_be_bytes(prompt[..16].try_into().unwrap()))
+        u128::from_be_bytes(prompt[..16].try_into().unwrap())
+    )
 }
 
 #[cfg(test)]

@@ -68,7 +68,10 @@ impl SessionStore {
     /// resurrected when the prompt later returns to it.
     pub fn get_or_create(&self, scope: &str, key: &str) -> (String, bool) {
         let mut guard = self.inner.lock().expect("session store mutex poisoned");
-        let is_current = guard.active_keys.get(scope).is_none_or(|active| active == key);
+        let is_current = guard
+            .active_keys
+            .get(scope)
+            .is_none_or(|active| active == key);
         if is_current {
             if let Some(existing) = guard.sessions.get(key).filter(|id| is_uuid_v4(id)) {
                 return (existing.clone(), false);
