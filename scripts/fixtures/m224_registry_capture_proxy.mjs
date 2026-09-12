@@ -108,7 +108,17 @@ function assertAllowed(method, requestUrl) {
 const server = http.createServer(async (req, res) => {
   const rawUrl = req.url ?? '/';
   const requestUrl = parsePinnedRequestUrl(rawUrl);
-  const { path: safePath, cursorPresent } = sanitizePath(rawUrl);
+  let safePath;
+  let cursorPresent = false;
+  try {
+    ({ path: safePath, cursorPresent } = sanitizePath(rawUrl));
+  } catch {
+    entries.push({ method: req.method ?? 'UNKNOWN', path: '<invalid>', cursorPresent, statusCode: 405, blocked: true });
+    persist();
+    res.writeHead(405, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ detail: { code: 'proxy_disallowed', message: 'request not allowed' } }));
+    return;
+  }
   if (!requestUrl || !assertAllowed(req.method ?? '', requestUrl)) {
     entries.push({
       method: req.method ?? 'UNKNOWN',
@@ -129,10 +139,18 @@ const server = http.createServer(async (req, res) => {
   delete forwardHeaders.host;
   delete forwardHeaders['content-length'];
 
-  const upstream = await fetch(requestUrl, {
-    method: req.method,
-    headers: forwardHeaders,
-  });
+  let upstream;
+  try {
+    upstream = await fetch(requestUrl, {
+      method: req.method,
+      headers: forwardHeaders,
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    res.writeHead(502, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ detail: { code: 'proxy_upstream_error', message: 'upstream unavailable' } }));
+    return;
+  }
   entries.push({
     method: req.method ?? 'GET',
     path: safePath,
@@ -144,7 +162,12 @@ const server = http.createServer(async (req, res) => {
   res.writeHead(upstream.status, {
     'content-type': upstream.headers.get('content-type') ?? 'application/json',
   });
-  res.end(Buffer.from(await upstream.arrayBuffer()));
+  try {
+    res.end(Buffer.from(await upstream.arrayBuffer()));
+  } catch {
+    if (!res.headersSent) res.writeHead(502, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ detail: { code: 'proxy_upstream_error', message: 'upstream read failed' } }));
+  }
 });
 
 server.listen(listenPort, '127.0.0.1', () => {

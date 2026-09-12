@@ -228,6 +228,14 @@ function getCollectionState<TTab extends RegistryTab>(
   return null;
 }
 
+function collectionStateGeneration(
+  state: RegistryInspectionState,
+  tab: RegistryTab,
+  collection: RegistryCollectionKey
+): number | null {
+  return getCollectionState(state, tab, collection)?.restartGeneration ?? null;
+}
+
 function collectionObservationSuccess(
   observedAt: string,
   itemCount: number
@@ -483,12 +491,11 @@ export function registryInspectionReducer(
 
     case 'cursor_collection_request_succeeded': {
       const tabState = next.tabs[action.tab];
-      if (collectionStateGeneration(next, action.tab, action.collection) !== action.generation) {
-        return state;
-      }
-
       const collectionState = getCollectionState(next, action.tab, action.collection);
       if (!collectionState || !('nextCursor' in collectionState)) {
+        return state;
+      }
+      if (collectionStateGeneration(next, action.tab, action.collection) !== action.generation) {
         return state;
       }
 
@@ -508,12 +515,11 @@ export function registryInspectionReducer(
 
     case 'unpaged_collection_request_succeeded': {
       const tabState = next.tabs[action.tab];
-      if (action.generation !== tabState.generation) {
-        return state;
-      }
-
       const collectionState = getCollectionState(next, action.tab, action.collection);
       if (!collectionState || 'nextCursor' in collectionState) {
+        return state;
+      }
+      if (collectionStateGeneration(next, action.tab, action.collection) !== action.generation) {
         return state;
       }
 
@@ -532,12 +538,11 @@ export function registryInspectionReducer(
 
     case 'collection_request_failed': {
       const tabState = next.tabs[action.tab];
-      if (action.generation !== tabState.generation) {
-        return state;
-      }
-
       const collectionState = getCollectionState(next, action.tab, action.collection);
       if (!collectionState) {
+        return state;
+      }
+      if (collectionStateGeneration(next, action.tab, action.collection) !== action.generation) {
         return state;
       }
 
