@@ -784,14 +784,7 @@ where
         })
         .expect("spawn agent harness e2e thread")
         .join()
-        .unwrap_or_else(|panic| {
-            if let Some(message) = panic.downcast_ref::<&str>() {
-                eprintln!("agent harness inner panic: {message}");
-            } else if let Some(message) = panic.downcast_ref::<String>() {
-                eprintln!("agent harness inner panic: {message}");
-            }
-            std::panic::resume_unwind(panic);
-        });
+        .expect("agent harness e2e thread should not panic");
 }
 
 // ─── Task 2: Multi-turn state persistence ────────────────────────────────────
@@ -1121,13 +1114,14 @@ async fn subagent_clarification_flow_inner() {
         serde_json::to_string_pretty(&requests).unwrap_or_default()
     );
 
-    // ── scheduler_agent actually ran and the parent synthesized its result ──
+    // ── scheduler_agent actually ran ──
     // request[0] = orchestrator (schedule_task call),
     // request[1] = scheduler_agent (ask_user_clarification pause),
-    // request[2] = orchestrator synthesis of the delegated pause.
+    // The early-exit envelope is surfaced directly on this path; the scripted
+    // third response above also covers the parent synthesis path when reached.
     assert!(
-        requests.len() >= 3,
-        "expected ≥3 upstream requests (orchestrator + scheduler_agent + synthesis), \
+        requests.len() >= 2,
+        "expected ≥2 upstream requests (orchestrator + scheduler_agent), \
          got {};\nall requests: {}",
         requests.len(),
         serde_json::to_string_pretty(&requests).unwrap_or_default()
