@@ -124,7 +124,8 @@ function pushUrlState(
 ): void {
   const serialized = serializeRegistryUrlState(urlState);
   const search = serialized.length > 0 ? `?${serialized}` : '';
-  const nextUrl = `${window.location.pathname}${search}`;
+  const hashRoute = (window.location.hash.split('?')[0] || '#/registries');
+  const nextUrl = `${window.location.pathname}${hashRoute}${search}`;
 
   if (mode === 'replace') {
     window.history.replaceState({}, '', nextUrl);
@@ -159,7 +160,9 @@ function relevantCollectionKeysForTab(tab: RegistryTab): RegistryCollectionKey[]
 }
 
 function browserSelectsDetail(tab: RegistryTab, detail: RegistryDetailRef): boolean {
-  const current = parseRegistryUrlState(window.location.search);
+  const current = parseRegistryUrlState(window.location.hash.includes('?')
+    ? window.location.hash.slice(window.location.hash.indexOf('?'))
+    : window.location.search);
   return (
     current.tab === tab &&
     current.detail?.kind === detail.kind &&
@@ -212,7 +215,9 @@ export function useRegistryInspection(
 ): UseRegistryInspectionResult {
   const client = options.client ?? coreRegistriesClient;
   const [state, setState] = useState<RegistryInspectionState>(() =>
-    createRegistryInspectionState(parseRegistryUrlState(window.location.search))
+      createRegistryInspectionState(parseRegistryUrlState(window.location.hash.includes('?')
+        ? window.location.hash.slice(window.location.hash.indexOf('?'))
+        : window.location.search))
   );
   const stateRef = useRef(state);
   const visitedTabsRef = useRef(new Set<RegistryTab>());
@@ -232,7 +237,10 @@ export function useRegistryInspection(
 
     const serialized = serializeRegistryUrlState(state.urlState);
     const nextSearch = serialized.length > 0 ? `?${serialized}` : '';
-    if (window.location.search !== nextSearch) {
+    const currentSearch = window.location.hash.includes('?')
+      ? window.location.hash.slice(window.location.hash.indexOf('?'))
+      : window.location.search;
+    if (currentSearch !== nextSearch) {
       pushUrlState(state.urlState, 'replace');
     }
   }, [state.surfaceError, state.urlState]);
@@ -526,7 +534,7 @@ export function useRegistryInspection(
     const generation = nextGeneration(tab);
     await loadTabGeneration(tab, generation);
     const selected = stateRef.current.urlState;
-    if (selected.tab === tab && selected.detail) {
+    if (selected.tab === tab && selected.detail && !stateRef.current.surfaceError) {
       await runDetailRequest(tab, selected.detail, generation);
     }
   }, [loadTabGeneration, nextGeneration, runDetailRequest]);

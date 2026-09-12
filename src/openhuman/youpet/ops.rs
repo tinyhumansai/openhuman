@@ -255,7 +255,7 @@ async fn send_alert_action(
         .map(str::to_string)
         .unwrap_or_else(|| Uuid::new_v4().to_string());
     let path = format!(
-        "/api/v1/alerts/{}/{}",
+        "/api/v1/workbench/alerts/{}/{}",
         urlencoding::encode(alert_id),
         action
     );

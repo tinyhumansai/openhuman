@@ -90,7 +90,7 @@ SELECT
     jsonb_build_object('policy_id', 'policy.registry', 'policy_version', 'v1')
   ),
   'service'
-FROM generate_series(1, 51) AS n;
+FROM generate_series(1, 52) AS n;
 
 INSERT INTO kernel_tool_definitions (
   id,
