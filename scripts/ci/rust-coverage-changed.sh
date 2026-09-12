@@ -244,7 +244,12 @@ run_full() {
   llvm_cov clean --workspace
   # The full lib suite contains tests that share process-global registries and
   # configuration. Keep libtest serial so one fixture cannot leak into another.
-  llvm_cov --no-report --no-fail-fast -p openhuman --lib -- --test-threads=1
+  # A build-only CoreRuntime test also installs a process-wide harness context;
+  # run that test separately so its narrowed DomainSet cannot affect the rest
+  # of the registry suite. It is still instrumented below and contributes to
+  # the merged report.
+  llvm_cov --no-report --no-fail-fast -p openhuman --lib --skip a_build_only_runtime_is_swept_before_it_can_be_invoked -- --test-threads=1
+  llvm_cov --no-report --no-fail-fast -p openhuman --lib a_build_only_runtime_is_swept_before_it_can_be_invoked -- --test-threads=1
   llvm_cov --no-report --no-fail-fast -p openhuman --bins
   while IFS= read -r target; do
     [ -n "${target}" ] || continue
