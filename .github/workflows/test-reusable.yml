@@ -55,7 +55,7 @@ jobs:
       image: ghcr.io/tinyhumansai/openhuman_ci:latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 1
@@ -261,7 +261,7 @@ jobs:
       RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 1
