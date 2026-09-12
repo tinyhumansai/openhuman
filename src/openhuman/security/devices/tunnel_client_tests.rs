@@ -191,23 +191,30 @@ fn a_non_boolean_ok_is_still_treated_as_a_refusal() {
     assert!(backend_ack_error(&json!({ "ok": true })).is_none());
 }
 
-/// A non-string `error` is rendered, not discarded. Throwing away the backend's
-/// explanation is the failure mode being fixed; an unexpected shape does not
-/// make it acceptable.
+/// A structured `error` keeps its public code and message without rendering
+/// unrelated fields that could contain credentials or request data.
 #[test]
-fn a_structured_error_payload_is_rendered_rather_than_dropped() {
+fn a_structured_error_payload_is_safely_summarized() {
     let err = parse_register_ack(json!({
         "ok": false,
-        "error": { "code": 429, "message": "channel limit" }
+        "error": {
+            "code": 429,
+            "message": "channel limit",
+            "pairingToken": "secret-token"
+        }
     }))
     .expect_err("a structured refusal is still a refusal");
 
     assert!(
         err.contains("channel limit") && err.contains("429"),
-        "the backend's payload must survive into the message, got: {err}"
+        "the public backend error fields must survive, got: {err}"
+    );
+    assert!(
+        !err.contains("secret-token") && !err.contains("pairingToken"),
+        "private fields must not survive in the error, got: {err}"
     );
     assert!(
         !err.contains("unspecified error"),
-        "a present error payload must not be reported as unspecified, got: {err}"
+        "a structured public error must not be reported as unspecified, got: {err}"
     );
 }

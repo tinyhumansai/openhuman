@@ -211,14 +211,27 @@ pub(crate) fn backend_ack_error(ack: &serde_json::Value) -> Option<String> {
     if object.get("ok")?.as_bool() == Some(true) {
         return None;
     }
-    // A non-string `error` (say `{ code, message }`) is rendered rather than
-    // discarded — throwing away the backend's explanation is the failure mode
-    // being fixed, and it does not become acceptable because the shape
-    // surprised us.
+    // Preserve only the public error fields from a structured response. Do
+    // not stringify the whole value: an unexpected error object can contain
+    // credentials or other request data alongside its code and message.
     Some(match object.get("error") {
         None | Some(serde_json::Value::Null) => "unspecified error".to_string(),
         Some(serde_json::Value::String(text)) => text.clone(),
-        Some(other) => other.to_string(),
+        Some(serde_json::Value::Object(error)) => {
+            let code = error.get("code").map(|value| match value {
+                serde_json::Value::String(text) => text.clone(),
+                serde_json::Value::Number(number) => number.to_string(),
+                _ => "unknown_code".to_string(),
+            });
+            let message = error.get("message").and_then(serde_json::Value::as_str);
+            match (code, message) {
+                (Some(code), Some(message)) => format!("{code}: {message}"),
+                (Some(code), None) => code,
+                (None, Some(message)) => message.to_string(),
+                (None, None) => "unspecified error".to_string(),
+            }
+        }
+        Some(_) => "unspecified error".to_string(),
     })
 }
 
