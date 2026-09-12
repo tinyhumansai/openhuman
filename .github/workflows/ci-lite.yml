@@ -1113,7 +1113,10 @@ jobs:
           persist-credentials: false
 
       - name: Fetch submodule tags for pin verification
-        run: git submodule foreach --recursive 'git fetch --tags --force origin'
+        run: |
+          for module in tinymemory tinyjuice tinyconnectors tinydocs tinymcp tinywallet tinyvoice tinyhosts tinybox; do
+            git -C "vendor/$module" fetch --no-recurse-submodules --tags --force origin
+          done
 
       # Nine subsystems load as downloaded cdylib modules and each is pinned
       # twice: once as a submodule (the contract compiled here) and once as a
