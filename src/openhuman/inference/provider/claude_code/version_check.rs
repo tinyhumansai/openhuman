@@ -52,17 +52,26 @@ pub fn resolve_binary() -> Option<PathBuf> {
 /// up by the time-boxed login-shell probe that follows it.
 fn well_known_install() -> Option<PathBuf> {
     let home = std::env::var_os("HOME").map(PathBuf::from);
+    let mut outdated = None;
     for candidate in well_known_candidates(home.as_deref()) {
-        if candidate.is_file() && version_probe_succeeds(&candidate) {
-            log::debug!(
-                "[claude-code][version] resolved off-PATH candidate path={}",
-                candidate.display()
-            );
-            return Some(candidate);
+        if candidate.is_file() {
+            match version_probe_version(&candidate) {
+                Some(version) if !version_lt(&version, MIN_CLI_VERSION) => {
+                    log::debug!(
+                        "[claude-code][version] resolved off-PATH candidate path={}",
+                        candidate.display()
+                    );
+                    return Some(candidate);
+                }
+                Some(_) => {
+                    outdated.get_or_insert(candidate);
+                }
+                None => {}
+            }
         }
     }
 
-    login_shell_lookup()
+    outdated.or_else(login_shell_lookup)
 }
 
 /// Check that a fallback is an executable Claude CLI, rather than merely a
@@ -70,21 +79,21 @@ fn well_known_install() -> Option<PathBuf> {
 /// the authoritative version check after resolution; this lightweight probe
 /// only lets resolution continue to later candidates when this one cannot
 /// answer `--version` at all.
-fn version_probe_succeeds(path: &Path) -> bool {
+fn version_probe_version(path: &Path) -> Option<String> {
     let path_env = super::driver::child_path_with_user_bins(path);
     match bounded_version_probe_with_path(path, VERSION_PROBE_TIMEOUT, Some(&path_env)) {
         Ok(Some(output)) => {
-            output.status.success()
-                && parse_version(&String::from_utf8_lossy(&output.stdout))
-                    .is_some_and(|version| !version_lt(&version, MIN_CLI_VERSION))
+            output.status.success().then(|| {
+                parse_version(&String::from_utf8_lossy(&output.stdout))
+            })?
         }
-        Ok(None) => false,
+        Ok(None) => None,
         Err(err) => {
             log::debug!(
                 "[claude-code][version] skipping unusable fallback path={} err={err}",
                 path.display()
             );
-            false
+            None
         }
     }
 }
@@ -126,28 +135,69 @@ fn bounded_version_probe_with_path(
             Ok(())
         });
     }
-    let mut child = command.spawn()?;
-    let deadline = std::time::Instant::now() + budget;
+    bounded_child_output(command, budget, path)
+}
 
+/// Collect child output without allowing inherited pipes from descendants to
+/// defeat the process deadline.
+fn bounded_child_output(
+    mut command: Command,
+    budget: Duration,
+    path: &Path,
+) -> std::io::Result<Option<std::process::Output>> {
+    use std::io::Read;
+    use std::sync::mpsc;
+
+    let mut child = command.spawn()?;
+    let (stdout_tx, stdout_rx) = mpsc::channel();
+    let (stderr_tx, stderr_rx) = mpsc::channel();
+    let stdout = child.stdout.take().expect("stdout was piped");
+    let stderr = child.stderr.take().expect("stderr was piped");
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = stdout.take(usize::MAX as u64).read_to_end(&mut bytes);
+        let _ = stdout_tx.send(bytes);
+    });
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = stderr.take(usize::MAX as u64).read_to_end(&mut bytes);
+        let _ = stderr_tx.send(bytes);
+    });
+
+    let deadline = std::time::Instant::now() + budget;
+    let mut status = None;
+    let mut stdout = None;
+    let mut stderr = None;
     loop {
-        match child.try_wait()? {
-            Some(_) => return child.wait_with_output().map(Some),
-            None if std::time::Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            None => {
-                #[cfg(unix)]
-                let _ = unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
-                let _ = child.kill();
-                let _ = child.wait();
-                log::debug!(
-                    "[claude-code][version] fallback version probe timed out path={} after {:?}",
-                    path.display(),
-                    budget
-                );
-                return Ok(None);
-            }
+        if status.is_none() {
+            status = child.try_wait()?;
         }
+        if stdout.is_none() {
+            stdout = stdout_rx.try_recv().ok();
+        }
+        if stderr.is_none() {
+            stderr = stderr_rx.try_recv().ok();
+        }
+        if let (Some(status), Some(stdout), Some(stderr)) = (status, stdout, stderr) {
+            return Ok(Some(std::process::Output {
+                status,
+                stdout,
+                stderr,
+            }));
+        }
+        if std::time::Instant::now() >= deadline {
+            #[cfg(unix)]
+            let _ = unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
+            let _ = child.kill();
+            let _ = child.wait();
+            log::debug!(
+                "[claude-code][version] fallback version probe timed out path={} after {:?}",
+                path.display(),
+                budget
+            );
+            return Ok(None);
+        }
+        std::thread::sleep(Duration::from_millis(10));
     }
 }
 
@@ -221,7 +271,7 @@ fn login_shell_lookup_with(shell: &str, budget: Duration) -> Option<PathBuf> {
     command
         .args(["-lc", "command -v claude"])
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null());
+        .stderr(std::process::Stdio::piped());
     #[cfg(unix)]
     unsafe {
         command.pre_exec(|| {
@@ -231,47 +281,17 @@ fn login_shell_lookup_with(shell: &str, budget: Duration) -> Option<PathBuf> {
             Ok(())
         });
     }
-    let mut child = match command.spawn() {
-        Ok(child) => child,
-        Err(err) => {
-            log::debug!("[claude-code][version] login shell probe failed err={err}");
+    let output = match bounded_child_output(command, budget, Path::new(shell)) {
+        Ok(Some(output)) => output,
+        Ok(None) => {
+            log::warn!(
+                "[claude-code][version] login shell probe timed out after {:?}; a slow or blocking shell profile can cause this",
+                budget
+            );
             return None;
         }
-    };
-
-    let deadline = std::time::Instant::now() + budget;
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            Ok(None) => {
-                #[cfg(unix)]
-                let _ = unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
-                let _ = child.kill();
-                let _ = child.wait();
-                log::warn!(
-                    "[claude-code][version] login shell probe timed out after {:?}; a slow or blocking shell profile can cause this",
-                    budget
-                );
-                return None;
-            }
-            Err(err) => {
-                #[cfg(unix)]
-                let _ = unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
-                let _ = child.kill();
-                let _ = child.wait();
-                log::debug!("[claude-code][version] login shell probe wait failed err={err}");
-                return None;
-            }
-        }
-    }
-
-    let output = match child.wait_with_output() {
-        Ok(output) => output,
         Err(err) => {
-            log::debug!("[claude-code][version] login shell probe output failed err={err}");
+            log::debug!("[claude-code][version] login shell probe failed err={err}");
             return None;
         }
     };
@@ -287,6 +307,8 @@ fn login_shell_lookup_with(shell: &str, budget: Duration) -> Option<PathBuf> {
         );
         path
     })
+}
+
 }
 
 /// The ordered fallback candidates, split out so the list is unit-testable
@@ -349,12 +371,20 @@ pub fn probe() -> CliStatus {
     };
     let path_str = path.display().to_string();
 
-    let output = match Command::new(&path)
+    let mut command = Command::new(&path);
+    command
         .arg("--version")
         .env("PATH", super::driver::child_path_with_user_bins(&path))
-        .output()
-    {
-        Ok(o) => o,
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let output = match bounded_child_output(command, VERSION_PROBE_TIMEOUT, &path) {
+        Ok(Some(o)) => o,
+        Ok(None) => {
+            return CliStatus::Unusable {
+                path: path_str,
+                reason: format!("version probe timed out after {VERSION_PROBE_TIMEOUT:?}"),
+            };
+        }
         Err(e) => {
             log::warn!("[claude-code][version] spawn failed path={path_str} err={e}");
             return CliStatus::Unusable {
