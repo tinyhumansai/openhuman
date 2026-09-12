@@ -111,6 +111,7 @@ fn result_event_captures_usage() {
     let mut m = EventMapper::new();
     m.handle(ClaudeCodeEvent::Result {
         subtype: Some("success".into()),
+        is_error: false,
         usage: Some(json!({
             "input_tokens": 100,
             "output_tokens": 50,
@@ -133,6 +134,7 @@ fn cost_surfaced_even_without_usage_object() {
     let mut m = EventMapper::new();
     m.handle(ClaudeCodeEvent::Result {
         subtype: Some("success".into()),
+        is_error: false,
         usage: None,
         total_cost_usd: Some(0.05),
         raw: Value::Null,
@@ -152,4 +154,118 @@ fn final_assistant_message_is_skipped() {
         message: json!({"type":"message","role":"assistant","content":[]}),
     });
     assert!(deltas.is_empty());
+}
+
+// Carried over from #5713 (@Felyx-Fu), which was closed in favour of this PR.
+
+#[test]
+fn empty_cli_error_does_not_override_stderr_fallback() {
+    let mut m = EventMapper::new();
+    m.handle(ClaudeCodeEvent::Error {
+        message: String::new(),
+    });
+
+    assert!(m.error.is_none());
+    assert!(m.terminal_error);
+}
+
+#[test]
+fn structured_cli_error_is_preserved() {
+    let mut m = EventMapper::new();
+    m.handle(ClaudeCodeEvent::Error {
+        message: "structured failure".into(),
+    });
+
+    assert_eq!(m.error.as_deref(), Some("structured failure"));
+    assert!(m.terminal_error);
+}
+
+#[test]
+fn cli_error_redacts_sensitive_diagnostics() {
+    let mut m = EventMapper::new();
+    m.handle(ClaudeCodeEvent::Error {
+        message: "request failed with sk-secret-token".into(),
+    });
+
+    assert_eq!(m.error.as_deref(), Some("request failed with [REDACTED]"));
+}
+
+#[test]
+fn result_error_is_recorded_without_masking_stderr_fallback() {
+    let mut m = EventMapper::new();
+    m.handle(ClaudeCodeEvent::Result {
+        subtype: Some("error".into()),
+        is_error: false,
+        usage: None,
+        total_cost_usd: None,
+        raw: Value::Null,
+    });
+
+    assert!(m.finished);
+    assert!(m.terminal_error);
+    assert!(m.error.is_none());
+}
+
+#[test]
+fn result_is_error_flag_marks_terminal_failure() {
+    let mut m = EventMapper::new();
+    m.handle(ClaudeCodeEvent::Result {
+        subtype: Some("success".into()),
+        is_error: true,
+        usage: None,
+        total_cost_usd: None,
+        raw: Value::Null,
+    });
+
+    assert!(m.finished);
+    assert!(m.terminal_error);
+    assert!(m.error.is_none());
+}
+
+#[test]
+fn failed_result_preserves_errors_payload() {
+    let mut m = EventMapper::new();
+    m.handle(ClaudeCodeEvent::Result {
+        subtype: Some("error_during_execution".into()),
+        is_error: true,
+        usage: None,
+        total_cost_usd: None,
+        raw: json!({
+            "errors": ["API request failed", "retry exhausted"],
+            "result": "The provider could not complete the request"
+        }),
+    });
+
+    assert_eq!(
+        m.error.as_deref(),
+        Some("API request failed; retry exhausted; The provider could not complete the request")
+    );
+}
+
+#[test]
+fn failed_result_preserves_nested_error_message() {
+    let mut m = EventMapper::new();
+    m.handle(ClaudeCodeEvent::Result {
+        subtype: Some("error".into()),
+        is_error: false,
+        usage: None,
+        total_cost_usd: None,
+        raw: json!({"error": {"message": "authentication failed"}}),
+    });
+
+    assert_eq!(m.error.as_deref(), Some("authentication failed"));
+}
+
+#[test]
+fn result_diagnostic_redacts_sensitive_values() {
+    let mut m = EventMapper::new();
+    m.handle(ClaudeCodeEvent::Result {
+        subtype: Some("error".into()),
+        is_error: true,
+        usage: None,
+        total_cost_usd: None,
+        raw: json!({"error": {"message": "token sk-secret-token was rejected"}}),
+    });
+
+    assert_eq!(m.error.as_deref(), Some("token [REDACTED] was rejected"));
 }

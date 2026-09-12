@@ -35,9 +35,36 @@ use std::collections::HashMap;
 use serde_json::Value;
 
 use super::stream_parser::ClaudeCodeEvent;
+use crate::openhuman::inference::provider::ops::sanitize_api_error;
 use crate::openhuman::inference::provider::types::{
     ChatResponse, ProviderDelta, ToolCall, UsageInfo,
 };
+
+fn result_diagnostic(raw: &Value) -> Option<String> {
+    let values = raw
+        .get("errors")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .chain(raw.get("result"))
+        .chain(raw.get("error"))
+        .chain(raw.get("message"));
+
+    let messages: Vec<String> = values
+        .filter_map(|value| {
+            value.as_str().map(str::to_string).or_else(|| {
+                value
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+        })
+        .map(|message| message.trim().to_string())
+        .filter(|message| !message.is_empty())
+        .collect();
+
+    (!messages.is_empty()).then(|| sanitize_api_error(&messages.join("; ")))
+}
 
 #[derive(Debug, Clone)]
 struct BlockState {
@@ -64,6 +91,11 @@ pub struct EventMapper {
     pub tool_calls: Vec<ToolCall>,
     pub usage: Option<UsageInfo>,
     pub error: Option<String>,
+    /// Whether the terminal result reported a semantic failure. Kept separate
+    /// from `error` so a turn that failed without saying why can still fall
+    /// through to stderr, rather than reporting a synthetic string that reads
+    /// like a diagnosis while carrying nothing.
+    pub terminal_error: bool,
     pub session_id: Option<String>,
     pub finished: bool,
 }
@@ -84,14 +116,18 @@ impl EventMapper {
                 Vec::new()
             }
             ClaudeCodeEvent::Error { message } => {
-                self.error = Some(message);
+                self.terminal_error = true;
+                if !message.trim().is_empty() {
+                    self.error = Some(sanitize_api_error(&message));
+                }
                 Vec::new()
             }
             ClaudeCodeEvent::Result {
                 subtype,
+                is_error,
                 usage,
                 total_cost_usd,
-                ..
+                raw,
             } => {
                 let mut parsed = usage.as_ref().map(parse_usage);
                 // CC stream emits `total_cost_usd` on the terminal `result`
@@ -103,8 +139,11 @@ impl EventMapper {
                     usage.charged_amount_usd = cost;
                 }
                 self.usage = parsed;
-                if subtype.as_deref() == Some("error") && self.error.is_none() {
-                    self.error = Some("claude reported `result.subtype=error`".into());
+                if is_error || subtype.as_deref() == Some("error") {
+                    self.terminal_error = true;
+                    if self.error.is_none() {
+                        self.error = result_diagnostic(&raw);
+                    }
                 }
                 self.finished = true;
                 Vec::new()

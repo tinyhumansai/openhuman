@@ -71,7 +71,9 @@ Each chat turn:
 4. Pipe stdin: full conversation history on a new session, just the last user turn on `--resume` (the CLI already holds its own prior-turn context server-side).
 5. Stream stdout through the JSONL parser → event mapper → `ProviderDelta`s on the request's `stream` sink.
 
-On exit non-zero the driver bubbles stderr (capped at 16 KiB) up as the error message.
+On failure, the driver prefers a non-empty diagnostic from Claude's structured
+stdout (`error`, `result`, or `errors`), then falls back to trimmed stderr
+(capped at 16 KiB). The process exit code is included in either case.
 
 ## Auth resolution order
 
