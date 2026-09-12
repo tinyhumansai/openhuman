@@ -372,6 +372,15 @@ fn handle_get_settings(_params: Map<String, Value>) -> ControllerFuture {
 fn handle_update_settings(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let enabled = params.get("enabled").and_then(Value::as_bool).ok_or_else(|| "missing required `enabled` (bool)".to_string())?;
+        if crate::core::runtime::context::CoreContext::current_embedder_config().is_some() {
+            tracing::warn!(
+                "[learning.update_settings] rejected for embedder-supplied immutable config"
+            );
+            return Err(
+                "learning settings cannot be updated when the core uses an embedder-supplied config"
+                    .to_string(),
+            );
+        }
         let mut config = config_rpc::load_config_with_timeout().await.map_err(|e| {
             tracing::warn!("[learning.update_settings] config load failed: {e}"); e
         })?;
