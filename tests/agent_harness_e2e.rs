@@ -1123,23 +1123,23 @@ async fn subagent_clarification_flow_inner() {
         serde_json::to_string_pretty(&requests).unwrap_or_default()
     );
 
-    // ── request[1] (scheduler_agent first iter) must differ from request[0] (orchestrator) ──
-    // Proves a genuinely separate scheduler_agent context ran, not the orchestrator re-called.
-    let req0_sys = requests
+    // ── request[1] must carry the delegated scheduler prompt ──
+    // The shared project context is intentionally identical across agents, so
+    // compare the request-specific user messages instead of system prefixes.
+    let req0_user = requests
         .first()
-        .and_then(|r| r.pointer("/body/messages/0/content"))
+        .and_then(|r| r.pointer("/body/messages/-1/content"))
         .and_then(Value::as_str)
         .unwrap_or("");
-    let req1_sys = requests
+    let req1_user = requests
         .get(1)
-        .and_then(|r| r.pointer("/body/messages/0/content"))
+        .and_then(|r| r.pointer("/body/messages/-1/content"))
         .and_then(Value::as_str)
         .unwrap_or("");
     assert_ne!(
-        req0_sys, req1_sys,
-        "request[0] and request[1] share identical first-message content — \
-         scheduler_agent did not build its own context; \
-         content: {req0_sys:?}"
+        req0_user, req1_user,
+        "request[0] and request[1] share identical user content, so delegation \
+         was not exercised; content: {req0_user:?}"
     );
 
     // The scheduler's clarification is present in the delegated request history.
