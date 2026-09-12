@@ -453,12 +453,10 @@ export function useRegistryInspection(
           return;
         }
 
-        const collectionState = getCollectionState(stateRef.current, tab, collection);
         const shouldRestart = Boolean(
           options.cursor &&
           !options.restarted &&
-          isInvalidCursorError(meta) &&
-          
+          isInvalidCursorError(meta)
         );
         dispatch({
           type: 'collection_request_failed',
@@ -572,14 +570,14 @@ export function useRegistryInspection(
         return;
       }
 
-      await runCollectionRequest(
-        tab,
-        collection,
-        collectionState.restartGeneration ?? current.tabs[tab].generation,
-        { append: true, cursor: collectionState.nextCursor }
-      );
+      const generation = collectionState.restartGeneration ?? current.tabs[tab].generation;
+      dispatch({ type: 'collection_request_started', tab, collection, generation });
+      await runCollectionRequest(tab, collection, generation, {
+        append: true,
+        cursor: collectionState.nextCursor,
+      });
     },
-    [runCollectionRequest]
+    [dispatch, runCollectionRequest]
   );
 
   const openDetail = useCallback(
