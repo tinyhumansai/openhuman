@@ -88,6 +88,8 @@ const PrivacyPanel = () => {
 
   useEffect(() => {
     let cancelled = false;
+    setLearningLoadState('loading');
+    setLearningEnabled(false);
     log('[privacy] fetching learning.enabled');
     learningApi
       .getSettings()

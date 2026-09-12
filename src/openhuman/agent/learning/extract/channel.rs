@@ -1,7 +1,7 @@
 //! Channel preference producer — Phase 2.
 //!
-//! Emits a single [`FacetClass::Channel`] Structural candidate for the
-//! session's primary communication channel (e.g. `desktop-chat`, `web_chat`).
+//! Emits a single [`FacetClass::Channel`] Structural candidate for a
+//! user-facing communication channel (e.g. `web_channel`, `voice_agent`).
 //! Called once at agent construction when learning is enabled so the stability
 //! detector can promote a durable `channel/primary` facet over time.
 
@@ -28,9 +28,16 @@ pub fn normalize_channel_id(raw: &str) -> Option<String> {
 
 /// Push a `channel/primary=<id>` Structural candidate into the global buffer.
 ///
-/// No-ops when `channel` is empty or the reserved `internal` id used by
-/// standalone/test builders. Returns `true` when a candidate was pushed.
+/// Only user-facing channel origins contribute evidence. Automation contexts
+/// such as cron, task, skill, and goal enrichment must not become durable
+/// channel preferences. Returns `true` when a candidate was pushed.
 pub fn emit_primary_channel(channel: &str) -> bool {
+    if !matches!(channel, "web_channel" | "voice_agent") {
+        tracing::debug!(
+            "[learning::extract::channel] skip emit: channel={channel:?} (not user-facing)"
+        );
+        return false;
+    }
     let Some(value) = normalize_channel_id(channel) else {
         tracing::debug!(
             "[learning::extract::channel] skip emit: channel={channel:?} (empty or internal)"

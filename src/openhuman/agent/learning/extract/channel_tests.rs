@@ -24,13 +24,22 @@ fn normalize_lowercases() {
 #[test]
 fn emit_primary_channel_pushes_structural_candidate() {
     let _ = candidate::global().drain();
-    assert!(emit_primary_channel("desktop-chat"));
+    assert!(emit_primary_channel("web_channel"));
     let drained = candidate::global().drain();
     assert_eq!(drained.len(), 1);
     assert_eq!(drained[0].class, FacetClass::Channel);
     assert_eq!(drained[0].key, "primary");
-    assert_eq!(drained[0].value, "desktop-chat");
+    assert_eq!(drained[0].value, "web_channel");
     assert_eq!(drained[0].cue_family, CueFamily::Structural);
+}
+
+#[test]
+fn emit_primary_channel_skips_automation_contexts() {
+    let _ = candidate::global().drain();
+    for channel in ["cron", "task", "skill", "goal_continuation", "goals_enrichment"] {
+        assert!(!emit_primary_channel(channel));
+    }
+    assert!(candidate::global().drain().is_empty());
 }
 
 #[test]

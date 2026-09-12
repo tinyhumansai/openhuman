@@ -16,7 +16,6 @@ vi.mock('../../../../services/api/learningApi', () => ({
   },
 }));
 
-const setMeetAutoOrchestratorHandoffMock = vi.fn();
 const setAnalyticsEnabledMock = vi.fn();
 vi.mock('../../../../providers/CoreStateProvider', () => ({
   useCoreState: () => ({
