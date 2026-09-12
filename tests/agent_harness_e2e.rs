@@ -1176,7 +1176,8 @@ async fn subagent_clarification_flow_inner() {
         .unwrap_or_else(|| panic!("turn-2 chat_done missing 'full_response': {second}"));
     assert!(
         second_response.contains("ANSWER_CANARY_V2"),
-        "turn-2 flow did not complete with answer canary; full_response: {second_response}\nevent: {second}"
+        "turn-2 flow did not complete with answer canary; full_response: {second_response}\nevent: {second}\nrequests: {}",
+        serde_json::to_string_pretty(&with_captured(|c| c.clone())).unwrap_or_default()
     );
 
     let requests = with_captured(|c| c.clone());
