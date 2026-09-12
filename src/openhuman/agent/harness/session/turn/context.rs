@@ -213,13 +213,20 @@ impl Agent {
             crate::openhuman::memory::preferences::STANDING_PREFS_LIMIT,
         )
         .await;
-        let facets = crate::openhuman::agent::learning::load_learned_from_global_cache(
-            &self.workspace_dir,
-            self.runtime_config
-                .as_ref()
-                .map(|config| &config.subsystems.memory),
-        )
-        .await;
+        let facets = if self.learning_enabled {
+            crate::openhuman::agent::learning::load_learned_from_global_cache(
+                &self.workspace_dir,
+                self.runtime_config
+                    .as_ref()
+                    .map(|config| &config.subsystems.memory),
+            )
+            .await
+        } else {
+            tracing::debug!(
+                "[learning] fetch_learned_context: learning disabled — skipping Active facet cache"
+            );
+            Vec::new()
+        };
         let standing =
             crate::openhuman::agent::learning::merge_standing_preferences(general, facets);
         tracing::debug!(
