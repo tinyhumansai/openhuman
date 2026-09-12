@@ -106,10 +106,6 @@ impl EventHandler<DomainEvent> for RebuildTriggerHandler {
     }
 
     async fn handle(&self, event: &DomainEvent) {
-        if !learning_enabled(&self.workspace_dir).await {
-            tracing::debug!("[learning::scheduler] learning disabled; skipping rebuild trigger");
-            return;
-        }
         let should_trigger = match event {
             DomainEvent::DocumentCanonicalized { source_kind, .. } => {
                 matches!(source_kind.as_str(), "email" | "document")
@@ -119,6 +115,11 @@ impl EventHandler<DomainEvent> for RebuildTriggerHandler {
         };
 
         if !should_trigger {
+            return;
+        }
+
+        if !learning_enabled(&self.workspace_dir).await {
+            tracing::debug!("[learning::scheduler] learning disabled; skipping rebuild trigger");
             return;
         }
 

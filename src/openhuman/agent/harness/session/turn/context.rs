@@ -204,34 +204,17 @@ impl Agent {
             .await
             .unwrap_or_default();
 
-        // Standing preferences = Lane A explicit prefs (save_preference) first,
-        // then Active facets from the ambient personalization cache. Lane A
-        // wins on normalised-text collisions; the merge is capped so the
-        // prompt block stays bounded.
+        // Standing preferences are explicit Lane A prefs only. Inferred facets
+        // remain available to the dedicated profile surfaces, but must not be
+        // silently promoted to authoritative user preferences in the prompt.
         let general = crate::openhuman::memory::preferences::load_general_preferences_on(
             &self.memory,
             crate::openhuman::memory::preferences::STANDING_PREFS_LIMIT,
         )
         .await;
-        let facets = if self.learning_enabled {
-            crate::openhuman::agent::learning::load_learned_from_global_cache(
-                &self.workspace_dir,
-                self.runtime_config
-                    .as_ref()
-                    .map(|config| &config.subsystems.memory),
-            )
-            .await
-        } else {
-            tracing::debug!(
-                "[learning] fetch_learned_context: learning disabled — skipping Active facet cache"
-            );
-            Vec::new()
-        };
-        let standing =
-            crate::openhuman::agent::learning::merge_standing_preferences(general, facets);
         tracing::debug!(
-            "[learning] fetch_learned_context: merged {} standing preference(s) (Lane A + Active facets)",
-            standing.len()
+            "[learning] fetch_learned_context: loaded {} explicit standing preference(s)",
+            general.len()
         );
 
         // Explicit user reflections — privileged memory class. Pulled
@@ -280,7 +263,7 @@ impl Agent {
                 .take(3)
                 .map(|e| sanitize_learned_entry(&e.content))
                 .collect(),
-            user_profile: standing,
+            user_profile: general,
             // Cap reflections at 10 to keep the privileged section
             // bounded — the issue requires reflections improve context
             // rather than flood it. Newest first.

@@ -165,8 +165,7 @@ describe('PrivacyPanel', () => {
     vi.mocked(listCapabilities).mockResolvedValue([]);
     getSettingsMock.mockRejectedValueOnce(new Error('settings unavailable'));
     renderWithProviders(<PrivacyPanel />);
-    const toggle = await screen.findByTestId('privacy-learning-toggle');
-    expect(toggle).toBeDisabled();
+    expect(await screen.findByTestId('privacy-learning-error')).toBeInTheDocument();
   });
 
   it('keeps the learning toggle unchanged when saving fails', async () => {

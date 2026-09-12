@@ -110,6 +110,7 @@ const ALLOWED_EVENT_NAMES = [
   'learning_facet_pinned',
   'learning_facet_unpinned',
   'learning_facet_forgotten',
+  'learning_toggle_updated',
   'skill_install',
   'skill_uninstall',
   'tab_bar_change',

@@ -19,6 +19,7 @@ import {
 } from '../controls';
 import SettingsPanel from '../layout/SettingsPanel';
 import PrivacyModeSection from './PrivacyModeSection';
+import { trackAnalyticsEvent } from '../../analytics';
 
 const log = debug('privacy-panel');
 
@@ -120,6 +121,7 @@ const PrivacyPanel = () => {
     setLearningSaving(true);
     try {
       const settings = await learningApi.updateSettings(next);
+      trackAnalyticsEvent('learning_toggle_updated');
       setLearningEnabled(settings.enabled);
       log('[privacy] learning.enabled persisted', settings.enabled);
     } catch (error) {

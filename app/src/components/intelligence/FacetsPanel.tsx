@@ -138,6 +138,7 @@ export default function FacetsPanel() {
     const next = !learningEnabled;
     try {
       const settings = await learningApi.updateSettings(next);
+      trackAnalyticsEvent('learning_toggle_updated');
       if (mountedRef.current) {
         setLearningEnabled(settings.enabled);
         setError(null);
