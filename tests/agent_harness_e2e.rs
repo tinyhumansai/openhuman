@@ -1197,7 +1197,10 @@ async fn subagent_clarification_flow_inner() {
     .await;
     let second =
         wait_for_terminal_request(&mut events, &second_request_id, Duration::from_secs(120)).await;
-    eprintln!("CLARIFY DEBUG REQUESTS: {}", serde_json::to_string_pretty(&with_captured(|c| c.clone())).unwrap_or_default());
+    for (i, req) in with_captured(|c| c.clone()).iter().enumerate() {
+        let messages = req.pointer("/body/messages").and_then(Value::as_array);
+        eprintln!("CLARIFY DEBUG {i}: messages={} last={:?}", messages.map_or(0, Vec::len), messages.and_then(|m| m.last()).and_then(|v| v.get("content")));
+    }
     assert_eq!(
         second.get("event").and_then(Value::as_str),
         Some("chat_done"),
