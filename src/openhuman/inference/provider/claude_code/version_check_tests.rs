@@ -50,9 +50,14 @@ fn well_known_candidates_without_a_home_still_probe_system_prefixes() {
     {
         let native = PathBuf::from("/opt/homebrew/bin/claude.cmd");
         let shim = PathBuf::from("/opt/homebrew/bin/claude");
-        assert!(
-            candidates.iter().position(|p| p == &native)
-                < candidates.iter().position(|p| p == &shim)
-        );
+        let native_index = candidates
+            .iter()
+            .position(|p| p == &native)
+            .expect("native .cmd candidate");
+        let shim_index = candidates
+            .iter()
+            .position(|p| p == &shim)
+            .expect("unsuffixed shim candidate");
+        assert!(native_index < shim_index);
     }
 }
