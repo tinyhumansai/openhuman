@@ -13,7 +13,7 @@
  *      the saved profile.
  */
 import debug from 'debug';
-import { type FC, useEffect } from 'react';
+import { type FC, useEffect, useState } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 
 import MobileTabBar from './components/ios/MobileTabBar';
@@ -21,9 +21,9 @@ import HumanPage from './features/human/HumanPage';
 import Accounts from './pages/Accounts';
 import { PairScreen } from './pages/ios/PairScreen';
 import Settings from './pages/Settings';
-import { listProfiles } from './services/transport/profileStore';
-import { createTransportManager } from './services/transport/TransportManager';
 import { setActiveCoreTransport } from './services/coreRpcClient';
+import { createTransportManager } from './services/transport/TransportManager';
+import { listProfiles } from './services/transport/profileStore';
 import { BACKEND_URL } from './utils/config';
 
 const log = debug('mobile:routes');
@@ -55,9 +55,11 @@ const RequirePairing: FC<{ children: React.ReactNode }> = ({ children }) => {
 
 /** Bind a persisted mobile profile before paired screens issue core RPCs. */
 const MobileTransportBootstrap: FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [profile] = useState(() => listProfiles()[0] ?? null);
+  const [ready, setReady] = useState(() => !profile?.kind);
+
   useEffect(() => {
-    const profile = listProfiles()[0];
-    if (!profile) {
+    if (!profile?.kind) {
       setActiveCoreTransport(null);
       return;
     }
@@ -69,10 +71,12 @@ const MobileTransportBootstrap: FC<{ children: React.ReactNode }> = ({ children 
       .then(transport => {
         if (!disposed) {
           setActiveCoreTransport(transport);
+          setReady(true);
           log('[mobile] bound persisted transport kind=%s', transport.kind);
         }
       })
       .catch(error => {
+        if (!disposed) setReady(true);
         log('[mobile] persisted transport binding failed: %o', error);
       });
 
@@ -81,9 +85,9 @@ const MobileTransportBootstrap: FC<{ children: React.ReactNode }> = ({ children 
       void manager.close();
       setActiveCoreTransport(null);
     };
-  }, []);
+  }, [profile]);
 
-  return <>{children}</>;
+  return ready ? <>{children}</> : null;
 };
 
 const AppRoutesIOS: FC = () => {
