@@ -458,7 +458,7 @@ export function useRegistryInspection(
           options.cursor &&
           !options.restarted &&
           isInvalidCursorError(meta) &&
-          collectionState?.restartGeneration !== generation
+          
         );
         dispatch({
           type: 'collection_request_failed',
@@ -568,6 +568,10 @@ export function useRegistryInspection(
         return;
       }
 
+      if (collectionState.observation.kind === 'loading') {
+        return;
+      }
+
       await runCollectionRequest(
         tab,
         collection,
@@ -631,7 +635,38 @@ export function useRegistryInspection(
       }
     }
 
-    void ensureTabLoaded(initialUrlState.tab);
+    void ensureTabLoaded(initialUrlState.tab).then(async () => {
+      if (
+        !initialUrlState.detail ||
+        stateRef.current.surfaceError ||
+        !browserSelectsDetail(initialUrlState.tab, initialUrlState.detail)
+      ) {
+        return;
+      }
+
+      const cached = isPageSessionDetailCacheable(initialUrlState.detail)
+        ? detailCacheRef.current.get(cacheKey(initialUrlState.detail))
+        : undefined;
+      const generation = stateRef.current.tabs[initialUrlState.tab].generation;
+      if (cached) {
+        dispatch({
+          type: 'detail_request_started',
+          tab: initialUrlState.tab,
+          generation,
+          detail: initialUrlState.detail,
+        });
+        dispatch({
+          type: 'detail_request_succeeded',
+          tab: initialUrlState.tab,
+          generation,
+          detail: initialUrlState.detail,
+          record: cached as never,
+        });
+        return;
+      }
+
+      await runDetailRequest(initialUrlState.tab, initialUrlState.detail, generation);
+    });
 
     const onPopState = () => {
       const nextSearch = window.location.hash.includes('?')
