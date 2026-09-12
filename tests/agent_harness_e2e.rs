@@ -719,6 +719,32 @@ async fn send_web_chat(rpc_base: &str, id: i64, client_id: &str, thread_id: &str
     );
 }
 
+async fn wait_for_web_chat_idle(rpc_base: &str, thread_id: &str) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let status = post_json_rpc(
+            rpc_base,
+            999,
+            "openhuman.channel_web_queue_status",
+            json!({ "thread_id": thread_id }),
+        )
+        .await;
+        let result = assert_no_jsonrpc_error(&status, "web_queue_status");
+        if result
+            .get("result")
+            .and_then(|value| value.get("active"))
+            == Some(&json!(false))
+        {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "web chat remained active while waiting for turn completion: {result}"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 /// Smoke: a single scripted text response flows through the full RPC stack.
@@ -1123,6 +1149,11 @@ async fn subagent_clarification_flow_inner() {
         first_response.contains("WHICH_VERSION_CANARY"),
         "clarification question not surfaced to user; full_response: {first_response}\nevent: {first}"
     );
+
+    // The terminal event is published just before the task removes its
+    // in-flight entry. Wait for that cleanup before submitting the answer so
+    // it starts a new turn instead of being treated as a same-turn follow-up.
+    wait_for_web_chat_idle(&stack.rpc_base, "thread-clarify").await;
 
     // ── turn 2: resume with answer → final response must reach the user ──
     send_web_chat(
