@@ -469,15 +469,13 @@ impl Tool for LearningRebuildCacheTool {
             .map_err(|e| anyhow::anyhow!("learning_rebuild_cache: config load failed: {e}"))?;
         if !config.learning.enabled {
             log::info!("[tool][learning] rebuild_cache skipped because learning.enabled=false");
-            return Ok(ToolResult::success(
-                serde_json::to_string(&json!({
-                    "added": 0,
-                    "evicted": 0,
-                    "kept": 0,
-                    "total_size": 0,
-                    "skipped": true,
-                }))?,
-            ));
+            return Ok(ToolResult::success(serde_json::to_string(&json!({
+                "added": 0,
+                "evicted": 0,
+                "kept": 0,
+                "total_size": 0,
+                "skipped": true,
+            }))?));
         }
         let cache = get_cache().await?;
         let detector = StabilityDetector::new(cache);
