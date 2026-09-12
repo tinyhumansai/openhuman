@@ -53,6 +53,7 @@ pub fn resolve_binary() -> Option<PathBuf> {
 fn well_known_install() -> Option<PathBuf> {
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let mut outdated = None;
+    let mut unusable = None;
     for candidate in well_known_candidates(home.as_deref()) {
         if candidate.is_file() {
             match version_probe_version(&candidate) {
@@ -66,7 +67,9 @@ fn well_known_install() -> Option<PathBuf> {
                 Some(_) => {
                     outdated.get_or_insert(candidate);
                 }
-                None => {}
+                None => {
+                    unusable.get_or_insert(candidate);
+                }
             }
         }
     }
@@ -80,10 +83,12 @@ fn well_known_install() -> Option<PathBuf> {
             Some(_) => {
                 outdated.get_or_insert(candidate);
             }
-            None => {}
+            None => {
+                unusable.get_or_insert(candidate);
+            }
         }
     }
-    outdated
+    outdated.or(unusable)
 }
 
 /// Check that a fallback is an executable Claude CLI, rather than merely a
