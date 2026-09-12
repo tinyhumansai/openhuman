@@ -1195,6 +1195,7 @@ async fn subagent_clarification_flow_inner() {
         "version 2",
     )
     .await;
+    eprintln!("clarification second request id: {second_request_id}, first: {}", first["request_id"]);
     let second =
         wait_for_terminal_request(&mut events, &second_request_id, Duration::from_secs(120)).await;
     assert_eq!(
