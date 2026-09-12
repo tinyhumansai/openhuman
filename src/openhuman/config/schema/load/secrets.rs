@@ -122,8 +122,6 @@ pub(super) fn decrypt_config_secrets(config: &mut Config, openhuman_dir: &Path) 
         &store,
         &mut config.youpet.service_token,
         "youpet.service_token",
-        &mut config.search.tavily.api_key,
-        "search.tavily.api_key",
     )?;
 
     let ch = &mut config.channels_config;
@@ -233,8 +231,6 @@ pub(super) fn encrypt_config_secrets(config: &mut Config) -> Result<()> {
         &store,
         &mut config.youpet.service_token,
         "youpet.service_token",
-        &mut config.search.tavily.api_key,
-        "search.tavily.api_key",
     )?;
 
     let ch = &mut config.channels_config;
