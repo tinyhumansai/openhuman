@@ -14,7 +14,7 @@
  */
 import debug from 'debug';
 import { type FC, useEffect, useState } from 'react';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 
 import MobileTabBar from './components/ios/MobileTabBar';
 import HumanPage from './features/human/HumanPage';
@@ -25,6 +25,7 @@ import { setActiveCoreTransport } from './services/coreRpcClient';
 import { listProfiles } from './services/transport/profileStore';
 import { createTransportManager } from './services/transport/TransportManager';
 import { BACKEND_URL } from './utils/config';
+import { useT } from './lib/i18n/I18nContext';
 
 const log = debug('mobile:routes');
 
@@ -53,10 +54,29 @@ const RequirePairing: FC<{ children: React.ReactNode }> = ({ children }) => {
   return <MobileShell>{children}</MobileShell>;
 };
 
+const TransportBootstrapError: FC = () => {
+  const { t } = useT();
+  const navigate = useNavigate();
+
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-[#0f1117] px-6 text-center text-content-inverted">
+      <p className="max-w-sm text-sm text-red-400">{t('iosPair.error.connectionFailed')}</p>
+      <button
+        type="button"
+        onClick={() => navigate('/pair', { replace: true })}
+        className="rounded-xl bg-[#4A83DD] px-6 py-3 text-sm text-content-inverted active:opacity-80">
+        {t('iosPair.scanQrCode')}
+      </button>
+    </div>
+  );
+};
+
 /** Bind a persisted mobile profile before paired screens issue core RPCs. */
 const MobileTransportBootstrap: FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [profile] = useState(() => listProfiles()[0] ?? null);
+  const location = useLocation();
+  const [profile] = useState(() => listProfiles().at(-1) ?? null);
   const [ready, setReady] = useState(() => !profile?.kind);
+  const [bindingFailed, setBindingFailed] = useState(false);
 
   useEffect(() => {
     if (!profile?.kind) {
@@ -71,12 +91,17 @@ const MobileTransportBootstrap: FC<{ children: React.ReactNode }> = ({ children 
       .then(transport => {
         if (!disposed) {
           setActiveCoreTransport(transport);
+          setBindingFailed(false);
           setReady(true);
           log('[mobile] bound persisted transport kind=%s', transport.kind);
         }
       })
       .catch(error => {
-        if (!disposed) setReady(true);
+        if (!disposed) {
+          setActiveCoreTransport(null);
+          setBindingFailed(true);
+          setReady(false);
+        }
         log('[mobile] persisted transport binding failed: %o', error);
       });
 
@@ -87,6 +112,8 @@ const MobileTransportBootstrap: FC<{ children: React.ReactNode }> = ({ children 
     };
   }, [profile]);
 
+  if (location.pathname === '/pair') return <>{children}</>;
+  if (bindingFailed) return <TransportBootstrapError />;
   return ready ? <>{children}</> : null;
 };
 

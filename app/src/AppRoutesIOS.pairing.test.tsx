@@ -20,7 +20,8 @@
  * fields, transport unhealthy, camera errors, retry) is already covered by
  * `pages/ios/PairScreen.test.tsx`. Not repeated here.
  */
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useParams } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -52,6 +53,17 @@ vi.mock('./components/ios/MobileTabBar', () => ({
 const listProfiles = vi.fn();
 vi.mock('./services/transport/profileStore', () => ({ listProfiles: () => listProfiles() }));
 
+const mockSetActiveCoreTransport = vi.fn();
+vi.mock('./services/coreRpcClient', () => ({
+  setActiveCoreTransport: (transport: unknown) => mockSetActiveCoreTransport(transport),
+}));
+
+const mockGetTransport = vi.fn();
+const mockClose = vi.fn(() => Promise.resolve());
+vi.mock('./services/transport/TransportManager', () => ({
+  createTransportManager: vi.fn(() => ({ getTransport: mockGetTransport, close: mockClose })),
+}));
+
 const AppRoutesIOS = (await import('./AppRoutesIOS')).default;
 
 const renderAt = (path: string) =>
@@ -63,6 +75,15 @@ const renderAt = (path: string) =>
 
 /** A saved profile is all `isPaired()` looks at — not whether the core answers. */
 const SAVED_PROFILE = [{ id: 'profile-1', label: 'Desk' }];
+const TUNNEL_PROFILE = {
+  id: 'profile-1',
+  label: 'Desk',
+  kind: 'tunnel',
+  channelId: 'channel-1',
+  pairingToken: 'pairing-token',
+  corePubkey: 'core-key',
+  devicePrivkey: 'device-key',
+} as const;
 
 describe('AppRoutesIOS — re-pairing escape hatch', () => {
   beforeEach(() => listProfiles.mockReset());
@@ -99,6 +120,40 @@ describe('AppRoutesIOS — re-pairing escape hatch', () => {
       expect(screen.queryByTestId('mobile-tab-bar')).not.toBeInTheDocument();
       unmount();
     }
+  });
+});
+
+describe('AppRoutesIOS — persisted transport bootstrap', () => {
+  beforeEach(() => {
+    listProfiles.mockReset();
+    mockGetTransport.mockReset();
+    mockClose.mockClear();
+    mockSetActiveCoreTransport.mockReset();
+  });
+
+  it('binds the newest saved profile before rendering paired routes', async () => {
+    const newestProfile = { ...TUNNEL_PROFILE, id: 'newest' };
+    listProfiles.mockReturnValue([{ ...TUNNEL_PROFILE, id: 'oldest' }, newestProfile]);
+    const transport = { kind: 'tunnel', isHealthy: vi.fn() };
+    mockGetTransport.mockResolvedValue(transport);
+
+    renderAt('/human');
+
+    await waitFor(() => expect(screen.getByTestId('page-human')).toBeInTheDocument());
+    expect(mockGetTransport).toHaveBeenCalledOnce();
+    expect(mockSetActiveCoreTransport).toHaveBeenCalledOnceWith(transport);
+  });
+
+  it('keeps a failed bootstrap recoverable through the pairing route', async () => {
+    listProfiles.mockReturnValue([TUNNEL_PROFILE]);
+    mockGetTransport.mockRejectedValue(new Error('desktop unavailable'));
+
+    renderAt('/human');
+
+    await waitFor(() => expect(screen.getByText(/connection failed/i)).toBeInTheDocument());
+    expect(screen.queryByTestId('page-human')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /scan qr code/i }));
+    expect(screen.getByTestId('page-pair')).toBeInTheDocument();
   });
 });
 

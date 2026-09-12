@@ -50,6 +50,10 @@ vi.mock('../../services/transport/profileStore', () => ({
 
 const mockGetTransport = vi.fn();
 const mockIsHealthy = vi.fn();
+const mockSetActiveCoreTransport = vi.fn();
+vi.mock('../../services/coreRpcClient', () => ({
+  setActiveCoreTransport: (transport: unknown) => mockSetActiveCoreTransport(transport),
+}));
 vi.mock('../../services/transport/TransportManager', () => ({
   createTransportManager: vi.fn(() => ({
     getTransport: mockGetTransport,
@@ -91,6 +95,7 @@ beforeEach(() => {
   mockSaveProfile.mockReset();
   mockGetTransport.mockReset();
   mockIsHealthy.mockReset();
+  mockSetActiveCoreTransport.mockReset();
 });
 
 afterEach(() => {
@@ -135,6 +140,9 @@ describe('PairScreen', () => {
     await waitFor(() => {
       expect(mockNavigate).toHaveBeenCalledWith('/human', { replace: true });
     });
+    expect(mockSetActiveCoreTransport).toHaveBeenCalledOnceWith(
+      expect.objectContaining({ kind: 'tunnel' })
+    );
   });
 
   it('expired QR -> shows expired message, no navigation', async () => {
