@@ -2,12 +2,30 @@
 //! `load_learned_from_cache` top-K ranking cap and pinned-facet rendering,
 //! not covered by the inline tests in `prompt_sections.rs`.
 
-use super::load_learned_from_cache;
+use super::{load_learned_from_cache, merge_standing_preferences};
 use crate::openhuman::agent::learning::cache::FacetCache;
 use tinymemory_api::provider::{FacetState, FacetType, ProfileFacet, UserState};
 
 fn open_cache() -> FacetCache {
     crate::openhuman::agent::learning::test_profile::in_memory_cache()
+}
+
+/// Explicit preferences are retained first, Active facets are deduplicated by
+/// normalized value, and the merged prompt input is capped at 25 entries.
+#[test]
+fn merge_standing_preferences_deduplicates_and_caps() {
+    let explicit = vec!["  Dark mode  ".into(), "Keep answers brief".into()];
+    let facets = (0..30)
+        .map(|i| format!("**style/{i}**: value-{i}"))
+        .chain(["**style/duplicate**: DARK MODE".into()])
+        .collect();
+
+    let merged = merge_standing_preferences(explicit, facets);
+
+    assert_eq!(merged.len(), 25);
+    assert_eq!(merged[0], "  Dark mode  ");
+    assert_eq!(merged[1], "Keep answers brief");
+    assert!(!merged.iter().any(|entry| entry.contains("duplicate")));
 }
 
 fn make_active(id: &str, key: &str, value: &str, stability: f64) -> ProfileFacet {

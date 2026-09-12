@@ -348,7 +348,9 @@ export default function Brain() {
                         onModeChange={setMode}
                         onRefresh={refresh}
                         onToast={addToast}
-                        contentRootAbs={graph?.data.content_root_abs}
+                        contentRootAbs={
+                          graph?.ownerId === authUserId ? graph.data.content_root_abs : undefined
+                        }
                       />
 
                       {/*

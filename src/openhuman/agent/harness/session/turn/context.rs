@@ -205,9 +205,8 @@ impl Agent {
             .await
             .unwrap_or_default();
 
-        // Standing preferences are explicit Lane A prefs only. Inferred facets
-        // remain available to the dedicated profile surfaces, but must not be
-        // silently promoted to authoritative user preferences in the prompt.
+        // Merge Lane A explicit preferences first, then Active facets from the
+        // ambient cache. Explicit preferences win value collisions.
         let general = crate::openhuman::memory::preferences::load_general_preferences_on(
             &self.memory,
             crate::openhuman::memory::preferences::STANDING_PREFS_LIMIT,
@@ -354,7 +353,7 @@ impl Agent {
         // Route through the global context manager so every
         // prompt-building call-site — main agent, sub-agent runner,
         // channel runtimes — shares one builder configuration.
-        let mut prompt = self.context.build_system_prompt(&ctx)?;
+        let prompt = self.context.build_system_prompt(&ctx)?;
         let boundary = render_tool_policy_boundary(&self.tool_policy_session, 2048);
         Ok(append_tool_policy_boundary(prompt, boundary))
     }

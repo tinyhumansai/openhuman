@@ -199,6 +199,8 @@ describe('<FacetsPanel />', () => {
   it('reports a rebuild refresh failure', async () => {
     renderWithProviders(<FacetsPanel />);
     await screen.findByTestId('facets-panel');
+    fireEvent.click(screen.getByTestId('learning-enabled-toggle'));
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledWith(true));
     listFacets.mockRejectedValueOnce(new Error('rebuild refresh failed'));
     fireEvent.click(screen.getByTestId('facets-rebuild'));
     await waitFor(() =>
