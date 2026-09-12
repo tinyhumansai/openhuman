@@ -242,9 +242,7 @@ compile_raw_coverage_target() {
 run_full() {
   log "running FULL instrumented suite (reason: $1)"
   llvm_cov clean --workspace
-  # The full lib suite contains tests that share process-global registries and
-  # configuration. Keep libtest serial so one fixture cannot leak into another.
-  llvm_cov --no-report --no-fail-fast -p openhuman --lib -- --test-threads=1
+  llvm_cov --no-report --no-fail-fast -p openhuman --lib
   llvm_cov --no-report --no-fail-fast -p openhuman --bins
   while IFS= read -r target; do
     [ -n "${target}" ] || continue
@@ -408,15 +406,8 @@ llvm_cov clean --workspace
 
 if [ "${#lib_filters[@]}" -gt 0 ]; then
   log "running scoped lib unit tests with filters: ${lib_filters[*]}"
-  # Run each domain in its own process. The scoped domains can include tests
-  # that share process-global registries and configuration; combining filters
-  # lets one domain's fixture setup leak into another even with one test
-  # thread. Separate processes preserve the isolation expected by those tests
-  # while the coverage reports are still merged below.
-  for filter in "${lib_filters[@]}"; do
-    log "running scoped lib filter: ${filter}"
-    run_counted llvm_cov --no-report --no-fail-fast -p openhuman --lib -- "${filter}" --test-threads=1 || exit
-  done
+  # libtest ORs multiple positional filters — one run covers all domains.
+  run_counted llvm_cov --no-report --no-fail-fast -p openhuman --lib -- "${lib_filters[@]}"
 fi
 
 if [ "${#test_targets[@]}" -gt 0 ]; then
