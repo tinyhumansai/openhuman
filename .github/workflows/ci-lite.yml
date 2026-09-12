@@ -737,17 +737,19 @@ jobs:
           module_root="/opt/openhuman-test-modules/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           memory_dir="$module_root/tinymemory"
           juice_dir="$module_root/tinyjuice"
-          memory_archive="$memory_dir/tinymemory-module-1.3.0-ubuntu-22.04-x86_64.tar.gz"
+          memory_version="1.16.0"
+          memory_sha256="f3ba06867ec89b8374a405f8a8569f5cecf88490609354ae4a6c1faa6e55b425"
+          memory_archive="$memory_dir/tinymemory-module-${memory_version}-ubuntu-22.04-x86_64.tar.gz"
           juice_archive="$juice_dir/tinyjuice-module-0.2.2-ubuntu-22.04-x86_64.tar.gz"
           rm -rf "$memory_dir" "$juice_dir"
           mkdir -p "$memory_dir" "$juice_dir"
           curl --fail --location --silent --show-error \
-            "https://github.com/tinyhumansai/tinymemory/releases/download/v1.3.0/$(basename "$memory_archive")" \
+            "https://github.com/tinyhumansai/tinymemory/releases/download/v${memory_version}/$(basename "$memory_archive")" \
             --output "$memory_archive"
           curl --fail --location --silent --show-error \
             "https://github.com/tinyhumansai/tinyjuice/releases/download/v0.2.2/$(basename "$juice_archive")" \
             --output "$juice_archive"
-          echo "3e30368c10d24153128f5a51130ac0b322b5c0e1fe5e8257a98d6e06d4eb8cff  $memory_archive" \
+          echo "${memory_sha256}  $memory_archive" \
             | sha256sum --check
           echo "fd8caf7fccb53328870fd26922aa9768d253cd4b3bf758967847d6512df03863  $juice_archive" \
             | sha256sum --check

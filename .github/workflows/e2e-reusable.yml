@@ -164,13 +164,15 @@ jobs:
           # live outside the runner-owned checkout in this root-run container.
           module_root="/opt/openhuman-test-modules/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           memory_dir="$module_root/tinymemory"
-          memory_archive="$memory_dir/tinymemory-module-1.3.0-ubuntu-22.04-x86_64.tar.gz"
+          memory_version="1.16.0"
+          memory_sha256="f3ba06867ec89b8374a405f8a8569f5cecf88490609354ae4a6c1faa6e55b425"
+          memory_archive="$memory_dir/tinymemory-module-${memory_version}-ubuntu-22.04-x86_64.tar.gz"
           rm -rf "$memory_dir"
           mkdir -p "$memory_dir"
           curl --fail --location --silent --show-error \
-            "https://github.com/tinyhumansai/tinymemory/releases/download/v1.3.0/$(basename "$memory_archive")" \
+            "https://github.com/tinyhumansai/tinymemory/releases/download/v${memory_version}/$(basename "$memory_archive")" \
             --output "$memory_archive"
-          echo "3e30368c10d24153128f5a51130ac0b322b5c0e1fe5e8257a98d6e06d4eb8cff  $memory_archive" \
+          echo "${memory_sha256}  $memory_archive" \
             | sha256sum --check
           tar --no-same-owner -xzf "$memory_archive" -C "$memory_dir"
           echo "TINYMEMORY_TEST_MODULE=$memory_dir/libtinymemory_module.so" \
@@ -362,13 +364,15 @@ jobs:
           # metadata API while the test is running.
           module_root="/opt/openhuman-test-modules/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           memory_dir="$module_root/tinymemory"
-          memory_archive="$memory_dir/tinymemory-module-1.3.0-ubuntu-22.04-x86_64.tar.gz"
+          memory_version="1.16.0"
+          memory_sha256="f3ba06867ec89b8374a405f8a8569f5cecf88490609354ae4a6c1faa6e55b425"
+          memory_archive="$memory_dir/tinymemory-module-${memory_version}-ubuntu-22.04-x86_64.tar.gz"
           rm -rf "$memory_dir"
           mkdir -p "$memory_dir"
           curl --fail --location --silent --show-error \
-            "https://github.com/tinyhumansai/tinymemory/releases/download/v1.3.0/$(basename "$memory_archive")" \
+            "https://github.com/tinyhumansai/tinymemory/releases/download/v${memory_version}/$(basename "$memory_archive")" \
             --output "$memory_archive"
-          echo "3e30368c10d24153128f5a51130ac0b322b5c0e1fe5e8257a98d6e06d4eb8cff  $memory_archive" \
+          echo "${memory_sha256}  $memory_archive" \
             | sha256sum --check
           tar --no-same-owner -xzf "$memory_archive" -C "$memory_dir"
           echo "TINYMEMORY_TEST_MODULE=$memory_dir/libtinymemory_module.so" \
