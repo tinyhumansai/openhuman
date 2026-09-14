@@ -34,6 +34,8 @@ Applies to every release, all platforms.
 
 ### macOS
 
+- [ ] **Screenshot paste in normal chat (4.2.8)** — Copy a screenshot to the clipboard, focus the chat message input, and press Cmd+V. Expected: one image preview appears, the draft text is preserved, and no message is sent. Repeat via Edit → Paste, then paste plain text and confirm normal insertion.
+
 - [ ] **Gatekeeper accepts the signed `.app` on first launch** — Double-click the `.app` from a fresh download (Quarantine attribute set). Expected: app opens without `"OpenHuman" cannot be opened because the developer cannot be verified` dialog. If it appears, the build is unsigned or the notarization stapler is missing.
 - [ ] **`codesign --verify --deep --strict <path-to-OpenHuman.app>` exits 0** — Run from terminal. Expected: no output, exit 0. Any `code object is not signed at all` or `invalid signature` output blocks the release.
 - [ ] **DMG drag-to-Applications flow works** — Mount the `.dmg`, drag `OpenHuman.app` to the `Applications` alias. Expected: copy completes; eject succeeds; first launch from `/Applications` does not re-prompt Gatekeeper.

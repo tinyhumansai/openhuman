@@ -302,11 +302,17 @@ function ChatComposerBody({
   // it would route files to a runtime attachment adapter this app does not use.
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     if (attachDisabled) return;
-    const items = Array.from(e.clipboardData?.items ?? []);
-    const files = items
-      .filter(item => item.kind === 'file' && /^(image|video)\//.test(item.type))
-      .map(item => item.getAsFile())
-      .filter((file): file is File => file !== null);
+    // Prefer FileList: a webview can expose a clipboard image there without
+    // a usable DataTransferItem. Use items only as a fallback, so the same
+    // screenshot represented in both lists is attached once.
+    const isMedia = (file: File) => /^(image|video)\//.test(file.type);
+    let files = Array.from(e.clipboardData?.files ?? []).filter(isMedia);
+    if (files.length === 0) {
+      files = Array.from(e.clipboardData?.items ?? [])
+        .filter(item => item.kind === 'file')
+        .map(item => item.getAsFile())
+        .filter((file): file is File => file !== null && isMedia(file));
+    }
     if (files.length === 0) return;
     e.preventDefault();
     debug('[chat-composer] paste: ingesting %d media file(s)', files.length);

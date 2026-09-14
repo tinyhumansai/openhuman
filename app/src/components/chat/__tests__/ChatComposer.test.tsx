@@ -417,6 +417,69 @@ describe('ChatComposer', () => {
       expect(onAttachFiles).toHaveBeenCalledWith([file]);
     });
 
+    it('attaches a screenshot exposed only through clipboard files', () => {
+      const onAttachFiles = vi.fn().mockResolvedValue(undefined);
+      renderComposer({ onAttachFiles });
+      const file = new File([new Uint8Array(4)], 'screenshot.png', { type: 'image/png' });
+      const notPrevented = fireEvent.paste(screen.getByRole('textbox'), {
+        clipboardData: { files: [file], items: [] },
+      });
+      expect(onAttachFiles).toHaveBeenCalledWith([file]);
+      expect(notPrevented).toBe(false);
+    });
+
+    it('uses the image file type when its clipboard item type is empty', () => {
+      const onAttachFiles = vi.fn().mockResolvedValue(undefined);
+      renderComposer({ onAttachFiles });
+      const file = new File([new Uint8Array(4)], 'screenshot.png', { type: 'image/png' });
+      fireEvent.paste(screen.getByRole('textbox'), {
+        clipboardData: { items: [{ kind: 'file', type: '', getAsFile: () => file }] },
+      });
+      expect(onAttachFiles).toHaveBeenCalledWith([file]);
+    });
+
+    it('attaches an image once when both clipboard lists expose it', () => {
+      const onAttachFiles = vi.fn().mockResolvedValue(undefined);
+      renderComposer({ onAttachFiles });
+      const file = new File([new Uint8Array(4)], 'screenshot.png', { type: 'image/png' });
+      fireEvent.paste(screen.getByRole('textbox'), {
+        clipboardData: {
+          files: [file],
+          items: [{ kind: 'file', type: 'image/png', getAsFile: () => file }],
+        },
+      });
+      expect(onAttachFiles).toHaveBeenCalledTimes(1);
+      expect(onAttachFiles).toHaveBeenCalledWith([file]);
+    });
+
+    it('does not attach clipboard files when attachments are disabled', () => {
+      const onAttachFiles = vi.fn().mockResolvedValue(undefined);
+      renderComposer({ onAttachFiles, attachmentsEnabled: false });
+      fireEvent.paste(screen.getByRole('textbox'), {
+        clipboardData: {
+          files: [new File([new Uint8Array(4)], 'screenshot.png', { type: 'image/png' })],
+        },
+      });
+      expect(onAttachFiles).not.toHaveBeenCalled();
+    });
+
+    it('ignores unreadable clipboard items and non-media files', () => {
+      const onAttachFiles = vi.fn().mockResolvedValue(undefined);
+      renderComposer({ onAttachFiles });
+      const file = new File(['text'], 'note.txt', { type: 'text/plain' });
+      const notPrevented = fireEvent.paste(screen.getByRole('textbox'), {
+        clipboardData: {
+          files: [file],
+          items: [
+            { kind: 'file', type: 'image/png', getAsFile: () => null },
+            { kind: 'file', type: 'text/plain', getAsFile: () => file },
+          ],
+        },
+      });
+      expect(onAttachFiles).not.toHaveBeenCalled();
+      expect(notPrevented).toBe(true);
+    });
+
     it('ignores plain-text paste (no media items)', () => {
       const onAttachFiles = vi.fn().mockResolvedValue(undefined);
       renderComposer({ onAttachFiles });
