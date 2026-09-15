@@ -80,8 +80,7 @@ impl TurnStateStore {
         tmp.as_file()
             .sync_all()
             .map_err(|e| format!("fsync turn-state tempfile: {e}"))?;
-        tmp.persist(&path)
-            .map_err(|e| format!("persist turn-state file {}: {e}", path.display()))?;
+        persist_temp_file(tmp, &path)?;
         // Sync the directory entry created by the rename — without this a crash
         // or power loss between persist() and the next fs flush can drop the
         // snapshot, defeating the cold-boot recovery guarantee. Best-effort on
@@ -454,8 +453,7 @@ impl TurnStateStore {
         tmp.as_file()
             .sync_all()
             .map_err(|e| format!("fsync turn-state tempfile: {e}"))?;
-        tmp.persist(&path)
-            .map_err(|e| format!("persist turn-state file {}: {e}", path.display()))?;
+        persist_temp_file(tmp, &path)?;
         if let Err(err) = sync_dir(&dir) {
             log::warn!("{LOG_PREFIX} failed to fsync {}: {err}", dir.display());
         }
@@ -494,6 +492,22 @@ impl TurnStateStore {
             }
         }
     }
+}
+
+#[cfg(windows)]
+fn persist_temp_file(tmp: NamedTempFile, path: &Path) -> Result<(), String> {
+    let (_file, temp_path) = tmp
+        .keep()
+        .map_err(|e| format!("persist turn-state file {}: {e}", path.display()))?;
+    fs::rename(&temp_path, path)
+        .map_err(|e| format!("persist turn-state file {}: {e}", path.display()))
+}
+
+#[cfg(not(windows))]
+fn persist_temp_file(tmp: NamedTempFile, path: &Path) -> Result<(), String> {
+    tmp.persist(path)
+        .map(|_| ())
+        .map_err(|e| format!("persist turn-state file {}: {e}", path.display()))
 }
 
 /// Pick the latest turn (greatest `started_at`, ties broken by `updated_at`).
