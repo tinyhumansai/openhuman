@@ -29,6 +29,19 @@ fi
 
 echo "Building web E2E bundle with backend ${VITE_BACKEND_URL}"
 pnpm run build:web
+# Mark dist-web as an E2E bundle for e2e-web-session.sh. `pnpm build:web` on its
+# own compiles in the wrong backend and none of the E2E affordances, and Vite
+# empties dist-web on every build, so any later non-E2E build removes this
+# marker and the session refuses that bundle instead of serving it (#5920).
+# The recorded values are for diagnosing a bundle, not read back.
+cat >"$APP_DIR/dist-web/.openhuman-e2e-bundle" <<MARKER
+VITE_BACKEND_URL=${VITE_BACKEND_URL}
+VITE_OPENHUMAN_TARGET=${VITE_OPENHUMAN_TARGET}
+VITE_OPENHUMAN_E2E_DEFAULT_CORE_MODE=${VITE_OPENHUMAN_E2E_DEFAULT_CORE_MODE}
+VITE_OPENHUMAN_E2E_RESTART_APP_AS_RELOAD=${VITE_OPENHUMAN_E2E_RESTART_APP_AS_RELOAD}
+VITE_OPENHUMAN_CORE_RPC_URL=${VITE_OPENHUMAN_CORE_RPC_URL}
+VITE_CHAT_ATTACHMENTS=${VITE_CHAT_ATTACHMENTS}
+MARKER
 echo "Building standalone openhuman-core for web E2E into ${E2E_WEB_CORE_TARGET_DIR}..."
 # A bare core build uses the contributor feature set, which intentionally
 # omits product domains such as voice, web3, documents and crash reporting.

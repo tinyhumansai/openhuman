@@ -246,6 +246,11 @@ jobs:
               - 'scripts/ci/check-module-pins.mjs'
               - 'scripts/ci/check-submodule-monotonic.mjs'
               - 'scripts/ci/module-pin-exemptions.json'
+              # The web E2E harness scripts, and the Vite `emptyOutDir` setting
+              # their bundle marker depends on (e2e-web-bundle-guard.test.mjs).
+              - 'app/scripts/e2e-web-build.sh'
+              - 'app/scripts/e2e-web-session.sh'
+              - 'app/vite.config.*'
             # Test-wiring surface: a change here can orphan a test or add an
             # untested controller domain → run the inventory guard.
             inventory:

@@ -154,6 +154,16 @@ endpoint = "http://127.0.0.1:${E2E_MOCK_PORT}/v1"
 auth_style = "openhumanjwt"
 EOF
 
+# The bundle must come from `pnpm test:e2e:web:build`, which compiles in the mock
+# backend URL and the E2E affordances. A plain `pnpm build:web` exits 0 with a
+# bundle this harness cannot drive, and every spec then fails as though the
+# product had regressed. Refuse it before starting anything (#5920).
+E2E_BUNDLE_MARKER="$APP_DIR/dist-web/.openhuman-e2e-bundle"
+if [ ! -f "$E2E_BUNDLE_MARKER" ]; then
+  echo "ERROR: $APP_DIR/dist-web was not built for E2E (no $(basename "$E2E_BUNDLE_MARKER")). Run pnpm test:e2e:web:build first; pnpm build:web alone omits the E2E backend and affordances." >&2
+  exit 1
+fi
+
 node "$REPO_ROOT/scripts/mock-api-server.mjs" --port "$E2E_MOCK_PORT" >"$OPENHUMAN_WORKSPACE/mock.log" 2>&1 &
 MOCK_PID=$!
 wait_for_http "http://127.0.0.1:${E2E_MOCK_PORT}/__admin/health" "mock backend"
