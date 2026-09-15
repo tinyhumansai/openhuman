@@ -1,10 +1,9 @@
 import * as Sentry from '@sentry/react';
+import { isTauri as isTauriRuntime } from '@tauri-apps/api/core';
 import { revealItemInDir, openUrl as tauriOpenUrl } from '@tauri-apps/plugin-opener';
 import { platform } from '@tauri-apps/plugin-os';
 
 import { isTauri } from './tauriCommands/common';
-
-const isHttpUrl = (url: string): boolean => /^https?:\/\//i.test(url.trim());
 
 /**
  * Returns a low-PII representation of `url` for telemetry breadcrumbs.
@@ -35,23 +34,15 @@ const getTelemetryUrl = (url: string): string => {
  * registered application instead of staying inside the embedded
  * webview.
  *
- * CEF embedder note: the IPC bridge (`window.ipc.postMessage`) is
- * injected on the renderer-side after `on_after_created` fires.
- * A click landing in that gap causes the plugin's `invoke()` glue
- * to reject with `TypeError: Cannot read properties of undefined
- * (reading 'postMessage')`. For http(s) URLs we recover by falling
- * back to `window.open` so the user-facing flow still works. For
- * non-http schemes we re-throw — `window.open` would spawn a Tauri
- * webview window that cannot handle custom schemes, which is worse
- * UX than a propagated error the caller can surface.
- *
- * In a browser context (no Tauri) we keep the `window.open` path so
- * `https://` / `mailto:` links still work for dev/preview builds.
+ * Desktop opener failures propagate to the caller. Falling back to
+ * `window.open` in a desktop webview can replace the app with the remote
+ * page, leaving no browser controls to return to the chat.
+ * Browser preview builds use `window.open` normally.
  */
 export const openUrl = async (url: string): Promise<void> => {
   const normalizedUrl = url.trim();
 
-  if (isTauri()) {
+  if (isTauriRuntime()) {
     try {
       await tauriOpenUrl(normalizedUrl);
       return;
@@ -59,13 +50,10 @@ export const openUrl = async (url: string): Promise<void> => {
       Sentry.addBreadcrumb({
         category: 'ipc',
         level: 'warning',
-        message: 'tauriOpenUrl failed; evaluating fallback',
-        data: { url: getTelemetryUrl(normalizedUrl), error: String(err) },
+        message: 'tauriOpenUrl failed; keeping app navigation',
+        data: { url: getTelemetryUrl(normalizedUrl) },
       });
-      if (!isHttpUrl(normalizedUrl)) {
-        throw err;
-      }
-      // http(s) URL — safe to fall back to window.open.
+      throw err;
     }
   }
   window.open(normalizedUrl, '_blank', 'noopener,noreferrer');

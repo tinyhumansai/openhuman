@@ -42,7 +42,7 @@ import {
   waitForAssistantReplyContaining,
   waitForSocketConnected,
 } from '../helpers/chat-harness';
-import { textExists } from '../helpers/element-helpers';
+import { clickText, textExists } from '../helpers/element-helpers';
 import { resetApp } from '../helpers/reset-app';
 import { navigateViaHash } from '../helpers/shared-flows';
 import { setMockBehavior, startMockServer, stopMockServer } from '../mock-server';
@@ -236,6 +236,86 @@ describe('agent harness behaviors', () => {
     setMockBehavior('llmForcedResponses', '');
     setMockBehavior('llmStreamChunkDelayMs', '');
     await stopMockServer();
+  });
+
+  it('keeps the chat when opening a reply link succeeds or the desktop opener fails', async function () {
+    this.timeout(90_000);
+    setMockBehavior(
+      'llmForcedResponses',
+      JSON.stringify([{ content: '[EXTERNAL_PR_LINK](https://example.com/repo/pull/1)' }])
+    );
+    const threadId = await startNewThread();
+    await sendPrompt('show the test PR link');
+    expect(await waitForAssistantReplyContaining('EXTERNAL_PR_LINK')).toBe(true);
+    const appUrl = await browser.getUrl();
+    for (const reject of [false, true]) {
+      // Keep this entirely offline: replace only the OS-opener IPC and record
+      // any browser fallback. Other IPC continues through the existing bridge.
+      await browser.execute((shouldReject: boolean) => {
+        const win = window as unknown as {
+          isTauri?: boolean;
+          __TAURI_INTERNALS__?: { invoke: (...args: unknown[]) => Promise<unknown> };
+          __linkTest?: { opened: string[]; fallback: number; restore: () => void };
+        };
+        const originalRuntime = win.isTauri;
+        const originalInternals = win.__TAURI_INTERNALS__;
+        const originalOpen = window.open;
+        const state = {
+          opened: [] as string[],
+          fallback: 0,
+          restore: () => {
+            win.isTauri = originalRuntime;
+            win.__TAURI_INTERNALS__ = originalInternals;
+            window.open = originalOpen;
+          },
+        };
+        win.__linkTest = state;
+        win.isTauri = true;
+        win.__TAURI_INTERNALS__ = {
+          ...originalInternals,
+          invoke: async (...args: unknown[]) => {
+            if (args[0] === 'plugin:opener|open_url') {
+              state.opened.push((args[1] as { url: string }).url);
+              if (shouldReject) throw new Error('mock opener unavailable');
+              return;
+            }
+            return originalInternals?.invoke(...args);
+          },
+        };
+        window.open = () => {
+          state.fallback++;
+          return null;
+        };
+      }, reject);
+      try {
+        await clickText('EXTERNAL_PR_LINK');
+        await browser.waitUntil(
+          async () =>
+            await browser.execute(() => {
+              const state = (window as unknown as { __linkTest?: { opened: string[] } }).__linkTest;
+              return state?.opened.length === 1;
+            }),
+          { timeout: 5000 }
+        );
+        expect(
+          await browser.execute(() => {
+            const state = (
+              window as unknown as { __linkTest?: { opened: string[]; fallback: number } }
+            ).__linkTest;
+            return { opened: state?.opened, fallback: state?.fallback };
+          })
+        ).toEqual({ opened: ['https://example.com/repo/pull/1'], fallback: 0 });
+        expect(await browser.getUrl()).toBe(appUrl);
+        expect(await getSelectedThreadId()).toBe(threadId);
+        expect(await chatMounted()).toBe(true);
+      } finally {
+        await browser.execute(() => {
+          const win = window as unknown as { __linkTest?: { restore: () => void } };
+          win.__linkTest?.restore();
+          delete win.__linkTest;
+        });
+      }
+    }
   });
 
   it('shows the approval card and completes after the user approves', async function () {

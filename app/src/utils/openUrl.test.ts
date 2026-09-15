@@ -1,13 +1,9 @@
-/**
- * Unit tests for `openUrl`. The Tauri path is exercised in callers'
- * integration tests; here we focus on the browser fallback and the
- * CEF-IPC-not-ready recovery so the non-Tauri branch (used by dev
- * preview builds) and the CEF gap window (#1472 / REACT-T/S/R) do
- * not regress.
- */
+/** Desktop links must never fall back to in-webview navigation. */
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 const isTauriMock = vi.fn();
+const isTauriRuntimeMock = vi.fn();
+vi.mock('@tauri-apps/api/core', () => ({ isTauri: () => isTauriRuntimeMock() }));
 const tauriOpenUrlMock = vi.fn();
 const revealItemInDirMock = vi.fn();
 const addBreadcrumbMock = vi.fn();
@@ -32,6 +28,7 @@ describe('openUrl', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    isTauriRuntimeMock.mockImplementation(() => isTauriMock());
     // Default this device to macOS so existing POSIX-path reveal tests pass; the
     // #4278 cross-host tests override per-case.
     platformMock.mockResolvedValue('macos');
@@ -91,7 +88,7 @@ describe('openUrl', () => {
       expect.objectContaining({
         category: 'ipc',
         level: 'warning',
-        message: 'tauriOpenUrl failed; evaluating fallback',
+        message: 'tauriOpenUrl failed; keeping app navigation',
         data: expect.objectContaining({ url: 'obsidian:' }),
       })
     );
@@ -100,37 +97,39 @@ describe('openUrl', () => {
     expect(call?.data?.url).not.toContain('/Users/me');
   });
 
-  it('falls back to window.open when tauriOpenUrl rejects on an http URL (CEF IPC race recovery, #1472)', async () => {
-    // Concrete repro for OPENHUMAN-REACT-T/S/R: CEF embedder
-    // injects `window.ipc.postMessage` after `on_after_created`. A
-    // click landing in that gap causes `tauriOpenUrl` to reject with
-    // a TypeError. For http(s) URLs the safe recovery is to hand off
-    // to `window.open` so the Billing dashboard still opens.
+  it('keeps the desktop app when the opener rejects an HTTPS URL', async () => {
     isTauriMock.mockReturnValue(true);
     const ipcError = new TypeError("Cannot read properties of undefined (reading 'postMessage')");
     tauriOpenUrlMock.mockRejectedValue(ipcError);
 
     const { openUrl } = await import('./openUrl');
-    await openUrl('https://tinyhumans.ai/dashboard?token=secret-redact-me');
-
-    expect(windowOpenMock).toHaveBeenCalledWith(
-      'https://tinyhumans.ai/dashboard?token=secret-redact-me',
-      '_blank',
-      'noopener,noreferrer'
+    await expect(openUrl('https://tinyhumans.ai/dashboard?token=secret-redact-me')).rejects.toThrow(
+      ipcError
     );
+
+    expect(windowOpenMock).not.toHaveBeenCalled();
     // Breadcrumb keeps only origin for http(s) — pathname + query (which may
     // carry tokens / emails / vault paths) must not be sent to Sentry.
     expect(addBreadcrumbMock).toHaveBeenCalledWith(
       expect.objectContaining({
         category: 'ipc',
         level: 'warning',
-        message: 'tauriOpenUrl failed; evaluating fallback',
+        message: 'tauriOpenUrl failed; keeping app navigation',
         data: expect.objectContaining({ url: 'https://tinyhumans.ai' }),
       })
     );
     const call = addBreadcrumbMock.mock.calls[0]?.[0] as { data?: { url?: string } } | undefined;
     expect(call?.data?.url).not.toContain('secret-redact-me');
     expect(call?.data?.url).not.toContain('/dashboard');
+  });
+
+  it('does not treat a desktop with an unavailable IPC bridge as a browser', async () => {
+    isTauriMock.mockReturnValue(false);
+    isTauriRuntimeMock.mockReturnValue(true);
+    tauriOpenUrlMock.mockRejectedValue(new Error('IPC unavailable'));
+    const { openUrl } = await import('./openUrl');
+    await expect(openUrl('https://example.com')).rejects.toThrow('IPC unavailable');
+    expect(windowOpenMock).not.toHaveBeenCalled();
   });
 
   it('revealPath dispatches to tauri-plugin-opener under Tauri (#2281 Reveal Folder fallback)', async () => {
@@ -200,23 +199,21 @@ describe('openUrl', () => {
     });
   });
 
-  it('trims surrounding whitespace before classifying an http URL for fallback', async () => {
+  it('trims surrounding whitespace before calling the desktop opener', async () => {
     isTauriMock.mockReturnValue(true);
     tauriOpenUrlMock.mockRejectedValue(
       new TypeError("Cannot read properties of undefined (reading 'postMessage')")
     );
 
     const { openUrl } = await import('./openUrl');
-    await openUrl('  https://tinyhumans.ai/dashboard?token=secret-redact-me  ');
+    await expect(
+      openUrl('  https://tinyhumans.ai/dashboard?token=secret-redact-me  ')
+    ).rejects.toThrow('postMessage');
 
     expect(tauriOpenUrlMock).toHaveBeenCalledWith(
       'https://tinyhumans.ai/dashboard?token=secret-redact-me'
     );
-    expect(windowOpenMock).toHaveBeenCalledWith(
-      'https://tinyhumans.ai/dashboard?token=secret-redact-me',
-      '_blank',
-      'noopener,noreferrer'
-    );
+    expect(windowOpenMock).not.toHaveBeenCalled();
     expect(addBreadcrumbMock).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ url: 'https://tinyhumans.ai' }) })
     );

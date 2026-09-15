@@ -73,6 +73,7 @@ mod deep_link_ipc_windows;
 mod deep_link_registration_check;
 mod dictation_hotkeys;
 mod directory_picker;
+mod external_navigation;
 mod file_logging;
 // Routing the frontend to a core that is not the one in this process. Leaf
 // gated: with `gateways` off the commands are simply absent, which is what the
@@ -3010,6 +3011,7 @@ pub fn run() {
                 .open_js_links_on_click(false)
                 .build(),
         )
+        .plugin(external_navigation::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
