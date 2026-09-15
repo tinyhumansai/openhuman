@@ -159,6 +159,21 @@ run_json_rpc_e2e_suite() {
   # JSON-RPC scenarios mutate process-global provider routes and runtime
   # configuration. Run every case in a fresh test process so a provider set by
   # one scenario cannot affect the routing assertions in another.
+  #
+  # Enumerate first, as its own checked step. The names used to be read straight
+  # from a process substitution, whose exit status nothing sees: a target that
+  # failed to compile listed nothing, the loop ran zero times, and the suite
+  # reported success. A listing that fails part-way is refused whole, so a
+  # partial list is never run as though it were complete.
+  local listing test_name
+  if ! listing="$(
+    "$CARGO_BIN" test --manifest-path Cargo.toml --features "$PRODUCT_FEATURES" \
+      --test json_rpc_e2e -- --list
+  )"; then
+    echo "[rust-e2e] ERROR: could not enumerate json_rpc_e2e tests; refusing to run an empty or partial list." >&2
+    return 1
+  fi
+
   while IFS= read -r test_name; do
     [ -n "$test_name" ] || continue
     echo "[rust-e2e]   $CARGO_BIN test --manifest-path Cargo.toml --test json_rpc_e2e $test_name"
@@ -166,11 +181,7 @@ run_json_rpc_e2e_suite() {
       --manifest-path Cargo.toml --features "$PRODUCT_FEATURES" \
       --test json_rpc_e2e "$test_name" -- \
       --exact --test-threads=1 "${EXTRA_ARGS[@]}"
-  done < <(
-    "$CARGO_BIN" test --manifest-path Cargo.toml --features "$PRODUCT_FEATURES" \
-      --test json_rpc_e2e -- --list \
-      | sed -n 's/: test$//p'
-  )
+  done <<<"$(printf '%s\n' "$listing" | sed -n 's/: test$//p')"
 }
 
 for suite in "${SUITES[@]}"; do
