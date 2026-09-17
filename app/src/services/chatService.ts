@@ -83,6 +83,8 @@ export interface TurnUsageWire {
   cached_input_tokens: number;
   cost_usd: number;
   context_window: number;
+  /** Most recent primary-model call occupancy; absent on older cores. */
+  context_used_tokens?: number;
   subagents?: SubagentUsageWire[];
 }
 

@@ -420,6 +420,13 @@ tinyagents-language = { path = "../../vendor/tinyagents/crates/tinyagents-langua
 tinyagents-registry = { path = "../../vendor/tinyagents/crates/tinyagents-registry" }
 tinyagents-session = { path = "../../vendor/tinyagents/crates/tinyagents-session" }
 tinyinference = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference" }
+# Goose Agent is the pinned primary-turn state machine used by the Phase 7
+# local-Qwen orchestration path. OpenHuman supplies all policy, providers, and
+# tools through adapters; no Goose UI/provider/tool implementation is imported.
+# Source and Apache-2.0 attribution: ../../vendor/goose/SOURCE.md.
+goose-agent = { path = "../../vendor/goose/crates/goose-agent" }
+goose-provider-types = { path = "../../vendor/goose/crates/goose-provider-types" }
+rmcp = { version = "=3.3.0", default-features = false, features = ["server"] }
 # TinyTools — the tool vocabulary: the `Tool` trait, `ToolResult`, and the
 # permission / scope / timeout classifications this host enforces around a call.
 #

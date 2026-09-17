@@ -457,6 +457,7 @@ fn usage_to_json(
         "cachedInputTokens": usage.cached_input_tokens,
         "costUsd": usage.cost_usd,
         "contextWindow": usage.context_window,
+        "contextUsedTokens": usage.context_used_tokens,
     })
 }
 

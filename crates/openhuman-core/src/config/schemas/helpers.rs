@@ -223,6 +223,10 @@ pub(super) struct PrivacyModeUpdate {
 pub(super) struct AgentSettingsUpdate {
     /// Tool/action wall-clock timeout in seconds (1–3600). Validated server-side.
     pub(super) agent_timeout_secs: Option<u64>,
+    /// Persisted user spending authorization for TinyHumans/OpenHuman-managed
+    /// metered tools. Sign-in does not grant it, and omission leaves the saved
+    /// value unchanged.
+    pub(super) allow_metered_agent_tools: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]

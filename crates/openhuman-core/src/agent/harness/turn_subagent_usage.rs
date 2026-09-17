@@ -56,6 +56,10 @@ pub struct LastTurnUsage {
     /// model whose window the core couldn't resolve). Lets the UI show real
     /// context utilisation instead of a hard-coded default.
     pub context_window: u64,
+    /// Tokens occupying the primary model's context on its most recent call.
+    /// This is a per-call value, not cumulative turn traffic, and excludes all
+    /// sub-agent calls.
+    pub context_used_tokens: u64,
     /// Per-sub-agent spend gathered during the turn, for the hover breakdown.
     pub subagents: Vec<SubagentUsageEntry>,
 }

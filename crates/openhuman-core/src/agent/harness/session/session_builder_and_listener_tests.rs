@@ -576,6 +576,7 @@ async fn last_turn_usage_is_public_and_non_draining() {
             cached_input_tokens: usage.cached_input_tokens,
             cost_usd: usage.cost_usd,
             context_window: usage.context_window,
+            context_used_tokens: usage.context_used_tokens,
             subagents: usage.subagents.clone(),
         }
     };

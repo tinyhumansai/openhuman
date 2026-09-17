@@ -75,23 +75,29 @@ pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
 "get_agent_settings" => Some( ControllerSchema {
             namespace: "config",
             function: "get_agent_settings",
-            description: "Read agent execution settings: the action/tool wall-clock timeout, the runtime-effective value, and whether the OPENHUMAN_TOOL_TIMEOUT_SECS env var overrides it.",
+            description: "Read agent execution settings: the action/tool wall-clock timeout, the runtime-effective value, whether the OPENHUMAN_TOOL_TIMEOUT_SECS env var overrides it, and allow_metered_agent_tools (persisted user opt-in for TinyHumans/OpenHuman-managed metered tools; sign-in alone does not authorize spending).",
             inputs: vec![],
             outputs: vec![json_output(
                 "settings",
-                "Agent settings: agent_timeout_secs, effective_timeout_secs, env_override, min_timeout_secs, max_timeout_secs.",
+                "Agent settings: agent_timeout_secs, allow_metered_agent_tools, effective_timeout_secs, env_override, min_timeout_secs, max_timeout_secs.",
             )],
         }),
 "update_agent_settings" => Some( ControllerSchema {
             namespace: "config",
             function: "update_agent_settings",
             description: "Update agent execution settings. Currently the action/tool wall-clock timeout (seconds). Applies to the next tool call without a restart; the OPENHUMAN_TOOL_TIMEOUT_SECS env var still overrides it when set.",
-            inputs: vec![FieldSchema {
-                name: "agent_timeout_secs",
-                ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
-                comment: "Wall-clock timeout for a single tool/action execution, in seconds (1–3600). Extend this when large local models are interrupted before finishing.",
-                required: false,
-            }],
+            inputs: vec![
+                FieldSchema {
+                    name: "agent_timeout_secs",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                    comment: "Wall-clock timeout for a single tool/action execution, in seconds (1–3600). Extend this when large local models are interrupted before finishing.",
+                    required: false,
+                },
+                optional_bool(
+                    "allow_metered_agent_tools",
+                    "Persisted spending authorization for managed metered agent tools (opt-in). Sign-in does not grant it, and omission leaves the saved value unchanged.",
+                ),
+            ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         }),
 "update_browser_settings" => Some( ControllerSchema {

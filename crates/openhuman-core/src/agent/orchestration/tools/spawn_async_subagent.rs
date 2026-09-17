@@ -125,9 +125,9 @@ include!("spawn_async_subagent_execute.rs");
 /// Format the user-facing acceptance text around a structured async sub-agent reference.
 fn format_async_subagent_accepted(agent_id: &str, payload_json: &str) -> String {
     format!(
-        "Accepted async sub-agent `{agent_id}`. Use the structured reference below to send more input, \
-         wait for completion, or perform a short timeout tick to check status. If the user does not need \
-         the result now, continue without blocking.\n\n[async_subagent_ref]\n{payload_json}\n[/async_subagent_ref]"
+        "Accepted async sub-agent `{agent_id}`. Its result will be delivered automatically. \
+         Use the structured reference below only to send more input; continue without blocking.\n\n\
+         [async_subagent_ref]\n{payload_json}\n[/async_subagent_ref]"
     )
 }
 
@@ -165,46 +165,13 @@ fn async_subagent_ref_payload(
                     "mode": "steer"
                 }
             },
-            "wait": {
-                "tool": "wait_subagent",
-                "description": "Block until the async sub-agent finishes, up to the timeout.",
-                "arguments": {
-                    "subagent_session_id": subagent_session_id,
-                    "timeout_secs": 120
-                }
-            },
-            "timeout_tick": {
-                "tool": "wait_subagent",
-                "description": "Perform a short status tick without committing the parent to a long wait.",
-                "arguments": {
-                    "subagent_session_id": subagent_session_id,
-                    "timeout_secs": 1
-                }
-            },
-            "delayed_tick": {
-                "tool": "wait",
-                "description": "Trigger a delayed callback before checking this async sub-agent again.",
-                "arguments": {
-                    "duration_secs": 30,
-                    "message": format!("Check async sub-agent {agent_id} status with wait_subagent using subagent_session_id {subagent_session_id}.")
-                }
-            },
-            "delayed_loop": {
-                "tool": "wait_loop",
-                "description": "Trigger repeatable delayed callbacks while this async sub-agent is still relevant.",
-                "arguments": {
-                    "duration_secs": 30,
-                    "message": format!("Check async sub-agent {agent_id} status with wait_subagent using subagent_session_id {subagent_session_id}."),
-                    "loop_key": subagent_session_id,
-                    "iteration": 1
-                }
+            "delivery": {
+                "mode": "automatic",
+                "description": "Completion or failure is delivered to the parent thread automatically."
             }
         },
         "next_actions": [
             "call steer_subagent to send more input",
-            "call wait_subagent with timeout_secs to collect the result",
-            "call wait_subagent with timeout_secs=1 as a timeout tick/status check",
-            "call wait or wait_loop with the returned message to trigger a delayed status check",
             "continue without waiting when the current user reply does not depend on the result"
         ]
     })

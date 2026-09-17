@@ -12,16 +12,11 @@ use crate::security::prompt_injection::{
 use anyhow::Result;
 
 impl Agent {
-    // ─────────────────────────────────────────────────────────────────
-    // Run helpers — single-shot and interactive loops
-    // ─────────────────────────────────────────────────────────────────
-
-    /// Runs a single turn with the given message and returns the response.
-    ///
-    /// This is the primary high-level method for programmatic interaction with the agent.
-    /// It wraps the core `turn` logic with telemetry events (`AgentTurnStarted`,
-    /// `AgentTurnCompleted`) and error sanitization.
-    pub async fn run_single(&mut self, message: &str) -> Result<String> {
+    pub(super) fn begin_guarded_run(
+        &self,
+        message: &str,
+    ) -> Result<Vec<crate::agent::messages::ConversationMessage>> {
+        // ─────────────────────────────────────────────────────────────────
         let guard = enforce_prompt_input(
             message,
             PromptEnforcementContext {
@@ -67,10 +62,17 @@ impl Agent {
             session_id: self.event_session_id().to_string(),
             channel: self.event_channel().to_string(),
         });
+        Ok(history_snapshot)
+    }
 
-        match self.turn(message).await {
+    pub(super) fn finish_guarded_run(
+        &self,
+        history_snapshot: &[crate::agent::messages::ConversationMessage],
+        result: Result<String>,
+    ) -> Result<String> {
+        match result {
             Ok(response) => {
-                let new_entries = Self::new_entries_for_turn(&history_snapshot, &self.history);
+                let new_entries = Self::new_entries_for_turn(history_snapshot, &self.history);
                 BUS.publish(DomainEvent::AgentTurnCompleted {
                     session_id: self.event_session_id().to_string(),
                     text_chars: response.chars().count(),
@@ -132,6 +134,21 @@ impl Agent {
                 Err(err)
             }
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Run helpers — single-shot and interactive loops
+    // ─────────────────────────────────────────────────────────────────
+
+    /// Runs a single turn with the given message and returns the response.
+    ///
+    /// This is the primary high-level method for programmatic interaction with the agent.
+    /// It wraps the core `turn` logic with telemetry events (`AgentTurnStarted`,
+    /// `AgentTurnCompleted`) and error sanitization.
+    pub async fn run_single(&mut self, message: &str) -> Result<String> {
+        let history_snapshot = self.begin_guarded_run(message)?;
+        let result = self.turn(message).await;
+        self.finish_guarded_run(&history_snapshot, result)
     }
 
     /// Runs an interactive CLI loop, reading from standard input and printing to standard output.

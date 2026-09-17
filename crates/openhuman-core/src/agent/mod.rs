@@ -27,6 +27,7 @@ pub mod error;
 pub mod experience;
 pub mod file_state;
 pub(crate) mod git_attribution;
+pub mod goose;
 pub mod harness;
 pub mod harness_init;
 pub mod hooks;
@@ -44,6 +45,7 @@ pub mod plan_review;
 /// agree on `cmd.exe` (Windows) vs `bash`/`sh` (Unix). Fixes #4705 where
 /// the sandbox paths hardcoded `sh` and failed at spawn on Windows.
 pub mod platform_shell;
+pub mod primary_orchestration;
 pub mod profiles;
 pub mod progress;
 /// Task-local [`progress::AgentProgress`] sink — how an in-process embedder
@@ -94,6 +96,10 @@ pub use schemas::{
 #[cfg(test)]
 #[path = "agent_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "phase7_acceptance_tests.rs"]
+pub mod phase7_acceptance_tests;
 
 #[allow(unused_imports)]
 pub use harness::session::{Agent, AgentBuilder};

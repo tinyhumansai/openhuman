@@ -359,6 +359,10 @@ pub struct TurnUsagePayload {
     pub cached_input_tokens: u64,
     pub cost_usd: f64,
     pub context_window: u64,
+    /// Primary model occupancy for the most recent call, excluding subagents.
+    /// Kept separate from cumulative turn traffic above.
+    #[serde(default)]
+    pub context_used_tokens: u64,
     /// Per-sub-agent spend, omitted from the wire when no sub-agents ran.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subagents: Vec<SubagentUsagePayload>,

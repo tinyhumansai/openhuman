@@ -128,6 +128,35 @@ pub(crate) fn terminal_inference_failure_kind(result: &str) -> Option<TerminalIn
     }
 }
 
+/// Classify terminal failures at a trusted tool boundary. Delegated inference
+/// retains its envelope requirement; first-party media generation and managed
+/// web-search tools expose the same provider failure directly, so their
+/// canonical tool name supplies the trust boundary.
+pub(crate) fn terminal_tool_failure_kind(
+    tool: &str,
+    result: &str,
+) -> Option<TerminalInferenceFailure> {
+    if let Some(kind) = terminal_inference_failure_kind(result) {
+        return Some(kind);
+    }
+    if !matches!(
+        tool,
+        "media_generate_image" | "media_generate_video" | "web_search_tool"
+    ) {
+        return None;
+    }
+    use crate::inference::provider::{
+        is_budget_exhausted_message, is_provider_config_rejection_message,
+    };
+    if is_budget_exhausted_message(result) {
+        Some(TerminalInferenceFailure::BudgetExhausted)
+    } else if is_provider_config_rejection_message(result) {
+        Some(TerminalInferenceFailure::ProviderConfig)
+    } else {
+        None
+    }
+}
+
 /// The actionable root-cause halt summary for a terminal delegated-inference
 /// failure. Ported verbatim from the legacy loop.
 pub(crate) fn terminal_inference_halt_summary(

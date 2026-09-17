@@ -146,6 +146,15 @@ pub(crate) async fn run_turn_via_tinyagents(
         input_tokens: run.usage.usage.input_tokens,
         output_tokens: run.usage.usage.output_tokens,
         cached_input_tokens: run.usage.usage.cache_read_tokens,
+        // The thin path has no per-call observer. Its aggregate is exact for a
+        // single-call run and unknown for a multi-call run; use zero rather than
+        // mislabel cumulative traffic as context occupancy.
+        last_call_input_tokens: (run.model_calls == 1)
+            .then_some(run.usage.usage.input_tokens)
+            .unwrap_or(0),
+        last_call_output_tokens: (run.model_calls == 1)
+            .then_some(run.usage.usage.output_tokens)
+            .unwrap_or(0),
         charged_amount_usd: crate::platform::cost::catalog::estimate_cost_usd(
             model,
             run.usage.usage.input_tokens,

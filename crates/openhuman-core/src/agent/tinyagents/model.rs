@@ -3,14 +3,19 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use futures::StreamExt;
 use tinyinference::message::{AssistantMessage, ContentBlock, MessageDelta};
 use tinyinference::model::{
-    ChatModel, ModelProfile, ModelRequest, ModelResponse, ModelStream, ModelStreamItem,
+    ChatModel, ModelProfile, ModelRequest, ModelResponse, ModelStream, ModelStreamItem, ToolChoice,
 };
 use tinyinference::tool::{ToolCall as TaToolCall, ToolDelta};
 use tinyinference::usage::Usage;
 use tokio::sync::mpsc::UnboundedSender;
 
+#[allow(unused_imports)]
+pub(crate) use super::model_helpers::{
+    normalize_qwen_tool_response, repair_qwen_bare_name_tool_call,
+};
 use crate::agent::messages::ChatMessage;
 use crate::inference::provider::{ChatResponse, ProviderDelta, UsageInfo};
 
@@ -448,7 +453,16 @@ impl ChatModel<()> for RouteRecordingModel {
         request: ModelRequest,
     ) -> tinyinference::Result<ModelResponse> {
         self.record_route();
-        self.inner.invoke(state, request).await
+        let repair = self.model == "qwen38-openhuman"
+            && !request.tools.is_empty()
+            && request.tool_choice != ToolChoice::None;
+        let tools = request.tools.clone();
+        let response = self.inner.invoke(state, request).await?;
+        Ok(if repair {
+            normalize_qwen_tool_response(response, &tools)
+        } else {
+            response
+        })
     }
 
     async fn stream(
@@ -457,7 +471,28 @@ impl ChatModel<()> for RouteRecordingModel {
         request: ModelRequest,
     ) -> tinyinference::Result<ModelStream> {
         self.record_route();
-        self.inner.stream(state, request).await
+        let repair = self.model == "qwen38-openhuman"
+            && !request.tools.is_empty()
+            && request.tool_choice != ToolChoice::None;
+        let tools = request.tools.clone();
+        let stream = self.inner.stream(state, request).await?;
+        if !repair {
+            return Ok(stream);
+        }
+        Ok(Box::pin(stream.map(move |item| match item {
+            // Prompt-guided tool frames arrive as visible text deltas before
+            // the completed response can parse and strip them. Suppress those
+            // deltas for this exact alias; the authoritative completed response
+            // still carries either clean prose or a structured tool call.
+            ModelStreamItem::MessageDelta(mut delta) => {
+                delta.text.clear();
+                ModelStreamItem::MessageDelta(delta)
+            }
+            ModelStreamItem::Completed(response) => {
+                ModelStreamItem::Completed(normalize_qwen_tool_response(response, &tools))
+            }
+            other => other,
+        })))
     }
 }
 

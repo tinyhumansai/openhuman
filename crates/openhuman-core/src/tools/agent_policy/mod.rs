@@ -8,7 +8,7 @@ mod prompt;
 mod types;
 
 pub use engine::ToolPolicyEngine;
-pub use prompt::render_tool_policy_boundary;
+pub use prompt::{render_dynamic_tool_policy_boundary, render_tool_policy_boundary};
 pub use types::{
     TaskProfile, TaskRiskLevel, ToolCapability, ToolPolicyAction, ToolPolicyDecision,
     ToolPolicySession,

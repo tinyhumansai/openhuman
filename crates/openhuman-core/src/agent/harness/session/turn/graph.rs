@@ -54,6 +54,9 @@ pub(crate) struct ChatTurnGraph {
     /// Provider-ready messages (system + prior history + this turn's user turn,
     /// multimodal markers already expanded).
     pub messages: Vec<ChatMessage>,
+    /// The user's raw request, before per-turn goal/memory/state context is
+    /// appended. Tool relevance must not be polluted by that injected prose.
+    pub task_prompt: String,
     /// The agent's durable, `Arc`-shared harness tool set.
     pub tools: Arc<Vec<Box<dyn Tool>>>,
     /// The delegation tools synthesised for the current connection set,
@@ -63,7 +66,8 @@ pub(crate) struct ChatTurnGraph {
     /// mid-session Composio connect reach the model as a *callable* tool and a
     /// revoke withdraw one, without owning `tools`.
     pub synthesized_tools: Arc<Vec<Box<dyn Tool>>>,
-    /// Callable-tool whitelist (empty = every visible tool).
+    /// Builder-resolved authorization ceiling (empty = every candidate before
+    /// the per-turn relevance plan is applied).
     pub visible_tool_names: HashSet<String>,
     /// Model-call cap for the loop.
     pub max_iterations: usize,
@@ -97,15 +101,72 @@ pub(crate) struct ChatTurnGraph {
 /// ([`core`](super::core) folds usage, persists the conversation, and handles a
 /// cap-hit checkpoint).
 pub(crate) async fn run_chat_turn_graph(graph: ChatTurnGraph) -> Result<TinyagentsTurnOutcome> {
-    // Fail-closed allowlist plumbing (issue #4452): the shared seam now takes an
-    // `Option<HashSet<String>>` where `None` = no filter (all visible tools) and
-    // `Some(set)` = exactly those tools. The chat path's historical convention is
-    // "empty `visible_tool_names` = every visible tool", so map an empty set to
-    // `None` to preserve that behavior; a populated set stays an explicit filter.
-    let visible_tool_names = if graph.visible_tool_names.is_empty() {
+    let selection_prompt = if is_continuation_request(&graph.task_prompt) {
+        graph
+            .messages
+            .iter()
+            .rev()
+            .filter(|message| message.role == "user")
+            .nth(1)
+            .or_else(|| {
+                graph
+                    .messages
+                    .iter()
+                    .rev()
+                    .find(|message| message.role == "user")
+            })
+            .map(|message| message.content.as_str())
+            .unwrap_or(&graph.task_prompt)
+    } else {
+        &graph.task_prompt
+    };
+    let candidates: Vec<crate::tools::ToolSpec> = graph
+        .tools
+        .iter()
+        .chain(graph.synthesized_tools.iter())
+        .map(|tool| tool.spec())
+        .collect();
+    let current_turn_context = graph
+        .messages
+        .iter()
+        .rev()
+        .find(|message| message.role == "user")
+        .map(|message| message.content.as_str())
+        .unwrap_or_default();
+    let mut state_required = HashSet::new();
+    if current_turn_context.contains("[active_goal]") {
+        state_required.insert("goal_complete".to_string());
+    }
+    if current_turn_context.contains("[active_subagents]") {
+        state_required.insert("list_subagents".to_string());
+        state_required.insert("continue_subagent".to_string());
+    }
+    let configured_ceiling =
+        (!graph.visible_tool_names.is_empty()).then_some(&graph.visible_tool_names);
+    let contract = crate::agent::harness::primary_tool_exposure::plan_primary_turn_contract(
+        selection_prompt,
+        &candidates,
+        configured_ceiling,
+        &state_required,
+    );
+    let visible_tool_names = contract.allowed_tools;
+    let mut exposed_names: Vec<&str> = visible_tool_names.iter().map(String::as_str).collect();
+    exposed_names.sort_unstable();
+    tracing::info!(
+        candidates = candidates.len(),
+        exposed = visible_tool_names.len(),
+        intent = ?contract.intent_family,
+        tools = ?exposed_names,
+        "[tool-exposure] primary turn tool plan"
+    );
+
+    // Fail-closed allowlist plumbing (issue #4452): a non-empty catalogue always
+    // passes `Some(plan)`, including `Some(empty)` when policy allows no tool.
+    // Only a genuinely tool-less turn uses `None`; there is nothing to widen.
+    let visible_tool_names = if candidates.is_empty() {
         None
     } else {
-        Some(graph.visible_tool_names)
+        Some(visible_tool_names)
     };
     // The turn's crate `ChatModel` set was built by the caller from the session's
     // `TurnModelSource` (issue #4249, Phase 3 / Motion A); the telemetry id rides
@@ -173,4 +234,24 @@ pub(crate) async fn run_chat_turn_graph(graph: ChatTurnGraph) -> Result<Tinyagen
         .await
     })
     .await
+}
+
+fn is_continuation_request(prompt: &str) -> bool {
+    matches!(
+        prompt.trim().to_ascii_lowercase().as_str(),
+        "continue"
+            | "continue."
+            | "keep going"
+            | "keep going."
+            | "go on"
+            | "go on."
+            | "etc"
+            | "etc."
+            | "continue with the task described above"
+            | "continue with the task described above."
+            | "try a different site"
+            | "try a different site?"
+            | "try another site"
+            | "try another site?"
+    )
 }

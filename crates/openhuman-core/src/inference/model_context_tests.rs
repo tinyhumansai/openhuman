@@ -2,6 +2,18 @@ use super::*;
 use crate::inference::local::profile::LocalProviderKind;
 
 #[test]
+fn qwen38_openhuman_overrides_lm_studio_fallback() {
+    assert_eq!(context_window_for_model("qwen38-openhuman"), Some(131_072));
+    assert_eq!(
+        context_window_for_model_with_local_fallback(
+            "qwen38-openhuman",
+            Some(LocalProviderKind::LmStudio)
+        ),
+        Some(131_072)
+    );
+}
+
+#[test]
 fn local_fallback_uses_profile_default() {
     // Unknown model with Ollama profile → 8192 default
     assert_eq!(

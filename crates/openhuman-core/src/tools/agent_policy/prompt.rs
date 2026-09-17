@@ -47,6 +47,29 @@ pub fn render_tool_policy_boundary(
     Some(truncate_utf8(rendered, max_bytes))
 }
 
+/// Render the same security boundary when the harness selects a narrower tool
+/// set per turn. The frozen session prompt must not advertise the broader
+/// ceiling as if every tool were callable on the current request.
+pub fn render_dynamic_tool_policy_boundary(
+    session: &ToolPolicySession,
+    max_bytes: usize,
+) -> Option<String> {
+    // Replace the potentially long allowlist before applying the byte cap so
+    // the shorter dynamic wording leaves maximum room for the restrictions.
+    let mut rendered = render_tool_policy_boundary(session, usize::MAX)?;
+    if let Some(start) = rendered.find("- Allowed tools:") {
+        let end = rendered[start..]
+            .find('\n')
+            .map(|offset| start + offset + 1)
+            .unwrap_or(rendered.len());
+        rendered.replace_range(
+            start..end,
+            "- Callable tools: use only tools advertised on the current request.\n",
+        );
+    }
+    Some(truncate_utf8(rendered, max_bytes))
+}
+
 fn truncate_utf8(mut input: String, max_bytes: usize) -> String {
     if input.len() <= max_bytes {
         return input;

@@ -67,6 +67,14 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     "queue_mode",
                     "Queue mode: 'interrupt' (default), 'steer', 'followup', 'collect', or 'parallel'.",
                 ),
+                optional_string(
+                    "turn_mode",
+                    "Optional primary execution-mode override: 'chat', 'assist', or 'agent'.",
+                ),
+                optional_bool(
+                    "allow_metered_tools",
+                    "Downward-only per-turn permission for managed-metered routes: false forbids managed-metered routes for this turn, true never broadens a persisted false opt-in and is not independent spending authorization, and omission preserves behavior.",
+                ),
             ],
             outputs: vec![json_output("ack", "Acceptance payload.")],
         },
@@ -133,6 +141,8 @@ fn handle_chat(params: Map<String, Value>) -> ControllerFuture {
                     // Attribution is stamped later by run_chat_task once the
                     // target agent is resolved.
                     agent_id: None,
+                    turn_mode_override: p.turn_mode,
+                    allow_metered_tools: p.allow_metered_tools,
                 },
             )
             .await?,

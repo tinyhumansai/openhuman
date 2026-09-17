@@ -6,8 +6,7 @@ use super::{collect_tree_root_summaries, sanitize_learned_entry};
 use crate::agent::context::prompt::{LearnedContextData, PromptContext, PromptTool};
 use crate::agent::messages::{ChatMessage, ConversationMessage};
 use crate::memory::MemoryCategory;
-use crate::tools::agent_policy::render_tool_policy_boundary;
-use crate::tools::Tool;
+use crate::tools::agent_policy::render_dynamic_tool_policy_boundary;
 
 use anyhow::Result;
 
@@ -277,25 +276,9 @@ impl Agent {
         }
     }
 
-    /// Builds the system prompt for the current turn, including tool
-    /// instructions and learned context.
+    /// Builds the frozen system prompt, including learned context. Live tool
+    /// instructions are attached later by TinyAgents from the per-turn set.
     pub fn build_system_prompt(&self, learned: LearnedContextData) -> Result<String> {
-        let tools_slice: &[Box<dyn Tool>] = self.tools.as_slice();
-        // `visible_tool_specs` holds shared `Arc<ToolSpec>` leaves (they are the
-        // same schema objects the durable and full views point at), while the
-        // `ToolDispatcher` trait — which embedders implement — takes an owned
-        // `&[ToolSpec]`. Materialise a borrow-slice for the call: this is one
-        // transient copy per system-prompt build, not a per-agent resident one,
-        // and keeping it here is what lets the trait stay source-compatible.
-        let visible_specs_owned: Vec<crate::tools::ToolSpec> = self
-            .visible_tool_specs
-            .iter()
-            .map(|spec| spec.as_ref().clone())
-            .collect();
-        let instructions = self
-            .tool_dispatcher
-            .prompt_instructions_for_specs(&visible_specs_owned)
-            .unwrap_or_else(|| self.tool_dispatcher.prompt_instructions(tools_slice));
         // Adapt the agent's whole callable surface into the shared PromptTool
         // shape that every prompt-building call-site uses. Temporary vec
         // borrows from the two tool `Arc`s and lives for the duration of the
@@ -323,10 +306,15 @@ impl Agent {
             agent_id: &self.agent_definition_name,
             tools: &prompt_tools,
             workflows: &self.workflows,
-            dispatcher_instructions: &instructions,
+            // TinyAgents owns the live tool protocol. Its OpenAI-compatible
+            // transport either sends native schemas or appends the prompt-guided
+            // XML protocol from the *selected turn set*. Rendering the legacy
+            // P-Format catalogue here as well duplicated every schema in the
+            // frozen prompt and taught local Qwen two competing call syntaxes.
+            dispatcher_instructions: "",
             learned,
             visible_tool_names: &prompt_visible_tool_names,
-            tool_call_format: self.tool_dispatcher.tool_call_format(),
+            tool_call_format: crate::agent::context::prompt::ToolCallFormat::Native,
             connected_integrations: &self.connected_integrations,
             connected_identities_md: crate::agent::prompts::render_connected_identities(),
             include_profile: !self.omit_profile,
@@ -358,7 +346,7 @@ impl Agent {
         // It also keeps the archetype/persona as the prompt's opening line,
         // which the prepend had replaced with a constant heading for every
         // agent.
-        let boundary = render_tool_policy_boundary(&self.tool_policy_session, 2048);
+        let boundary = render_dynamic_tool_policy_boundary(&self.tool_policy_session, 2048);
         Ok(append_tool_policy_boundary(prompt, boundary))
     }
 }

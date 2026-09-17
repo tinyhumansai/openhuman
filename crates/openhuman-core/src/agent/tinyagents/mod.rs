@@ -31,6 +31,7 @@ pub mod host;
 pub(crate) mod journal;
 pub(crate) mod middleware;
 pub(crate) mod model;
+pub(crate) mod model_helpers;
 pub(crate) mod observability;
 pub(crate) mod orchestration;
 // `pub` since issue #6014, and the inconsistency it removes is the point:

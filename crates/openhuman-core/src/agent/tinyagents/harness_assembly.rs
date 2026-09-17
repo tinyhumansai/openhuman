@@ -345,17 +345,10 @@ pub(super) fn assemble_turn_harness(
             is_subagent_run,
         );
 
-    // SHADOW tool-exposure layer (issue #4249, 01.3 — dynamic exposure). Compose
-    // the OpenHuman exposure policy as a crate-native selection layer
-    // (ToolAllowlistMiddleware + a ContextualToolSelectionMiddleware built via
-    // `inheriting`) and run it in shadow: it emits the exposure decision
-    // event-native (`AgentEvent::ToolsFiltered`) and logs any divergence between
-    // the crate layer's decision and the set OpenHuman actually registered as
-    // callable — WITHOUT changing the callable set (byte-identical to today). The
-    // ownership flip + deletion of `tool_filter.rs`/`tool_prep.rs` is the gated
-    // follow-up once the `[tool-exposure]` divergence logs show parity. Tags encode
-    // the OpenHuman run context (agent id / channel / scope) for the flip; the
-    // name-based `inheriting` predicate does not consult them yet.
+    // Authoritative TinyAgents exposure layer. The same fail-closed set used for
+    // registration is applied to every live model request and again at the tool
+    // execution boundary. The latter is defense in depth against a malformed or
+    // stale prompt-guided tool call.
     let exposure_tags: Vec<String> = {
         let mut tags = vec![if subagent_scope.is_some() {
             "scope:subagent".to_string()
@@ -372,13 +365,11 @@ pub(super) fn assemble_turn_harness(
         }
         tags
     };
-    harness.push_middleware(Arc::new(
-        middleware::OpenHumanToolExposureShadowMiddleware::new(
-            &candidate_names,
-            allowed.as_ref(),
-            exposure_tags,
-        ),
-    ));
+    harness.push_middleware(Arc::new(middleware::OpenHumanToolExposureMiddleware::new(
+        &candidate_names,
+        allowed.as_ref(),
+        exposure_tags,
+    )));
 
     // Prompt-cache prefix protection (issue #4249, 03.2). First declare the turn's
     // stable prefix (system prompt + tool schemas) as `PromptSegment`s, then let

@@ -52,7 +52,7 @@ fn accepted_message_hides_task_id_from_prose() {
 }
 
 #[test]
-fn async_reference_payload_includes_agent_id_and_control_instructions() {
+fn async_reference_payload_uses_automatic_delivery_without_unavailable_wait_tools() {
     let payload = async_subagent_ref_payload(
         "sub-123",
         "subsess-456",
@@ -65,17 +65,14 @@ fn async_reference_payload_includes_agent_id_and_control_instructions() {
 
     assert_eq!(payload["agent_id"], "researcher");
     assert_eq!(payload["agentId"], "researcher");
-    assert_eq!(payload["instructions"]["wait"]["tool"], "wait_subagent");
-    assert_eq!(
-        payload["instructions"]["timeout_tick"]["arguments"]["timeout_secs"],
-        1
-    );
-    assert_eq!(payload["instructions"]["delayed_tick"]["tool"], "wait");
-    assert_eq!(payload["instructions"]["delayed_loop"]["tool"], "wait_loop");
+    assert_eq!(payload["instructions"]["delivery"]["mode"], "automatic");
     assert_eq!(
         payload["instructions"]["send_message"]["tool"],
         "steer_subagent"
     );
+    let encoded = payload.to_string();
+    assert!(!encoded.contains("wait_subagent"));
+    assert!(!encoded.contains("wait_loop"));
 }
 
 #[test]

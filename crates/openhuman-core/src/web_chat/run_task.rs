@@ -6,6 +6,10 @@
 
 use std::sync::Arc;
 
+use crate::agent::primary_orchestration::{
+    clear_primary_checkpoint, has_live_primary_checkpoint, resolve_orchestration_engine,
+    resolve_primary_turn_mode, ModeResolutionInput,
+};
 use crate::agent::profiles::AgentProfileStore;
 use crate::config::rpc as config_rpc;
 use crate::threads::turn_state::TurnStateStore;
@@ -253,6 +257,46 @@ pub(crate) async fn run_chat_task(
         config.clone(),
     );
 
+    let primary_interactive = matches!(
+        metadata.source.as_deref(),
+        None | Some("type") | Some("dictation") | Some("ptt")
+    );
+    let checkpoint_id = format!("web:{thread_id}");
+    let has_live_agent_checkpoint =
+        has_live_primary_checkpoint(&config.workspace_dir, &checkpoint_id).await;
+    let mode = resolve_primary_turn_mode(ModeResolutionInput {
+        user_message: message,
+        explicit_override: metadata.turn_mode_override,
+        has_live_agent_checkpoint,
+    });
+    if has_live_agent_checkpoint
+        && mode != crate::agent::primary_orchestration::PrimaryTurnMode::Agent
+    {
+        clear_primary_checkpoint(&config.workspace_dir, &checkpoint_id);
+    }
+    let orchestration_binding = model_override
+        .as_deref()
+        .filter(|value| {
+            value.trim().eq_ignore_ascii_case(
+                crate::agent::primary_orchestration::LOCAL_QWEN_PROVIDER_BINDING,
+            )
+        })
+        .unwrap_or(&current_fp.provider_binding);
+    let engine = resolve_orchestration_engine(
+        config.agent.orchestration_engine,
+        orchestration_binding,
+        primary_interactive,
+    );
+    log::info!(
+        "[primary-orchestration] resolved mode={} engine={} provider_binding={} primary_interactive={} thread={} request_id={}",
+        mode.as_str(),
+        engine.as_str(),
+        orchestration_binding,
+        primary_interactive,
+        thread_id,
+        request_id,
+    );
+
     // Scope source-memory recall to the active profile's allowlist for the
     // duration of the turn (None = all). Nested inside the thread-id scope so
     // every memory-tree query the agent makes this turn is gated. See
@@ -261,7 +305,13 @@ pub(crate) async fn run_chat_task(
     // wrappers below hold a pointer rather than inlining the whole future into
     // this already-large `run_chat_task` frame (which otherwise overflows the
     // default test-thread stack — see the channels web-turn coverage tests).
-    let turn = Box::pin(agent.run_single(message));
+    let turn = Box::pin(agent.run_primary_interactive(
+        message,
+        mode,
+        engine,
+        &checkpoint_id,
+        metadata.allow_metered_tools,
+    ));
     let result = match crate::agent::tinyagents::thread_context::with_thread_id(
         thread_id.to_string(),
         crate::memory::source_scope::with_source_scope(profile.memory_sources.clone(), turn),

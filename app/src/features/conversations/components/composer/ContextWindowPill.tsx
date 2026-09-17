@@ -22,6 +22,7 @@ export type ContextUsage = {
   used: number;
   /** Size of the window for the selected model. */
   limit: number;
+  /** Cumulative session traffic shown only in the labelled detail panel. */
   input: number;
   cachedInput: number;
   output: number;
@@ -103,6 +104,7 @@ export function ContextWindowPill({ usage }: { usage: ContextUsage }) {
             which would sit the heading beside the rows instead of above them. */}
         <TooltipContent side="top" className="min-w-52 flex-col items-stretch gap-0 p-2.5 text-xs">
           <p className="mb-1.5 font-medium">{t('conversations.composer.context.title')}</p>
+          <p className="text-muted-foreground mb-1">{t('token.sessionUsageTitle')}</p>
           <div className="flex flex-col gap-1">
             <Row label={t('conversations.composer.context.input')} value={compact(usage.input)} />
             <Row

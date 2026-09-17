@@ -273,6 +273,44 @@ fn update_local_ai_settings_schema_accepts_api_key() {
 }
 
 #[test]
+fn update_agent_settings_schema_exposes_allow_metered_agent_tools() {
+    let schema = schemas("update_agent_settings");
+    let field = schema
+        .inputs
+        .iter()
+        .find(|field| field.name == "allow_metered_agent_tools")
+        .expect("allow_metered_agent_tools field");
+    assert!(!field.required);
+    match &field.ty {
+        TypeSchema::Option(inner) => assert!(matches!(**inner, TypeSchema::Bool)),
+        other => panic!("expected Option<Bool>, got {other:?}"),
+    }
+    let comment = field.comment.to_lowercase();
+    assert!(
+        comment.contains("persisted") && comment.contains("opt-in"),
+        "comment must document persisted opt-in: {}",
+        field.comment
+    );
+    assert!(
+        comment.contains("sign-in"),
+        "comment must document sign-in boundary: {}",
+        field.comment
+    );
+
+    let get_schema = schemas("get_agent_settings");
+    let output = get_schema
+        .outputs
+        .iter()
+        .find(|field| field.name == "settings")
+        .expect("settings output field");
+    assert!(
+        output.comment.contains("allow_metered_agent_tools"),
+        "getter output description must name allow_metered_agent_tools: {}",
+        output.comment
+    );
+}
+
+#[test]
 fn deserialize_params_parses_workspace_onboarding_flag_params() {
     let out: WorkspaceOnboardingFlagParams = deserialize_params(Map::new()).unwrap();
     assert!(out.flag_name.is_none());

@@ -26,6 +26,11 @@ pub(crate) struct TinyagentsTurnOutcome {
     /// Accumulated cached (cache-read) input tokens. Carried so the turn persists
     /// real cached usage instead of zero (issue #4249, Phase 5).
     pub cached_input_tokens: u64,
+    /// Input tokens in the most recent primary model call. This is deliberately
+    /// not accumulated across iterations: it represents one context window.
+    pub last_call_input_tokens: u64,
+    /// Output tokens in the most recent primary model call.
+    pub last_call_output_tokens: u64,
     /// Estimated charged USD for the turn (from `cost::catalog::estimate_cost_usd`
     /// over the observed usage). Carried so the transcript / session meters record
     /// a real cost instead of `$0` on every non-cap turn.

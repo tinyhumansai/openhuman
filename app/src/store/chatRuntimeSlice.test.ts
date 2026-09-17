@@ -150,6 +150,31 @@ describe('chatRuntimeSlice recordChatTurnUsage', () => {
     expect(store.getState().chatRuntime.sessionTokenUsage.lastTurnContextUsed).toBe(920);
   });
 
+  it('uses reported primary-call occupancy instead of cumulative multi-call traffic', () => {
+    const store = makeStore();
+    store.dispatch(
+      recordChatTurnUsage({
+        inputTokens: 76_198,
+        outputTokens: 846,
+        cachedTokens: 71_654,
+        contextWindow: 131_072,
+        contextUsedTokens: 24_321,
+      })
+    );
+    const usage = store.getState().chatRuntime.sessionTokenUsage;
+    expect(usage.inputTokens).toBe(76_198);
+    expect(usage.cachedTokens).toBe(71_654);
+    expect(usage.lastTurnContextUsed).toBe(24_321);
+  });
+
+  it('preserves a reported zero occupancy instead of applying the legacy fallback', () => {
+    const store = makeStore();
+    store.dispatch(
+      recordChatTurnUsage({ inputTokens: 1_000, outputTokens: 100, contextUsedTokens: 0 })
+    );
+    expect(store.getState().chatRuntime.sessionTokenUsage.lastTurnContextUsed).toBe(0);
+  });
+
   it('clamps the gauge numerator to zero when sub-agents exceed the turn total (#4271)', () => {
     const store = makeStore();
     store.dispatch(

@@ -48,19 +48,19 @@ pub use schema::{
     IntegrationsConfig, LarkConfig, LearningConfig, LinqConfig, LlmBackend, LocalAiConfig,
     MatrixConfig, McpAuthConfig, McpClientConfig, McpClientIdentityConfig, McpServerConfig,
     MemoryConfig, MemoryTreeConfig, ModelRouteConfig, MultimodalConfig, MultimodalFileConfig,
-    ObservabilityConfig, OrchestratorModelConfig, PrivacyConfig, PrivacyMode, ProxyConfig,
-    ProxyScope, ReflectionSource, ReliabilityConfig, ResourceLimitsConfig, RuntimeConfig,
-    RuntimePoolConfig, RuntimePoolLangConfig, SandboxBackend, SandboxConfig, SchedulerConfig,
-    SchedulerGateConfig, SchedulerGateMode, SearchConfig, SearchEngine, SearchEngineCredentials,
-    SearxngConfig, SecretsConfig, SecurityConfig, ShellConfig, SlackConfig, StorageConfig,
-    StorageProviderConfig, StorageProviderSection, StreamMode, SttEngine, TeamModelConfig,
-    TelegramConfig, TokenjuiceConfig, UpdateConfig, UpdateRestartStrategy, VoiceActivationMode,
-    VoiceServerConfig, WebSearchConfig, WebhookConfig, YuanbaoConfig, DEFAULT_CLOUD_LLM_MODEL,
-    DEFAULT_MEMORY_SYNC_INTERVAL_SECS, DEFAULT_MODEL, MEMORY_SYNC_INTERVAL_PRESETS_SECS,
-    MODEL_AGENTIC_V1, MODEL_BURST_V1, MODEL_CHAT_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1,
-    MODEL_REASONING_V1, MODEL_SUMMARIZATION_V1, MODEL_VISION_V1, SEARCH_ENGINE_BRAVE,
-    SEARCH_ENGINE_DISABLED, SEARCH_ENGINE_EXA, SEARCH_ENGINE_MANAGED, SEARCH_ENGINE_PARALLEL,
-    SEARCH_ENGINE_QUERIT, SEARCH_ENGINE_TAVILY,
+    ObservabilityConfig, OrchestrationEngine, OrchestratorModelConfig, PrivacyConfig, PrivacyMode,
+    ProxyConfig, ProxyScope, ReflectionSource, ReliabilityConfig, ResourceLimitsConfig,
+    RuntimeConfig, RuntimePoolConfig, RuntimePoolLangConfig, SandboxBackend, SandboxConfig,
+    SchedulerConfig, SchedulerGateConfig, SchedulerGateMode, SearchConfig, SearchEngine,
+    SearchEngineCredentials, SearxngConfig, SecretsConfig, SecurityConfig, ShellConfig,
+    SlackConfig, StorageConfig, StorageProviderConfig, StorageProviderSection, StreamMode,
+    SttEngine, TeamModelConfig, TelegramConfig, TokenjuiceConfig, UpdateConfig,
+    UpdateRestartStrategy, VoiceActivationMode, VoiceServerConfig, WebSearchConfig, WebhookConfig,
+    YuanbaoConfig, DEFAULT_CLOUD_LLM_MODEL, DEFAULT_MEMORY_SYNC_INTERVAL_SECS, DEFAULT_MODEL,
+    MEMORY_SYNC_INTERVAL_PRESETS_SECS, MODEL_AGENTIC_V1, MODEL_BURST_V1, MODEL_CHAT_V1,
+    MODEL_CODING_V1, MODEL_REASONING_QUICK_V1, MODEL_REASONING_V1, MODEL_SUMMARIZATION_V1,
+    MODEL_VISION_V1, SEARCH_ENGINE_BRAVE, SEARCH_ENGINE_DISABLED, SEARCH_ENGINE_EXA,
+    SEARCH_ENGINE_MANAGED, SEARCH_ENGINE_PARALLEL, SEARCH_ENGINE_QUERIT, SEARCH_ENGINE_TAVILY,
 };
 // Kept as a separate re-export (issue #4117) so the large alphabetized group
 // above stays byte-identical and rustfmt-stable.
@@ -81,3 +81,6 @@ pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(()
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod ops_autonomy_extended_tests;

@@ -325,7 +325,16 @@ impl SystemPromptBuilder {
                 if part.trim().is_empty() {
                     continue;
                 }
-                output.push_str(part.trim_end());
+                let rendered = part.trim_end();
+                let chars = rendered.chars().count();
+                tracing::debug!(
+                    section = section.name(),
+                    tier = ?tier,
+                    chars,
+                    estimated_tokens = chars.div_ceil(4),
+                    "[prompts] rendered system-prompt section"
+                );
+                output.push_str(rendered);
                 output.push_str("\n\n");
             }
             // A boundary is only worth declaring when the tier actually
@@ -354,10 +363,27 @@ impl SystemPromptBuilder {
         // the heading keeps this self-maintaining: an agent that stops
         // carrying its own copy silently gets the global one back.
         if !output.contains(GROUNDING_HEADING) {
+            tracing::debug!(
+                section = "grounding",
+                tier = ?PromptTier::Stable,
+                chars = GROUNDING_BODY.chars().count(),
+                estimated_tokens = GROUNDING_BODY.chars().count().div_ceil(4),
+                "[prompts] rendered system-prompt section"
+            );
             output.push_str(GROUNDING_BODY);
             output.push_str("\n\n");
         }
-        output.push_str(global_style_block(ctx.workspace_dir).trim_end());
+        let style = global_style_block(ctx.workspace_dir);
+        let style = style.trim_end();
+        let style_chars = style.chars().count();
+        tracing::debug!(
+            section = "global_style",
+            tier = ?PromptTier::Stable,
+            chars = style_chars,
+            estimated_tokens = style_chars.div_ceil(4),
+            "[prompts] rendered system-prompt section"
+        );
+        output.push_str(style);
         output.push('\n');
         // The grounding contract and the style block are byte-stable and are
         // appended after every tier, so they land behind the volatile bytes and
@@ -367,6 +393,12 @@ impl SystemPromptBuilder {
         // contract in the middle of the document, which is worse to read and
         // worse to edit. If they ever grow, make them their own `Stable`
         // sections instead of special-casing them here.
+        tracing::info!(
+            chars = output.chars().count(),
+            estimated_tokens = output.chars().count().div_ceil(4),
+            sections = self.sections.len(),
+            "[prompts] assembled system prompt"
+        );
         Ok(TieredPrompt {
             text: output,
             breakpoints,

@@ -1,0 +1,53 @@
+[workspace]
+members = [
+    "crates/goose-agent",
+    "crates/goose-provider-types",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+version = "1.50.0"
+rust-version = "1.94.1"
+authors = ["AAIF <ai-oss-tools@block.xyz>"]
+license = "Apache-2.0"
+repository = "https://github.com/aaif-goose/goose"
+description = "An AI agent"
+
+[workspace.lints.clippy]
+uninlined_format_args = "allow"
+string_slice = "warn"
+
+# This is the dependency surface used by the two pinned crates below. Versions
+# match goose commit 53672c3f14bbf83959cea3e6fe0132a2e8b800af exactly.
+[workspace.dependencies]
+# The upstream manifest permits 3.x, but the pinned commit's lockfile resolves
+# 3.3.0. Keep that exact resolution so this source snapshot remains reproducible.
+rmcp = { version = "=3.3.0", default-features = false, features = ["schemars", "auth"] }
+anyhow = { version = "1.0.102", default-features = false, features = ["std"] }
+async-stream = { version = "0.3.6", default-features = false }
+async-trait = { version = "0.1.89", default-features = false }
+base64 = { version = "0.23.0", default-features = false, features = ["std"] }
+chrono = { version = "0.4.44", default-features = false, features = ["serde", "std"] }
+env-lock = { version = "1", default-features = false }
+futures = { version = "0.3.32", default-features = false, features = ["std"] }
+once_cell = { version = "1.21.3", default-features = false, features = ["std"] }
+rand = "0.10.1"
+regex = { version = "1.12.3", default-features = false, features = ["std"] }
+reqwest = { version = "0.13.2", default-features = false, features = ["multipart", "form"] }
+schemars = { version = "1.0.2", default-features = false, features = ["std"] }
+serde = { version = "1.0.228", default-features = false, features = ["derive", "std"] }
+serde_json = { version = "1.0.145", default-features = false, features = ["std"] }
+strum = { version = "0.28.0", default-features = false, features = ["derive", "std"] }
+tempfile = { version = "3.10.1", default-features = false }
+test-case = { version = "3", default-features = false }
+thiserror = { version = "2.0.18", default-features = false }
+tokio = { version = "1.48", default-features = false }
+tokio-stream = { version = "0.1.16", default-features = false }
+tokio-util = { version = "0.7.12", default-features = false }
+tracing = { version = "0.1.43", default-features = false, features = ["std"] }
+tracing-futures = { version = "0.2.4", default-features = false, features = ["futures-03", "std", "std-future"] }
+uuid = { version = "1.23", default-features = false, features = ["v4", "std"] }
+
+[profile.dev.package."*"]
+debug = false

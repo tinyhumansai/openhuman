@@ -12,6 +12,7 @@ async fn apply_agent_settings_rejects_out_of_range_timeout() {
         &mut cfg,
         AgentSettingsPatch {
             agent_timeout_secs: Some(0),
+            ..Default::default()
         },
     )
     .await
@@ -23,6 +24,7 @@ async fn apply_agent_settings_rejects_out_of_range_timeout() {
         &mut cfg,
         AgentSettingsPatch {
             agent_timeout_secs: Some(99_999),
+            ..Default::default()
         },
     )
     .await

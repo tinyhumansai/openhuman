@@ -158,7 +158,8 @@ pub(super) async fn finalize_turn_outcome(
         }
     }
 
-    let bridge_totals = bridge.map(|bridge| bridge.totals_with_cost());
+    let bridge_totals = bridge.as_ref().map(|bridge| bridge.totals_with_cost());
+    let last_call_tokens = bridge.as_ref().map(|bridge| bridge.last_call_tokens());
 
     // Prefer the bridge's accumulated usage (per-call, authoritative — including
     // cached tokens and the estimated charged USD) when the observed path ran;
@@ -256,6 +257,17 @@ pub(super) async fn finalize_turn_outcome(
         input_tokens,
         output_tokens,
         cached_input_tokens,
+        // Observed runs retain the final provider call separately from the
+        // cumulative turn totals. For unobserved single-call runs the aggregate
+        // is exact; multi-call aggregates are not valid occupancy readings.
+        last_call_input_tokens: last_call_tokens
+            .map(|tokens| tokens.0)
+            .or_else(|| (run.model_calls == 1).then_some(input_tokens))
+            .unwrap_or(0),
+        last_call_output_tokens: last_call_tokens
+            .map(|tokens| tokens.1)
+            .or_else(|| (run.model_calls == 1).then_some(output_tokens))
+            .unwrap_or(0),
         charged_amount_usd,
         early_exit_tool,
         hit_cap,

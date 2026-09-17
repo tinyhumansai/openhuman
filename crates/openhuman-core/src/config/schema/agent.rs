@@ -3,6 +3,31 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+/// Primary interactive-chat orchestration engine.
+///
+/// Phase 7 keeps TinyAgents as the rollback implementation while the exact
+/// local-Qwen route opts into the pinned Goose state machine.  Runtime routing
+/// still limits Goose to primary interactive chat; background agents and
+/// unrelated providers remain on TinyAgents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum OrchestrationEngine {
+    /// One-release rollback path.
+    Tinyagents,
+    /// Pinned Goose state-machine integration.
+    #[default]
+    Goose,
+}
+
+impl OrchestrationEngine {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Tinyagents => "tinyagents",
+            Self::Goose => "goose",
+        }
+    }
+}
+
 /// Optional model pin for the front-line orchestrator.
 ///
 /// This is intentionally a small exact-model override: provider routing
@@ -227,6 +252,13 @@ impl RequiredOutputContract {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct AgentConfig {
+    /// Engine used for the primary interactive-chat path.  During the Phase 7
+    /// rollout this value is consulted only for the exact
+    /// `lmstudio:qwen38-openhuman` binding.  Other providers and non-interactive
+    /// agent entrypoints stay on TinyAgents.  Set `tinyagents` to roll the local
+    /// route back without changing the model, endpoint, or context settings.
+    #[serde(default)]
+    pub orchestration_engine: OrchestrationEngine,
     /// When true: bootstrap_max_chars=6000, rag_chunk_limit=2. Use for 13B or smaller models.
     #[serde(default)]
     pub compact_context: bool,
@@ -379,6 +411,12 @@ pub struct AgentConfig {
     /// `AGENTS.md`.
     #[serde(default = "default_agents_md_enabled")]
     pub agents_md_enabled: bool,
+
+    /// Persisted user spending authorization for TinyHumans/OpenHuman-managed
+    /// metered agent tools. Sign-in/authentication does not grant it, and a
+    /// per-turn setting may only narrow this value.
+    #[serde(default)]
+    pub allow_metered_agent_tools: bool,
 }
 
 fn default_agents_md_enabled() -> bool {
@@ -520,6 +558,7 @@ impl AgentConfig {
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
+            orchestration_engine: OrchestrationEngine::default(),
             compact_context: false,
             max_tool_iterations: default_agent_max_tool_iterations(),
             max_history_messages: default_agent_max_history_messages(),
@@ -535,6 +574,7 @@ impl Default for AgentConfig {
             session_shadow_reads: default_session_shadow_reads(),
             required_output: None,
             agents_md_enabled: default_agents_md_enabled(),
+            allow_metered_agent_tools: false,
         }
     }
 }

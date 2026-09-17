@@ -16,6 +16,34 @@ impl ChatModel<()> for SuccessfulModel {
     }
 }
 
+struct QwenToolStreamModel;
+
+#[async_trait]
+impl ChatModel<()> for QwenToolStreamModel {
+    async fn invoke(
+        &self,
+        _state: &(),
+        _request: ModelRequest,
+    ) -> tinyinference::Result<ModelResponse> {
+        Ok(ModelResponse::assistant("unused"))
+    }
+
+    async fn stream(
+        &self,
+        _state: &(),
+        _request: ModelRequest,
+    ) -> tinyinference::Result<ModelStream> {
+        let completed = ModelResponse::assistant(
+            r#"<tool_call>{"web_fetch","arguments":{"url":"https://example.com"}}</tool_call>"#,
+        );
+        Ok(Box::pin(futures::stream::iter(vec![
+            ModelStreamItem::Started,
+            ModelStreamItem::MessageDelta(MessageDelta::text("<tool_call>")),
+            ModelStreamItem::Completed(completed),
+        ])))
+    }
+}
+
 #[tokio::test]
 async fn selected_model_records_concrete_route_and_fallback_overwrites_primary() {
     let primary = RouteRecordingModel::new(Arc::new(SuccessfulModel), "openhuman", "chat-v1");
@@ -124,4 +152,143 @@ fn profile_override_cache_identity_includes_request_model() {
         ProfileOverrideModel::new(inner, ModelProfile::default()).with_request_model("model-b");
 
     assert_ne!(first.cache_identity(), second.cache_identity());
+}
+
+fn tool_schema(name: &str) -> tinyinference::tool::ToolSchema {
+    tinyinference::tool::ToolSchema {
+        name: name.to_string(),
+        description: String::new(),
+        parameters: serde_json::json!({"type": "object"}),
+        format: Default::default(),
+    }
+}
+
+fn url_tool_schema(name: &str) -> tinyinference::tool::ToolSchema {
+    tinyinference::tool::ToolSchema::new(
+        name,
+        "",
+        serde_json::json!({
+            "type": "object",
+            "properties": {"url": {"type": "string"}},
+            "required": ["url"]
+        }),
+    )
+}
+
+#[test]
+fn qwen_bare_name_repair_accepts_an_advertised_tool() {
+    let response = repair_qwen_bare_name_tool_call(
+        ModelResponse::assistant(
+            r#"<tool_call>{"web_fetch", "arguments": {"url": "https://example.com", "max_bytes": 6000}}</tool_call>"#,
+        ),
+        &[tool_schema("web_fetch")],
+    );
+
+    assert_eq!(response.text(), "");
+    assert_eq!(response.tool_calls().len(), 1);
+    assert_eq!(response.tool_calls()[0].name, "web_fetch");
+    assert_eq!(
+        response.tool_calls()[0].arguments,
+        serde_json::json!({"url": "https://example.com", "max_bytes": 6000})
+    );
+}
+
+#[test]
+fn qwen_bare_name_repair_rejects_an_unadvertised_tool() {
+    let text = r#"<tool_call>{"shell", "arguments": {"command": "whoami"}}</tool_call>"#;
+    let response = repair_qwen_bare_name_tool_call(
+        ModelResponse::assistant(text),
+        &[tool_schema("web_fetch")],
+    );
+
+    assert!(response.tool_calls().is_empty());
+    assert!(!response.text().contains("<tool_call>"));
+    assert!(response.text().contains("invalid tool call"));
+}
+
+#[test]
+fn qwen_missing_name_repair_accepts_one_schema_valid_read_only_tool() {
+    let response = repair_qwen_bare_name_tool_call(
+        ModelResponse::assistant(
+            r#"<tool_call>{"arguments":{"url":"https://example.com"}}</tool_call>"#,
+        ),
+        &[url_tool_schema("web_fetch"), tool_schema("web_search_tool")],
+    );
+
+    assert_eq!(response.text(), "");
+    assert_eq!(response.tool_calls().len(), 1);
+    assert_eq!(response.tool_calls()[0].name, "web_fetch");
+}
+
+#[test]
+fn qwen_missing_name_repair_rejects_ambiguous_or_acting_tools() {
+    let text = r#"<tool_call>{"arguments":{"url":"https://example.com"}}</tool_call>"#;
+    let ambiguous = repair_qwen_bare_name_tool_call(
+        ModelResponse::assistant(text),
+        &[
+            url_tool_schema("web_fetch"),
+            url_tool_schema("browser_open"),
+        ],
+    );
+    assert!(ambiguous.tool_calls().is_empty());
+    assert!(!ambiguous.text().contains("<tool_call>"));
+    assert!(ambiguous.text().contains("invalid tool call"));
+
+    let acting = repair_qwen_bare_name_tool_call(
+        ModelResponse::assistant(text),
+        &[url_tool_schema("shell")],
+    );
+    assert!(acting.tool_calls().is_empty());
+    assert!(!acting.text().contains("<tool_call>"));
+    assert!(acting.text().contains("invalid tool call"));
+}
+
+#[test]
+fn qwen_normalization_admits_only_the_first_tool_call() {
+    let mut response = ModelResponse::assistant("");
+    response.message.tool_calls = vec![
+        TaToolCall::new(
+            "one",
+            "web_search_tool",
+            serde_json::json!({"query": "first"}),
+        ),
+        TaToolCall::new(
+            "two",
+            "web_search_tool",
+            serde_json::json!({"query": "second"}),
+        ),
+    ];
+
+    let response = normalize_qwen_tool_response(response, &[tool_schema("web_search_tool")]);
+
+    assert_eq!(response.tool_calls().len(), 1);
+    assert_eq!(response.tool_calls()[0].id, "one");
+}
+
+#[tokio::test]
+async fn qwen_stream_hides_prompt_tool_markup_and_keeps_completed_call() {
+    use futures::StreamExt;
+
+    let route = RouteRecordingModel::new(
+        Arc::new(QwenToolStreamModel),
+        "lmstudio",
+        "qwen38-openhuman",
+    );
+    let request = ModelRequest::default().with_tools(vec![url_tool_schema("web_fetch")]);
+
+    let items: Vec<_> = route
+        .stream(&(), request)
+        .await
+        .expect("stream")
+        .collect()
+        .await;
+
+    assert!(items.iter().all(|item| !matches!(
+        item,
+        ModelStreamItem::MessageDelta(delta) if delta.text.contains("<tool_call>")
+    )));
+    assert!(items.iter().any(|item| matches!(
+        item,
+        ModelStreamItem::Completed(response) if response.tool_calls().len() == 1
+    )));
 }

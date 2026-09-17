@@ -72,7 +72,7 @@ mod tools;
 mod update;
 
 pub use agent::{
-    AgentConfig, DelegateAgentConfig, MemoryContextWindow, MemoryWindowLimits,
+    AgentConfig, DelegateAgentConfig, MemoryContextWindow, MemoryWindowLimits, OrchestrationEngine,
     OrchestratorModelConfig, RequiredOutputContract, TeamModelConfig,
 };
 pub use autonomy::AutonomyConfig;

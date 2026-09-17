@@ -22,6 +22,12 @@ pub(super) struct BridgeState {
     pub(super) output_tokens: u64,
     pub(super) cached_input_tokens: u64,
     pub(super) charged_amount_usd: f64,
+    /// Provider-reported occupancy of the most recently completed model call.
+    /// Unlike the counters above, these values are replaced on every call and
+    /// therefore describe one context window rather than cumulative turn
+    /// traffic.
+    pub(super) last_call_input_tokens: u64,
+    pub(super) last_call_output_tokens: u64,
     /// Local response-cache hits observed on this turn (issue #4249, 03.2). A hit
     /// means the harness served a model call from its [`ResponseCache`] without
     /// invoking the provider. Additive counters — a follow-up (coordinated with
@@ -177,6 +183,14 @@ impl OpenhumanEventBridge {
             s.cached_input_tokens,
             s.charged_amount_usd,
         )
+    }
+
+    /// Provider-reported input/output tokens for the most recent model call.
+    /// This is the numerator a context-window gauge needs; summing the same
+    /// cached prefix across a multi-call turn overstates actual occupancy.
+    pub(crate) fn last_call_tokens(&self) -> (u64, u64) {
+        let s = self.state.lock().unwrap();
+        (s.last_call_input_tokens, s.last_call_output_tokens)
     }
 
     /// Cumulative `(cache_hits, cache_misses)` observed so far (issue #4249,
@@ -371,6 +385,8 @@ impl OpenhumanEventBridge {
             s.output_tokens += usage.output_tokens;
             s.cached_input_tokens += usage.cache_read_tokens;
             s.charged_amount_usd += call_cost;
+            s.last_call_input_tokens = usage.input_tokens;
+            s.last_call_output_tokens = usage.output_tokens;
             (
                 s.input_tokens,
                 s.output_tokens,

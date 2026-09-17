@@ -127,6 +127,7 @@ fn o1_o3_segment_context(model: &str) -> Option<u64> {
 
 fn tier_context_window(model: &str) -> Option<u64> {
     match model {
+        "qwen38-openhuman" => Some(131_072),
         MODEL_REASONING_V1 => Some(TIER_REASONING_CONTEXT),
         MODEL_AGENTIC_V1 | MODEL_CODING_V1 => Some(TIER_LARGE_CONTEXT),
         "summarization-v1" => Some(TIER_FLASH_CONTEXT),

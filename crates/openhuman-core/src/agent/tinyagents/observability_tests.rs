@@ -304,6 +304,11 @@ async fn duplicate_usage_for_same_model_call_is_recorded_once() {
         }
     }
     assert_eq!(cost_updates, 1, "footer must update once per model call");
+    assert_eq!(
+        bridge.last_call_tokens(),
+        (100, 40),
+        "duplicate usage must not alter the final-call occupancy"
+    );
 
     // A genuinely new model call (iteration cursor → 2) records again.
     sink.emit(AgentEvent::ModelStarted {
@@ -318,6 +323,11 @@ async fn duplicate_usage_for_same_model_call_is_recorded_once() {
         (input, output),
         (110, 45),
         "a distinct model call (new iteration) must still record"
+    );
+    assert_eq!(
+        bridge.last_call_tokens(),
+        (10, 5),
+        "context occupancy must describe the latest call, not cumulative traffic"
     );
 }
 

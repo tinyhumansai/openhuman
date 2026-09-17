@@ -354,9 +354,29 @@ fn system_prompt_includes_tool_policy_boundary() {
         .expect("prompt");
 
     assert!(prompt.contains("## Tool Policy Boundary"));
-    assert!(prompt.contains("Allowed tools: echo"));
+    assert!(prompt.contains("Callable tools: use only tools advertised on the current request"));
     assert!(prompt.contains("Restricted tools: 1 omitted by policy"));
     assert!(!prompt.contains("write_notes"));
+}
+
+#[test]
+fn system_prompt_does_not_duplicate_the_tinyagents_tool_protocol() {
+    let provider: Arc<dyn ChatModel<()>> = Arc::new(DummyProvider);
+    let agent = make_agent_with_builder(
+        provider,
+        vec![Box::new(EchoTool)],
+        vec![],
+        crate::config::AgentConfig::default(),
+        crate::config::ContextConfig::default(),
+    );
+
+    let prompt = agent
+        .build_system_prompt(LearnedContextData::default())
+        .expect("prompt");
+
+    assert!(!prompt.contains("## Tools\n"));
+    assert!(!prompt.contains("## Tool Use Protocol"));
+    assert!(!prompt.contains("echo["));
 }
 
 #[test]

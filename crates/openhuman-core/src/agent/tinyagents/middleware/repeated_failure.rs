@@ -17,8 +17,8 @@ use tinyinference::tool::ToolCall as TaToolCall;
 
 use super::loop_guards::{
     is_recoverable_tool_failure, is_repeat_call_exempt, recoverable_identical_halt_summary,
-    recoverable_no_progress_halt_summary, terminal_inference_failure_kind,
-    terminal_inference_halt_summary, RECOVERABLE_NO_PROGRESS_FAILURE_THRESHOLD,
+    recoverable_no_progress_halt_summary, terminal_inference_halt_summary,
+    terminal_tool_failure_kind, RECOVERABLE_NO_PROGRESS_FAILURE_THRESHOLD,
     RECOVERABLE_REPEAT_FAILURE_THRESHOLD,
 };
 
@@ -280,7 +280,7 @@ impl Middleware<()> for RepeatedToolFailureMiddleware {
         // re-emits the doomed step under varied delegation-tool names so the
         // identical-retry threshold never trips in time.
         if result.error.is_some() {
-            if let Some(kind) = terminal_inference_failure_kind(&failure_text) {
+            if let Some(kind) = terminal_tool_failure_kind(&result.name, &failure_text) {
                 tracing::warn!(
                     tool = %result.name,
                     kind = ?kind,

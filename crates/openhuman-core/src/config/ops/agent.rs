@@ -32,15 +32,18 @@ pub struct AutonomySettingsPatch {
     pub auto_approve_all: Option<bool>,
 }
 
-/// Partial update for the `[agent]` block. Currently carries the single
-/// user-facing `agent_timeout_secs` knob (the tool/action wall-clock timeout);
-/// other `AgentConfig` fields are not yet UI-exposed. `None` leaves the value
-/// unchanged.
+/// Partial update for the `[agent]` block. Carries `agent_timeout_secs`
+/// (the tool/action wall-clock timeout) and `allow_metered_agent_tools` (opt-in
+/// for managed metered agent tools). `None` leaves the value unchanged.
 #[derive(Debug, Clone, Default)]
 pub struct AgentSettingsPatch {
     /// Tool/action wall-clock timeout in seconds. Validated to
     /// `tool_timeout::MIN_TIMEOUT_SECS..=tool_timeout::MAX_TIMEOUT_SECS`.
     pub agent_timeout_secs: Option<u64>,
+    /// Persisted user spending authorization for TinyHumans/OpenHuman-managed
+    /// metered agent tools. Sign-in/authentication does not grant it, and a
+    /// per-turn setting may only narrow this value.
+    pub allow_metered_agent_tools: Option<bool>,
 }
 
 /// Partial update for the agent's editable filesystem roots.
@@ -189,8 +192,8 @@ pub async fn add_auto_approve_tool(tool_name: &str) -> Result<(), String> {
         .map(|_| ())
 }
 
-/// Updates the `[agent]` block (currently the `agent_timeout_secs` tool/action
-/// wall-clock timeout).
+/// Updates the `[agent]` block (`agent_timeout_secs` tool/action wall-clock
+/// timeout and `allow_metered_agent_tools` authorization).
 ///
 /// After persisting, pushes the new value into the live
 /// [`crate::tools::timeout`] runtime so subsequent tool calls honour
@@ -214,14 +217,18 @@ pub async fn apply_agent_settings(
         }
         config.agent.agent_timeout_secs = timeout_secs;
     }
+    if let Some(allow_metered) = update.allow_metered_agent_tools {
+        config.agent.allow_metered_agent_tools = allow_metered;
+    }
 
     config.save().await.map_err(|e| e.to_string())?;
 
     let effective = crate::tools::timeout::set_tool_timeout_secs(config.agent.agent_timeout_secs);
     log::debug!(
-        "[config][agent] agent settings saved; agent_timeout_secs={} effective={}s",
+        "[config][agent] agent settings saved; agent_timeout_secs={} effective={}s allow_metered_agent_tools={}",
         config.agent.agent_timeout_secs,
-        effective
+        effective,
+        config.agent.allow_metered_agent_tools
     );
 
     let snapshot = snapshot_config_json(config)?;
@@ -242,14 +249,15 @@ pub async fn load_and_apply_agent_settings(
     apply_agent_settings(&mut config, update).await
 }
 
-/// Returns the agent execution settings (currently the action timeout) plus the
-/// runtime-effective value and whether the `OPENHUMAN_TOOL_TIMEOUT_SECS` env var
-/// is overriding the configured value, so the UI can explain a no-op control.
+/// Returns the agent execution settings (action timeout and metered tools opt-in)
+/// plus the runtime-effective value and whether the `OPENHUMAN_TOOL_TIMEOUT_SECS`
+/// env var is overriding the configured value, so the UI can explain a no-op control.
 pub async fn get_agent_settings() -> Result<RpcOutcome<serde_json::Value>, String> {
     let config = load_config_with_timeout().await?;
     crate::tools::timeout::set_tool_timeout_secs(config.agent.agent_timeout_secs);
     let value = serde_json::json!({
         "agent_timeout_secs": config.agent.agent_timeout_secs,
+        "allow_metered_agent_tools": config.agent.allow_metered_agent_tools,
         "effective_timeout_secs": crate::tools::timeout::tool_execution_timeout_secs(),
         "env_override": crate::tools::timeout::env_override_active(),
         "min_timeout_secs": crate::tools::timeout::MIN_TIMEOUT_SECS,

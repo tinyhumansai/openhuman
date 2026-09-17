@@ -457,6 +457,8 @@ interface ChatTurnUsagePayload {
   cachedTokens?: number;
   costUsd?: number;
   contextWindow?: number;
+  /** Most recent primary-model call occupancy; absent on older cores. */
+  contextUsedTokens?: number;
   /** Thread the turn belongs to; routes the delta to that thread's bucket. */
   threadId?: string;
   subAgents?: Array<{
@@ -486,10 +488,10 @@ function applyTurnUsage(usage: SessionTokenUsage, payload: ChatTurnUsagePayload)
   // (>0); an unknown-window turn leaves the prior value intact.
   const ctxWindow = nonNeg(payload.contextWindow);
   if (ctxWindow > 0) usage.contextWindow = ctxWindow;
-  // `inTok`/`outTok` are combined parent+sub-agent turn totals (the core sends
-  // one number for cost), but the context window is the orchestrator model's
-  // alone. Subtract this turn's sub-agent spend so the gauge numerator is the
-  // orchestrator thread's own occupancy and can't overflow its window (#4271).
+  // `inTok`/`outTok` are combined parent+sub-agent turn traffic. They are not a
+  // context occupancy measurement because a multi-call turn counts the same
+  // cached prefix repeatedly. New cores report the final primary call directly;
+  // retain the old subagent-subtraction approximation only for compatibility.
   let subTurnTokens = 0;
   for (const sub of payload.subAgents ?? []) {
     if (!sub || typeof sub.agentId !== 'string' || sub.agentId.length === 0) continue;
@@ -509,7 +511,11 @@ function applyTurnUsage(usage: SessionTokenUsage, payload: ChatTurnUsagePayload)
     existing.runs += 1;
     usage.subAgents[sub.agentId] = existing;
   }
-  usage.lastTurnContextUsed = Math.max(0, inTok + outTok - subTurnTokens);
+  const hasReportedOccupancy =
+    typeof payload.contextUsedTokens === 'number' && Number.isFinite(payload.contextUsedTokens);
+  usage.lastTurnContextUsed = hasReportedOccupancy
+    ? nonNeg(payload.contextUsedTokens)
+    : Math.max(0, inTok + outTok - subTurnTokens);
 }
 
 /**

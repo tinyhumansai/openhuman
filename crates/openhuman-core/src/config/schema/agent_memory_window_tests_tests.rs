@@ -213,3 +213,55 @@ fn agents_md_enabled_roundtrips_when_disabled() {
     let cfg: AgentConfig = serde_json::from_str(r#"{"agents_md_enabled": false}"#).unwrap();
     assert!(!cfg.agents_md_enabled);
 }
+
+#[test]
+fn allow_metered_agent_tools_defaults_to_false() {
+    assert!(
+        !AgentConfig::default().allow_metered_agent_tools,
+        "AgentConfig::default() must have allow_metered_agent_tools set to false"
+    );
+}
+
+#[test]
+fn allow_metered_agent_tools_defaults_false_when_omitted() {
+    let cfg: AgentConfig = serde_json::from_str("{}").unwrap();
+    assert!(
+        !cfg.allow_metered_agent_tools,
+        "deserializing empty JSON object must default allow_metered_agent_tools to false"
+    );
+    assert_eq!(cfg.tool_dispatcher, "auto");
+    assert_eq!(cfg.memory_window, None);
+    assert_eq!(cfg.max_memory_context_chars, 2000);
+}
+
+#[test]
+fn allow_metered_agent_tools_roundtrips_explicit_true() {
+    let cfg: AgentConfig = serde_json::from_str(r#"{"allow_metered_agent_tools": true}"#).unwrap();
+    assert!(cfg.allow_metered_agent_tools);
+    let serialized = serde_json::to_string(&cfg).unwrap();
+    let roundtrip: AgentConfig = serde_json::from_str(&serialized).unwrap();
+    assert!(roundtrip.allow_metered_agent_tools);
+}
+
+#[test]
+fn allow_metered_agent_tools_roundtrips_explicit_false() {
+    let cfg: AgentConfig = serde_json::from_str(r#"{"allow_metered_agent_tools": false}"#).unwrap();
+    assert!(!cfg.allow_metered_agent_tools);
+    let serialized = serde_json::to_string(&cfg).unwrap();
+    let roundtrip: AgentConfig = serde_json::from_str(&serialized).unwrap();
+    assert!(!roundtrip.allow_metered_agent_tools);
+}
+
+#[test]
+fn allow_metered_agent_tools_preserves_overall_config_defaults() {
+    let full_cfg: crate::config::Config = serde_json::from_str("{}").unwrap();
+    assert!(!full_cfg.agent.allow_metered_agent_tools);
+    assert!(full_cfg.primary_cloud.is_none());
+    assert!(full_cfg.default_model.is_none());
+    assert!(full_cfg.api_url.is_none());
+    assert!(full_cfg.inference_url.is_none());
+    assert_eq!(full_cfg.agent.tool_dispatcher, "auto");
+    assert_eq!(full_cfg.agent.memory_window, None);
+    assert_eq!(full_cfg.agent.max_memory_context_chars, 2000);
+    assert!(full_cfg.agent.channel_permissions.is_empty());
+}
