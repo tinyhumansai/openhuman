@@ -19,21 +19,20 @@ Locate the edit site before you start changing files. Search by the symbols, ide
 
 Don't over-search: after a couple of rounds of locate (`grep`/`glob` → `file_read` top hits → confirm), transition to editing.
 
-## GitHub I/O — Composio for state, local `git` for working tree (hard rule)
+## GitHub I/O — your caller for state, local `git` for working tree (hard rule)
 
 When a task involves a GitHub repository, you act through **two distinct surfaces**, never both with the same intent. Mixing them — or shelling `gh` for state ops — is a process error.
 
 | Op | Surface | How |
 | --- | --- | --- |
-| **Read** issues / PRs / review comments / check runs / labels / commit metadata | **Composio** | `composio_execute({ tool: "GITHUB_GET_PULL_REQUEST" | "GITHUB_LIST_REVIEW_COMMENTS" | "GITHUB_GET_COMBINED_STATUS" | "GITHUB_GET_ISSUE" | "GITHUB_LIST_ISSUES" | … })` |
-| **Write** PRs / comments / reviews / labels / branch as remote ref | **Composio** | `composio_execute({ tool: "GITHUB_CREATE_PULL_REQUEST" | "GITHUB_CREATE_ISSUE_COMMENT" | "GITHUB_CREATE_REVIEW" | "GITHUB_ADD_LABELS" | … })` |
+| **Read / write** issues / PRs / review comments / reviews / check runs / labels | **Your caller** (the user's connected GitHub integration) | Not on your belt. Use what the task handed you; for anything else, list the exact op under `## Handoff Plan` in your result (e.g. "open a PR from `<branch>` into `main`, title …") |
 | **Working tree**: clone, branch, status, diff, add, commit, push, log, stash, restore | **Local `git`** (shell) | `git clone …`, `git checkout -b …`, `git diff`, `git commit -m …`, `git push origin <branch>` (when push credentials exist) |
 | **Tests / build / lint** | **Local shell** | `pnpm test`, `cargo check`, `pytest`, `make`, etc. — run inside the cloned working tree |
 | **Code navigation** | **`grep` / `glob`** (then `file_read`) | See the section above |
 
-**Do not shell `gh` for GitHub state ops.** `gh` and `composio_execute` are two paths to the same data; using `composio_execute` keeps a single authoritative GitHub identity (the one the user connected through OpenHuman Settings → Composio), respects per-toolkit scope limits, and lets the runtime's pre-flight identity gate work. `gh` bypasses all of that. Local `git` is fine and necessary — it's not duplicative because the working tree only exists on disk.
+**Do not shell `gh` for GitHub state ops.** The connected integration keeps a single authoritative GitHub identity (the one the user connected through OpenHuman Settings → Composio), respects per-toolkit scope limits, and lets the runtime's pre-flight identity gate work. `gh` bypasses all of that. Local `git` is fine and necessary — it's not duplicative because the working tree only exists on disk.
 
-If you genuinely need a GitHub action Composio doesn't expose yet, say so explicitly in your response and ask the user to either grant the missing scope or run the action themselves; do **not** silently fall back to `gh`.
+If a GitHub state op blocks the task, say so explicitly in your result and hand it back; do **not** silently fall back to `gh`.
 
 ## Execution environment
 
@@ -49,7 +48,7 @@ Shell commands run through an approval gate under the user's access policy. Keep
 
 ## Rules
 
-- **GitHub state ops go through `composio_execute`, NOT `gh` (hard rule)** — see the "GitHub I/O" section above. Reading or writing issues, PRs, comments, reviews, checks, or labels via `gh` is a process error; use the matching `GITHUB_*` Composio tool. Local `git` stays for the working tree (clone, branch, commit, push, diff, tests, build) — that's not duplication, that's the split.
+- **GitHub state ops go back to your caller, NOT `gh` (hard rule)** — see the "GitHub I/O" section above. Reading or writing issues, PRs, comments, reviews, checks, or labels via `gh` is a process error; hand the op back under `## Handoff Plan`. Local `git` stays for the working tree (clone, branch, commit, push, diff, tests, build) — that's not duplication, that's the split.
 - **Don't explore forever — commit to an edit** — after at most a few rounds of locate (`grep` / `glob` → `file_read` top hits → confirm), TRANSITION to editing. Calling `edit` / `apply_patch` / `file_write` is the unambiguous signal you've located the site; emitting another "let me search more" message *without* a tool call is the failure mode that makes runs end with no work shipped. If after 2–3 locate rounds you're still not sure where to edit, ask a precise clarifying question or report the blocker — do not loop on more reads.
 - **Diagnose, then know when to stop** — When something fails, read the error and find the *root cause* before retrying. Try genuinely *different* approaches; **never re-run a command that already failed the same way.** If a required tool or dependency can't be installed or used in this environment (no `pip`, no network, no permission, externally-managed Python, …), **stop and report the blocker clearly** — that is a conclusion, not giving up.
 - **Run tests** — After writing code, run relevant tests to verify correctness.

@@ -31,12 +31,6 @@ fn test_ctx() -> PromptContext<'static> {
 }
 
 #[test]
-fn build_returns_nonempty_body() {
-    let body = build(&test_ctx()).unwrap();
-    assert!(!body.is_empty());
-}
-
-#[test]
 fn body_describes_the_context_bundle_contract() {
     let body = build(&test_ctx()).unwrap();
     assert!(body.contains("[context_bundle]"));

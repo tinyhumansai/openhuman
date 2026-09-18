@@ -149,9 +149,8 @@ fn ctx_with<'a>(integrations: &'a [ConnectedIntegration]) -> PromptContext<'a> {
 }
 
 #[test]
-fn build_returns_nonempty_body() {
+fn build_omits_connection_blocks_without_connections() {
     let body = build(&ctx_with(&[])).unwrap();
-    assert!(!body.is_empty());
     assert!(!body.contains("## Connected Integrations"));
     // No live connections in unit context → the MCP block is omitted too.
     assert!(!body.contains("## Connected MCP Servers"));
@@ -624,52 +623,13 @@ fn the_rendered_prompt_never_names_a_withheld_tool() {
     );
 }
 
-/// Withheld tool names that `text` presents as directly callable.
-///
-/// Three exemptions, and all are about telling a *route* from a *call*:
-///
-/// * The generated `## Capabilities not in your tool list` block names withheld
-///   tools on purpose — that block is the route, and it is the one sanctioned
-///   place to write one. It is removed wholesale before scanning.
-/// * A pack **id** may be backticked anywhere, since naming the skill is how a
-///   route reads in prose. Two pack ids (`composio`, `goals`) are also tool
-///   names inside their own pack, so a bare substring check cannot tell the
-///   two apart; routes are always spelled ``skill `<id>` ``, so removing that
-///   exact form is what makes the remaining occurrences calls.
-/// * A full route — ``skill `<id>`, tool `<name>` ``, the exact spelling the
-///   generated block emits — may name the tool it routes to, but only in that
-///   form and only under the pack that owns it. A packed name backticked on its
-///   own is still a call.
+/// Packed tool names `text` presents as directly callable — the shared helper
+/// scoped to the orchestrator, which owns no pack and so has every one withheld.
 fn withheld_names_presented_as_callable(text: &str) -> Vec<&'static str> {
-    let packed = crate::tools::toolpacks::all_packed_tool_names();
-    const HEADING: &str = "## Capabilities not in your tool list";
-    let mut prose = match text.find(HEADING) {
-        Some(start) => {
-            // Search for the next heading strictly after this one's own text
-            // (`start + HEADING.len()`, not `start + 1`) — both indices land on
-            // an ASCII byte, so this can never split a multi-byte UTF-8
-            // character or run past `text.len()`.
-            let search_from = start + HEADING.len();
-            let end = text[search_from..]
-                .find("\n## ")
-                .map(|i| search_from + i)
-                .unwrap_or(text.len());
-            format!("{}{}", &text[..start], &text[end..])
-        }
-        None => text.to_string(),
-    };
-    for pack in crate::tools::toolpacks::PACKS {
-        for name in pack.tools {
-            prose = prose.replace(&format!("skill `{}`, tool `{name}`", pack.id), "");
-        }
-    }
-    for name in &packed {
-        prose = prose.replace(&format!("skill `{name}`"), "");
-    }
-    packed
-        .into_iter()
-        .filter(|name| prose.contains(&format!("`{name}`")))
-        .collect()
+    crate::agent::registry::agents::fleet_prompt_tests::names_presented_as_callable(
+        text,
+        crate::tools::toolpacks::all_packed_tool_names(),
+    )
 }
 
 #[path = "prompt_tests_session_routing_tests.rs"]

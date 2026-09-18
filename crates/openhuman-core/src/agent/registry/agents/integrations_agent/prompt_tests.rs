@@ -34,7 +34,6 @@ fn ctx_with<'a>(integrations: &'a [ConnectedIntegration]) -> PromptContext<'a> {
 #[test]
 fn build_returns_nonempty_body() {
     let body = build(&ctx_with(&[])).unwrap();
-    assert!(!body.is_empty());
     assert!(!body.contains("## Connected Integrations"));
     assert!(!body.contains("## Available Skills"));
 }

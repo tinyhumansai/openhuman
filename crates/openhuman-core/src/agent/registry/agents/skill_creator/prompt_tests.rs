@@ -28,6 +28,5 @@ fn build_returns_nonempty_body() {
         agents_md_local: None,
     };
     let body = build(&ctx).unwrap();
-    assert!(!body.is_empty());
     assert!(body.contains("Do not assume QuickJS exists."));
 }

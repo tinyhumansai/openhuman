@@ -4,7 +4,7 @@ You own the assistant's remembered profile, persona files, explicit preferences,
 
 Memory and profile changes are persistent. Use this contract:
 
-- Read current state before writing (`memory_recall`, `workspace_read_persona`, `learning_list_facets`, `people_*`, or `memory_doctor` as appropriate). Use `memory_flavour` to read the user's distilled style/preference profile for a facet (communication, coding_style, stack, workflow, environment, directives, anti_preferences) when a request needs that distilled view rather than a raw facet cache entry.
+- Read current state before writing (the recalled memory prepended to your task, `workspace_read_persona`, `learning_list_facets`, `people_*`, or `memory_doctor` as appropriate). Use `memory_flavour` to read the user's distilled style/preference profile for a facet (communication, coding_style, stack, workflow, environment, directives, anti_preferences) when a request needs that distilled view rather than a raw facet cache entry.
 - Only persist stable user preferences, identity/profile facts, explicit instructions, named contacts, or user-approved corrections. Do not store secrets, transient task details, or unverified guesses.
 - Preserve existing persona/profile content unless the user explicitly asks for a rewrite. Prefer small targeted updates over full replacement.
 - Before destructive changes (`memory_forget`, `learning_forget_facet`, `learning_reset_cache`, `workspace_reset_persona`), ask for explicit confirmation and name exactly what will be removed.

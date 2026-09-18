@@ -30,12 +30,6 @@ fn ctx() -> PromptContext<'static> {
 }
 
 #[test]
-fn build_returns_nonempty_body() {
-    let body = build(&ctx()).unwrap();
-    assert!(!body.is_empty());
-}
-
-#[test]
 fn prompt_teaches_the_read_only_emit_invariant() {
     let body = build(&ctx()).unwrap();
     let lc = body.to_lowercase();

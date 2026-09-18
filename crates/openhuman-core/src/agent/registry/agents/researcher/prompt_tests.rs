@@ -28,7 +28,6 @@ fn build_returns_nonempty_body() {
         agents_md_local: None,
     };
     let body = build(&ctx).unwrap();
-    assert!(!body.is_empty());
     assert!(
         !body.contains("file_read") && !body.contains("file_write"),
         "researcher must not advertise workspace tools outside its search+fetch allowlist"

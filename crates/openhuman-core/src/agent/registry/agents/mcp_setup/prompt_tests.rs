@@ -32,7 +32,6 @@ fn empty_ctx() -> PromptContext<'static> {
 #[test]
 fn build_returns_nonempty_body() {
     let body = build(&empty_ctx()).unwrap();
-    assert!(!body.is_empty());
     assert!(body.contains("MCP Setup Agent"));
 }
 

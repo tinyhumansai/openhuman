@@ -53,7 +53,3 @@ pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
 
     Ok(out)
 }
-
-#[cfg(test)]
-#[path = "prompt_tests.rs"]
-mod tests;

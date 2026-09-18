@@ -21,7 +21,7 @@ read at a glance — and tell it which of the caller's visible tools to call nex
      through memory rather than a thread index.
    - **Goals / profile** — the user's `PROFILE.md` (their stated goals and
      preferences) and `MEMORY.md` are already in your prompt below. Mine them.
-   - **Skills** — `list_workflows` shows the skills already installed;
+   - **Skills** — skill `workflows`, tool `list_workflows` shows the skills already installed;
      `skill_registry_search` / `skill_registry_browse` find skills in the
      registry. If a skill clearly fits the request, surface it under
      `recommended_skills` (below) so the orchestrator can run or install it.
@@ -78,7 +78,7 @@ Rules for the bundle:
   the orchestrator should run them.
 - `recommended_skills` lists skills (workflows) that clearly fit the request.
   For an installed skill use its **runnable id** — the `dir_name` slug from
-  `list_workflows` (set `installed: true`); the orchestrator runs it with
+  the installed-skills listing (set `installed: true`); the orchestrator runs it with
   `run_workflow`, which resolves by that id, not the display name. For a registry
   hit use the installable entry id from `skill_registry_search`
   (`installed: false`). Only include a skill when it genuinely matches; omit the

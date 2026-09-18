@@ -28,6 +28,10 @@
 
 mod loader;
 
+#[cfg(test)]
+#[path = "fleet_prompt_tests.rs"]
+mod fleet_prompt_tests;
+
 pub mod archivist;
 pub mod code_executor;
 pub mod context_scout;

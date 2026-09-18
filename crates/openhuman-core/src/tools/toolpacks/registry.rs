@@ -57,6 +57,16 @@ pub const PACKS: &[ToolPack] = &[
             "list_agent_profiles",
             "list_connectable_toolkits",
         ],
+        // `skill_executor` (step 1: `describe_workflow`) and `context_scout`
+        // (`list_workflows`) carry these on their belts but are deliberately NOT
+        // owners, so each pays a `use_skill` round trip for them — a known,
+        // accepted per-run cost. Ownership would also make them route targets
+        // and, for `skill_executor`, trip `closed_by_direct_handoff`: the
+        // orchestrator's unpacked `run_skill` hand-off
+        // (`DELIBERATELY_UNPACKED_HANDOFFS`) targets it, so this whole pack —
+        // `run_workflow`, `list_flows`, `get_flow_run`, … — would close to the
+        // orchestrator.
+        // Removing the round trip needs an un-withhold that is not ownership.
         owners: &["workflow_builder", "flow_discovery"],
     },
     ToolPack {

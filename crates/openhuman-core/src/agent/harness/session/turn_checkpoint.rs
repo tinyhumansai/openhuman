@@ -311,7 +311,7 @@ pub(super) fn final_answer_instruction(stop_reason: Option<&str>, records: &str)
 /// see the conversation, so it cannot copy the pattern of the turn's own tool-call
 /// preambles, which is what wrote the intent-only reply in the first place. The
 /// three rules are shapes of reply, not particular tools or tasks.
-pub(super) fn close_verification_prompt(user_request: &str, records: &str, reply: &str) -> String {
+pub(crate) fn close_verification_prompt(user_request: &str, records: &str, reply: &str) -> String {
     format!(
         "You are checking a reply before it is shown to a user. Below are the user's request, the \
          records of the tool calls made while handling it, and the reply.\n\n\

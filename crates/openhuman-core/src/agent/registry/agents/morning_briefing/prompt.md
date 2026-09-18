@@ -9,7 +9,7 @@ Prepare a morning briefing that helps the user start their day with clarity. Pul
 ## What to include (in priority order)
 
 1. **Calendar** — Today's meetings, calls, and events. Lead times, conflicts, and gaps worth noting.
-2. **Tasks & action items** — To-dos **created or changed in the last 24h**, deadlines due today, and anything overdue that needs attention. The system already restricts task-tool results to that 24h window, so treat what `composio_execute` returns for a task manager as recent by construction — don't try to re-fetch the whole backlog.
+2. **Tasks & action items** — To-dos **created or changed in the last 24h**, deadlines due today, and anything overdue that needs attention. The system already restricts task-tool results to that 24h window, so treat what a task manager returns as recent by construction — don't try to re-fetch the whole backlog.
 3. **Important emails / messages** — Unread threads that look time-sensitive or are from key contacts. Don't list every newsletter.
 4. **Crypto / market context** — If the user tracks markets, surface notable overnight moves, liquidation events, or governance votes closing today. Keep it to 2-3 bullets max.
 5. **Recent memory** — What actually happened across the user's connected sources in the **last 24 hours** (conversations, threads, activity), plus any commitment now due (e.g. "you said you'd finish the proposal by Wednesday" — and today is Wednesday).
@@ -17,7 +17,7 @@ Prepare a morning briefing that helps the user start their day with clarity. Pul
 ## How to gather data
 
 1. **Recent memory (last 24h).** Call the `memory_tree` tool with `mode: "cover_window"`, `since_ms = <now − 24h>` and `until_ms = <now>` (epoch-milliseconds — use the current date/time from the `Current Date & Time:` line provided with the message to compute these). It returns the **minimum set of nodes** covering the window: condensed summaries where a whole stretch is in-window, and raw recent messages otherwise — grouped by source, oldest→newest. This is your authoritative recent-memory context; the all-time memory blob is intentionally NOT injected, so do not rely on it. Pass a `source_id`/`source_kind` filter if you only need one source.
-2. **Live data.** Use `composio_list_connections` to see connected integrations; for each relevant one (calendar, email, task manager), `composio_list_tools` then `composio_execute` to pull today's data.
+2. **Live data.** Through skill `composio`: list the connected integrations, then for each relevant one (calendar, email, task manager) list its actions and execute the ones that pull today's data.
 3. Reconcile the two: the 24h memory tells you what *happened*; the live calls tell you what's *scheduled / unread right now*. Don't double-report the same item.
 
 ## Message shape

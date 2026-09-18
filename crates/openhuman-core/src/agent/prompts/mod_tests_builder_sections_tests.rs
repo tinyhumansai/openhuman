@@ -329,6 +329,51 @@ fn datetime_section_appends_resolve_time_rule_only_when_tool_present() {
 }
 
 #[test]
+fn workspace_section_names_shell_only_when_the_agent_can_call_it() {
+    fn render(tools: &[PromptTool<'_>], visible: &HashSet<String>) -> String {
+        let ctx = PromptContext {
+            workspace_dir: Path::new("/tmp"),
+            model_name: "test-model",
+            agent_id: "",
+            tools,
+            workflows: &[],
+            dispatcher_instructions: "",
+            learned: LearnedContextData::default(),
+            visible_tool_names: visible,
+            tool_call_format: ToolCallFormat::PFormat,
+            connected_integrations: &[],
+            connected_identities_md: String::new(),
+            include_profile: false,
+            include_memory_md: false,
+            curated_snapshot: None,
+            user_identity: None,
+            personality_soul_md: None,
+            personality_memory_md: None,
+            personality_roster: vec![],
+            agents_md_global: None,
+            agents_md_local: None,
+        };
+        WorkspaceSection.build(&ctx).unwrap()
+    }
+    let shell = [PromptTool {
+        name: "shell",
+        description: "Run commands",
+        parameters_schema: None,
+    }];
+    assert!(render(&shell, &NO_FILTER).contains("`shell`"));
+
+    // No shell on the belt, or shell filtered out of the visible set.
+    let filtered: HashSet<String> = ["file_read".to_string()].into();
+    for rendered in [render(&[], &NO_FILTER), render(&shell, &filtered)] {
+        assert!(
+            !rendered.contains("`shell`") && !rendered.contains("`pwd`"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("relative path"), "{rendered}");
+    }
+}
+
+#[test]
 fn user_identity_section_empty_when_unset() {
     let ctx = ctx_with_identity(None);
     let rendered = UserIdentitySection.build(&ctx).unwrap();

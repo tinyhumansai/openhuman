@@ -33,12 +33,6 @@ fn ctx_with_identity(identity: Option<UserIdentity>) -> PromptContext<'static> {
 }
 
 #[test]
-fn build_returns_nonempty_body() {
-    let body = build(&ctx_with_identity(None)).unwrap();
-    assert!(!body.is_empty());
-}
-
-#[test]
 fn build_includes_runtime_and_datetime_sections() {
     // Issue #926 + #3602: the morning briefing must carry the `## Runtime`
     // host block and the `## Current Date & Time` grounding section so the
