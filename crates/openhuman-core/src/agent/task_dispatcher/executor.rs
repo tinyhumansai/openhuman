@@ -116,6 +116,7 @@ pub(super) async fn run_autonomous(
     prompt: &str,
     run_id: &str,
     session_thread_id: Option<String>,
+    thread_context: Vec<(String, String)>,
 ) -> Result<String, String> {
     // Match skill-run egress handling: only widen to the permissive default
     // when the operator hasn't configured an explicit allow-list. See the
@@ -140,6 +141,16 @@ pub(super) async fn run_autonomous(
         "[task_dispatcher] pinned autonomous task-run iteration budget post-construction \
          (overrides the session builder's per-definition cap)"
     );
+    // Prior thread messages as `(sender, content)` — the delivery turn's view
+    // of what the user has already been told. Empty for a task run.
+    if !thread_context.is_empty() {
+        if let Err(err) = agent.seed_resume_from_messages(thread_context, prompt) {
+            tracing::warn!(
+                run_id = %run_id,
+                "[task_dispatcher] could not seed thread context: {err:#}"
+            );
+        }
+    }
     agent.set_event_context(run_id.to_string(), "task");
     agent.set_agent_definition_name(format!(
         "task-{}-{}",

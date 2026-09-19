@@ -365,8 +365,10 @@ pub(crate) fn build_batched_notice(completed: &[CompletedBackgroundAgent]) -> Op
     out.push_str(&format!(
         "[{n} background sub-agent{} finished while you were busy. Review each result \
          below — including any that FAILED or NEED INPUT — and present what is relevant \
-         to the user (never silently drop a failure or an awaiting-input pause). Each is \
-         tagged with its sub-agent process id.]\n",
+         to the user (never silently drop a failure or an awaiting-input pause). The \
+         conversation above may already answer one: if so, do not present that result as \
+         current — say so briefly, or say nothing about it. A failure nothing above has \
+         resolved must still be surfaced. Each is tagged with its sub-agent process id.]\n",
         if n == 1 { "" } else { "s" },
     ));
     for c in completed {

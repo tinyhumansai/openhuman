@@ -510,3 +510,79 @@ async fn write_back_marks_blocked_with_reason_on_failure() {
         .unwrap_or_default()
         .contains("agent build failed"));
 }
+
+/// A background result delivered after the user was already answered must be
+/// composed against that answer (#6345). The delivery agent is built fresh, so
+/// unless the thread's recent messages are seeded into it, the answer is not in
+/// its context and it posts the stale result as if nothing had happened.
+// The guard serialises the process-global model override for the whole turn,
+// so holding it across the awaits is the point.
+#[allow(clippy::await_holding_lock)]
+#[tokio::test]
+async fn a_delivery_turn_sees_the_answer_already_given_in_the_thread() {
+    use std::sync::Arc;
+    use tinyagents_harness::testkit::ScriptedModel;
+
+    let _serial = crate::inference::inference_test_guard();
+    crate::agent::harness::AgentDefinitionRegistry::init_global_builtins().unwrap();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let config = crate::config::Config {
+        workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
+        config_path: tmp.path().join("config.toml"),
+        ..crate::config::Config::default()
+    };
+    std::fs::create_dir_all(&config.workspace_dir).unwrap();
+
+    let thread_id = "thread-delivery-context";
+    let store = |sender: &str, content: &str, n: u32| {
+        crate::memory::conversations::append_message(
+            config.workspace_dir.clone(),
+            thread_id,
+            crate::memory::conversations::ConversationMessage {
+                id: format!("m{n}"),
+                content: content.to_string(),
+                message_type: "text".to_string(),
+                extra_metadata: serde_json::Value::Null,
+                sender: sender.to_string(),
+                created_at: format!("2026-09-19T00:00:0{n}Z"),
+            },
+        )
+        .unwrap();
+    };
+    crate::memory::conversations::ensure_thread(
+        config.workspace_dir.clone(),
+        serde_json::from_value(json!({
+            "id": thread_id,
+            "title": "notion",
+            "createdAt": "2026-09-19T00:00:00Z",
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    store("user", "list my notion pages", 1);
+    store("agent", "ANSWER_CANARY: here are your 10 Notion pages.", 2);
+
+    let model = Arc::new(ScriptedModel::replies(vec!["Already answered above."]));
+    let _override =
+        crate::inference::provider::factory::test_provider_override::install_model(model.clone());
+
+    super::run_delivery_turn(
+        config.clone(),
+        thread_id.to_string(),
+        "[1 background sub-agent finished while you were busy.]\n<background_agent_failure id=\"t1\" agent=\"skill_executor\">no Notion API key</background_agent_failure>".to_string(),
+    )
+    .await
+    .expect("delivery turn runs");
+
+    let seen: String = model
+        .requests()
+        .iter()
+        .flat_map(|r| r.messages.iter().map(|m| m.text()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        seen.contains("ANSWER_CANARY"),
+        "the delivery turn must see the answer already given in the thread; model saw: {seen}"
+    );
+}

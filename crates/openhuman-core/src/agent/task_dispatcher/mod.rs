@@ -49,7 +49,63 @@ pub async fn run_system_turn_on_thread(
     let config = crate::config::Config::load_or_init()
         .await
         .map_err(|e| format!("load config: {e:#}"))?;
+    run_delivery_turn(config, thread_id, prompt).await
+}
+
+/// How many of the thread's latest messages a delivery turn is given: enough
+/// to include an answer that superseded the result, without the whole thread.
+const DELIVERY_THREAD_CONTEXT_MESSAGES: usize = 8;
+
+/// [`run_system_turn_on_thread`] with the config supplied.
+///
+/// The delivery agent is built fresh, so on its own it sees only the notice. It
+/// then cannot tell that the user was already answered by another route, and
+/// posts a stale result — a failure, typically — as the thread's last word
+/// (#6345). Seeding it with the thread's recent messages lets it merge or
+/// supersede instead.
+async fn run_delivery_turn(
+    config: crate::config::Config,
+    thread_id: String,
+    prompt: String,
+) -> Result<String, String> {
     let executor = executor::resolve_executor(&config.workspace_dir, None);
     let run_id = format!("bgdeliver-{}", uuid::Uuid::new_v4());
-    executor::run_autonomous(config, &executor, &prompt, &run_id, Some(thread_id)).await
+    let thread_context = match crate::memory::conversations::blocking::get_messages(
+        config.workspace_dir.clone(),
+        thread_id.clone(),
+    )
+    .await
+    {
+        Ok(messages) => {
+            let skip = messages
+                .len()
+                .saturating_sub(DELIVERY_THREAD_CONTEXT_MESSAGES);
+            messages
+                .into_iter()
+                .skip(skip)
+                .map(|m| (m.sender, m.content))
+                .collect()
+        }
+        Err(err) => {
+            log::warn!(
+                "[background_delivery] could not read thread {thread_id} for delivery \
+                 context — delivering without it: {err}"
+            );
+            Vec::new()
+        }
+    };
+    log::debug!(
+        "[background_delivery] delivery turn run_id={run_id} thread_id={thread_id} \
+         context_messages={}",
+        thread_context.len()
+    );
+    executor::run_autonomous(
+        config,
+        &executor,
+        &prompt,
+        &run_id,
+        Some(thread_id),
+        thread_context,
+    )
+    .await
 }

@@ -161,7 +161,15 @@ pub async fn dispatch_card(
     let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
     let join = tokio::spawn(async move {
         let _ = start_rx.await;
-        let outcome = run_autonomous(config, &executor, &prompt, &run_id, session_thread_id).await;
+        let outcome = run_autonomous(
+            config,
+            &executor,
+            &prompt,
+            &run_id,
+            session_thread_id,
+            Vec::new(),
+        )
+        .await;
         let _ = hb_cancel_for_task.send(true);
         // Race with a concurrent cancel: whoever removes the registry entry owns
         // the write-back, so it runs exactly once. No entry (no session thread,
