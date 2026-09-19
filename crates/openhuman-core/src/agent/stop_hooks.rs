@@ -87,6 +87,45 @@ where
     CURRENT_STOP_HOOKS.scope(hooks, future).await
 }
 
+tokio::task_local! {
+    static CURRENT_TOOL_CALL_LIMIT: usize;
+}
+
+/// Narrow the real tool invocation budget for one turn, including parallel calls.
+/// Nested scopes cannot widen their parent's budget. The scope resets on exit.
+pub async fn with_tool_call_limit<F: std::future::Future>(
+    limit: Option<usize>,
+    future: F,
+) -> F::Output {
+    let inherited = CURRENT_TOOL_CALL_LIMIT.try_with(|n| *n).ok();
+    tracing::debug!(
+        limit,
+        inherited,
+        "[tinyagents] installing per-turn tool budget"
+    );
+    match (limit, inherited) {
+        (Some(a), Some(b)) => CURRENT_TOOL_CALL_LIMIT.scope(a.min(b), future).await,
+        (Some(n), None) | (None, Some(n)) => CURRENT_TOOL_CALL_LIMIT.scope(n, future).await,
+        (None, None) => future.await,
+    }
+}
+
+/// Install hook policy and a tool budget around the same turn.
+pub async fn with_stop_hooks_and_tool_limit<F: std::future::Future>(
+    hooks: Vec<Arc<dyn StopHook>>,
+    limit: Option<usize>,
+    future: F,
+) -> F::Output {
+    with_tool_call_limit(limit, with_stop_hooks(hooks, future)).await
+}
+
+pub(crate) fn tool_call_limit(max_iterations: usize) -> usize {
+    let default = max_iterations.saturating_mul(8).max(8);
+    CURRENT_TOOL_CALL_LIMIT
+        .try_with(|n| default.min(*n))
+        .unwrap_or(default)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Built-in hooks
 // ─────────────────────────────────────────────────────────────────────────────

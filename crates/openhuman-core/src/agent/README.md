@@ -85,3 +85,18 @@ Flat files: `bus.rs` (`agent.run_turn` native request handler), `cost.rs` (`pub(
 
 - [gitbooks/developing/architecture/agent-harness.md](../../../../gitbooks/developing/architecture/agent-harness.md)
 - [gitbooks/developing/agent-observability.md](../../../../gitbooks/developing/agent-observability.md)
+
+### Scoped tool-call budgets for embedders
+
+`stop_hooks::with_tool_call_limit(Some(n), turn)` narrows the real TinyAgents
+invocation budget for one awaited turn without changing the agent's persistent
+configuration. Zero permits no tool invocations. The adapter applies the limit
+to both run policy and run configuration, including parallel calls counted by
+TinyAgents. `with_stop_hooks_and_tool_limit` combines it with stop hooks.
+
+Nested scopes take the smaller limit; `None` preserves an enclosing limit.
+Exiting or dropping the future restores the caller's scope, and concurrent
+turns do not share limits. This bounds calls within each run, not a shared
+aggregate across child runs. Task-local values do not automatically propagate
+through `tokio::spawn`; callers creating a separate task must scope that turn
+explicitly. Without a limit, existing iteration-derived limits are unchanged.
