@@ -107,6 +107,9 @@ fn collects_agentid_entries_and_collapses_skills_wildcard() {
             "research",           // researcher's delegate_name override
             "delegate_archivist", // archivist has no delegate_name → default
             "delegate_to_integrations_agent",
+            // The one archetype delegation tool the model sees; the two
+            // above report `ToolExposure::Hidden` and stay dispatchable.
+            "delegate_to",
         ],
         "skills wildcard must collapse to a single delegate_to_integrations_agent tool"
     );
@@ -161,7 +164,7 @@ fn skills_wildcard_with_no_integrations_produces_no_delegation_tool() {
     let tools = collect_orchestrator_tools(&orch, &reg, &[]);
     let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
     // `spawn_worker_thread` is temporarily disabled — see #1624.
-    assert_eq!(names, vec!["research", "delegate_archivist"]);
+    assert_eq!(names, vec!["research", "delegate_archivist", "delegate_to"]);
 }
 
 /// An AgentId entry whose target carries a `delegate_name` override
@@ -183,7 +186,7 @@ fn subagent_with_delegate_name_override_synthesises_the_override_name() {
     let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
     assert_eq!(
         names,
-        vec!["do_custom"],
+        vec!["do_custom", "delegate_to"],
         "custom_agent subagent entry must synthesise a tool named after its \
          `delegate_name` override (`do_custom`), not the default \
          `delegate_custom_agent`"
@@ -242,7 +245,7 @@ fn unknown_subagent_id_is_skipped_not_fatal() {
     let tools = collect_orchestrator_tools(&orch, &reg, &[]);
     let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
     // `spawn_worker_thread` is temporarily disabled — see #1624.
-    assert_eq!(names, vec!["research"]);
+    assert_eq!(names, vec!["research", "delegate_to"]);
 }
 
 /// An empty `subagents` list should produce zero tools — regular
@@ -411,4 +414,23 @@ fn duplicate_sanitised_slug_drops_later_collisions() {
     let desc = delegate_tool.description();
     assert!(desc.contains("First slack."));
     assert!(!desc.contains("Second slack"));
+}
+
+/// Only `delegate_to` and the integrations tool reach the wire: every
+/// archetype member reports `Hidden`. Asserting the advertised set is what
+/// stops a member being re-exposed beside the tool that replaced it.
+#[test]
+fn only_the_collapsed_delegation_tools_are_advertised() {
+    let orch = sample_orchestrator();
+    let reg = registry_with_targets();
+    let tools = collect_orchestrator_tools(&orch, &reg, &[integration("gmail", "Email.")]);
+    let advertised: Vec<&str> = tools
+        .iter()
+        .filter(|t| t.exposure() != crate::tools::traits::ToolExposure::Hidden)
+        .map(|t| t.name())
+        .collect();
+    assert_eq!(
+        advertised,
+        vec!["delegate_to_integrations_agent", "delegate_to"]
+    );
 }

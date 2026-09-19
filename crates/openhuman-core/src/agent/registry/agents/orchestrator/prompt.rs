@@ -184,7 +184,9 @@ fn render_withheld_specialists(ctx: &PromptContext<'_>) -> String {
             .delegate_name
             .clone()
             .unwrap_or_else(|| format!("delegate_{}", target.id));
-        if ctx.visible_tool_names.contains(&tool_name) {
+        if ctx.visible_tool_names.contains(&tool_name)
+            || reachable_via_delegate_to(ctx, &definition.id, &tool_name)
+        {
             continue;
         }
         let Some(pack) = toolpacks::pack_for_tool(&tool_name) else {
@@ -222,6 +224,20 @@ fn render_withheld_specialists(ctx: &PromptContext<'_>) -> String {
     out
 }
 
+/// Whether `tool` — a synthesised delegate name — is an `agent` value of this
+/// session's collapsed `delegate_to` tool rather than a tool of its own.
+///
+/// Mirrors `collect_orchestrator_tools`: every archetype hand-off joins the
+/// `delegate_to` enum unless its pack is withheld from this parent. Without
+/// this the route rows keyed on a delegate's *tool* name would vanish the
+/// moment the delegate stopped being one, and the prompt would stop teaching
+/// the skills/MCP hand-offs #6302 exists to keep reachable.
+fn reachable_via_delegate_to(ctx: &PromptContext<'_>, parent_id: &str, tool: &str) -> bool {
+    ctx.visible_tool_names
+        .contains(crate::agent::orchestration::tools::DELEGATE_TO_TOOL_NAME)
+        && !crate::tools::toolpacks::ops::is_withheld_from(parent_id, tool)
+}
+
 /// How this session can reach `specialist` right now, as the call to name.
 ///
 /// The hand-off tool in backticks when it is on the belt; the `use_skill` form
@@ -246,6 +262,12 @@ fn hand_off_route(ctx: &PromptContext<'_>, specialist: &str) -> Option<String> {
         .unwrap_or_else(|| format!("delegate_{}", target.id));
     if ctx.visible_tool_names.is_empty() || ctx.visible_tool_names.contains(&tool) {
         return Some(format!("`{tool}`"));
+    }
+    if reachable_via_delegate_to(ctx, &definition.id, &tool) {
+        return Some(format!(
+            "`{} {{ agent: \"{tool}\" }}`",
+            crate::agent::orchestration::tools::DELEGATE_TO_TOOL_NAME
+        ));
     }
     // A packed route is only a route if this session can call `use_skill`
     // itself. A filtered belt holding neither the delegate nor `use_skill` has

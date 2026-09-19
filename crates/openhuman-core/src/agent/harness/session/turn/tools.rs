@@ -597,6 +597,17 @@ impl Agent {
             synthed.iter().map(|t| t.name().to_string()).collect();
         let synthed_specs: Vec<Arc<crate::tools::ToolSpec>> =
             synthed.iter().map(|t| Arc::new(t.spec())).collect();
+        // The names to *advertise*: a synthesised tool reporting `Hidden` is a
+        // member of the collapsed `delegate_to` (every `ArchetypeDelegationTool`)
+        // and stays registered and dispatchable, but off the wire — the same
+        // rule `AgentBuilder::from_config_for_agent` applies at build time.
+        // Inserting every synthesised name here is what put all the members
+        // back beside `delegate_to` on turn 1, shipping both surfaces.
+        let advertised_synthed: Vec<String> = synthed
+            .iter()
+            .filter(|t| t.exposure() != crate::tools::traits::ToolExposure::Hidden)
+            .map(|t| t.name().to_string())
+            .collect();
 
         // Skip mutation when neither the previous nor the next synthesis
         // produced any names — saves work on agents without dynamic
@@ -652,8 +663,8 @@ impl Agent {
             for name in &old_synth {
                 self.visible_tool_names.remove(name);
             }
-            for name in &synthed_names {
-                self.visible_tool_names.insert(name.clone());
+            for name in advertised_synthed {
+                self.visible_tool_names.insert(name);
             }
             // The synthesis above re-adds delegate names wholesale, including
             // any that belong to a tool pack — so re-apply the withholding here

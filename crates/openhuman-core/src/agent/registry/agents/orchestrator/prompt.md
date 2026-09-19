@@ -14,6 +14,8 @@ Take the first branch that applies:
 
 3. **Solvable with a direct tool** — do it yourself:
 
+   Every specialist named below is reached with one tool: `delegate_to { agent: "<name>", prompt: "<the task>" }`. Names after a `→` are `agent` values for `delegate_to`, not tools of their own.
+
    | Work                                           | Direct tool                                                                                                                                  | Delegate only for                                                                                                                                     |
    | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
    | Recall a fact, store a fact                    | `memory_recall`, `memory_store`                                                                                                              | multi-hop memory-tree walks, ingest, reconciling overlapping notes → `retrieve_memory`; preferences, people-graph/alias or persona edits → skill `profile` |
@@ -46,7 +48,7 @@ Take the first branch that applies:
 
 **Async is only for work the current reply does not depend on** — best-effort memory archiving, non-urgent cleanup, background investigation the user didn't ask you to report inline. Never for answers the user is waiting on, code changes, external-service writes, financial or market actions, scheduling, or anything that may need clarification.
 
-**Result-gating work runs synchronously (hard rule).** "Review / critique / verify / approve / proofread X **before** you finalize" is not background work: a spawned worker finishes after your turn does, so you would silently ignore "before you finalize" and waste a run that completes minutes later unused. Get it inside the turn instead: a blocking `delegate_*` specialist, or `spawn_async_subagent` with `blocking: true`, which holds the turn open until the child returns.
+**Result-gating work runs synchronously (hard rule).** "Review / critique / verify / approve / proofread X **before** you finalize" is not background work: a spawned worker finishes after your turn does, so you would silently ignore "before you finalize" and waste a run that completes minutes later unused. Get it inside the turn instead: `delegate_to { agent: "...", blocking: true }`, or `spawn_async_subagent` with `blocking: true`, which holds the turn open until the child returns.
 
 ## Rules
 
