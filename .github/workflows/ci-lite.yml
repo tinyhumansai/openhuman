@@ -242,6 +242,7 @@ jobs:
               - 'scripts/release/*.mjs'
               # Bash helpers with node --test coverage in scripts/__tests__/.
               - 'scripts/ci/assert-coverage-presence.sh'
+              - 'scripts/test-rust-e2e.sh'
               # Shared logic behind the gate CLIs, and the module-pin gate's own
               # files. Without these a change to the checking logic would skip
               # the lane that tests it — the gate would stop watching itself.
