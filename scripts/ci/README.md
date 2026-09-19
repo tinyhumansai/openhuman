@@ -12,14 +12,13 @@ authoritative spec; this is an index so a CI failure log points somewhere.
 | `check-module-pins.mjs` + `module-pin-exemptions.json` | A loadable module's registry pin (`crates/openhuman-core/src/modules/registry.rs`) and its `vendor/*` submodule pin must describe the same release (openhuman#5727). The exemptions file records known, expected drift — not a way to silence the gate. Logic lives in `scripts/lib/module-pins.mjs`. |
 | `check-submodule-monotonic.mjs` | A `vendor/*` submodule pin may never move backwards onto a commit that is an ancestor of what the base branch already has. |
 | `check-toolchain-image.mjs` | The CI image's toolchain, the version-pinned `dtolnay/rust-toolchain@<version>` workflow steps, and `.github/Dockerfile` all match the channel pinned in `rust-toolchain.toml`. |
-| `rust-coverage-changed.sh` | PR fast-lane: runs `cargo-llvm-cov` scoped to only the domains/tests a PR touched instead of the full suite, and escalates to the full suite when scoping selects zero tests. |
-| `vitest-changed-coverage.sh` | Frontend counterpart — runs `vitest related` against changed files instead of the full unit suite. |
-| `assert-coverage-presence.sh` + `coverage-presence-allowlist.txt` | Fails when a changed Rust file produced no lcov records at all, meaning no lane even compiled it (openhuman#5593). Allowlist entries must document, inline, which gate excludes the file and why that's intended. |
-| `list-feature-gated-rust-tests.mjs` | Prints every file under `crates/openhuman-core/src` that carries tests behind a product feature gate (`voice`, `media`, `web3`, `meet`, `mcp`, `skills`, `flows`, `channels`, `contacts`). `ci-lite.yml`'s `rust-feature-gate-smoke` job diffs the output against a checked-in EXPECTED list so a new gated test file forces the scoped `cargo test` filter to be extended (#5022). |
+| `rust-coverage.sh` | Runs the complete product-feature Rust suite under `cargo-llvm-cov`, including every core integration target and the root Rust support crates. |
+| `assert-coverage-presence.sh` + `coverage-presence-allowlist.txt` | Fails when an eligible Rust source file produced no lcov records at all, meaning the full product suite never compiled it (openhuman#5593). Allowlist entries must document, inline, which gate excludes the file and why that's intended. |
+| `list-feature-gated-rust-tests.mjs` | Prints every file under `crates/openhuman-core/src` that carries tests behind a product feature gate (`voice`, `media`, `web3`, `meet`, `mcp`, `skills`, `flows`, `channels`, `contacts`). `ci-lite.yml`'s `rust-feature-gate-smoke` job diffs the output against a checked-in EXPECTED list so a new gated test file forces the gate-contract test filters to be reviewed (#5022). |
 | `orch-ip-gate.sh` | Blocks the server-side orchestration "brain" (reasoning/wake graph, its prompts, per-agent model-selection metadata) from re-entering this open client repo. |
 
-`rust-coverage-changed.sh` and `vitest-changed-coverage.sh` both feed the PR
-CI Gate's changed-line diff-cover check (>= 80%) in `ci-lite.yml`.
+The complete Rust and frontend coverage suites feed the PR CI Gate's
+changed-line diff-cover check (>= 80%) in `ci-lite.yml`.
 
 ## Running locally
 
@@ -30,8 +29,7 @@ Only `check-openhuman-rust-layout.mjs` is wired to a pnpm script
 gate here runs from `.github/workflows/ci-lite.yml`; `ci-full.yml` does not
 call any of them, and only reaches `product-features.sh` indirectly through
 `test-reusable.yml`. Grep `ci-lite.yml` for a script's name to see its exact
-invocation and any required environment (the coverage scripts read `FULL` and
-`CHANGED_FILES` from the workflow's paths-filter step).
+invocation and any required environment.
 
 Long-running CI commands (the coverage lanes) go through
 `scripts/ci-cancel-aware.sh`, which lives directly under `scripts/`, not here.

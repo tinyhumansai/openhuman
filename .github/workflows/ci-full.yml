@@ -5,7 +5,7 @@
 #
 # Two-lane model:
 #   - ci-lite.yml (quick): pushes to main + PRs to main/release — quality
-#     checks + unit tests scoped to the changed files only.
+#     checks + complete unit-test suites for each changed area.
 #   - ci-full.yml (this file, slow): PRs targeting `release` (fix PRs opened
 #     while stabilising a cut — the "CI Full Gate" check gates their merge)
 #     and pushes to `release` (the maintainer-dispatched promotion merge from

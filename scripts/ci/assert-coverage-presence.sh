@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# Coverage-presence gate: fail when a changed Rust source file produced NO
-# coverage records at all — i.e. the lane never compiled it, so neither the
-# scoped test run nor diff-cover could possibly have verified it.
+# Coverage-presence gate: fail when a Rust source file that should be measured
+# produced no coverage records, so diff-cover could not possibly verify it.
 #
 # WHY THIS EXISTS (PR #5593). `crates/openhuman-core/src/hosting/**` is gated behind a Cargo
 # feature that is in neither `[features] default` nor
 # `scripts/ci/product-features.txt`, so the coverage lane compiled none of it.
-# The scoped libtest filter matched nothing (`running 0 tests … ok`) and
+# The former scoped libtest filter matched nothing (`running 0 tests … ok`) and
 # diff-cover reported "No lines with coverage information in this diff". Both
 # read the ABSENCE of data as "nothing to check" rather than "we checked
 # nothing", and 1,643 lines — including a 511-line test file — merged green.
@@ -135,6 +134,12 @@ for line in sys.stdin:
     marker = path.rfind("/crates/openhuman-embed/src/")
     if marker != -1:
         print(path[marker + 1 :])
+    marker = path.rfind("/crates/openhuman-rpc/src/")
+    if marker != -1:
+        print(path[marker + 1 :])
+    marker = path.rfind("/crates/openhuman-session/src/")
+    if marker != -1:
+        print(path[marker + 1 :])
     marker = path.rfind("/crates/openhuman-tui/src/")
     if marker != -1:
         print(path[marker + 1 :])
@@ -188,7 +193,7 @@ eligible() {
   base="$(basename "${f}")"
 
   case "${f}" in *.rs) ;; *) return 1 ;; esac  # non-Rust: assets, .md, fixtures
-  case "${f}" in src/* | crates/openhuman-core/src/* | crates/openhuman-embed/src/* | crates/openhuman-tui/src/*) ;; *) return 1 ;; esac
+  case "${f}" in src/* | crates/openhuman-core/src/* | crates/openhuman-embed/src/* | crates/openhuman-rpc/src/* | crates/openhuman-session/src/* | crates/openhuman-tui/src/*) ;; *) return 1 ;; esac
   [ -f "${f}" ] || return 1                    # deleted / renamed-away
   case "${f}" in src/lib.rs | src/main.rs | src/bin/* | crates/openhuman-core/src/lib.rs | crates/openhuman-core/src/main.rs | crates/openhuman-core/src/bin/* | crates/openhuman-tui/src/lib.rs | crates/openhuman-tui/src/main.rs) return 1 ;; esac
   # Test-only sources. We do not demand coverage OF test code, and a test file
@@ -229,11 +234,11 @@ if [ "${MODE}" = all ]; then
   # working tree would also be checked, which is harmless (it is a real file
   # that either compiled or did not).
   listing=""
-  if listing="$(git ls-files 'src/*.rs' 'src/**/*.rs' 'crates/openhuman-core/src/*.rs' 'crates/openhuman-core/src/**/*.rs' 'crates/openhuman-embed/src/*.rs' 'crates/openhuman-embed/src/**/*.rs' 'crates/openhuman-tui/src/*.rs' 'crates/openhuman-tui/src/**/*.rs' 2>/dev/null)" && [ -n "${listing}" ]; then
+  if listing="$(git ls-files 'src/*.rs' 'src/**/*.rs' 'crates/openhuman-core/src/*.rs' 'crates/openhuman-core/src/**/*.rs' 'crates/openhuman-embed/src/*.rs' 'crates/openhuman-embed/src/**/*.rs' 'crates/openhuman-rpc/src/*.rs' 'crates/openhuman-rpc/src/**/*.rs' 'crates/openhuman-session/src/*.rs' 'crates/openhuman-session/src/**/*.rs' 'crates/openhuman-tui/src/*.rs' 'crates/openhuman-tui/src/**/*.rs' 2>/dev/null)" && [ -n "${listing}" ]; then
     log "enumerating tracked sources with git ls-files"
   else
     log "git ls-files unavailable or empty — falling back to a filesystem walk"
-    listing="$(find src crates/openhuman-core/src crates/openhuman-embed/src crates/openhuman-tui/src -type f -name '*.rs' 2>/dev/null || true)"
+    listing="$(find src crates/openhuman-core/src crates/openhuman-embed/src crates/openhuman-rpc/src crates/openhuman-session/src crates/openhuman-tui/src -type f -name '*.rs' 2>/dev/null || true)"
   fi
   while IFS= read -r f; do
     [ -n "${f}" ] && candidates+=("${f}")
@@ -262,11 +267,11 @@ if [ "${MODE}" = all ] && [ "${checked}" -eq 0 ]; then
 fi
 
 if [ "${#unverified[@]}" -eq 0 ]; then
-  log "clean — every eligible changed source file produced coverage records"
+  log "clean — every eligible source file produced coverage records"
   exit 0
 fi
 
-echo "::error::Coverage lane produced NO records for ${#unverified[@]} changed source file(s) — they were never compiled, so nothing verified them."
+echo "::error::Coverage lane produced NO records for ${#unverified[@]} source file(s) — they were never compiled, so nothing verified them."
 for f in "${unverified[@]}"; do
   echo "::error file=${f}::${f} produced no coverage records. The coverage lane compiles 'default + scripts/ci/product-features.txt'; if this file sits behind a Cargo feature in neither list it was never built. Fix by adding the gate to product-features.txt (and the shell forwarding list), or record it in scripts/ci/coverage-presence-allowlist.txt with a reason."
 done

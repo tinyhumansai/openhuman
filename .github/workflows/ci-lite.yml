@@ -1,10 +1,9 @@
 ---
 # CI Lite — the quick lane (pushes to main + PRs targeting main or release).
 #
-# Runs quality checks per changed area and unit tests ONLY for the files the
-# PR changed (vitest related / domain-scoped cargo-llvm-cov), with diff-cover
-# enforcing >= 80% coverage on changed lines. Integration and E2E suites do
-# NOT run here — they run in full via ci-full.yml on PRs targeting `release`
+# Runs quality checks and complete unit-test suites per changed area, with
+# diff-cover enforcing >= 80% coverage on changed lines. Release-only mock-backend
+# and cross-platform E2E suites run via ci-full.yml on PRs targeting `release`
 # and on every push to `release` (the maintainer-dispatched
 # promote-main-to-release.yml merge and fix-PR merges). Fix PRs against
 # release get this fast lane too, for quick lint/coverage feedback alongside
@@ -51,19 +50,9 @@ jobs:
     timeout-minutes: 5
     outputs:
       frontend: ${{ steps.filter.outputs.frontend }}
-      # "true" when the change touches config that invalidates test scoping
-      # (lockfile, vitest/vite/ts config, test setup) → run the full suite.
-      frontend-full: ${{ steps.filter.outputs['frontend-full'] }}
-      # Shell-quoted list of changed app/src source files, consumed by
-      # scripts/ci/vitest-changed-coverage.sh (vitest related).
-      frontend-src-files: ${{ steps.filter.outputs['frontend-src_files'] }}
       i18n: ${{ steps.filter.outputs.i18n }}
       docs: ${{ steps.filter.outputs.docs }}
       rust-core: ${{ steps.filter.outputs['rust-core'] }}
-      rust-core-full: ${{ steps.filter.outputs['rust-core-full'] }}
-      # Shell-quoted list of changed src/ + tests/ files, consumed by
-      # scripts/ci/rust-coverage-changed.sh (domain-scoped llvm-cov).
-      rust-core-src-files: ${{ steps.filter.outputs['rust-core-src_files'] }}
       rust-tauri: ${{ steps.filter.outputs['rust-tauri'] }}
       # Mock backend + shared scripts → run the scripts self-test suite.
       scripts: ${{ steps.filter.outputs.scripts }}
@@ -86,13 +75,9 @@ jobs:
         id: filter
         uses: dorny/paths-filter@v4
         with:
-          list-files: shell
           filters: |
             frontend:
               - '.github/workflows/ci-lite.yml'
-              # The changed-files runner itself must trigger the lane that
-              # runs it (it is also in frontend-full → full-suite mode).
-              - 'scripts/ci/vitest-changed-coverage.sh'
               - 'scripts/ci-cancel-aware.sh'
               - 'package.json'
               - 'pnpm-lock.yaml'
@@ -106,25 +91,6 @@ jobs:
               - 'app/vite.config.*'
               - 'app/tailwind.config.*'
               - 'app/postcss.config.*'
-            # Changes here invalidate per-file test scoping → full Vitest run.
-            frontend-full:
-              - '.github/workflows/ci-lite.yml'
-              - 'scripts/ci/vitest-changed-coverage.sh'
-              - 'package.json'
-              - 'pnpm-lock.yaml'
-              - 'app/package.json'
-              - 'app/index.html'
-              - 'app/public/**'
-              - 'app/test/vitest.config.ts'
-              - 'app/tsconfig*.json'
-              - 'app/vite.config.*'
-              - 'app/tailwind.config.*'
-              - 'app/postcss.config.*'
-              - 'app/scripts/**'
-              - 'app/src/test/**'
-            frontend-src:
-              - 'app/src/**/*.ts'
-              - 'app/src/**/*.tsx'
             i18n:
               - '.github/workflows/ci-lite.yml'
               - 'app/src/**'
@@ -137,12 +103,10 @@ jobs:
               - 'package.json'
             rust-core:
               - '.github/workflows/ci-lite.yml'
-              # The changed-files runner itself must trigger the lane that
-              # runs it (it is also in rust-core-full → full-suite mode).
-              - 'scripts/ci/rust-coverage-changed.sh'
+              - 'scripts/ci/rust-coverage.sh'
               # The product feature set decides what the Rust lanes below
               # actually compile (clippy's `--features`, the test suite's, and
-              # rust-coverage-changed.sh's). Changing it changes the code under
+              # rust-coverage.sh's). Changing it changes the code under
               # test as surely as editing `Cargo.toml` does, so it has to arm
               # this lane too — #5619 turned `hosting` on and, without this
               # entry, resolved to `["rust-tauri"]` alone, skipping every lane
@@ -184,41 +148,6 @@ jobs:
               # `--init --recursive`. Do not go back to a list.
               - '.gitmodules'
               - 'vendor/**'
-            # Changes here invalidate per-module test scoping → full suite.
-            rust-core-full:
-              - '.github/workflows/ci-lite.yml'
-              - 'scripts/ci/rust-coverage-changed.sh'
-              # Same reason as in `rust-core` above: a feature-set change
-              # changes what compiles, which invalidates per-module scoping
-              # exactly as a `Cargo.toml` change does.
-              - 'scripts/ci/product-features.*'
-              - 'scripts/ci/assert-coverage-presence.sh'
-              - 'scripts/ci/coverage-presence-allowlist.txt'
-              - 'Cargo.toml'
-              - 'crates/openhuman-core/Cargo.toml'
-              - 'crates/openhuman-embed/Cargo.toml'
-              - 'crates/openhuman-session/Cargo.toml'
-              - 'crates/openhuman-tui/Cargo.toml'
-              - 'Cargo.lock'
-              - 'build.rs'
-              - '.cargo/config.toml'
-              - 'rust-toolchain.toml'
-              - 'scripts/ci-cancel-aware.sh'
-              - 'scripts/check-linux-tls-dependencies.sh'
-              # A vendored-crate bump invalidates per-module test scoping for the
-              # same reason a Cargo.lock change does: it moves the dependency
-              # graph under every module. Full suite, not scoped.
-              - '.gitmodules'
-              - 'vendor/**'
-            rust-core-src:
-              - 'src/**'
-              - 'crates/openhuman-core/src/**'
-              - 'crates/openhuman-embed/src/**'
-              - 'crates/openhuman-embed/tests/**'
-              - 'crates/openhuman-session/src/**'
-              - 'crates/openhuman-tui/src/**'
-              - 'crates/openhuman-tui/tests/**'
-              - 'tests/**'
             rust-tauri:
               - '.github/workflows/ci-lite.yml'
               - 'Cargo.lock'
@@ -364,18 +293,11 @@ jobs:
         if: needs.changes.outputs.docs == 'true'
         run: pnpm docs:check
 
-      - name: Run Vitest with coverage (changed files only)
+      - name: Run complete frontend unit suite with coverage
         if: needs.changes.outputs.frontend == 'true'
-        run: bash scripts/ci/vitest-changed-coverage.sh
+        run: bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app test:coverage
         env:
           NODE_ENV: test
-          FULL: ${{ needs.changes.outputs['frontend-full'] }}
-          # Same argument-limit guard as the rust-core lane below. The condition is
-          # inverted so the file list sits on the `&&` (truthy) side: GitHub's
-          # `a && b || c` ternary falls through to `c` whenever `b` is falsy, so
-          # `... == 'true' && '' || <files>` would hand back the full list in
-          # exactly the full-suite case this is meant to blank.
-          CHANGED_FILES: ${{ needs.changes.outputs['frontend-full'] != 'true' && needs.changes.outputs['frontend-src-files'] || '' }}
 
       - name: Normalize lcov source paths to repo root
         if: needs.changes.outputs.frontend == 'true'
@@ -690,7 +612,7 @@ jobs:
         # a domain feature must equal the allowlist below. When a new gate (or a new
         # test in an existing gate's domain) adds a gated test file, this fails — the
         # author then adds it here AND, if it can hold an ungated-assert regression of
-        # the #5022 class, extends the scoped `cargo test` filter above. Prevents the
+        # the #5022 class, extends the gate-contract `cargo test` filters above. Prevents the
         # smoke lane from silently under-covering as the gate surface grows.
         run: |
           set -euo pipefail
@@ -743,7 +665,7 @@ jobs:
           )
           ACTUAL=$(node scripts/ci/list-feature-gated-rust-tests.mjs | sort -u)
           if ! diff <(echo "$EXPECTED" | sed 's/^ *//' | sort -u) <(echo "$ACTUAL"); then
-            echo "::error::Gated-test file set changed. Update the EXPECTED allowlist in the rust-feature-gate-smoke lane, and extend the scoped 'cargo test' filter if the new module can carry an ungated-assert regression (see #5022)."
+            echo "::error::Gated-test file set changed. Update the EXPECTED allowlist in the rust-feature-gate-smoke lane, and extend the gate-contract 'cargo test' filters if the new module can carry an ungated-assert regression (see #5022)."
             exit 1
           fi
           echo "gate-contract test coverage allowlist is current"
@@ -921,19 +843,10 @@ jobs:
         env:
           CARGO_BUILD_JOBS: "1"
 
-      - name: Run cargo llvm-cov for openhuman core (changed modules only)
-        run: bash scripts/ci/rust-coverage-changed.sh
+      - name: Run complete root Rust suite with cargo llvm-cov
+        run: bash scripts/ci/rust-coverage.sh
         env:
           CARGO_BUILD_JOBS: "1"
-          FULL: ${{ needs.changes.outputs['rust-core-full'] }}
-          # Suppressed in full-suite mode. The list is ignored when FULL=true, but a
-          # large refactor can push it past the container job's argument/env limit,
-          # and `docker exec` then fails to START the step —
-          # "Argument list too long" — before the script can apply its own
-          # MAX_CHANGED_FILES fallback. Blanking it here keeps the step launchable.
-          # Condition inverted so the file list is on the `&&` side — `a && '' || b`
-          # always falls through to `b` because `''` is falsy.
-          CHANGED_FILES: ${{ needs.changes.outputs['rust-core-full'] != 'true' && needs.changes.outputs['rust-core-src-files'] || '' }}
           OUT: lcov-core.info
           # The tinyagents harness is the agent engine on every build now
           # (issue #4249); the suite exercises it by default. The legacy engine

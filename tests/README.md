@@ -73,7 +73,7 @@ flakes.
 - Domain unit tests live beside their modules as `*_tests.rs` under
   `crates/openhuman-core/src/<domain>/`, not here.
 - Coverage bookkeeping: `docs/TEST-COVERAGE-MATRIX.md`. PR changed-line
-  coverage must be at least 80% (`scripts/ci/rust-coverage-changed.sh`,
+  coverage must be at least 80% (`scripts/ci/rust-coverage.sh`,
   `scripts/ci/assert-coverage-presence.sh`).
 - Frontend E2E lives in `app/test/e2e/`, using
   `app/test/e2e/helpers/element-helpers.ts` rather than raw platform element

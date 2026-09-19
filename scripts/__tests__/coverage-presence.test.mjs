@@ -121,6 +121,20 @@ test("treats embedding facade sources as coverage-eligible", () => {
   assert.match(res.output, /checked 1 eligible/);
 });
 
+test("treats RPC and session crate sources as coverage-eligible", () => {
+  const sources = [
+    "crates/openhuman-rpc/src/client.rs",
+    "crates/openhuman-session/src/session.rs",
+  ];
+  const res = run(
+    Object.fromEntries(sources.map((source) => [source, WITH_FN])),
+    sources,
+    ["--files", ...sources],
+  );
+  assert.equal(res.status, 0);
+  assert.match(res.output, /checked 2 eligible/);
+});
+
 test("skips barrel modules that declare no fn", () => {
   const res = run({ "src/a/mod.rs": NO_FN }, [], ["--files", "src/a/mod.rs"]);
   assert.equal(res.status, 0);

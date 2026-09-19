@@ -166,7 +166,7 @@ CEF cache preflight before Tauri's deep-link forwarding path is installed.
 
 ### Push / PR checks
 
-The default pull-request gate is `.github/workflows/ci-lite.yml` (quick lane: quality checks + unit tests scoped to the changed files). E2E suites do not run on PRs to `main` — the full E2E matrix (Rust mock-backend, Playwright web, desktop on Linux/macOS/Windows) runs in `.github/workflows/ci-full.yml` on PRs targeting the `release` branch and on every push to it.
+The default pull-request gate is `.github/workflows/ci-lite.yml` (quick lane: quality checks plus complete unit-test suites for each changed area). E2E suites do not run on PRs to `main` — the full E2E matrix (Rust mock-backend, Playwright web, desktop on Linux/macOS/Windows) runs in `.github/workflows/ci-full.yml` on PRs targeting the `release` branch and on every push to it.
 
 macOS and Windows desktop E2E do not run on every PR. Use the manually dispatched E2E workflow (`.github/workflows/e2e.yml`) when cross-platform desktop signal is needed before promotion.
 

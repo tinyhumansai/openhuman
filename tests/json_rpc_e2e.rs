@@ -3741,7 +3741,7 @@ async fn json_rpc_memory_sync_and_learn() {
     // source. So clear it first.
     //
     // This is safe only because the coverage lane runs this target serially —
-    // `scripts/ci/rust-coverage-changed.sh`, in `run_integration_target()`:
+    // `scripts/ci/rust-coverage.sh`, in `run_integration_target()`:
     //   llvm_cov ... --test "${target}" -- --test-threads=1
     // If that ever stops being true, a concurrent case would have its store
     // wiped underneath it and this is the line that made that possible.
