@@ -142,7 +142,7 @@ same real type in both builds.
   `crates/openhuman-core/src/agent/registry/agents/orchestrator/prompt.rs` —
   read `mcp::registry::connections` to list connected servers/tools for the
   tool catalog and the orchestrator prompt.
-- `crates/openhuman-core/src/agent/harness/session/turn/core_turn.rs` — reads
+- `crates/openhuman-core/src/agent/session_host/turn/core_turn.rs` — reads
   `connections::connected_overview()` when assembling a turn.
 - `crates/openhuman-core/src/platform/about_app/catalog_auth_channels_team.rs` — the
   `channels.mcp_registry_browse` / `mcp_server_install` /

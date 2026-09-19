@@ -59,9 +59,18 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     "locale",
                     "Optional BCP-47 UI locale (e.g. 'ar', 'zh-CN'). Drives the \"reply in this language\" system-prompt directive.",
                 ),
-                optional_bool("speak_reply", "When true, the agent's final reply is spoken via TTS (for PTT and similar background voice flows)."),
-                optional_string("source", "Origin of the message: \"ptt\" | \"dictation\" | \"type\" | other. Used for analytics + downstream metadata."),
-                optional_u64("session_id", "Optional caller-provided correlation id (PTT session id)."),
+                optional_bool(
+                    "speak_reply",
+                    "When true, the agent's final reply is spoken via TTS (for PTT and similar background voice flows).",
+                ),
+                optional_string(
+                    "source",
+                    "Origin of the message: \"ptt\" | \"dictation\" | \"type\" | other. Used for analytics + downstream metadata.",
+                ),
+                optional_u64(
+                    "session_id",
+                    "Optional caller-provided correlation id (PTT session id).",
+                ),
                 optional_string(
                     "queue_mode",
                     "Queue mode: 'interrupt' (default), 'steer', 'followup', 'collect', or 'parallel'.",

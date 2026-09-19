@@ -165,7 +165,7 @@ pub fn uninstall_workflow(
         .map_err(|e| format!("remove {} failed: {e}", canonical_candidate.display()))?;
 
     // Notify live agent sessions to drop the removed skill from their
-    // `## Installed Skills` catalogue (see `Agent::refresh_workflows`).
+    // `## Installed Skills` catalogue (see `OpenHumanSessionHost::refresh_workflows`).
     crate::core::bus::BUS.publish(crate::core::events::DomainEvent::WorkflowsChanged {
         reason: "uninstall".to_string(),
     });

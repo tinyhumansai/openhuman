@@ -14,8 +14,8 @@
 //!
 //! `dump-prompt` is the main tool: it renders the exact system prompt the
 //! context engine would hand to the LLM when that agent is spawned. The
-//! dump routes through [`Agent::from_config_for_agent`] and calls
-//! [`Agent::build_system_prompt`] on the live session, so the output is
+//! dump routes through [`OpenHumanSessionHost::from_config_for_agent`] and calls
+//! [`OpenHumanSessionHost::build_system_prompt`] on the live session, so the output is
 //! byte-identical to what the LLM sees on turn 1. Pass
 //! `--agent orchestrator` for the orchestrator prompt; otherwise pass
 //! any built-in or workspace-custom agent id (e.g. `integrations_agent`,

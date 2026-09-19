@@ -485,6 +485,9 @@ fn observation_to_progress(obs: &AgentObservation, state: &mut ReplayState) -> V
         // what the trace records. The live bridge logs them and emits no
         // `AgentProgress` for any of them either.
         | AgentEvent::ToolsFiltered { .. }
+        | AgentEvent::ToolsAdvertised { .. }
+        | AgentEvent::ToolSearched { .. }
+        | AgentEvent::DeferredToolCall { .. }
         | AgentEvent::WorkspacePrepared { .. }
         | AgentEvent::WorkspaceViolation { .. }
         | AgentEvent::WorkspaceCleanup { .. }

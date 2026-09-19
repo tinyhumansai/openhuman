@@ -46,7 +46,7 @@ mod worker_mirror;
 #[cfg(test)]
 pub(super) use dispatch::inherited_thread_id;
 pub(crate) use dispatch::run_agent_turn_request_via_default_graph;
-pub(super) use dispatch::{run_subagent_via_graph, AggregatedUsage};
+pub(super) use dispatch::{AggregatedUsage, run_subagent_via_graph};
 
 // Only what `graph_tests.rs`'s `use super::*` still needs directly (the rest
 // of the original flat imports now live with the code that uses them, in

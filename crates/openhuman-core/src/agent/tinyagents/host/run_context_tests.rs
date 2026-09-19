@@ -34,16 +34,20 @@ fn child_inherits_tree_handles_but_isolates_observations_and_usage() {
     assert_eq!(child.spawn_depth, 1);
     assert_eq!(child.thread_id.as_deref(), Some("thread-a"));
     assert!(child.file_state_agent_id().is_none());
-    assert!(child
-        .resolved_route
-        .lock()
-        .expect("child route lock")
-        .is_none());
-    assert!(child
-        .subagent_usage
-        .lock()
-        .expect("child usage lock")
-        .is_empty());
+    assert!(
+        child
+            .resolved_route
+            .lock()
+            .expect("child route lock")
+            .is_none()
+    );
+    assert!(
+        child
+            .subagent_usage
+            .lock()
+            .expect("child usage lock")
+            .is_empty()
+    );
 
     parent.cancellation.cancel();
     assert!(child.cancellation.is_cancelled());

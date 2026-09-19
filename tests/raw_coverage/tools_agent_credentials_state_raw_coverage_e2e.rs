@@ -17,7 +17,7 @@ use axum::routing::post;
 use axum::{Json, Router};
 use chrono::{Duration as ChronoDuration, Utc};
 use openhuman_core::tinytools_agent::dialect::NativeDialect;
-use openhuman_core::agent::harness::session::Agent;
+use openhuman_core::agent::session_host::OpenHumanSessionHost;
 use openhuman_core::agent::harness::{
     run_subagent, with_parent_context, AgentDefinition, ParentExecutionContext, PromptSource,
     SandboxMode, SubagentRunOptions, ToolScope,
@@ -395,7 +395,7 @@ fn agent_definition(id: &str, max_result_chars: Option<usize>) -> AgentDefinitio
     AgentDefinition {
         id: id.to_string(),
         when_to_use: "Raw coverage test agent".to_string(),
-        display_name: Some("Round16 Agent".to_string()),
+        display_name: Some("Round16 OpenHumanSessionHost".to_string()),
         system_prompt: PromptSource::Inline("Use the visible tools and answer tersely.".into()),
         omit_identity: true,
         omit_memory_context: false,
@@ -738,7 +738,7 @@ async fn round16_agent_builder_turn_uses_public_harness_paths() {
         ),
         response(Some("builder final"), Vec::new()),
     ]));
-    let mut agent = Agent::builder()
+    let mut agent = OpenHumanSessionHost::builder()
         .chat_model(provider)
         .tools(vec![Box::new(EchoTool)])
         .memory(Arc::new(StubMemory))

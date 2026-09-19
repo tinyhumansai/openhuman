@@ -34,9 +34,7 @@ pub(crate) mod memory_context;
 pub(crate) mod memory_context_safety;
 pub(crate) mod memory_protocol;
 pub(crate) mod required_output;
-pub mod run_queue;
 pub mod sandbox_context;
-pub mod session;
 pub(crate) mod spawn_depth_context;
 pub mod subagent_runner;
 pub mod task_recency_context;
@@ -51,12 +49,12 @@ pub use definition::{
     SandboxMode, ToolScope, TriggerMemoryAgent,
 };
 pub use fork_context::{
-    current_agent_context_prepared_sources, current_parent, with_agent_context_prepared_sources,
-    with_parent_context, AgentContextPreparedSource, ParentExecutionContext,
+    AgentContextPreparedSource, ParentExecutionContext, current_agent_context_prepared_sources,
+    current_parent, with_agent_context_prepared_sources, with_parent_context,
 };
 pub use sandbox_context::{current_sandbox_mode, with_current_sandbox_mode};
-pub(crate) use spawn_depth_context::{with_spawn_depth, MAX_SPAWN_DEPTH};
-pub use subagent_runner::{run_subagent, SubagentRunError, SubagentRunOptions};
+pub(crate) use spawn_depth_context::{MAX_SPAWN_DEPTH, with_spawn_depth};
+pub use subagent_runner::{SubagentRunError, SubagentRunOptions, run_subagent};
 pub use task_recency_context::{current_task_recency_window, with_task_recency_window};
 
 pub(crate) use graph::run_channel_turn_via_graph;

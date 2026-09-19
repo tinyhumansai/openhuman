@@ -107,7 +107,7 @@ fn rendered_subagent_system_prompt_is_byte_stable_across_repeat_calls() {
 #[test]
 fn for_subagent_builder_injects_user_files_even_when_identity_omitted() {
     // Regression pin for the review finding: the runtime Tauri chat
-    // path spins welcome/trigger_* via `Agent::from_config_for_agent`
+    // path spins welcome/trigger_* via `OpenHumanSessionHost::from_config_for_agent`
     // → `SystemPromptBuilder::for_subagent(body, omit_identity=true, …)`,
     // which deliberately drops `IdentitySection`. Before
     // `UserFilesSection` existed, our PROFILE/MEMORY injection lived

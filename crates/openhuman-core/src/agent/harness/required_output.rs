@@ -57,11 +57,7 @@ pub(crate) fn find_required_block(
     let has_all = keys
         .iter()
         .all(|key| obj.get(key).is_some_and(|v| !v.is_null()));
-    if has_all {
-        Some(first)
-    } else {
-        None
-    }
+    if has_all { Some(first) } else { None }
 }
 
 /// A minimal, schema-valid block synthesised when the model omits the block and
@@ -85,7 +81,7 @@ pub(crate) fn synthesize_block(contract: &RequiredOutput) -> String {
 /// satisfies the leading-position rule directly, whether the caller keeps the
 /// re-prompt as the whole reply (the non-streamed *replace* path) or appends it
 /// after prose that was already streamed (the *append* path); see
-/// `Agent::enforce_required_output`.
+/// `OpenHumanSessionHost::enforce_required_output`.
 pub(crate) fn repair_instruction(contract: &RequiredOutput) -> String {
     let keys = contract.all_keys().join("\", \"");
     format!(

@@ -53,7 +53,7 @@ fn default_entry_from_definition(def: AgentDefinition) -> AgentRegistryEntry {
 /// Inverse of [`default_entry_from_definition`] — synthesizes a harness
 /// [`AgentDefinition`] from a user-authored [`AgentRegistryEntry`] so a
 /// custom agent (one with no shipped harness definition) can be built through
-/// the same [`crate::agent::Agent::from_config_for_agent`] factory
+/// the same [`crate::agent::OpenHumanSessionHost::from_config_for_agent`] factory
 /// path as a built-in, and therefore run with its real tool belt rather than
 /// degrade to a persona-only completion.
 ///

@@ -5,6 +5,7 @@
 //! (`ops/start_chat.rs`/`ops/parallel_turn.rs`) once the message has been validated.
 
 use std::sync::Arc;
+use tinyagents_harness::run_queue::RunQueue;
 
 use crate::config::rpc as config_rpc;
 use crate::threads::turn_state::TurnStateStore;
@@ -33,7 +34,7 @@ pub(crate) async fn run_chat_task(
     model_override: Option<String>,
     temperature: Option<f64>,
     locale: Option<String>,
-    run_queue: Arc<crate::agent::harness::run_queue::RunQueue>,
+    run_queue: Arc<RunQueue<crate::agent::queued_turn::QueuedTurn>>,
     metadata: ChatRequestMetadata,
     // When true, run as an isolated fork: build a fresh agent seeded from the
     // thread's history-at-start and never touch the shared `THREAD_SESSIONS`
@@ -84,8 +85,14 @@ pub(crate) async fn run_chat_task(
             block
                 .started
                 .store(true, std::sync::atomic::Ordering::SeqCst);
-            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-            return Err("test block elapsed".to_string());
+            tokio::select! {
+                _ = block.release.notified() => {
+                    return Err("test block released".to_string());
+                }
+                _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {
+                    return Err("test block elapsed".to_string());
+                }
+            }
         }
     }
 

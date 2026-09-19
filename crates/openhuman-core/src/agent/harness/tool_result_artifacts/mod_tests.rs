@@ -44,9 +44,11 @@ async fn threshold_persists_preview_and_readable_file() {
         .unwrap();
     assert!(!read.is_error, "{}", read.output());
     assert!(read.output().contains("xxxx"));
-    assert!(!read
-        .output()
-        .contains("ghp_abcdefghijklmnopqrstuvwxyz123456"));
+    assert!(
+        !read
+            .output()
+            .contains("ghp_abcdefghijklmnopqrstuvwxyz123456")
+    );
 }
 
 #[tokio::test]
@@ -72,10 +74,11 @@ async fn persisted_preview_is_bounded_for_small_budget() {
     assert!(outcome.final_bytes <= 320, "final={}", outcome.final_bytes);
     assert_eq!(out.len(), outcome.final_bytes);
     assert!(out.contains("[tool_result_preview]"));
-    assert!(tmp
-        .path()
-        .join("artifacts/tool-results/session/shell/call.txt")
-        .exists());
+    assert!(
+        tmp.path()
+            .join("artifacts/tool-results/session/shell/call.txt")
+            .exists()
+    );
 }
 
 #[tokio::test]
@@ -109,10 +112,11 @@ async fn aggregate_spills_largest_until_under_budget() {
     let total: usize = results.iter().map(|result| result.output.len()).sum();
     assert!(total <= 1800, "total={total}");
     assert!(!results[0].output.starts_with("[tool_result_preview]\n"));
-    assert!(tmp
-        .path()
-        .join("artifacts/tool-results/session/largest/largest.txt")
-        .exists());
+    assert!(
+        tmp.path()
+            .join("artifacts/tool-results/session/largest/largest.txt")
+            .exists()
+    );
 }
 
 #[tokio::test]
@@ -158,10 +162,11 @@ async fn aggregate_forces_budget_when_envelope_has_no_savings() {
         total <= results.len() * MIN_ENVELOPE_ALLOWANCE_BYTES,
         "total={total} exceeds the per-result envelope floor bound"
     );
-    assert!(tmp
-        .path()
-        .join("artifacts/tool-results/session/one/one.txt")
-        .exists());
+    assert!(
+        tmp.path()
+            .join("artifacts/tool-results/session/one/one.txt")
+            .exists()
+    );
 }
 
 #[test]
@@ -230,11 +235,13 @@ fn artifact_read_target_matches_only_file_read_under_the_artifact_directory() {
 
 #[test]
 fn artifact_read_target_matches_the_artifact_directory_as_a_path_component() {
-    assert!(artifact_read_target(
-        "file_read",
-        &json!({"path": "./artifacts/tool-results/s/c.txt"})
-    )
-    .is_some());
+    assert!(
+        artifact_read_target(
+            "file_read",
+            &json!({"path": "./artifacts/tool-results/s/c.txt"})
+        )
+        .is_some()
+    );
     assert_eq!(
         artifact_read_target(
             "file_read",

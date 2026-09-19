@@ -4,7 +4,7 @@
 //! deduplication helper used before sending specs to the provider.
 
 use crate::agent::harness::artifact_offload::{
-    render_artifact_offload_contract, should_render_offload_contract, ARTIFACT_OFFLOAD_HEADING,
+    ARTIFACT_OFFLOAD_HEADING, render_artifact_offload_contract, should_render_offload_contract,
 };
 use std::collections::HashSet;
 use tinytools::ToolSpec;

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use openhuman_core::agent::prompts::SystemPromptBuilder;
-use openhuman_core::agent::Agent;
+use openhuman_core::agent::OpenHumanSessionHost;
 use openhuman_core::memory::{Memory, MemoryCategory, MemoryEntry};
 use openhuman_core::tinytools_agent::dialect::XmlDialect;
 use tinytools::{Tool, ToolResult};
@@ -107,8 +107,8 @@ impl Memory for StubMemory {
     }
 }
 
-fn base_builder() -> openhuman_core::agent::AgentBuilder {
-    Agent::builder()
+fn base_builder() -> openhuman_core::agent::SessionHostBuilder {
+    OpenHumanSessionHost::builder()
         .chat_model(Arc::new(StubModel))
         .tools(vec![
             Box::new(StubTool("alpha")),
@@ -120,20 +120,20 @@ fn base_builder() -> openhuman_core::agent::AgentBuilder {
 
 #[test]
 fn builder_validates_required_fields() {
-    let err = Agent::builder()
+    let err = OpenHumanSessionHost::builder()
         .build()
         .err()
         .expect("missing tools should error");
     assert!(err.to_string().contains("tools are required"));
 
-    let err = Agent::builder()
+    let err = OpenHumanSessionHost::builder()
         .tools(vec![Box::new(StubTool("alpha"))])
         .build()
         .err()
         .expect("missing provider should error");
     assert!(err.to_string().contains("provider is required"));
 
-    let err = Agent::builder()
+    let err = OpenHumanSessionHost::builder()
         .chat_model(Arc::new(StubModel))
         .tools(vec![Box::new(StubTool("alpha"))])
         .build()
@@ -141,7 +141,7 @@ fn builder_validates_required_fields() {
         .expect("missing memory should error");
     assert!(err.to_string().contains("memory is required"));
 
-    let err = Agent::builder()
+    let err = OpenHumanSessionHost::builder()
         .chat_model(Arc::new(StubModel))
         .tools(vec![Box::new(StubTool("alpha"))])
         .memory(Arc::new(StubMemory))

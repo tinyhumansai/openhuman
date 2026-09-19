@@ -1,6 +1,6 @@
 //! Agent chat turns: the full tool-using turn and the simple no-tools variant.
 
-use crate::agent::Agent;
+use crate::agent::OpenHumanSessionHost;
 use crate::config::Config;
 use crate::inference::provider as providers;
 use crate::rpc::RpcOutcome;
@@ -74,28 +74,31 @@ pub async fn agent_chat(
 /// Which session [`agent_chat_for`] builds the turn on.
 #[derive(Debug, Clone, Copy)]
 pub enum AgentChatTarget<'a> {
-    /// The orchestrator — [`Agent::from_config`], today's `agent_chat`.
+    /// The orchestrator — [`OpenHumanSessionHost::from_config`], today's `agent_chat`.
     Orchestrator,
     /// Resolve `id` the way every other id-keyed entry point does: the
     /// process registry first, then `config.agent_registry.entries`.
     AgentId(&'a str),
     /// A definition the caller already holds; nothing is resolved by id. The
     /// entry point for a library host running its own per-agent specs — see
-    /// [`Agent::from_config_with_definition`].
+    /// [`OpenHumanSessionHost::from_config_with_definition`].
     Definition {
         definition: &'a crate::agent::harness::definition::AgentDefinition,
     },
 }
 
-fn build_turn_agent(config: &Config, target: &AgentChatTarget<'_>) -> Result<Agent, String> {
+fn build_turn_agent(
+    config: &Config,
+    target: &AgentChatTarget<'_>,
+) -> Result<OpenHumanSessionHost, String> {
     match target {
-        AgentChatTarget::Orchestrator => Agent::from_config(config),
+        AgentChatTarget::Orchestrator => OpenHumanSessionHost::from_config(config),
         AgentChatTarget::AgentId(id) => {
             log::debug!("[inference] agent_chat building agent_id={id}");
-            Agent::from_config_for_agent(config, id)
+            OpenHumanSessionHost::from_config_for_agent(config, id)
         }
         AgentChatTarget::Definition { definition } => {
-            Agent::from_config_with_definition(config, definition)
+            OpenHumanSessionHost::from_config_with_definition(config, definition)
         }
     }
     .map_err(|e| e.to_string())
@@ -106,10 +109,10 @@ fn build_turn_agent(config: &Config, target: &AgentChatTarget<'_>) -> Result<Age
 /// Two differences from the historical `agent_chat` beyond the target:
 ///
 /// * A non-empty `thread_id` resumes **that thread's** transcript
-///   (`Agent::seed_resume_from_thread_transcript`). When the thread has no
+///   (`OpenHumanSessionHost::seed_resume_from_thread_transcript`). When the thread has no
 ///   transcript yet, auto-resume is suppressed for the turn so a fresh thread
 ///   never splices in the agent's newest transcript from some other thread —
-///   `Agent::turn` resolves the latest transcript per agent *name*, not per
+///   `OpenHumanSessionHost::turn` resolves the latest transcript per agent *name*, not per
 ///   thread.
 /// * The agent is built by `target`, so a library host can run one booted
 ///   core with many independently defined agents.
@@ -168,7 +171,7 @@ pub async fn agent_chat_for(
         }
         None => build_turn_agent(config, &target)?,
     };
-    // Thread-correct resume. `Agent::turn` would otherwise auto-load the
+    // Thread-correct resume. `OpenHumanSessionHost::turn` would otherwise auto-load the
     // newest transcript for the agent *name*, which is another thread's
     // history whenever the same agent serves several threads (every library
     // host does exactly that). Seed from this thread's transcript when it has
@@ -195,13 +198,13 @@ pub async fn agent_chat_for(
             log::debug!("[inference] agent_chat resumed thread transcript thread_id={id}");
         } else {
             log::debug!("[inference] agent_chat fresh thread thread_id={id}; autoload suppressed");
-            agent.set_next_turn_overrides(crate::agent::harness::session::TurnOverrides {
+            agent.set_next_turn_overrides(crate::agent::session_host::TurnOverrides {
                 suppress_transcript_autoload: true,
                 ..Default::default()
             });
         }
     }
-    // Live progress for in-process embedders. `Agent::from_config` never
+    // Live progress for in-process embedders. `OpenHumanSessionHost::from_config` never
     // attaches a sink itself, so there is nothing to clobber here; callers that
     // set one explicitly (web chat, platform socket, flows, skills) hold their
     // own `Agent` and never reach this path — where both could apply, the

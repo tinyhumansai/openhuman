@@ -2,7 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use openhuman_core::tinytools_agent::dialect::XmlDialect;
 use openhuman_core::agent::hooks::{PostTurnHook, TurnContext};
-use openhuman_core::agent::Agent;
+use openhuman_core::agent::OpenHumanSessionHost;
 use openhuman_core::config::{AgentConfig, ContextConfig};
 use openhuman_core::agent::prompts::{
     ConnectedIntegration, LearnedContextData, PersonalityRosterEntry, PersonalityRosterSection,
@@ -421,7 +421,7 @@ async fn max_iteration_checkpoint_uses_deterministic_fallback_and_hooks() {
         ))],
     );
 
-    let mut agent = Agent::builder()
+    let mut agent = OpenHumanSessionHost::builder()
         .chat_model(provider.clone())
         .tools(vec![Box::new(Round24Tool {
             calls: calls.clone(),
@@ -494,7 +494,7 @@ async fn max_iteration_checkpoint_uses_deterministic_fallback_and_hooks() {
 #[tokio::test]
 async fn builder_validation_and_system_prompt_cover_defaults_and_learning() {
     let _env = env_lock();
-    let missing_tools = match Agent::builder().build() {
+    let missing_tools = match OpenHumanSessionHost::builder().build() {
         Ok(_) => panic!("builder without tools should fail"),
         Err(err) => err,
     };
@@ -508,7 +508,7 @@ async fn builder_validation_and_system_prompt_cover_defaults_and_learning() {
     let calls = Arc::new(AtomicUsize::new(0));
     let memory = RecordingMemory::new();
     let provider = ScriptedModel::new(vec![text_response("learned final", None)]);
-    let mut agent = Agent::builder()
+    let mut agent = OpenHumanSessionHost::builder()
         .chat_model(provider.clone())
         .tools(vec![Box::new(Round24Tool { calls })])
         .memory(memory)

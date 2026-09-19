@@ -5,7 +5,7 @@ Generic OpenHuman process-startup helpers. Currently a thin, stateless module wh
 ## Responsibilities
 
 - Run workspace migrations at process startup via `run_workspace_migrations(workspace_dir)`.
-- Drive the **session-layout** migration (`agent::harness::session::migrate_session_layout_if_needed`) and log its outcome (jsonl/md moved, pruned legacy dirs, warnings).
+- Drive the **session-layout** migration and log its outcome (jsonl/md moved, pruned legacy dirs, warnings).
 - Drive the **welcome-to-orchestrator** thread/artifact migration (`threads::migrate_welcome_agent_artifacts`) and log its outcome (threads/transcripts updated, files renamed).
 - Swallow migration errors (log `warn`) and fall back to in-place legacy reads so boot always proceeds.
 
@@ -34,11 +34,11 @@ None (no `bus.rs`); does not publish or subscribe to `DomainEvent`s.
 
 ## Persistence
 
-No own state/store. It triggers migrations that mutate on-disk workspace artifacts (session layout files, thread/transcript artifacts) under `workspace_dir`, but the actual persistence and idempotency markers live in the called migration helpers (`agent::harness::session`, `threads`).
+No own state/store. It triggers migrations that mutate on-disk workspace artifacts (session layout files, thread/transcript artifacts) under `workspace_dir`, but the actual persistence and idempotency markers live in the called migration helpers (`tinyagents_session::transcript`, `threads`).
 
 ## Dependencies
 
-- `crate::agent::harness::session::migrate_session_layout_if_needed` — performs the session-layout migration (moves jsonl/md, prunes legacy dirs).
+- `tinyagents_session::transcript` — owns the durable session layout and transcript transitions.
 - `crate::threads::migrate_welcome_agent_artifacts` — performs the welcome-agent → orchestrator artifact migration.
 
 ## Used by

@@ -22,7 +22,7 @@ use super::message_trim::{estimate_message_tokens, estimate_text_tokens};
 /// # Why the loop and not afterwards
 ///
 /// A capped turn used to end like this: the loop exits on the model-call cap,
-/// and `Agent::summarize_turn_wrapup` then dispatches a second, out-of-band
+/// and `OpenHumanSessionHost::summarize_turn_wrapup` then dispatches a second, out-of-band
 /// request straight at the `ChatModel` asking for a checkpoint. Being outside
 /// the harness, that request ran with **none** of the loop's context
 /// management — no microcompact, no compression, no trim — while being built

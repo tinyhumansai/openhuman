@@ -21,7 +21,7 @@ The memory agent is a specialist sub-agent that navigates the user's memory tree
 | `types.rs` | Benchmark and performance tracking types |
 | `ops.rs` | Benchmarking harness for memory walk performance |
 | `tools.rs` | `call_memory_agent` tool implementation, re-exported from [`tools/mod.rs`](../../tools/mod.rs) (`pub use crate::memory::agent::tools::*;`) |
-| `memory_loader.rs` | What is left of the old per-turn memory loader: `CROSS_CHAT_HEADER` (the `[Cross-chat context]` block header, bound by `agent/harness/memory_context.rs` and the orchestrator prompt so the wording cannot drift), `MemoryCitation`, and `collect_recall_citations` (called from `agent/harness/session/turn/core_turn.rs`; the citations reach `web_chat`'s reply presentation). The per-turn `load_context()` block — two full scans of the `global` namespace every turn — was removed from `core_turn.rs`; see [`memory/auto_recall/mod.rs`](../auto_recall/mod.rs) for what replaced it. The `PRIOR_CONVERSATION_*` constants are leftovers of that block and have no caller. |
+| `memory_loader.rs` | What is left of the old per-turn memory loader: `CROSS_CHAT_HEADER` (the `[Cross-chat context]` block header, bound by `agent/harness/memory_context.rs` and the orchestrator prompt so the wording cannot drift), `MemoryCitation`, and `collect_recall_citations` (called from `agent/session_host/turn/core_turn.rs`; the citations reach `web_chat`'s reply presentation). The per-turn `load_context()` block — two full scans of the `global` namespace every turn — was removed from `core_turn.rs`; see [`memory/auto_recall/mod.rs`](../auto_recall/mod.rs) for what replaced it. The `PRIOR_CONVERSATION_*` constants are leftovers of that block and have no caller. |
 
 ## Memory tree structure
 

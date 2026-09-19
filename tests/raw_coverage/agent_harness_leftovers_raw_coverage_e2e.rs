@@ -8,7 +8,7 @@ use openhuman_core::agent::prompts::{
 };
 use openhuman_core::tinytools_agent::dialect::NativeDialect;
 use openhuman_core::agent::harness::definition::AgentTier;
-use openhuman_core::agent::harness::session::Agent;
+use openhuman_core::agent::session_host::OpenHumanSessionHost;
 use openhuman_core::agent::harness::{
     run_subagent, with_parent_context, AgentDefinition, DefinitionSource, ModelSpec,
     ParentExecutionContext, PromptSource, SandboxMode, SubagentRunOptions, ToolScope,
@@ -265,8 +265,8 @@ fn build_agent(
     workspace: &Path,
     provider: Arc<ScriptedModel>,
     tools: Vec<Box<dyn Tool>>,
-) -> Result<Agent> {
-    let mut agent = Agent::builder()
+) -> Result<OpenHumanSessionHost> {
+    let mut agent = OpenHumanSessionHost::builder()
         .chat_model(provider)
         .tools(tools)
         .memory(Arc::new(StubMemory::default()))
@@ -478,19 +478,19 @@ async fn builder_reports_missing_required_fields_in_validation_order() -> Result
     let tmp = TempDir::new()?;
     let provider = ScriptedModel::new(vec![text_response("unused")]);
 
-    let err = match Agent::builder().build() {
+    let err = match OpenHumanSessionHost::builder().build() {
         Ok(_) => panic!("builder without tools should fail"),
         Err(err) => err,
     };
     assert!(err.to_string().contains("tools are required"));
 
-    let err = match Agent::builder().tools(Vec::new()).build() {
+    let err = match OpenHumanSessionHost::builder().tools(Vec::new()).build() {
         Ok(_) => panic!("builder without provider should fail"),
         Err(err) => err,
     };
     assert!(err.to_string().contains("provider is required"));
 
-    let err = match Agent::builder()
+    let err = match OpenHumanSessionHost::builder()
         .tools(Vec::new())
         .chat_model(provider)
         .workspace_dir(tmp.path().to_path_buf())

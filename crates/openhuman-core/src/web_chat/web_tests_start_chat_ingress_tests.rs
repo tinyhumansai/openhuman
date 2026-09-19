@@ -604,7 +604,10 @@ fn classify_inference_error_harness_wall_clock_timeout_is_turn_timeout() {
             retryable,
             ..
         } = classify_inference_error(raw);
-        assert_eq!(category, "turn_timeout", "must classify as turn_timeout: {raw}");
+        assert_eq!(
+            category, "turn_timeout",
+            "must classify as turn_timeout: {raw}"
+        );
         assert!(retryable, "a wall-clock timeout is retryable: {raw}");
     }
 }

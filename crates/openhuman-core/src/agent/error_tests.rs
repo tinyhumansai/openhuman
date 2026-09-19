@@ -95,7 +95,7 @@ fn from_anyhow_recovers_typed_agent_error_and_other_source() {
 
 // ── AgentError::EmptyProviderResponse (TAURI-RUST-4JX) ──────────────────
 //
-// `agent::harness::session::turn` returns this variant when the provider's
+// `agent::session_host::turn` returns this variant when the provider's
 // chat completion contains no text, no thinking, and no tool calls (a
 // degenerate/poisoned response — typically a flaky local model). The
 // variant was added so `run_single` can route it through `skips_sentry()`
@@ -107,7 +107,7 @@ fn from_anyhow_recovers_typed_agent_error_and_other_source() {
 fn empty_provider_response_display_matches_user_facing_string() {
     // The exact wire string is anchored: the UI surfaces it verbatim to
     // the user, and the emit-site comment at
-    // `agent/harness/session/turn.rs:801` (the warn breadcrumb) explicitly
+    // `agent/session_host/turn.rs:801` (the warn breadcrumb) explicitly
     // calls out the "surfacing as error instead of a silent blank reply"
     // contract. Any change to this byte string is a user-visible message
     // change and a Sentry-fingerprint change.

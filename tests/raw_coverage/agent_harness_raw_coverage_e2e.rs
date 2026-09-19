@@ -2,7 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use openhuman_core::tinytools_agent::dialect::NativeDialect;
 use openhuman_core::agent::harness::definition::AgentDefinitionRegistry;
-use openhuman_core::agent::harness::session::Agent;
+use openhuman_core::agent::session_host::OpenHumanSessionHost;
 use openhuman_core::agent::harness::{
     run_subagent, with_parent_context, AgentDefinition, ParentExecutionContext, PromptSource,
     SandboxMode, SubagentRunOptions, ToolScope,
@@ -230,7 +230,7 @@ fn agent_config() -> AgentConfig {
     }
 }
 
-fn build_agent(workspace: &Path, provider: Arc<ScriptedModel>, agent_name: &str) -> Result<Agent> {
+fn build_agent(workspace: &Path, provider: Arc<ScriptedModel>, agent_name: &str) -> Result<OpenHumanSessionHost> {
     build_agent_with_tools(workspace, provider, agent_name, vec![Box::new(EchoTool)])
 }
 
@@ -239,8 +239,8 @@ fn build_agent_with_tools(
     provider: Arc<ScriptedModel>,
     agent_name: &str,
     tools: Vec<Box<dyn Tool>>,
-) -> Result<Agent> {
-    let mut agent = Agent::builder()
+) -> Result<OpenHumanSessionHost> {
+    let mut agent = OpenHumanSessionHost::builder()
         .chat_model(provider)
         .tools(tools)
         .memory(Arc::new(StubMemory))

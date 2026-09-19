@@ -1,5 +1,5 @@
 //! Building and running the per-turn voice orchestrator: a fresh, isolated
-//! `Agent` pinned to a fast non-thinking model, seeded from the relayed
+//! `OpenHumanSessionHost` pinned to a fast non-thinking model, seeded from the relayed
 //! history, run under the hard per-turn ceiling with the same chat-scoped
 //! approval surface web chat installs.
 
@@ -8,8 +8,8 @@ use std::time::Duration;
 use log::{info, warn};
 use serde_json::Value;
 
-use crate::agent::harness::session::Agent;
 use crate::agent::progress::AgentProgress;
+use crate::agent::session_host::OpenHumanSessionHost;
 use crate::agent::turn_origin::{with_origin, AgentTurnOrigin};
 
 use super::chat_delivery::{VOICE_CHAT_CLIENT_ID, VOICE_CHAT_THREAD_ID};
@@ -44,7 +44,7 @@ const VOICE_AGENT_NAME: &str = "voice";
 /// whole budget *thinking* before its first word. `chat-v1` (DeepSeek-V4-Flash,
 /// thinking off) is a short-turn, tool-capable SKU: the master still routes
 /// delegation through the prompt (per-turn classification is disabled — see the
-/// model pin in `agent/harness/session/turn/core.rs`), so tool turns keep working
+/// model pin in `agent/session_host/turn/core.rs`), so tool turns keep working
 /// while spoken replies start in ~1s instead of ~6s. Reasoning models are the
 /// wrong tool for a latency-capped realtime channel.
 const VOICE_MODEL: &str = "chat-v1";
@@ -96,9 +96,9 @@ async fn build_voice_agent(
     correlation_id: &str,
     messages: &[Value],
     prompt: &str,
-) -> Result<Agent, String> {
+) -> Result<OpenHumanSessionHost, String> {
     let config = crate::config::ops::load_config_with_timeout().await?;
-    let mut agent = Agent::from_config_for_agent(&config, "orchestrator")
+    let mut agent = OpenHumanSessionHost::from_config_for_agent(&config, "orchestrator")
         .map_err(|e| format!("orchestrator build failed: {e}"))?;
     agent.set_event_context(format!("voice_{correlation_id}"), "voice_agent");
     // Isolate the voice transcript namespace from the chat orchestrator so a
@@ -127,7 +127,7 @@ async fn build_voice_agent(
 /// Run the orchestrator turn under the hard per-turn ceiling. The streaming sink
 /// must already be attached; deltas flow out while this runs.
 async fn run_single_with_timeout(
-    agent: &mut Agent,
+    agent: &mut OpenHumanSessionHost,
     correlation_id: &str,
     prompt: &str,
 ) -> Result<String, String> {

@@ -68,8 +68,8 @@ domain.
 ## Called by
 
 `grep -rn 'inference::provider::' crates/openhuman-core/src` shows the main
-consumers: the agent harness (`agent/harness/session/builder/factory.rs`,
-`agent/harness/session/runtime*.rs`, `agent/harness/subagent_runner/ops/*`,
+consumers: the agent harness (`agent/session_host/builder/factory.rs`,
+`agent/session_host/runtime*.rs`, `agent/harness/subagent_runner/ops/*`,
 `agent/tinyagents/host/model_resolver.rs`), `web_chat/session.rs` and
 `web_chat/web_errors/` (`classify.rs`, `budget.rs`, `retry.rs`, `timeout.rs`,
 `backend_error_code.rs`, `provider_detail.rs`, `response_predicates.rs`), `voice/factory/{helpers,mod}.rs`,

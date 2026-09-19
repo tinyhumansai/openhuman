@@ -5,8 +5,7 @@ fn both_timeout_shapes_still_render_the_same_user_facing_copy() {
     // The telemetry split must not change what the user sees: either way the
     // turn ran out of time and the graceful `turn_timeout` copy is correct.
     let marker = super::super::web_errors::turn_timeout_error_message(600);
-    let harness =
-        "run timed out: tool call for run `agent_turn` exceeded its remaining wall-clock budget (26375 ms)";
+    let harness = "run timed out: tool call for run `agent_turn` exceeded its remaining wall-clock budget (26375 ms)";
     assert_eq!(classify_inference_error(&marker).error_type, "turn_timeout");
     assert_eq!(classify_inference_error(harness).error_type, "turn_timeout");
 }

@@ -36,7 +36,7 @@ pub enum AgentError {
     /// with flaky local model fine-tunes (e.g. community quantizations of
     /// Qwen/Llama via LM Studio or Ollama). Surfaced as a user-facing
     /// error instead of a silent blank reply (defense-in-depth from
-    /// `agent/harness/session/turn.rs`) but suppressed from Sentry — it's
+    /// `agent/session_host/turn.rs`) but suppressed from Sentry — it's
     /// a provider/user-state outcome, not an OpenHuman bug, and a deeper
     /// fix lives in the model / provider config the user chose. Targets
     /// Sentry TAURI-RUST-4JX (~33 events, escalating on 0.56.0).
@@ -98,7 +98,7 @@ impl fmt::Display for AgentError {
             }
             Self::EmptyProviderResponse { .. } => {
                 // Verbatim user-facing string from the old
-                // `agent/harness/session/turn.rs` emit site — UI / tests
+                // `agent/session_host/turn.rs` emit site — UI / tests
                 // grep for this exact byte sequence.
                 write!(f, "The model returned an empty response. Please try again.")
             }

@@ -35,7 +35,7 @@ pub(crate) async fn flows_build_with_extra_hidden_tools(
     stream: Option<FlowStreamTarget>,
     extra_hidden_tools: &[&str],
 ) -> Result<RpcOutcome<Value>, String> {
-    use crate::agent::Agent;
+    use crate::agent::OpenHumanSessionHost;
     use crate::flows::agents::workflow_builder::builder_prompt::render_prompt;
 
     // Reject invalid turns (e.g. a `build` with no `flow_id`) before we render a
@@ -61,7 +61,7 @@ pub(crate) async fn flows_build_with_extra_hidden_tools(
     // resolves the per-agent iteration cap from the `workflow_builder`
     // `AgentDefinition` itself (`iteration_policy = "extended"` ->
     // `effective_max_iterations()` = 50), so no override is needed here.
-    let mut agent = Agent::from_config_for_agent(config, "workflow_builder")
+    let mut agent = OpenHumanSessionHost::from_config_for_agent(config, "workflow_builder")
         .map_err(|e| format!("failed to build workflow_builder agent: {e:#}"))?;
     agent.set_agent_definition_name("workflow_builder".to_string());
     start_builder_turn_clean(&mut agent);
@@ -276,7 +276,8 @@ pub(crate) async fn flows_build_with_extra_hidden_tools(
     // response — the frontend renders from the stream, not the return value,
     // so patching only the latter would still leave an interactive user
     // staring at the original silent/status-only text.
-    let proposal = extract_workflow_proposal(agent.history());
+    let runtime_history = agent.history();
+    let proposal = extract_workflow_proposal(&runtime_history);
 
     // A user-cancelled turn settles here, clean and separate from the
     // error/trail-off paths below: `finalize_flow_stream` gets an `Ok(...)` (a
@@ -346,7 +347,8 @@ pub(crate) async fn flows_build_with_extra_hidden_tools(
     // is NEVER left with silence or an unanswerable status note.
     let trail_off = !capped && proposal.is_none() && run_error.is_none();
     let assistant_text = if trail_off && !text_looks_like_question(&assistant_text) {
-        let fallback = build_trail_off_fallback(agent.history());
+        let runtime_history = agent.history();
+        let fallback = build_trail_off_fallback(&runtime_history);
         let combined = combine_trail_off_fallback(&fallback, &assistant_text);
         tracing::warn!(
             target: "flows",
@@ -458,15 +460,15 @@ pub(super) fn extract_workflow_proposal(
 
 /// Keep the builder's first turn from auto-resuming another flow's session.
 ///
-/// On an empty history `Agent::turn` falls back to `try_load_session_transcript`,
+/// On an empty history `OpenHumanSessionHost::turn` falls back to `try_load_session_transcript`,
 /// which loads the newest transcript for the agent *name*. Every flow's builder
 /// shares the name `workflow_builder` and the profile's `session_raw/` dir, so
 /// that fallback hands a brand-new flow the most recent builder conversation from
 /// whichever flow ran last. Thread-scoped resume, where a host does it, seeds
 /// `cached_transcript_messages` and is unaffected. `agent_chat` suppresses the
 /// same fallback for the same reason.
-pub(crate) fn start_builder_turn_clean(agent: &mut crate::agent::Agent) {
-    agent.set_next_turn_overrides(crate::agent::harness::session::TurnOverrides {
+pub(crate) fn start_builder_turn_clean(agent: &mut crate::agent::OpenHumanSessionHost) {
+    agent.set_next_turn_overrides(crate::agent::session_host::TurnOverrides {
         suppress_transcript_autoload: true,
         ..Default::default()
     });

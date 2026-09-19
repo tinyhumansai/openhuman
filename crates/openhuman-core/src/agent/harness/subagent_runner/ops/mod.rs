@@ -54,9 +54,9 @@ pub(crate) use provider::resolve_subagent_source;
 #[cfg(test)]
 use prompt::dedup_tool_specs_by_name;
 #[cfg(test)]
-use provider::normalize_slug;
-#[cfg(test)]
 pub(super) use provider::LazyToolkitResolver;
+#[cfg(test)]
+use provider::normalize_slug;
 // filter_tool_indices lives in tool_prep (sibling of ops).
 #[cfg(test)]
 pub(super) use super::tool_prep::filter_tool_indices;
@@ -68,7 +68,7 @@ pub(super) use crate::agent::harness::definition::{AgentDefinition, PromptSource
 #[cfg(test)]
 pub(super) use crate::agent::harness::fork_context::ParentExecutionContext;
 #[cfg(test)]
-pub(super) use crate::agent::harness::{with_spawn_depth, MAX_SPAWN_DEPTH};
+pub(super) use crate::agent::harness::{MAX_SPAWN_DEPTH, with_spawn_depth};
 #[cfg(test)]
 use tinytools::ToolSpec;
 

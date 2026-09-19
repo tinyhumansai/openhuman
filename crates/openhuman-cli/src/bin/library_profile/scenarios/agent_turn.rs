@@ -4,7 +4,7 @@
 
 use anyhow::Result;
 use openhuman_core::agent::harness::AgentDefinitionRegistry;
-use openhuman_core::agent::Agent;
+use openhuman_core::agent::OpenHumanSessionHost;
 use openhuman_core::inference::provider::factory::test_provider_override;
 
 use crate::harness::{fixture, measure, ProfileResult};
@@ -20,7 +20,8 @@ pub async fn run() -> Result<ProfileResult> {
     eprintln!("[library-profile] agent-turn: registries ready, mock installed");
 
     measure("agent-turn", 1, None, |_rec| async {
-        let mut agent = Agent::from_config_for_agent(&fixture.config, "subconscious")?;
+        let mut agent =
+            OpenHumanSessionHost::from_config_for_agent(&fixture.config, "subconscious")?;
         let reply = agent
             .run_single("Give me a one-line status on the Phoenix migration.")
             .await?;

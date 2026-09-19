@@ -133,7 +133,7 @@ fn main() {
             }
             // Defense-in-depth: drop max-tool-iterations cap events that
             // slipped past the call-site filters in
-            // `agent::harness::session::runtime::run_single`,
+            // `agent::session_host::runtime::run_single`,
             // `channels::runtime::dispatch`, and
             // `web_chat::run_chat_task`. The cap is a
             // deterministic agent-state outcome surfaced to the user via

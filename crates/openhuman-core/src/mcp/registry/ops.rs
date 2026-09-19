@@ -638,7 +638,7 @@ async fn invoke_config_assist_agent(
         message.len()
     );
 
-    let mut agent = match crate::agent::Agent::from_config(config) {
+    let mut agent = match crate::agent::OpenHumanSessionHost::from_config(config) {
         Ok(a) => a,
         Err(e) => {
             return Ok(json!({

@@ -25,14 +25,14 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use async_trait::async_trait;
-use serde_json::{json, Value};
-use tinyagents_graph::parallel::{map_reduce, FailurePolicy, ParallelOptions};
+use serde_json::{Value, json};
+use tinyagents_graph::parallel::{FailurePolicy, ParallelOptions, map_reduce};
 
-use super::handoff::{chunk_content, ResultHandoffCache, HANDOFF_MAX_ENTRIES};
-use crate::agent::messages::{transcript_message_from_chat, ChatMessage};
+use super::handoff::{HANDOFF_MAX_ENTRIES, ResultHandoffCache, chunk_content};
+use crate::agent::messages::{ChatMessage, transcript_message_from_chat};
 use crate::agent::tinyagents::TurnModelSource;
 use tinyagents_session::transcript::{
-    resolve_keyed_transcript_path, write_transcript, MessageUsage, TranscriptMeta, TurnUsage,
+    MessageUsage, TranscriptMeta, TurnUsage, resolve_keyed_transcript_path, write_transcript,
 };
 use tinyinference_llm::message::Message;
 use tinyinference_llm::model::ModelRequest;

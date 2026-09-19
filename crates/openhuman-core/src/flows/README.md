@@ -67,7 +67,7 @@ from always-compiled code.
 - `crates/openhuman-core/src/core/runtime/services.rs` — runs `sweep_orphaned_running_runs_on_boot` and `reconcile_schedule_triggers_on_boot` during core boot and calls `medulla_bridge::install`; `platform/socket/ops.rs` installs the bridge on the socket path as well.
 - `crates/openhuman-core/src/tools/ops.rs` — pushes all 27 flows tools onto the agent tool list (`tools/mod.rs` re-exports the four tool modules).
 - `crates/openhuman-core/src/agent/registry/agents/loader.rs` — registers `workflow_builder` and `flow_discovery` as built-in archetypes.
-- `crates/openhuman-core/src/agent/harness/session/` (`builder/factory.rs`, `turn/tools.rs`) — extends the skill catalogue with `catalogue::flow_entries`.
+- `crates/openhuman-core/src/agent/session_host/` (`builder/factory.rs`, `turn/tools.rs`) — extends the skill catalogue with `catalogue::flow_entries`.
 
 ## Tests
 

@@ -19,7 +19,7 @@ fn append_worker_message(
     sender: &str,
     metadata: serde_json::Value,
 ) {
-    use crate::memory::conversations::{append_message, ConversationMessage as StoredMessage};
+    use crate::memory::conversations::{ConversationMessage as StoredMessage, append_message};
     let mut extra = serde_json::json!({
         "scope": "worker_thread",
         "agent_id": agent_id,

@@ -264,7 +264,7 @@ impl<'a> PromptTool<'a> {
     ///
     /// An agent's callable surface is not one contiguous slice: the durable
     /// registry and the freshly-synthesised delegation set live in separate
-    /// `Arc`s (see `Agent::synthesized_tools`), and the prompt catalogue must
+    /// `Arc`s (see `OpenHumanSessionHost::synthesized_tools`), and the prompt catalogue must
     /// render both. Taking an iterator lets the caller chain them without
     /// materialising a combined `Vec<Box<dyn Tool>>` — which is impossible
     /// anyway, since `Box<dyn Tool>` is not cloneable.

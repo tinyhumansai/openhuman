@@ -46,7 +46,7 @@
 //! ## Scope
 //!
 //! Only the orchestrator session gets a `PayloadSummarizer` wired in
-//! ([`crate::agent::harness::session::builder::AgentBuilder`]
+//! ([`crate::agent::session_host::builder::AgentBuilder`]
 //! checks `agent_id == "orchestrator"`). Welcome, integrations_agent,
 //! researcher, planner, archivist, and every other typed sub-agent get
 //! `None` and their tool results are untouched. The summarizer itself

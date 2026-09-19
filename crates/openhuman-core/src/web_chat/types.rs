@@ -4,8 +4,47 @@
 //! and the `channel.web_*` request param structs.
 
 use serde::Deserialize;
+use tinyagents_harness::run_queue::QueueLane;
 
-use crate::agent::Agent;
+use crate::agent::OpenHumanSessionHost;
+
+/// How a web request arriving during an active turn is handled.
+///
+/// This is a web/orchestration disposition, not queue state. Only the three
+/// variants returned by [`Self::queue_lane`] are ever inserted into TinyAgents'
+/// run queue; interrupt and parallel are resolved by `start_chat` first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum QueueMode {
+    #[default]
+    Interrupt,
+    Steer,
+    Followup,
+    Collect,
+    Parallel,
+}
+
+impl QueueMode {
+    pub(super) fn queue_lane(self) -> Option<QueueLane> {
+        match self {
+            Self::Steer => Some(QueueLane::Steer),
+            Self::Followup => Some(QueueLane::Followup),
+            Self::Collect => Some(QueueLane::Collect),
+            Self::Interrupt | Self::Parallel => None,
+        }
+    }
+}
+
+impl std::fmt::Display for QueueMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Interrupt => "interrupt",
+            Self::Steer => "steer",
+            Self::Followup => "followup",
+            Self::Collect => "collect",
+            Self::Parallel => "parallel",
+        })
+    }
+}
 
 /// All inputs that the cached `SessionEntry`'s `Agent` was built from,
 /// captured at build time. The cache-hit predicate is a single
@@ -33,7 +72,7 @@ pub(crate) struct SessionCacheFingerprint {
 }
 
 pub(super) struct SessionEntry {
-    pub(super) agent: Agent,
+    pub(super) agent: OpenHumanSessionHost,
     pub(super) fingerprint: SessionCacheFingerprint,
 }
 
@@ -41,7 +80,9 @@ pub(super) struct SessionEntry {
 pub(super) struct InFlightEntry {
     pub(super) request_id: String,
     pub(super) handle: tokio::task::JoinHandle<()>,
-    pub(super) run_queue: std::sync::Arc<crate::agent::harness::run_queue::RunQueue>,
+    pub(super) run_queue: std::sync::Arc<
+        tinyagents_harness::run_queue::RunQueue<crate::agent::queued_turn::QueuedTurn>,
+    >,
     /// Cooperative cancellation for this turn. Cancelling it makes the turn's
     /// `tokio::select!` arm fire and drops the in-flight turn future (which
     /// cancels the in-flight LLM request and releases locks at a safe await

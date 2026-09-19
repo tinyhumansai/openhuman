@@ -8,7 +8,7 @@
 //! block is absent, and `suppress_transcript_autoload` appears once, as `false`
 //! (`:115`) — it is never exercised at all.
 //!
-//! These drive a real `Agent::turn` against a scripted model and assert on what
+//! These drive a real `OpenHumanSessionHost::turn` against a scripted model and assert on what
 //! actually reaches the provider.
 //!
 //! # Every test carries its own control
@@ -35,8 +35,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use tempfile::TempDir;
 
 use openhuman_core::agent::goals::{runtime as goal_runtime, store as goal_store};
-use openhuman_core::agent::harness::session::TurnOverrides;
-use openhuman_core::agent::Agent;
+use openhuman_core::agent::session_host::TurnOverrides;
+use openhuman_core::agent::OpenHumanSessionHost;
 use openhuman_core::config::{AgentConfig, ContextConfig};
 use tinyinference_llm::message::Message;
 use tinyinference_llm::model::{
@@ -232,8 +232,8 @@ fn agent_with(
     tools: Vec<Box<dyn Tool>>,
     workspace_path: PathBuf,
     dispatcher: Box<dyn openhuman_core::tinytools_agent::dialect::ToolDialect>,
-) -> Agent {
-    Agent::builder()
+) -> OpenHumanSessionHost {
+    OpenHumanSessionHost::builder()
         .chat_model(model)
         .tools(tools)
         .memory(noop_memory::noop_memory())

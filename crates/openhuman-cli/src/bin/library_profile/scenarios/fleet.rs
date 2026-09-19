@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use openhuman_core::agent::harness::AgentDefinitionRegistry;
-use openhuman_core::agent::Agent;
+use openhuman_core::agent::OpenHumanSessionHost;
 use openhuman_core::inference::provider::factory::test_provider_override;
 use openhuman_core::platform::proc_metrics;
 
@@ -112,11 +112,11 @@ fn build_agents(
     config: &openhuman_core::config::Config,
     n: usize,
     rec: &Recorder,
-) -> Result<Vec<Agent>> {
+) -> Result<Vec<OpenHumanSessionHost>> {
     let stride = (n / 10).max(1);
     let mut agents = Vec::with_capacity(n);
     for i in 0..n {
-        match Agent::from_config_for_agent(config, FLEET_AGENT_ID) {
+        match OpenHumanSessionHost::from_config_for_agent(config, FLEET_AGENT_ID) {
             Ok(agent) => agents.push(agent),
             Err(err) => {
                 eprintln!(

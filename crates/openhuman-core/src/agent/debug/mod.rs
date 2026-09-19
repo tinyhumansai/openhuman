@@ -2,9 +2,9 @@
 //! would see for a given agent.
 //!
 //! Instead of re-implementing prompt assembly, this module routes
-//! through [`Agent::from_config_for_agent`] — the same entry point the
+//! through [`OpenHumanSessionHost::from_config_for_agent`] — the same entry point the
 //! Tauri web channel and CLI use — and then calls
-//! [`Agent::build_system_prompt`] on the constructed session. The
+//! [`OpenHumanSessionHost::build_system_prompt`] on the constructed session. The
 //! output is byte-identical to what the LLM would receive on turn 1 of
 //! that agent.
 //!
@@ -31,8 +31,8 @@ pub use dump_writer::{write_prompt_dumps, DumpWriteSummary};
 pub use wire::render as render_wire_dump;
 
 use crate::agent::harness::definition::{AgentDefinition, AgentDefinitionRegistry, PromptSource};
-use crate::agent::harness::session::Agent;
 use crate::agent::prompts::{LearnedContextData, PromptContext, PromptTool, ToolCallFormat};
+use crate::agent::session_host::OpenHumanSessionHost;
 use crate::config::Config;
 use crate::integrations::composio::ComposioActionTool;
 use tinytools::{Tool, ToolCategory};
@@ -123,7 +123,7 @@ fn tool_specs_of(tools: &[Box<dyn Tool>]) -> Vec<serde_json::Value> {
 }
 
 /// Render and return the system prompt for a single agent via the
-/// real [`Agent::from_config_for_agent`] construction path.
+/// real [`OpenHumanSessionHost::from_config_for_agent`] construction path.
 pub async fn dump_agent_prompt(options: DumpPromptOptions) -> Result<DumpedPrompt> {
     let config = load_dump_config(
         options.workspace_dir_override.clone(),
@@ -263,7 +263,7 @@ async fn load_dump_config(
 /// Build a real [`Agent`] via `from_config_for_agent`, populate live
 /// connected integrations, and render the turn-1 system prompt.
 async fn render_via_session(config: &Config, agent_id: &str) -> Result<DumpedPrompt> {
-    let mut agent = Agent::from_config_for_agent(config, agent_id)
+    let mut agent = OpenHumanSessionHost::from_config_for_agent(config, agent_id)
         .with_context(|| format!("building session agent for `{agent_id}`"))?;
 
     // Match turn-1 behaviour: fetch the user's active Composio
@@ -283,7 +283,7 @@ async fn render_via_session(config: &Config, agent_id: &str) -> Result<DumpedPro
 }
 
 /// Package a built session agent's rendered prompt and tool surface.
-fn session_dump(agent: &Agent, agent_id: &str, text: String) -> DumpedPrompt {
+fn session_dump(agent: &OpenHumanSessionHost, agent_id: &str, text: String) -> DumpedPrompt {
     // The whole callable surface, so the dump shows the `delegate_*` tools
     // the refresh above just synthesised alongside the durable registry.
     let tools = agent.all_tool_refs();
@@ -321,7 +321,7 @@ fn session_dump(agent: &Agent, agent_id: &str, text: String) -> DumpedPrompt {
 /// slice to only the requested toolkit before calling the agent's
 /// dynamic prompt builder.
 async fn render_integrations_agent(config: &Config, toolkit: &str) -> Result<DumpedPrompt> {
-    let mut agent = Agent::from_config_for_agent(config, INTEGRATIONS_AGENT_ID)
+    let mut agent = OpenHumanSessionHost::from_config_for_agent(config, INTEGRATIONS_AGENT_ID)
         .with_context(|| format!("building integrations_agent session for `{toolkit}`"))?;
     agent.fetch_connected_integrations().await;
 
@@ -593,7 +593,7 @@ async fn connected_toolkits_for(config: &Config) -> Result<Vec<String>> {
     // reuse its `fetch_connected_integrations` cache — the call is
     // deduped backend-side via `INTEGRATIONS_CACHE`, so repeated
     // invocations in `dump_all_agent_prompts` only hit the wire once.
-    let mut agent = Agent::from_config_for_agent(config, INTEGRATIONS_AGENT_ID)
+    let mut agent = OpenHumanSessionHost::from_config_for_agent(config, INTEGRATIONS_AGENT_ID)
         .with_context(|| "building integrations_agent probe session for toolkit discovery")?;
     agent.fetch_connected_integrations().await;
     Ok(agent

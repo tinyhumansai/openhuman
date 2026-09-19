@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 use async_trait::async_trait;
 
@@ -12,11 +13,12 @@ use tinyagents_harness::error::Result as TaResult;
 use tinyagents_harness::middleware::{Middleware, ToolInvocationIdentity};
 use tinyagents_harness::runtime::AgentHarness;
 use tinyinference_llm::message::Message;
-use tinyinference_llm::model::{ModelRequest, ModelResponse};
+use tinyinference_llm::model::{ModelRequest, ModelResponse, ResolvedModelRoute};
 use tinytools::{ToolPolicy as TaToolPolicy, ToolResult as TaToolResult};
 
 use crate::agent::harness::tool_result_artifacts::ToolResultArtifactStore;
 use crate::agent::tinyagents::payload_summarizer::PayloadSummarizer;
+use crate::agent::tinyagents::turn_outcome::ToolCallOutcome;
 use crate::inference::tokenjuice::AgentTokenjuiceCompression;
 
 use super::tool_output::ToolOutputMiddleware;
@@ -92,9 +94,22 @@ pub(crate) struct TranscriptSnapshot {
     pub(crate) input_tokens: u64,
     pub(crate) output_tokens: u64,
     pub(crate) cached_input_tokens: u64,
+    /// Provider-reported cost where available, otherwise the host's per-call
+    /// estimate. This covers only model calls the provider answered.
+    pub(crate) charged_amount_usd: f64,
+    /// The last accepted model route. A failed follow-up has no response of
+    /// its own, so this remains the route that incurred the snapshot usage.
+    pub(crate) resolved_route: Option<ResolvedModelRoute>,
+    /// Driver-selected model used only when a provider response has no route
+    /// metadata. The driver fills this even when the hook seeded the snapshot.
+    pub(crate) pricing_model: Option<String>,
     /// Model calls the provider answered, so a failed run reports its real
     /// iteration count rather than one derived from message counts.
     pub(crate) model_calls: u32,
+    /// Completed tool calls observed before the failure. Unlike the transcript
+    /// `Message::Tool` row, these retain the result error flag, structured
+    /// arguments, and elapsed time required by the post-commit sidecar.
+    pub(crate) tool_outcomes: Vec<ToolCallOutcome>,
 }
 
 /// Display cap for one unanswered step in a failure note, matching the cap
@@ -160,6 +175,11 @@ pub(crate) type TranscriptSnapshotSink = Arc<std::sync::Mutex<TranscriptSnapshot
 /// failure.
 pub(crate) struct TranscriptSnapshotMiddleware {
     sink: TranscriptSnapshotSink,
+    /// `after_tool` receives no structured arguments or start time. Keep both
+    /// while the harness still exposes the concrete call so an erroring run can
+    /// hand the same honest tool result to the durable partial append as a
+    /// completed run does.
+    started: Arc<std::sync::Mutex<HashMap<String, (Instant, serde_json::Value)>>>,
 }
 
 #[async_trait]
@@ -168,6 +188,21 @@ impl Middleware<(), crate::agent::tinyagents::host::OpenHumanRunContext>
 {
     fn name(&self) -> &str {
         "openhuman.transcript_snapshot"
+    }
+
+    async fn before_tool(
+        &self,
+        _ctx: &mut RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>,
+        _state: &(),
+        call: &mut tinyinference_llm::tool::ToolCall,
+    ) -> TaResult<()> {
+        if let Ok(mut started) = self.started.lock() {
+            started.insert(
+                call.id.to_string(),
+                (Instant::now(), call.arguments.clone()),
+            );
+        }
+        Ok(())
     }
 
     async fn after_tool(
@@ -179,11 +214,32 @@ impl Middleware<(), crate::agent::tinyagents::host::OpenHumanRunContext>
     ) -> TaResult<()> {
         // A tool result reaches a provider only with the next request, so it
         // also sits past `accepted_len` until that request is answered.
+        let call_id = invocation.call_id().to_string();
+        let (duration_ms, arguments) = self
+            .started
+            .lock()
+            .ok()
+            .and_then(|mut started| started.remove(&call_id))
+            .map(|(started, arguments)| {
+                (
+                    started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+                    arguments,
+                )
+            })
+            .unwrap_or_default();
+        let content = crate::agent::tinyagents::middleware::tool_result_text(result);
         if let Ok(mut guard) = self.sink.lock() {
-            guard.messages.push(Message::tool(
-                invocation.call_id().to_string(),
-                crate::agent::tinyagents::middleware::tool_result_text(result),
-            ));
+            guard
+                .messages
+                .push(Message::tool(call_id.clone(), content.clone()));
+            guard.tool_outcomes.push(ToolCallOutcome {
+                call_id,
+                name: invocation.tool_name().to_string(),
+                arguments,
+                success: !result.is_error,
+                content,
+                duration_ms,
+            });
         }
         Ok(())
     }
@@ -202,10 +258,21 @@ impl Middleware<(), crate::agent::tinyagents::host::OpenHumanRunContext>
 
     async fn after_model(
         &self,
-        _ctx: &mut RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>,
+        ctx: &mut RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>,
         _state: &(),
         response: &mut ModelResponse,
     ) -> TaResult<()> {
+        // The model middleware records this same route in the host context.
+        // Prefer response metadata because it is the exact accepted call; the
+        // context slot is the compatibility seam for a model wrapper that only
+        // exposes its route there.
+        let route = response.resolved_route.clone().or_else(|| {
+            ctx.data
+                .resolved_route
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone()
+        });
         if let Ok(mut guard) = self.sink.lock() {
             guard.accepted_len = guard.messages.len();
             guard.model_calls += 1;
@@ -224,6 +291,36 @@ impl Middleware<(), crate::agent::tinyagents::host::OpenHumanRunContext>
                 guard.input_tokens += usage.input_tokens;
                 guard.output_tokens += usage.output_tokens;
                 guard.cached_input_tokens += usage.cache_read_tokens;
+                let host_usage =
+                    crate::agent::tinyagents::model::usage_info_from_response(response)
+                        .unwrap_or_else(|| crate::inference::provider::UsageInfo {
+                            input_tokens: usage.input_tokens,
+                            output_tokens: usage.output_tokens,
+                            context_window: 0,
+                            cached_input_tokens: usage.cache_read_tokens,
+                            cache_creation_tokens: usage.cache_creation_tokens,
+                            reasoning_tokens: usage.reasoning_tokens,
+                            charged_amount_usd: 0.0,
+                        });
+                // Use the host's per-call pricing helper whenever the provider
+                // omitted an authoritative amount. `route` is preferred over a
+                // construction-time model because it preserves fallback pricing.
+                let cost_model = route
+                    .as_ref()
+                    .map(|route| {
+                        if route.route.trim().is_empty() {
+                            route.model.as_str()
+                        } else {
+                            route.route.as_str()
+                        }
+                    })
+                    .or(guard.pricing_model.as_deref())
+                    .unwrap_or_default();
+                guard.charged_amount_usd +=
+                    crate::agent::cost::call_cost_usd(cost_model, &host_usage);
+            }
+            if route.is_some() {
+                guard.resolved_route = route;
             }
         }
         Ok(())
@@ -285,7 +382,10 @@ impl TurnContextMiddleware {
         // before microcompact/summarization rewrite it — the caller's error path
         // persists exactly what the model was about to see.
         if let Some(sink) = self.transcript_snapshot {
-            harness.push_middleware(Arc::new(TranscriptSnapshotMiddleware { sink }));
+            harness.push_middleware(Arc::new(TranscriptSnapshotMiddleware {
+                sink,
+                started: Default::default(),
+            }));
         }
         // Microcompact is NOT registered here any more (issue #6014). It used to
         // be, which put its `before_model` ahead of the summarization step the
@@ -420,5 +520,56 @@ impl Middleware<(), crate::agent::tinyagents::host::OpenHumanRunContext> for Han
         );
         crate::agent::tinyagents::middleware::replace_tool_result_text(result, handoff);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tinyagents_harness::context::RunConfig;
+
+    #[tokio::test]
+    async fn transcript_snapshot_keeps_a_completed_failed_tool_row() {
+        let sink = Arc::new(std::sync::Mutex::new(TranscriptSnapshot::default()));
+        let middleware = TranscriptSnapshotMiddleware {
+            sink: sink.clone(),
+            started: Default::default(),
+        };
+        let mut context = RunContext::new(
+            RunConfig::new("snapshot-tool-outcome"),
+            crate::agent::tinyagents::host::OpenHumanRunContext::new(),
+        );
+        let mut call = tinyinference_llm::tool::ToolCall {
+            id: "failed-call".into(),
+            name: "write_file".into(),
+            arguments: serde_json::json!({"path": "blocked.txt"}),
+            invalid: None,
+        };
+        middleware
+            .before_tool(&mut context, &(), &mut call)
+            .await
+            .expect("snapshot accepts tool start");
+        let invocation = ToolInvocationIdentity::new("failed-call", "write_file");
+        let mut result = TaToolResult::error("permission denied");
+        middleware
+            .after_tool(&mut context, &(), &invocation, &mut result)
+            .await
+            .expect("snapshot accepts tool completion");
+
+        let snapshot = sink.lock().expect("snapshot");
+        assert_eq!(
+            snapshot.messages,
+            vec![Message::tool("failed-call", "permission denied")]
+        );
+        assert_eq!(snapshot.tool_outcomes.len(), 1);
+        let outcome = &snapshot.tool_outcomes[0];
+        assert_eq!(outcome.call_id, "failed-call");
+        assert_eq!(outcome.name, "write_file");
+        assert_eq!(
+            outcome.arguments,
+            serde_json::json!({"path": "blocked.txt"})
+        );
+        assert!(!outcome.success);
+        assert_eq!(outcome.content, "permission denied");
     }
 }

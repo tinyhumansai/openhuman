@@ -6,7 +6,7 @@
 //!
 //! ## Key Components
 //!
-//! - **[`harness::session::Agent`]**: The primary entry point for running a
+//! - **[`session_host::OpenHumanSessionHost`]**: The primary entry point for running a
 //!   conversation. It manages the loop of sending prompts to a provider and
 //!   executing the resulting tool calls.
 //! - **[`crate::agent::registry::agents`]**: Definitions for built-in
@@ -56,9 +56,15 @@ pub(crate) mod progress_tracing;
 /// Prompt plumbing — types, section builders, and
 /// [`SystemPromptBuilder`](prompts::SystemPromptBuilder).
 pub mod prompts;
+/// Host-owned payload carried through TinyAgents run queues.
+pub mod queued_turn;
 pub mod registry;
 mod schemas;
 pub mod session_db;
+/// OpenHuman's composition and policy layer around the neutral TinyAgents
+/// session runtime. Generic history, transcript delta, prefix and tool
+/// snapshots are owned by `tinyagents-runtime`.
+pub mod session_host;
 pub mod session_import;
 pub mod stop_hooks;
 pub mod task_dispatcher;
@@ -90,4 +96,4 @@ pub use schemas::{
 mod tests;
 
 #[allow(unused_imports)]
-pub use harness::session::{Agent, AgentBuilder};
+pub use session_host::{OpenHumanSessionHost, SessionHostBuilder, TurnOverrides};

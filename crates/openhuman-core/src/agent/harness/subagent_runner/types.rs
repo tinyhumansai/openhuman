@@ -91,7 +91,11 @@ pub struct SubagentRunOptions {
     /// iteration boundaries — exactly like the main agent loop — so the parent
     /// can `steer_subagent` mid-flight. `None` keeps today's non-steerable
     /// behaviour.
-    pub run_queue: Option<std::sync::Arc<crate::agent::harness::run_queue::RunQueue>>,
+    pub run_queue: Option<
+        std::sync::Arc<
+            tinyagents_harness::run_queue::RunQueue<crate::agent::queued_turn::QueuedTurn>,
+        >,
+    >,
 }
 
 /// Terminal status of a sub-agent run.

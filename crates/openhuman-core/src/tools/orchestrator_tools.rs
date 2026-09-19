@@ -21,7 +21,7 @@
 //! descriptions automatically stay in sync with the definitions and
 //! never drift from a hardcoded table.
 //!
-//! Called from [`crate::agent::harness::session::builder`] at
+//! Called from [`crate::agent::session_host::builder`] at
 //! agent-build time, with the orchestrator's own definition, the global
 //! registry (for delegation target lookups), and the current list of
 //! connected Composio integrations.

@@ -47,7 +47,7 @@ pub(crate) enum ArmError {
     /// action (top up) to fix it, so it must not page Sentry.
     BudgetExhausted(anyhow::Error),
     /// Our prompt-injection guard (`agent::bus`'s `enforce_prompt_input`,
-    /// also used by `agent::harness::session::runtime`) flagged the
+    /// also used by `agent::session_host::runtime`) flagged the
     /// incoming content as adversarial / unsafe and refused to dispatch
     /// the turn. The guard runs *before* either model is contacted, so
     /// trying the same prompt again — on cloud or local — produces the
@@ -263,7 +263,7 @@ pub(crate) fn classify_error(message: String) -> ArmError {
 /// - `crates/openhuman-core/src/agent/bus.rs` — `Blocked` / `ReviewBlocked` arms of the
 ///   `enforce_prompt_input` decision (the path the triage evaluator hits via
 ///   `agent.run_turn`).
-/// - `crates/openhuman-core/src/agent/harness/session/runtime.rs` — same strings in the
+/// - `crates/openhuman-core/src/agent/session_host/runtime.rs` — same strings in the
 ///   tool-call loop, kept identical so this classifier covers both.
 /// - `crates/openhuman-core/src/inference/local/ops.rs` — user-facing variants with the
 ///   `"Please rephrase clearly."` suffix; we match the leading phrase so

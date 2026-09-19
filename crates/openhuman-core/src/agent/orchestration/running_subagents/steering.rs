@@ -2,9 +2,9 @@
 //! sub-agent: the `RunQueue` compatibility lane, and the TinyAgents
 //! `SteeringHandle` fast path for runs that have registered one.
 
-use crate::agent::harness::run_queue::{QueueMode, QueuedMessage};
 use tinyagents_graph::orchestration::DetachedTaskRegistryError;
 use tinyagents_harness::ids::TaskId;
+use tinyagents_harness::run_queue::QueueLane;
 use tinyagents_harness::steering::{SteeringCommand, SteeringCommandKind};
 use tinyinference_llm::message::Message as TaMessage;
 
@@ -20,6 +20,10 @@ pub enum SteerError {
     NotOwned,
     /// The sub-agent already reached a terminal status.
     AlreadyDone,
+    /// Detached sub-agents can only receive an injected instruction or
+    /// collected context. Follow-up work is a web-turn concern and cannot be
+    /// meaningfully dispatched from this fallback queue.
+    UnsupportedLane,
 }
 
 pub(crate) fn steer_error_from_registry(error: DetachedTaskRegistryError) -> SteerError {
@@ -30,24 +34,32 @@ pub(crate) fn steer_error_from_registry(error: DetachedTaskRegistryError) -> Ste
     }
 }
 
-fn steering_command_for_mode(mode: QueueMode, text: String) -> Option<SteeringCommand> {
-    match mode {
-        QueueMode::Steer => Some(SteeringCommand::InjectMessage(TaMessage::user(format!(
+fn steering_command_for_lane(lane: QueueLane, text: String) -> Option<SteeringCommand> {
+    match lane {
+        QueueLane::Steer => Some(SteeringCommand::InjectMessage(TaMessage::user(format!(
             "[User steering message]: {text}"
         )))),
-        QueueMode::Collect => Some(SteeringCommand::InjectMessage(TaMessage::user(format!(
+        QueueLane::Collect => Some(SteeringCommand::InjectMessage(TaMessage::user(format!(
             "[Additional context from user]: {text}"
         )))),
-        QueueMode::Interrupt | QueueMode::Followup | QueueMode::Parallel => None,
+        QueueLane::Followup => None,
+    }
+}
+
+fn queue_lane_name(lane: QueueLane) -> &'static str {
+    match lane {
+        QueueLane::Steer => "steer",
+        QueueLane::Followup => "followup",
+        QueueLane::Collect => "collect",
     }
 }
 
 fn send_registered_steering(
     handle: &tinyagents_harness::steering::SteeringHandle,
     text: String,
-    mode: QueueMode,
+    lane: QueueLane,
 ) -> bool {
-    let Some(command) = steering_command_for_mode(mode, text) else {
+    let Some(command) = steering_command_for_lane(lane, text) else {
         return false;
     };
     handle.send(command);
@@ -172,8 +184,16 @@ pub async fn steer(
     task_id: &str,
     parent_session: &str,
     text: String,
-    mode: QueueMode,
+    lane: QueueLane,
 ) -> Result<(), SteerError> {
+    if !matches!(lane, QueueLane::Steer | QueueLane::Collect) {
+        log::warn!(
+            "[running_subagents] rejected unsupported queue lane task_id={} lane={}",
+            task_id,
+            queue_lane_name(lane)
+        );
+        return Err(SteerError::UnsupportedLane);
+    }
     let task_id_key = TaskId::new(task_id);
     let snapshot = registry()
         .snapshot(&task_id_key, parent_session)
@@ -184,13 +204,13 @@ pub async fn steer(
 
     let steered_via_registry = registry()
         .steering_handle(&task_id_key, parent_session)
-        .map(|handle| send_registered_steering(&handle, text.clone(), mode))
+        .map(|handle| send_registered_steering(&handle, text.clone(), lane))
         .unwrap_or(false);
     if steered_via_registry {
         log::info!(
-            "[running_subagents] steered task_id={} mode={} via=tinyagents_registry",
+            "[running_subagents] steered task_id={} lane={} via=tinyagents_registry",
             task_id,
-            mode
+            queue_lane_name(lane)
         );
         return Ok(());
     }
@@ -198,21 +218,23 @@ pub async fn steer(
     snapshot
         .metadata
         .run_queue
-        .push(QueuedMessage {
-            text,
-            mode,
-            client_id: "steer_subagent".to_string(),
-            thread_id: task_id.to_string(),
-            queued_at_ms: now_ms(),
-            model_override: None,
-            temperature: None,
-            locale: None,
-        })
+        .push(
+            lane,
+            crate::agent::queued_turn::QueuedTurn {
+                text,
+                client_id: "steer_subagent".to_string(),
+                thread_id: task_id.to_string(),
+                queued_at_ms: now_ms(),
+                model_override: None,
+                temperature: None,
+                locale: None,
+            },
+        )
         .await;
     log::info!(
-        "[running_subagents] steered task_id={} mode={}",
+        "[running_subagents] steered task_id={} lane={}",
         task_id,
-        mode
+        queue_lane_name(lane)
     );
     Ok(())
 }
@@ -226,8 +248,16 @@ pub async fn steer(
 pub(crate) async fn steer_control(
     task_id: &str,
     text: String,
-    mode: QueueMode,
+    lane: QueueLane,
 ) -> Result<(), SteerError> {
+    if !matches!(lane, QueueLane::Steer | QueueLane::Collect) {
+        log::warn!(
+            "[running_subagents] rejected unsupported control queue lane task_id={} lane={}",
+            task_id,
+            queue_lane_name(lane)
+        );
+        return Err(SteerError::UnsupportedLane);
+    }
     let task_id_key = TaskId::new(task_id);
     let snapshot = registry()
         .snapshot_trusted(&task_id_key)
@@ -238,13 +268,13 @@ pub(crate) async fn steer_control(
 
     let steered_via_registry = registry()
         .steering_handle_trusted(&task_id_key)
-        .map(|handle| send_registered_steering(&handle, text.clone(), mode))
+        .map(|handle| send_registered_steering(&handle, text.clone(), lane))
         .unwrap_or(false);
     if steered_via_registry {
         log::info!(
-            "[running_subagents] control_steered task_id={} mode={} via=tinyagents_registry",
+            "[running_subagents] control_steered task_id={} lane={} via=tinyagents_registry",
             task_id,
-            mode
+            queue_lane_name(lane)
         );
         return Ok(());
     }
@@ -252,21 +282,23 @@ pub(crate) async fn steer_control(
     snapshot
         .metadata
         .run_queue
-        .push(QueuedMessage {
-            text,
-            mode,
-            client_id: "subagent_control_rpc".to_string(),
-            thread_id: task_id.to_string(),
-            queued_at_ms: now_ms(),
-            model_override: None,
-            temperature: None,
-            locale: None,
-        })
+        .push(
+            lane,
+            crate::agent::queued_turn::QueuedTurn {
+                text,
+                client_id: "subagent_control_rpc".to_string(),
+                thread_id: task_id.to_string(),
+                queued_at_ms: now_ms(),
+                model_override: None,
+                temperature: None,
+                locale: None,
+            },
+        )
         .await;
     log::info!(
-        "[running_subagents] control_steered task_id={} mode={}",
+        "[running_subagents] control_steered task_id={} lane={}",
         task_id,
-        mode
+        queue_lane_name(lane)
     );
     Ok(())
 }

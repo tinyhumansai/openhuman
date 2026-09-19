@@ -3,7 +3,7 @@
 
 use super::delivery::is_morning_briefing_job;
 use super::failure_classification::classify_agent_anyhow_for_user;
-use crate::agent::Agent;
+use crate::agent::OpenHumanSessionHost;
 use crate::config::Config;
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
@@ -33,7 +33,7 @@ pub(super) async fn run_agent_job(
     // When an agent_id is set, resolve the built-in definition and apply
     // its model hint, iteration cap, and prompt body so the cron job
     // runs with the definition's constraints instead of the generic
-    // Agent::from_config defaults.
+    // OpenHumanSessionHost::from_config defaults.
     let selected_agent_id = job.agent_id.as_deref().unwrap_or("orchestrator");
     {
         let agent_id = selected_agent_id;
@@ -232,7 +232,7 @@ pub(super) fn run_flow_schedule_job(job: &CronJob) -> (bool, String) {
 pub(super) const EMPTY_AGENT_OUTPUT: &str = "agent job executed";
 
 pub(super) struct BuiltCronAgent {
-    pub(crate) agent: Agent,
+    pub(crate) agent: OpenHumanSessionHost,
 }
 
 pub(super) fn build_agent_for_cron_job(
@@ -240,7 +240,7 @@ pub(super) fn build_agent_for_cron_job(
     job: &CronJob,
 ) -> anyhow::Result<BuiltCronAgent> {
     let agent_id = job.agent_id.as_deref().unwrap_or("orchestrator");
-    match Agent::from_config_for_agent(config, agent_id) {
+    match OpenHumanSessionHost::from_config_for_agent(config, agent_id) {
         Ok(agent) => {
             tracing::debug!(
                 job_id = %job.id,
@@ -256,7 +256,7 @@ pub(super) fn build_agent_for_cron_job(
                 error = %e,
                 "[cron] failed to build agent from definition; falling back to canonical orchestrator"
             );
-            Agent::from_config_for_agent(config, "orchestrator")
+            OpenHumanSessionHost::from_config_for_agent(config, "orchestrator")
                 .map(|agent| BuiltCronAgent { agent })
         }
     }

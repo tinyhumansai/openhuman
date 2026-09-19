@@ -226,7 +226,7 @@ impl SpawnAsyncSubagentTool {
                         running_task_id,
                         &parent_session,
                         follow_up_prompt.clone(),
-                        crate::agent::harness::run_queue::QueueMode::Steer,
+                        tinyagents_harness::run_queue::QueueLane::Steer,
                     )
                     .await
                     {
@@ -379,7 +379,7 @@ impl SpawnAsyncSubagentTool {
         // this run mid-flight and `wait_subagent` for its result. The engine
         // drains `steer_queue` at iteration boundaries; `status_tx` publishes
         // the terminal state to any waiter.
-        let steer_queue = RunQueue::new();
+        let steer_queue = Arc::new(RunQueue::new());
         let task_queue = steer_queue.clone();
         let (status_tx, status_rx) = running_subagents::status_channel();
 

@@ -85,10 +85,10 @@ Responses project the crate's own `AgentObservation` and `HarnessRunStatus` serd
 
 ## Used by
 
-- `agent/harness/session/turn/graph.rs`: the chat-turn route into `run_turn_via_tinyagents_shared`.
+- `agent/session_host/turn/graph.rs`: the chat-turn route into `run_turn_via_tinyagents_shared`.
 - `agent/harness/graph.rs`: the channel/CLI bus turn route.
 - `agent/harness/subagent_runner/ops/graph.rs`: the sub-agent spawn route. It and the session route both build their context-window summarizer through `TurnModelSource::build_summarizer`.
-- `agent/harness/session/builder/setters.rs`, `agent/harness/subagent_runner/ops/{provider,runner}.rs`, `channels/`: construct `TurnModelSource`.
+- `agent/session_host/builder/setters.rs`, `agent/harness/subagent_runner/ops/{provider,runner}.rs`, `channels/`: construct `TurnModelSource`.
 - `agent/bus.rs`: reads `TinyagentsTurnOutcome::resolved_route` after a turn.
 - `core/all.rs` (replay controllers) and `core/runtime/builder.rs` (`reaper::reap_orphaned_runs`).
 - `agent/todos/`: `todos::*` stores.

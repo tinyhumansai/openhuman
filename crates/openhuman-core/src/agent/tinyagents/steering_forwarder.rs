@@ -29,10 +29,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tinyagents_harness::ids::TaskId;
+use tinyagents_harness::run_queue::{QueueLane, RunQueue};
 use tinyagents_harness::steering::{SteeringCommand, SteeringHandle};
 use tinyinference_llm::message::Message as TaMessage;
 
-use crate::agent::harness::run_queue::{QueueMode, QueuedMessage, RunQueue};
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
 
@@ -73,8 +73,12 @@ fn now_ms() -> u64 {
 /// bridge behind the `steer_subagent` / mid-flight-steering feature. Emits a
 /// [`DomainEvent::RunQueueMessageDelivered`] when at least one message is
 /// delivered so the delivery is visible in the event stream (issue #4456).
-pub(super) async fn forward_steers(queue: &RunQueue, handle: &SteeringHandle, thread_label: &str) {
-    let drained = queue.drain_steers().await;
+pub(super) async fn forward_steers(
+    queue: &RunQueue<crate::agent::queued_turn::QueuedTurn>,
+    handle: &SteeringHandle,
+    thread_label: &str,
+) {
+    let drained = queue.drain(QueueLane::Steer).await;
     if drained.is_empty() {
         return;
     }
@@ -98,16 +102,16 @@ pub(super) async fn forward_steers(queue: &RunQueue, handle: &SteeringHandle, th
 }
 
 /// Forward any queued **collect** messages (orchestrator/monitor lines enqueued
-/// via `QueueMode::Collect`) into the run as injected user turns so they reach
+/// via the collect queue lane into the run as injected user turns so they reach
 /// the next LLM call as additional context. Mirrors the legacy
 /// `[Additional context from user]:` framing the model was taught to read. Emits
 /// a [`DomainEvent::RunQueueMessageDelivered`] on delivery (issue #4456).
 pub(super) async fn forward_collects(
-    queue: &RunQueue,
+    queue: &RunQueue<crate::agent::queued_turn::QueuedTurn>,
     handle: &SteeringHandle,
     thread_label: &str,
 ) {
-    let drained = queue.drain_collects().await;
+    let drained = queue.drain(QueueLane::Collect).await;
     if drained.is_empty() {
         return;
     }
@@ -144,7 +148,7 @@ pub(super) struct SteeringForwarderGuard {
     handle: SteeringHandle,
     /// The session-owned run queue, used to requeue residual steers on drop.
     /// `None` after the requeue so a double-drop is a no-op.
-    run_queue: Option<Arc<RunQueue>>,
+    run_queue: Option<Arc<RunQueue<crate::agent::queued_turn::QueuedTurn>>>,
     /// The steering-registry key to deregister on drop (sub-agent runs only).
     registry_task_id: Option<TaskId>,
     /// Best-effort thread label for observability + requeued-message metadata.
@@ -163,7 +167,7 @@ impl SteeringForwarderGuard {
     /// steering registry) and `None` for the interactive parent turn.
     pub(super) fn new(
         handle: SteeringHandle,
-        run_queue: Option<Arc<RunQueue>>,
+        run_queue: Option<Arc<RunQueue<crate::agent::queued_turn::QueuedTurn>>>,
         registry_task_id: Option<TaskId>,
         thread_label: String,
     ) -> Self {
@@ -225,7 +229,7 @@ impl Drop for SteeringForwarderGuard {
         //    Control-flow-only commands (Pause/Resume/Cancel/…) are meaningless
         //    once the run is gone and are intentionally dropped.
         let residual = self.handle.drain();
-        let requeue_texts: Vec<(String, QueueMode)> = residual
+        let requeue_texts: Vec<(String, QueueLane)> = residual
             .into_iter()
             .filter_map(|cmd| match cmd {
                 SteeringCommand::InjectMessage(msg) => {
@@ -236,11 +240,11 @@ impl Drop for SteeringForwarderGuard {
                     // re-labeled as user Steer. Default to Steer when neither
                     // prefix is present (a raw steer that was never framed).
                     if let Some(rest) = text.strip_prefix(STEER_PREFIX) {
-                        Some((rest.to_string(), QueueMode::Steer))
+                        Some((rest.to_string(), QueueLane::Steer))
                     } else if let Some(rest) = text.strip_prefix(COLLECT_PREFIX) {
-                        Some((rest.to_string(), QueueMode::Collect))
+                        Some((rest.to_string(), QueueLane::Collect))
                     } else {
-                        Some((text.to_string(), QueueMode::Steer))
+                        Some((text.to_string(), QueueLane::Steer))
                     }
                 }
                 _ => None,
@@ -265,18 +269,20 @@ impl Drop for SteeringForwarderGuard {
             Ok(rt) => {
                 let label = thread_label.clone();
                 rt.spawn(async move {
-                    for (text, mode) in requeue_texts {
+                    for (text, lane) in requeue_texts {
                         queue
-                            .push(QueuedMessage {
-                                text,
-                                mode,
-                                client_id: String::new(),
-                                thread_id: label.clone(),
-                                queued_at_ms: now_ms(),
-                                model_override: None,
-                                temperature: None,
-                                locale: None,
-                            })
+                            .push(
+                                lane,
+                                crate::agent::queued_turn::QueuedTurn {
+                                    text,
+                                    client_id: String::new(),
+                                    thread_id: label.clone(),
+                                    queued_at_ms: now_ms(),
+                                    model_override: None,
+                                    temperature: None,
+                                    locale: None,
+                                },
+                            )
                             .await;
                     }
                 });
@@ -303,5 +309,101 @@ impl Drop for SteeringForwarderGuard {
             thread_id: thread_label,
             requeued,
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tinyagents_harness::context::{RunConfig, RunContext};
+    use tinyagents_harness::runtime::AgentHarness;
+    use tinyagents_harness::testkit::ScriptedModel;
+
+    #[tokio::test]
+    async fn residual_collect_requeues_to_its_original_lane() {
+        let queue = Arc::new(RunQueue::new());
+        let handle = SteeringHandle::allow_all();
+        let guard = SteeringForwarderGuard::new(
+            handle.clone(),
+            Some(queue.clone()),
+            None,
+            "thread-test".to_string(),
+        );
+        handle.send(SteeringCommand::InjectMessage(TaMessage::user(format!(
+            "{COLLECT_PREFIX}recovered context"
+        ))));
+
+        drop(guard);
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if queue.status().await.collects == 1 {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("residual collect should be requeued before timeout");
+
+        assert!(queue.drain(QueueLane::Steer).await.is_empty());
+        let recovered = queue.drain(QueueLane::Collect).await;
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].text, "recovered context");
+    }
+
+    #[tokio::test]
+    async fn collect_reaches_the_next_model_boundary_as_additional_context() {
+        let queue = Arc::new(RunQueue::new());
+        queue
+            .push(
+                QueueLane::Collect,
+                crate::agent::queued_turn::QueuedTurn {
+                    text: "the deployment finished successfully".to_string(),
+                    client_id: "client-test".to_string(),
+                    thread_id: "thread-test".to_string(),
+                    queued_at_ms: 1,
+                    model_override: None,
+                    temperature: None,
+                    locale: None,
+                },
+            )
+            .await;
+        let handle = SteeringHandle::allow_all();
+
+        // This is the OpenHuman bridge at the safe boundary immediately before
+        // a harness model call. The assertion below observes the actual model
+        // request, not just queue status or the steering handle's contents.
+        forward_collects(&queue, &handle, "thread-test").await;
+
+        let model = Arc::new(ScriptedModel::replies(vec!["done"]));
+        let mut harness: AgentHarness<()> = AgentHarness::new();
+        harness
+            .register_model("scripted", model.clone())
+            .set_default_model("scripted");
+        harness
+            .invoke_in_context(
+                &(),
+                RunContext::new(RunConfig::new("collect-boundary"), ()).with_steering(handle),
+                vec![TaMessage::user("start")],
+            )
+            .await
+            .expect("collect-context run should complete");
+
+        let requests = model.requests();
+        assert_eq!(requests.len(), 1, "one model boundary should be crossed");
+        let collect = requests[0]
+            .messages
+            .iter()
+            .find(|message| message.text().contains("deployment finished successfully"))
+            .expect("the next model request should contain the collected context");
+        assert!(matches!(collect, TaMessage::User(_)));
+        assert_eq!(
+            collect.text(),
+            "[Additional context from user]: the deployment finished successfully"
+        );
+        assert!(
+            !collect.text().starts_with(STEER_PREFIX),
+            "collect must be context, not a steering instruction"
+        );
     }
 }

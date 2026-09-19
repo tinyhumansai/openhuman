@@ -2,7 +2,7 @@
 //! `ArchivistHook`.
 
 use super::boundary::{BoundaryConfig, BoundaryDecision};
-use super::events_heuristic::{extract_events_heuristic, ExtractedEventKind};
+use super::events_heuristic::{ExtractedEventKind, extract_events_heuristic};
 use super::helpers::{extract_profile_key, uuid_v4};
 use super::types::ArchivistHook;
 use crate::config::Config;
@@ -137,7 +137,7 @@ impl ArchivistHook {
     /// event extraction). This guarantees the trailing segment of a session
     /// is always finalized even when no boundary-triggering turn arrives.
     ///
-    /// Called at session end (see `Agent::spawn_session_memory_extraction`
+    /// Called at session end (see `OpenHumanSessionHost::spawn_session_memory_extraction`
     /// in `session/turn.rs`). Safe to call multiple times — segment_close
     /// is idempotent (only transitions `open → closed`).
     pub async fn flush_open_segment(&self, session_id: &str) {

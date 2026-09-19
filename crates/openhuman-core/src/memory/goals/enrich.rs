@@ -17,7 +17,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::agent::harness::definition::AgentDefinitionRegistry;
 use crate::agent::turn_origin::{with_origin, AgentTurnOrigin, TrustedAutomationSource};
-use crate::agent::Agent;
+use crate::agent::OpenHumanSessionHost;
 use crate::config::Config;
 use crate::memory::api::goals::GoalsDoc;
 use crate::memory::api::provider::MemoryProvider;
@@ -120,7 +120,7 @@ pub async fn enrich_goals(
         }
     }
 
-    let mut agent = Agent::from_config_for_agent(config, GOALS_AGENT_ID)
+    let mut agent = OpenHumanSessionHost::from_config_for_agent(config, GOALS_AGENT_ID)
         .map_err(|e| format!("goals agent init failed: {e}"))?;
 
     let job_id = format!("memory_goals:enrich:{}", now_secs());

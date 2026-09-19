@@ -26,10 +26,10 @@ use crate::inference::provider::{is_raw_passthrough_model, role_for_model_tier};
 /// 1. **Full harness turn** (the common case, Phase A). When `agent_ref` names a
 ///    harness [`AgentDefinition`](crate::agent::harness::definition::AgentDefinition),
 ///    the node builds a real session agent
-///    ([`Agent::from_config_for_agent`](crate::agent::Agent::from_config_for_agent)
+///    ([`OpenHumanSessionHost::from_config_for_agent`](crate::agent::OpenHumanSessionHost::from_config_for_agent)
 ///    + `set_agent_definition_name`) and drives one full turn via
 ///
-///    [`Agent::run_single`](crate::agent::Agent::run_single) — the
+///    [`OpenHumanSessionHost::run_single`](crate::agent::OpenHumanSessionHost::run_single) — the
 ///    complete tool loop. The definition's `ToolScope` / `sandbox_mode` /
 ///    `max_iterations` govern the turn, so an agent node gains its curated
 ///    toolset with no graph change. This is the same harness pattern
@@ -61,7 +61,7 @@ use crate::inference::provider::{is_raw_passthrough_model, role_for_model_tier};
 /// first cut (skip-memory is a follow-up).
 ///
 /// **Concurrency safety.** `run_agent` is re-entrant by construction: it builds
-/// a fresh [`Agent`](crate::agent::Agent) per call and stamps any
+/// a fresh [`Agent`](crate::agent::OpenHumanSessionHost) per call and stamps any
 /// model override onto a *cloned* `Config`, so concurrent calls never mutate
 /// shared state. The origin escalation and approval-run context are task-locals
 /// propagated by the engine's `buffer_unordered` (which polls every item on the
@@ -198,7 +198,7 @@ pub(crate) fn resolve_run_timeout_secs(
 }
 
 /// Renders an agent-node completion `request` into the single user message
-/// [`Agent::run_single`](crate::agent::Agent::run_single) takes: the
+/// [`OpenHumanSessionHost::run_single`](crate::agent::OpenHumanSessionHost::run_single) takes: the
 /// `prompt` string when present and non-empty, else the `messages` array
 /// flattened to `"<role>: <content>"` lines (blank entries skipped). Empty
 /// string when neither yields content. Mirrors how [`OpenHumanLlm::complete`]
@@ -256,7 +256,7 @@ pub(crate) fn resolve_node_model(request: &Value, entry_model: Option<&str>) -> 
 }
 
 /// Translates a managed tier / `hint:*` / model string into the `default_model`
-/// value that routes a freshly-built harness [`Agent`](crate::agent::Agent)
+/// value that routes a freshly-built harness [`Agent`](crate::agent::OpenHumanSessionHost)
 /// to the workload serving that tier. The session builder's `provider_role_for`
 /// only routes the `hint:<role>` form to a specialised workload, so a bare tier
 /// name (`reasoning-v1`) must be normalised to `hint:reasoning` here — otherwise
@@ -309,7 +309,7 @@ pub(crate) fn structured_output_instruction(request: &Value) -> Option<String> {
 /// line; an absent part contributes nothing (no stray blank lines). Pulled
 /// out as its own pure function — rather than inlined in `run_via_harness` —
 /// so the prepend order is unit-testable without building a real harness
-/// [`Agent`](crate::agent::Agent).
+/// [`Agent`](crate::agent::OpenHumanSessionHost).
 pub(crate) fn build_harness_run_prompt(request: &Value) -> String {
     let parts = [
         input_context_block(request),
@@ -390,7 +390,7 @@ impl AgentRunner for OpenHumanAgentRunner {
                 // — even for a user-created custom agent, which has real
                 // `tool_allowlist`/`model` settings that fallback ignores.
                 //
-                // The agent factory (`Agent::from_config_for_agent`) now
+                // The agent factory (`OpenHumanSessionHost::from_config_for_agent`) now
                 // also consults `config.agent_registry.entries` on a
                 // harness-registry miss and synthesizes a real
                 // `AgentDefinition` for any `AgentRegistrySource::Custom`
@@ -492,7 +492,7 @@ impl OpenHumanAgentRunner {
         conn: Option<&str>,
         entry_model: Option<&str>,
     ) -> Result<Value> {
-        use crate::agent::Agent;
+        use crate::agent::OpenHumanSessionHost;
 
         // Hold a slot for the whole turn: a fanned-out node can call this
         // hundreds of times at once, and each call below builds a full agent
@@ -532,8 +532,8 @@ impl OpenHumanAgentRunner {
             None => Cow::Borrowed(self.config.as_ref()),
         };
 
-        let mut agent =
-            Agent::from_config_for_agent(effective.as_ref(), agent_ref).map_err(|e| {
+        let mut agent = OpenHumanSessionHost::from_config_for_agent(effective.as_ref(), agent_ref)
+            .map_err(|e| {
                 EngineError::Capability(format!(
                     "agent node: failed to build harness agent '{agent_ref}': {e:#}"
                 ))

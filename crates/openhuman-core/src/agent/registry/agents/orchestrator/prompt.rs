@@ -291,7 +291,7 @@ fn strip_route_lines(archetype: &str, skills: bool, mcp: bool) -> String {
 
 /// The registry entry behind `agent_id`, tolerating the web channel's rename.
 ///
-/// `PromptContext::agent_id` carries `Agent::agent_definition_name`, which the
+/// `PromptContext::agent_id` carries `OpenHumanSessionHost::agent_definition_name`, which the
 /// web channel rewrites to `"orchestrator_<short_thread>"` so each thread gets
 /// its own transcript namespace. The canonical id lives in a different field
 /// (`agent_definition_id`, whose docs say to use it for exactly this), but that

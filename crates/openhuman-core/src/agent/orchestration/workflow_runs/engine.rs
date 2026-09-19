@@ -21,7 +21,7 @@
 //!
 //! The fix mirrors the production blueprint in
 //! [`crate::agent::triage::escalation`]: build a *root*
-//! [`ParentExecutionContext`] from a real [`Agent`] (`Agent::from_config`) and
+//! [`ParentExecutionContext`] from a real [`Agent`] (`OpenHumanSessionHost::from_config`) and
 //! run the whole phase loop inside [`with_parent_context`]. Every
 //! `spawn_agent` call nested in that scope then resolves `current_parent()` to
 //! the root, inheriting a real provider, tool registry, memory, and model — the

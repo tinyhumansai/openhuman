@@ -57,9 +57,9 @@ iterations.
 
 ## Public surface
 
-- `Agent`, `AgentBuilder`, `TurnOverrides` — re-exported from `session`; the
+- `OpenHumanSessionHost`, `SessionHostBuilder`, `TurnOverrides` — re-exported from `session_host`; the
   entry point for any chat turn. External callers import these from
-  `crate::agent`, which re-exports them from `harness::session`.
+  `crate::agent`, which re-exports them from `session_host`.
 - `run_subagent`, `SubagentRunOptions`, `SubagentRunError` — hierarchical
   sub-agent dispatch from a parent tool loop.
 - `AgentDefinition`, `AgentDefinitionRegistry`, `DefinitionSource`,

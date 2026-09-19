@@ -4,7 +4,7 @@
 //! runner:
 //!
 //! 1. Reads the [`super::fork_context::ParentExecutionContext`] task-local
-//!    set by the parent [`crate::agent::Agent::turn`].
+//!    set by the parent [`crate::agent::OpenHumanSessionHost::turn`].
 //! 2. Resolves the sub-agent's model name (inherit / hint / exact).
 //! 3. Filters the parent's tool registry per `definition.tools`,
 //!    `disallowed_tools`, and `skill_filter` (or, in `fork` mode,
@@ -73,7 +73,7 @@ pub(crate) use tool_prep::build_text_mode_tool_instructions;
 // Progressive-disclosure handoff: the tinyagents `HandoffMiddleware` intercepts
 // oversized sub-agent tool results via `apply_handoff`, sharing the per-spawn
 // `ResultHandoffCache` with the `extract_from_result` tool.
-pub(crate) use handoff::{apply_handoff, ResultHandoffCache};
+pub(crate) use handoff::{ResultHandoffCache, apply_handoff};
 pub(crate) use ops::run_agent_turn_request_via_default_graph;
 pub(crate) use ops::{append_subagent_role_contract, resolve_subagent_source};
 

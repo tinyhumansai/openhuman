@@ -34,14 +34,14 @@ mod subagents;
 mod tier;
 
 pub use agent_definition::{
-    AgentDefinition, IterationPolicy, TriggerMemoryAgent, EXTENDED_MAX_TOOL_ITERATIONS,
+    AgentDefinition, EXTENDED_MAX_TOOL_ITERATIONS, IterationPolicy, TriggerMemoryAgent,
 };
 pub use execution_spec::{ModelSpec, SandboxMode, ToolScope};
 pub use prompt_source::{PromptBuilder, PromptSource};
 pub use registry::AgentDefinitionRegistry;
 pub use source::DefinitionSource;
 pub use subagents::{SkillsWildcard, SubagentEntry};
-pub use tier::{validate_tier_transition, AgentTier};
+pub use tier::{AgentTier, validate_tier_transition};
 
 /// Sentinel used to represent an explicit zero-tool scope.
 pub const NO_TOOLS_SENTINEL: &str = "__no_tools__";

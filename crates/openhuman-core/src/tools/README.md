@@ -115,7 +115,7 @@ None. No `store.rs`; the module holds no persisted state. Tools that persist (me
 ## Used by
 
 - `crates/openhuman-core/src/core/all.rs` — registers the `tools` RPC controllers + schemas.
-- `crate::agent` harness (`agent/harness/session/builder/`, `subagent_runner`, `agent/tools/*`) and the `crate::agent::tinyagents` seam (`CanonicalSharedToolAdapter`, `ToolPolicyMiddleware`) — primary consumers; build the registry and execute/police tools on the tinyagents harness path.
+- `crate::agent` harness (`agent/session_host/builder/`, `subagent_runner`, `agent/tools/*`) and the `crate::agent::tinyagents` seam (`CanonicalSharedToolAdapter`, `ToolPolicyMiddleware`) — primary consumers; build the registry and execute/police tools on the tinyagents harness path.
 - `crate::channels::runtime::dispatch::routing` — calls `orchestrator_tools::collect_orchestrator_tools` to build per-subagent orchestrator tool sets.
 - `crate::tools::agent_policy`, `crate::security::approval` — read tool metadata (category, external-effect) for policy/approval decisions.
 - `crate::tools::registry` (reads `all_tools_controller_schemas`) and `crate::mcp::server` (reuses `SEARXNG_MAX_RESULTS` / `normalize_categories` for its stdio tool specs).

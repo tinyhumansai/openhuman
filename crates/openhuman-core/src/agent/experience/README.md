@@ -69,7 +69,7 @@ Records are stored through the `Memory` trait (no dedicated DB), served by `Driv
 
 - `crates/openhuman-core/src/core/all.rs` — registers controllers/schemas and the namespace description.
 - `crates/openhuman-core/src/agent/mod.rs` — declares `pub mod experience`.
-- `crates/openhuman-core/src/agent/harness/session/turn/core/experience_context.rs` — defines `Agent::inject_agent_experience_context`, which queries the session store plus the shared store with `retrieve_across_stores` (max 3 hits, 2048-byte block, gated on `learning_enabled`) and prepends the block to the enriched user message. Called from `turn/core_turn.rs`.
+- `crates/openhuman-core/src/agent/session_host/turn/core/experience_context.rs` — defines `Agent::inject_agent_experience_context`, which queries the session store plus the shared store with `retrieve_across_stores` (max 3 hits, 2048-byte block, gated on `learning_enabled`) and prepends the block to the enriched user message. Called from `turn/core_turn.rs`.
 - `crates/openhuman-core/src/agent/tinyagents/host/experience_store.rs` — host adapter implementing `tinyagents_harness::host::ExperienceStore` over `AgentExperienceStore`.
 - `crates/openhuman-core/src/config/migration_helpers/core.rs` — uses `DriverMemory::for_config` to bind the import target.
 

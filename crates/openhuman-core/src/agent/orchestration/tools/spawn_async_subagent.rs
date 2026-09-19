@@ -5,7 +5,6 @@
 //! events and, when possible, persisted in the child worker thread.
 
 use crate::agent::harness::definition::AgentDefinitionRegistry;
-use crate::agent::harness::run_queue::RunQueue;
 use crate::agent::harness::subagent_runner::{run_subagent, SubagentRunOptions, SubagentRunStatus};
 use crate::agent::messages::ChatMessage;
 use crate::agent::orchestration::running_subagents::{self, SubagentStatus};
@@ -19,6 +18,7 @@ use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
 use tinyagents_harness::context::RunContext;
+use tinyagents_harness::run_queue::RunQueue;
 use tinyagents_harness::tool::{ToolDispatch, ToolExecutionContext};
 use tinytools::ToolRunContext;
 use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolResult};

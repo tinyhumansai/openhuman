@@ -3,14 +3,14 @@ use super::*;
 #[tokio::test]
 async fn steer_pushes_into_the_subagent_queue() {
     let _guard = test_guard();
-    let rq = RunQueue::new();
+    let rq = run_queue();
     let tx = register_test("task-steer", "session-A", rq.clone());
 
     steer(
         "task-steer",
         "session-A",
         "refocus on memory safety".into(),
-        QueueMode::Steer,
+        QueueLane::Steer,
     )
     .await
     .expect("steer should succeed");
@@ -23,7 +23,7 @@ async fn steer_pushes_into_the_subagent_queue() {
         "task-steer",
         "session-A",
         "extra context".into(),
-        QueueMode::Collect,
+        QueueLane::Collect,
     )
     .await
     .unwrap();
@@ -39,7 +39,7 @@ async fn steer_pushes_into_the_subagent_queue() {
 #[tokio::test]
 async fn steer_prefers_registered_tinyagents_handle() {
     let _guard = test_guard();
-    let rq = RunQueue::new();
+    let rq = run_queue();
     let tx = register_test("task-registered-steer", "session-A", rq.clone());
     let handle = SteeringHandle::allow_all();
     let task_id = TaskId::new("task-registered-steer");
@@ -49,7 +49,7 @@ async fn steer_prefers_registered_tinyagents_handle() {
         "task-registered-steer",
         "session-A",
         "refocus".into(),
-        QueueMode::Steer,
+        QueueLane::Steer,
     )
     .await
     .expect("steer should succeed");
@@ -76,7 +76,7 @@ async fn steer_prefers_registered_tinyagents_handle() {
 #[tokio::test]
 async fn steer_directive_delivers_control_flow_via_background_policy() {
     let _guard = test_guard();
-    let rq = RunQueue::new();
+    let rq = run_queue();
     let tx = register_test("task-directive", "session-A", rq.clone());
     // A background sub-agent handle accepts Cancel/Redirect/Resume.
     let handle = openhuman_steering_handle(SteeringRunClass::Background);
@@ -113,7 +113,7 @@ async fn steer_directive_delivers_control_flow_via_background_policy() {
 #[tokio::test]
 async fn steer_directive_refuses_kinds_the_policy_rejects() {
     let _guard = test_guard();
-    let rq = RunQueue::new();
+    let rq = run_queue();
     let tx = register_test("task-tight", "session-A", rq);
     // An interactive-class handle only allows InjectMessage/Pause, so a
     // Cancel directive must be refused up front rather than enqueued (which
@@ -147,7 +147,7 @@ async fn steer_directive_refuses_kinds_the_policy_rejects() {
 #[tokio::test]
 async fn steer_directive_enforces_ownership_and_registration() {
     let _guard = test_guard();
-    let rq = RunQueue::new();
+    let rq = run_queue();
     let tx = register_test("task-own", "session-owner", rq);
 
     // Cross-parent is refused before any handle lookup.
@@ -176,7 +176,7 @@ async fn steer_directive_enforces_ownership_and_registration() {
 #[tokio::test]
 async fn steer_rejects_cross_parent_and_unknown() {
     let _guard = test_guard();
-    let rq = RunQueue::new();
+    let rq = run_queue();
     let _tx = register_test("task-owned", "session-owner", rq);
 
     assert_eq!(
@@ -184,7 +184,7 @@ async fn steer_rejects_cross_parent_and_unknown() {
             "task-owned",
             "session-intruder",
             "x".into(),
-            QueueMode::Steer
+            QueueLane::Steer
         )
         .await,
         Err(SteerError::NotOwned)
@@ -194,7 +194,7 @@ async fn steer_rejects_cross_parent_and_unknown() {
             "task-missing",
             "session-owner",
             "x".into(),
-            QueueMode::Steer
+            QueueLane::Steer
         )
         .await,
         Err(SteerError::Unknown)
@@ -205,15 +205,35 @@ async fn steer_rejects_cross_parent_and_unknown() {
 #[tokio::test]
 async fn steer_after_terminal_is_rejected() {
     let _guard = test_guard();
-    let rq = RunQueue::new();
+    let rq = run_queue();
     let tx = register_test("task-term", "session-A", rq);
     let _ = tx.send(SubagentStatus::Failed {
         error: "boom".into(),
     });
 
     assert_eq!(
-        steer("task-term", "session-A", "x".into(), QueueMode::Steer).await,
+        steer("task-term", "session-A", "x".into(), QueueLane::Steer).await,
         Err(SteerError::AlreadyDone)
     );
     prune("task-term");
+}
+
+#[tokio::test]
+async fn detached_subagent_rejects_followup_lane() {
+    let _guard = test_guard();
+    let rq = run_queue();
+    let _tx = register_test("task-no-followup", "session-A", rq.clone());
+
+    assert_eq!(
+        steer(
+            "task-no-followup",
+            "session-A",
+            "not a new turn".into(),
+            QueueLane::Followup,
+        )
+        .await,
+        Err(SteerError::UnsupportedLane)
+    );
+    assert_eq!(rq.status().await.total, 0);
+    prune("task-no-followup");
 }

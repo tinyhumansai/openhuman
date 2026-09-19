@@ -1,7 +1,8 @@
 use super::{
     all_web_channel_controller_schemas, all_web_channel_registered_controllers, cancel_chat,
-    classify_inference_error, compose_system_prompt_suffix, event_session_id_for,
-    extract_provider_error_detail, generic_inference_error_user_message,
+    channel_web_cancel, channel_web_queue_clear, channel_web_queue_status,
+    classify_inference_error, compose_system_prompt_suffix, drain_queued_turns_for_test,
+    event_session_id_for, extract_provider_error_detail, generic_inference_error_user_message,
     in_flight_entries_for_test, inference_budget_exceeded_user_message,
     is_inference_budget_exceeded_error, json_output, key_for, locale_reply_directive,
     normalize_model_override, optional_f64, optional_string, parallel_in_flight_entries_for_test,
@@ -13,6 +14,7 @@ use super::{
 use crate::core::TypeSchema;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use tinyagents_harness::run_queue::QueueLane;
 use tokio::time::{timeout, Duration};
 
 // Serializes every test that drives `start_chat` with the process-global
@@ -98,6 +100,7 @@ fn make_block() -> TestRunChatTaskBlock {
     TestRunChatTaskBlock {
         started: Arc::new(AtomicBool::new(false)),
         dropped: Arc::new(AtomicBool::new(false)),
+        release: Arc::new(tokio::sync::Notify::new()),
     }
 }
 
@@ -118,6 +121,8 @@ async fn wait_for_parallel<F: Fn(&[(String, String)]) -> bool>(pred: F) -> Vec<(
 
 #[path = "web_tests_error_code_classification_tests.rs"]
 mod error_code_classification_tests;
+#[path = "web_tests_queue_acceptance_tests.rs"]
+mod queue_acceptance_tests;
 #[path = "web_tests_rate_limit_classification_tests.rs"]
 mod rate_limit_classification_tests;
 #[path = "web_tests_session_and_concurrency_tests.rs"]

@@ -272,7 +272,7 @@ fn build_turn_models_crate(
 /// agent harness holds instead of a provider-specific client (issue #4249, Phase 3
 /// / Motion A).
 ///
-/// An [`Agent`](crate::agent::Agent) (and each channel/subagent turn
+/// An [`Agent`](crate::agent::OpenHumanSessionHost) (and each channel/subagent turn
 /// request) is model-agnostic: it holds this source and builds a *tiered* crate
 /// [`ChatModel`] set (primary + workload-tier fallback routes + summarizer) per
 /// turn. Production sources retain only crate-native role/config metadata;

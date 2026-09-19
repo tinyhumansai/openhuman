@@ -104,7 +104,7 @@ fn find<'a>(tools: &'a [Box<dyn Tool>], name: &str) -> &'a dyn Tool {
 /// vector, the packed tool in the separate synthesised one.
 ///
 /// This is not a contrived shape. Every `delegate_*` tool is synthesised into
-/// `Agent::synthesized_tools`, a different `Arc` from the durable registry
+/// `OpenHumanSessionHost::synthesized_tools`, a different `Arc` from the durable registry
 /// (#6145), and seven delegates were already packed.
 fn split_registries(
     name: &'static str,

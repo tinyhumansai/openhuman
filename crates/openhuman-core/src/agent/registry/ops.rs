@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use crate::agent::harness::AgentDefinitionRegistry;
-use crate::agent::Agent;
+use crate::agent::OpenHumanSessionHost;
 use crate::config::rpc as config_rpc;
 use crate::config::Config;
 
@@ -152,7 +152,7 @@ pub async fn available_tools() -> Result<Vec<AgentToolInfo>, String> {
     let config = config_rpc::load_config_with_timeout().await?;
     AgentDefinitionRegistry::init_global(&config.workspace_dir)
         .map_err(|e| format!("failed to initialise AgentDefinitionRegistry: {e}"))?;
-    let agent = Agent::from_config_for_agent(&config, TOOLS_CATALOG_AGENT_ID)
+    let agent = OpenHumanSessionHost::from_config_for_agent(&config, TOOLS_CATALOG_AGENT_ID)
         .map_err(|e| format!("failed to build tools-catalog agent: {e}"))?;
 
     let mut tools: Vec<AgentToolInfo> = agent
@@ -201,8 +201,8 @@ pub fn merge_entries(
 /// Synchronous, config-only lookup for a user-authored (`Custom`-source),
 /// **enabled** agent registry entry by id.
 ///
-/// Used by the agent factory (`Agent::from_config_for_agent` family, see
-/// `agent::harness::session::builder::factory`) on a harness-registry lookup
+/// Used by the agent factory (`OpenHumanSessionHost::from_config_for_agent` family, see
+/// `agent::session_host::builder::factory`) on a harness-registry lookup
 /// miss so a custom agent can be synthesized into a real
 /// `AgentDefinition` (via `definition_from_registry_entry`) and run with its
 /// real tool belt, instead of erroring (chat/task-dispatcher) or degrading to

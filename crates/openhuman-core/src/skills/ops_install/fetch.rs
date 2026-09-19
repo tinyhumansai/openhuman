@@ -396,7 +396,7 @@ pub(crate) async fn install_workflow_from_url_with_home(
     let stderr = parse_warnings.join("\n");
 
     // Notify live agent sessions so they refresh their `## Installed Skills`
-    // catalogue mid-conversation (see `Agent::refresh_workflows`).
+    // catalogue mid-conversation (see `OpenHumanSessionHost::refresh_workflows`).
     crate::core::bus::BUS.publish(crate::core::events::DomainEvent::WorkflowsChanged {
         reason: "install".to_string(),
     });

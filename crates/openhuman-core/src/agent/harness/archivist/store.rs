@@ -238,7 +238,7 @@ pub(super) fn record_turn(workspace: &Path, mut turn: ArchivedTurn) -> Result<Ar
             Err(_) if path.exists() => continue,
             Err(err) => {
                 return Err(err)
-                    .with_context(|| format!("failed to write episodic turn {}", path.display()))
+                    .with_context(|| format!("failed to write episodic turn {}", path.display()));
             }
         }
     }

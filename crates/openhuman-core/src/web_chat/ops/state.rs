@@ -88,6 +88,22 @@ pub async fn in_flight_entries_for_test() -> Vec<(String, String)> {
         .collect()
 }
 
+/// Test-only host-routing seam: drain one lane from the active turn's real
+/// TinyAgents queue so acceptance tests can assert that web metadata survives
+/// queue admission. Production code only observes this queue through its
+/// status and terminal dispatch paths.
+#[cfg(test)]
+pub async fn drain_queued_turns_for_test(
+    thread_id: &str,
+    lane: tinyagents_harness::run_queue::QueueLane,
+) -> Vec<crate::agent::queued_turn::QueuedTurn> {
+    let guard = IN_FLIGHT.lock().await;
+    match guard.get(&key_for(thread_id)) {
+        Some(entry) => entry.run_queue.drain(lane).await,
+        None => Vec::new(),
+    }
+}
+
 /// Test accessor: `(request_id, thread_id)` for every in-flight parallel turn.
 #[cfg(any(test, debug_assertions))]
 pub async fn parallel_in_flight_entries_for_test() -> Vec<(String, String)> {

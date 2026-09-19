@@ -97,14 +97,14 @@ to that delegate, not a second skill runtime.
   tool's `host_extension`.
 - `core/runtime/builder.rs` and `core/runtime/context.rs` —
   `CoreBuilder::tool_groups` and the ambient `ToolGroups` on `CoreContext`.
-- `agent/harness/session/builder/` — `builder_build.rs` strips packed names
+- `agent/session_host/builder/` — `builder_build.rs` strips packed names
   from the agent's visible set and binds both registries once the tool `Arc`s
   exist; `mod.rs` calls `scope_use_skill_spec` so the advertised `use_skill`
   spec lists only packs this session can call something in, and drops the
   spec entirely when that is none.
-- `agent/harness/session/turn/tools.rs` — rebinds the synthesized registry
+- `agent/session_host/turn/tools.rs` — rebinds the synthesized registry
   after every delegation refresh and re-strips packed names;
-  `agent/harness/session/runtime/accessors.rs` re-strips after
+  `agent/session_host/runtime/accessors.rs` re-strips after
   materializing the visible set.
 - `agent/tinyagents/middleware/tool_policy.rs` — after
   the permission gates, intercepts the disclosure half of a `use_skill` call

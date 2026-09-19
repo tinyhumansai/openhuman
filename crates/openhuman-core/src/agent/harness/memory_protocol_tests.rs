@@ -155,8 +155,9 @@ fn reads_and_other_ops_need_no_guidance() {
     let mut t = MemoryProtocolTracker::new();
     assert!(!t.observe_tool("memory_recall", &no_args()).needs_guidance());
     assert!(!t.observe_tool("send_message", &no_args()).needs_guidance());
-    assert!(t
-        .observe_tool("memory_recall", &no_args())
-        .guidance("memory_recall")
-        .is_none());
+    assert!(
+        t.observe_tool("memory_recall", &no_args())
+            .guidance("memory_recall")
+            .is_none()
+    );
 }

@@ -92,7 +92,7 @@ use openhuman_core::agent::triage::routing::{
     build_local_provider_with_config, ResolvedProvider,
 };
 use openhuman_core::agent::triage::{parse_triage_decision, ParseError, TriageAction};
-use openhuman_core::agent::Agent;
+use openhuman_core::agent::OpenHumanSessionHost;
 use openhuman_core::agent::{
     all_agent_controller_schemas, all_agent_registered_controllers,
 };
@@ -781,8 +781,8 @@ async fn call(controller: &RegisteredController, params: Value) -> Result<Value,
     (controller.handler)(params).await
 }
 
-fn base_agent_builder() -> openhuman_core::agent::AgentBuilder {
-    Agent::builder()
+fn base_agent_builder() -> openhuman_core::agent::SessionHostBuilder {
+    OpenHumanSessionHost::builder()
         .chat_model(Arc::new(EchoModel))
         .tools(vec![
             Box::new(StubTool("alpha")),
@@ -1079,20 +1079,20 @@ async fn agent_registry_and_profile_controllers_cover_success_and_errors() {
 
 #[test]
 fn agent_builder_public_paths_cover_required_fields_defaults_and_filters() {
-    let err = Agent::builder()
+    let err = OpenHumanSessionHost::builder()
         .build()
         .err()
         .expect("missing tools should error");
     assert!(err.to_string().contains("tools are required"));
 
-    let err = Agent::builder()
+    let err = OpenHumanSessionHost::builder()
         .tools(vec![Box::new(StubTool("alpha"))])
         .build()
         .err()
         .expect("missing provider should error");
     assert!(err.to_string().contains("provider is required"));
 
-    let err = Agent::builder()
+    let err = OpenHumanSessionHost::builder()
         .chat_model(Arc::new(EchoModel))
         .tools(vec![Box::new(StubTool("alpha"))])
         .build()
@@ -1100,7 +1100,7 @@ fn agent_builder_public_paths_cover_required_fields_defaults_and_filters() {
         .expect("missing memory should error");
     assert!(err.to_string().contains("memory is required"));
 
-    let err = Agent::builder()
+    let err = OpenHumanSessionHost::builder()
         .chat_model(Arc::new(EchoModel))
         .tools(vec![Box::new(StubTool("alpha"))])
         .memory(Arc::new(RecordingMemory::default()))
@@ -1168,7 +1168,7 @@ fn agent_definition_public_shapes_cover_serde_defaults_and_registry_replacement(
         r#"
 id = "coverage_agent"
 when_to_use = "Exercise public definition shapes."
-display_name = "Coverage Agent"
+display_name = "Coverage OpenHumanSessionHost"
 temperature = 0.33
 disallowed_tools = ["dangerous"]
 extra_tools = ["safe_extra"]
@@ -1192,7 +1192,7 @@ named = ["todo", "plan_exit"]
     )
     .expect("definition TOML");
 
-    assert_eq!(parsed.display_name(), "Coverage Agent");
+    assert_eq!(parsed.display_name(), "Coverage OpenHumanSessionHost");
     assert_eq!(parsed.model.resolve("parent-model"), "reasoning-v1");
     assert_eq!(parsed.sandbox_mode, SandboxMode::ReadOnly);
     assert_eq!(parsed.agent_tier, AgentTier::Reasoning);

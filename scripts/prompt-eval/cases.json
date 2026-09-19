@@ -1,7 +1,7 @@
 {
   "_comment": "Tier-2 prompt evals: real model, scored, on demand only. Never wired into CI. See docs/prompt-evals.md.",
   "judge": {
-    "_source": "Copied from close_verification_prompt in crates/openhuman-core/src/agent/harness/session/turn_checkpoint.rs (pub(super), deliberately not widened for this script). The Rust copy has a drift guard; if you edit the rules there, mirror them here.",
+    "_source": "Copied from close_verification_prompt in crates/openhuman-core/src/agent/session_host/turn_checkpoint.rs (pub(super), deliberately not widened for this script). The Rust copy has a drift guard; if you edit the rules there, mirror them here.",
     "preamble": "You are checking a reply before it is shown to a user. Below are the user's request, the records of the tool calls made while handling it, and the reply.",
     "rules": [
       "The reply only says what the assistant will do or is about to do, instead of reporting what happened.",

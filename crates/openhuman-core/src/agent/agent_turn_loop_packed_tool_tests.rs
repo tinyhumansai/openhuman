@@ -1,6 +1,6 @@
 use super::*;
 
-// #6276: bare calls to withheld packed tools, driven through a whole `Agent::turn`.
+// #6276: bare calls to withheld packed tools, driven through a whole `OpenHumanSessionHost::turn`.
 // Split out of `agent_turn_loop_tests.rs` to keep that file under the layout gate.
 
 /// Stands in for a packed tool and records the arguments it ran with.

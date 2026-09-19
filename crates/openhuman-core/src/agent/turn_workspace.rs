@@ -16,7 +16,7 @@
 //! a turn may work:
 //!
 //! * the session builder
-//!   ([`Agent::from_config`](crate::agent::Agent::from_config)),
+//!   ([`OpenHumanSessionHost::from_config`](crate::agent::OpenHumanSessionHost::from_config)),
 //!   which turns it into the turn's
 //!   [`WorkspaceDescriptor`](tinyagents_harness::workspace::WorkspaceDescriptor)
 //!   so acting tools (shell, file, git) resolve their default cwd there; and

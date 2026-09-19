@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use super::execution_spec::{ModelSpec, SandboxMode, ToolScope};
 use super::prompt_source::PromptSource;
 use super::source::DefinitionSource;
-use super::subagents::{deserialize_subagent_entries, SubagentEntry};
+use super::subagents::{SubagentEntry, deserialize_subagent_entries};
 use super::tier::AgentTier;
 use crate::inference::tokenjuice::AgentTokenjuiceCompression;
 

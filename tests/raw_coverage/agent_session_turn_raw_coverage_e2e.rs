@@ -14,7 +14,7 @@ use openhuman_core::agent::progress::AgentProgress;
 use openhuman_core::agent::tool_policy::{
     ToolPolicy, ToolPolicyDecision, ToolPolicyRequest,
 };
-use openhuman_core::agent::Agent;
+use openhuman_core::agent::OpenHumanSessionHost;
 use openhuman_core::config::{AgentConfig, Config, ContextConfig, MemoryConfig};
 use openhuman_core::agent::messages::ConversationMessage;
 use openhuman_core::memory::{
@@ -620,8 +620,8 @@ fn agent_with(
     dispatcher: Box<dyn openhuman_core::tinytools_agent::dialect::ToolDialect>,
     config: AgentConfig,
     context_config: ContextConfig,
-) -> Agent {
-    Agent::builder()
+) -> OpenHumanSessionHost {
+    OpenHumanSessionHost::builder()
         .chat_model(model)
         .tools(tools)
         .memory(noop_memory::noop_memory())
@@ -832,7 +832,7 @@ async fn turn_citation_task_replaces_previous_handle_and_joins_successfully_inne
         release_recall: Some(never_release_first),
         recall_cancelled: Some(first_cancelled.clone()),
     });
-    let mut agent = Agent::builder()
+    let mut agent = OpenHumanSessionHost::builder()
         .chat_model(ScriptedModel::new(vec![
             text_response("first answer"),
             text_response("second answer"),
@@ -922,7 +922,7 @@ async fn turn_xml_failures_checkpoint_policy_visibility_and_hooks_are_publicly_e
     let hook_notify = Arc::new(Notify::new());
     let mut channel_permissions = std::collections::HashMap::new();
     channel_permissions.insert("round17-channel".to_string(), "read_only".to_string());
-    let mut agent = Agent::builder()
+    let mut agent = OpenHumanSessionHost::builder()
         .chat_model(provider.clone())
         .tools(vec![
             Round17Tool::boxed("round17_ok", "ok-output", ok_calls.clone()),

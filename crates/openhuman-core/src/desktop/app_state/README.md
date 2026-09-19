@@ -42,7 +42,7 @@ The signed-in identity for prompts and Sentry is `security::credentials::identit
 
 - `crates/openhuman-core/src/core/all.rs` — registers `all_app_state_registered_controllers()`; the shell reaches them through `coreRpcClient` → `relay_http_rpc`.
 - `crates/openhuman-core/src/core/jsonrpc.rs` — `latch_from_config` at runtime bootstrap.
-- `crates/openhuman-core/src/agent/harness/session/builder/factory.rs` — `load_stored_app_state` to read `onboarding_tasks.enabled_tools` for tool filtering.
+- `crates/openhuman-core/src/agent/session_host/builder/factory.rs` — `load_stored_app_state` to read `onboarding_tasks.enabled_tools` for tool filtering.
 - `crates/openhuman-core/src/security/keyring_consent/ops.rs` — persists the consent choice through `update_local_state`.
 
 ## Tests

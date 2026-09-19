@@ -587,7 +587,7 @@ pub(crate) async fn process_channel_runtime_message(
             );
             // The typed `AgentError` is flattened to a `String` at the
             // native-bus boundary (`agent::bus` map_err → `e.to_string()`),
-            // so the downcast that works in `Agent::run_single` is not an
+            // so the downcast that works in `OpenHumanSessionHost::run_single` is not an
             // option here — fall back to canonical-phrase substring match.
             // The max-tool-iterations cap is a deterministic agent-state
             // outcome and is already surfaced to the user as the

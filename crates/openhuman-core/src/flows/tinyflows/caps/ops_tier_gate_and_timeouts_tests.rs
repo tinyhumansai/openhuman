@@ -451,7 +451,7 @@ fn agent_node_runtime_resolves_to_the_definitions_effective_iteration_cap() {
     let expected = def.effective_max_iterations();
     assert_eq!(expected, 50);
 
-    let agent = crate::agent::Agent::from_config_for_agent(&config, "code_executor")
+    let agent = crate::agent::OpenHumanSessionHost::from_config_for_agent(&config, "code_executor")
         .expect("build code_executor agent");
     assert_eq!(agent.agent_config().max_tool_iterations, expected);
 

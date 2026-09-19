@@ -1173,7 +1173,7 @@ async fn scheduling_clarification_flow_inner() {
     // to "orchestrator asks the user itself", which never exercises the pause.
     let scheduler_request = requests.get(1).map(Value::to_string).unwrap_or_default();
     assert!(
-        scheduler_request.contains("Scheduler Agent"),
+        scheduler_request.contains("Scheduler OpenHumanSessionHost"),
         "request[1] did not carry the scheduler_agent prompt — schedule_task did not \
          delegate; request: {scheduler_request}"
     );
@@ -1841,7 +1841,7 @@ async fn approval_gate_timeout_inner() {
 //   `expression` arg (format!("{i}m ago")) gives a different hash each iteration,
 //   preventing REPEAT_OUTPUT_THRESHOLD from firing. Queuing beyond the
 //   definition-derived cap trips max_tool_iterations. AgentError::MaxIterationsExceeded →
-//   "Agent exceeded maximum tool iterations (N)"
+//   "OpenHumanSessionHost exceeded maximum tool iterations (N)"
 //   (error.rs:89-90; MAX_ITERATIONS_ERROR_PREFIX at error.rs:176).
 //
 // empty_provider_response:
@@ -1851,7 +1851,7 @@ async fn approval_gate_timeout_inner() {
 //   again." Lowercased → contains "empty". skips_sentry() = true for both
 //   variants (error.rs:148-153).
 
-/// Agent loops past max_tool_iterations (10) → user-facing max-iterations error,
+/// OpenHumanSessionHost loops past max_tool_iterations (10) → user-facing max-iterations error,
 /// surfaced as a terminal event (not a hang, not a crash).
 ///
 /// resolve_time (ops.rs:192, orchestrator/agent.toml:173) always returns
@@ -1907,14 +1907,14 @@ async fn max_iterations_exceeded_inner() {
     // turn_checkpoint.rs:62 intercepts it and renders a user-friendly `chat_done`
     // message: "I reached the tool-call limit for this turn ({max_iterations} steps),
     // so I paused here." This is the reachable surface from the web-chat channel.
-    // The lower-level display "Agent exceeded maximum tool iterations (N)" (error.rs:89-90,
+    // The lower-level display "OpenHumanSessionHost exceeded maximum tool iterations (N)" (error.rs:89-90,
     // prefix const error.rs:176) is only visible in sub-agent checkpoints
     // (checkpoint.rs:31-40), not in the top-level orchestrator turn.
     assert!(
         serialized.contains("tool-call limit")
             || serialized.contains("tool_call_limit")
             || serialized.contains("maximum tool iterations")
-            || serialized.contains("Agent exceeded"),
+            || serialized.contains("OpenHumanSessionHost exceeded"),
         "expected max-iterations surface (tool-call limit or similar); got: {serialized}"
     );
 
@@ -2317,7 +2317,7 @@ async fn multi_hop_delegation_chain_inner() {
 
 // ─── Task 10: Streaming tool-call accumulation (issue test 13) ───────────────
 //
-// This module runs at the Agent level using a ScriptedProvider (same pattern as
+// This module runs at the OpenHumanSessionHost level using a ScriptedProvider (same pattern as
 // tests/agent_session_turn_raw_coverage_e2e.rs).  It does NOT use the HTTP
 // scripted-upstream + SSE stack above: the RPC/SSE stack doesn't expose
 // per-delta streaming observability that would let us assert the exact fragment
@@ -2359,7 +2359,7 @@ async fn multi_hop_delegation_chain_inner() {
 
 mod streaming_support {
     use async_trait::async_trait;
-    use openhuman_core::agent::Agent;
+    use openhuman_core::agent::OpenHumanSessionHost;
     use openhuman_core::config::{AgentConfig, ContextConfig};
     use openhuman_core::memory::Memory;
     use openhuman_core::tinytools_agent::dialect::NativeDialect;
@@ -2547,8 +2547,8 @@ mod streaming_support {
         tools: Vec<Box<dyn Tool>>,
         workspace_path: PathBuf,
         config: AgentConfig,
-    ) -> Agent {
-        Agent::builder()
+    ) -> OpenHumanSessionHost {
+        OpenHumanSessionHost::builder()
             .chat_model(provider)
             .tools(tools)
             .memory(memory_for_workspace_s(&workspace_path))
@@ -4149,7 +4149,7 @@ mod tool_policy_boundary_placement {
     use anyhow::Result;
     use async_trait::async_trait;
     use openhuman_core::agent::prompts::LearnedContextData;
-    use openhuman_core::agent::Agent;
+    use openhuman_core::agent::OpenHumanSessionHost;
     use openhuman_core::config::AgentConfig;
     use openhuman_core::memory::{
         Memory, MemoryCategory, MemoryEntry, NamespaceSummary as MemoryNamespaceSummary, RecallOpts,
@@ -4253,7 +4253,7 @@ mod tool_policy_boundary_placement {
             .channel_permissions
             .insert("boundary-channel".to_string(), "read_only".to_string());
 
-        let agent = Agent::builder()
+        let agent = OpenHumanSessionHost::builder()
             .chat_model(provider)
             .tools(vec![
                 Box::new(ScopedTool {
@@ -4284,7 +4284,7 @@ mod tool_policy_boundary_placement {
     /// the inference backend's automatic prefix cache everything behind it. It
     /// also replaced each agent's opening persona line with a constant heading.
     ///
-    /// This drives the real `Agent::build_system_prompt`. The four tests #5821
+    /// This drives the real `OpenHumanSessionHost::build_system_prompt`. The four tests #5821
     /// shipped exercise the extracted pure helper `append_tool_policy_boundary`
     /// and would all still pass if `build_system_prompt` stopped calling it; the
     /// one existing test that goes through the builder,

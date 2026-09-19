@@ -40,7 +40,7 @@ pub async fn flows_discover(
     stream: Option<FlowStreamTarget>,
 ) -> Result<RpcOutcome<Vec<FlowSuggestion>>, String> {
     use crate::agent::turn_origin::{with_origin, AgentTurnOrigin};
-    use crate::agent::Agent;
+    use crate::agent::OpenHumanSessionHost;
 
     tracing::info!(
         target: "flows",
@@ -54,7 +54,7 @@ pub async fn flows_discover(
     crate::agent::harness::AgentDefinitionRegistry::init_global(&config.workspace_dir)
         .map_err(|e| format!("failed to initialise agent registry: {e}"))?;
 
-    let mut agent = Agent::from_config_for_agent(config, "flow_discovery")
+    let mut agent = OpenHumanSessionHost::from_config_for_agent(config, "flow_discovery")
         .map_err(|e| format!("failed to build flow_discovery agent: {e:#}"))?;
     agent.set_agent_definition_name("flow_discovery".to_string());
 

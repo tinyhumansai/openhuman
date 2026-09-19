@@ -3,10 +3,10 @@
 //!
 //! The agent harness already emits everything an embedder needs
 //! ([`AgentProgress`], attached with
-//! [`Agent::set_on_progress`](crate::agent::Agent::set_on_progress)),
+//! [`OpenHumanSessionHost::set_on_progress`](crate::agent::OpenHumanSessionHost::set_on_progress)),
 //! but RPC entry points such as
 //! [`agent_chat`](crate::inference::host_runtime::ops::agent_chat) build the
-//! [`Agent`](crate::agent::Agent) internally and drop it, so there is
+//! [`Agent`](crate::agent::OpenHumanSessionHost) internally and drop it, so there is
 //! no handle to attach a sink to. A host embedding the core in-process therefore
 //! sees nothing at all for the whole turn — no tool calls, no deltas — and can
 //! only guess whether a long turn is alive.
@@ -37,7 +37,7 @@
 use crate::agent::progress::AgentProgress;
 
 /// The channel an embedder hands to [`with_progress_sink`], and the same type
-/// [`Agent::set_on_progress`](crate::agent::Agent::set_on_progress)
+/// [`OpenHumanSessionHost::set_on_progress`](crate::agent::OpenHumanSessionHost::set_on_progress)
 /// takes — so a sink read back out of the task-local can be attached directly.
 ///
 /// Use a bounded channel with headroom: the turn loop sends from inside the
@@ -47,7 +47,7 @@ pub type ProgressSink = tokio::sync::mpsc::Sender<AgentProgress>;
 tokio::task_local! {
     /// Per-turn progress sink scoped by an in-process embedder around the
     /// future it awaits. Read by entry points that build an
-    /// [`Agent`](crate::agent::Agent) internally.
+    /// [`Agent`](crate::agent::OpenHumanSessionHost) internally.
     pub static AGENT_PROGRESS_SINK: ProgressSink;
 }
 

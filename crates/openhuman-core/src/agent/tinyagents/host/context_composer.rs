@@ -21,7 +21,7 @@
 //! Prompt assembly is **not** reimplemented here. Everything this file does is
 //! translate a [`TurnContextRequest`] into a `PromptContext` and hand it to the
 //! existing `SystemPromptBuilder::with_defaults()` chain — the same chain
-//! `agent::harness::session::turn::context::build_system_prompt` uses. That
+//! `agent::session_host::turn::context::build_system_prompt` uses. That
 //! keeps one source of truth for section ordering, the grounding contract, and
 //! the global style suffix.
 //!
@@ -114,7 +114,7 @@ pub struct OpenHumanContextComposer {
     ///
     // TODO(phase4): this should be resolved per `req.thread_id` rather than
     // snapshotted at construction. The real fetch lives in
-    // `crate::agent::harness::session::turn::context` (see the
+    // `crate::agent::session_host::turn::context` (see the
     // `LearnedContextData { … }` assembly around `sanitize_learned_entry` /
     // `tree_root_summaries`), which reads the learning store and the memory
     // tree summarizer. It is not a free function and is not thread-keyed
@@ -294,7 +294,7 @@ impl ContextComposer for OpenHumanContextComposer {
             // from the profiles domain (`crate::profiles`); the
             // existing main-agent path leaves this empty too (see the
             // `personality_roster: vec![]` TODO in
-            // `agent/harness/session/turn/context.rs`), so this matches
+            // `agent/session_host/turn/context.rs`), so this matches
             // current behaviour rather than regressing it.
             personality_roster: Vec::new(),
             agents_md_global: agents_md.global,

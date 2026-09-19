@@ -15,7 +15,7 @@ pub(super) const VOICE_READBACK_PREFIX: &str =
     "Please read the following to me, word for word, and say nothing else:";
 
 /// Convert an OpenAI-style `messages` array into `(role, content)` history pairs
-/// for [`Agent::seed_resume_from_messages`]. Drops `system` turns — the relayed
+/// for [`OpenHumanSessionHost::seed_resume_from_messages`]. Drops `system` turns — the relayed
 /// system prompt is the ElevenLabs agent's, not ours — and flattens multimodal
 /// content the same way [`extract_prompt`] does. Pure + unit-tested.
 pub(super) fn messages_to_history_pairs(messages: &[Value]) -> Vec<(String, String)> {

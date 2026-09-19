@@ -47,11 +47,11 @@ Re-exported from `mod.rs`:
 
 ## Used by
 
-- `crates/openhuman-core/src/agent/harness/session/builder/builder_build.rs` — builds two snapshots with `build_session_from_refs`: the session's `tool_policy_session` (with the role visibility filter) and a `channel_policy_session` without it, used to derive the sub-agent tool ceiling.
-- `crates/openhuman-core/src/agent/harness/session/builder/mod.rs` — `visible_tool_specs_for_policy` filters prompt-visible specs with `decision_for(name).blocks_execution()`.
-- `crates/openhuman-core/src/agent/harness/session/runtime/accessors.rs` — `rebuild_tool_policy_session` re-runs `build_session_from_refs` after `hide_tools`.
-- `crates/openhuman-core/src/agent/harness/session/turn/context.rs` — calls `render_tool_policy_boundary(&session, 2048)` and appends the block to the end of the system prompt.
-- `crates/openhuman-core/src/agent/harness/session/types.rs` — carries `tool_policy_session` on the session.
+- `crates/openhuman-core/src/agent/session_host/builder/builder_build.rs` — builds two snapshots with `build_session_from_refs`: the session's `tool_policy_session` (with the role visibility filter) and a `channel_policy_session` without it, used to derive the sub-agent tool ceiling.
+- `crates/openhuman-core/src/agent/session_host/builder/mod.rs` — `visible_tool_specs_for_policy` filters prompt-visible specs with `decision_for(name).blocks_execution()`.
+- `crates/openhuman-core/src/agent/session_host/runtime/accessors.rs` — `rebuild_tool_policy_session` re-runs `build_session_from_refs` after `hide_tools`.
+- `crates/openhuman-core/src/agent/session_host/turn/context.rs` — calls `render_tool_policy_boundary(&session, 2048)` and appends the block to the end of the system prompt.
+- `crates/openhuman-core/src/agent/session_host/types.rs` — carries `tool_policy_session` on the session.
 - `crates/openhuman-core/src/agent/tinyagents/middleware/tool_policy.rs` — `ToolPolicyMiddleware` is the runtime enforcement point: `is_denied()` for direct calls, `blocks_execution()` for the `use_skill` route. The snapshot reaches it through `ToolPolicyEnforcement` in `agent/tinyagents/turn_policy.rs`.
 - `crates/openhuman-core/src/agent/tinyagents/host/security_gate.rs` — `SecurityGate::with_tool_policy` accepts an `Arc<ToolPolicySession>` and maps its actions to gate verdicts.
 - `crates/openhuman-core/src/config/schema/agent.rs` — the `channel_permissions` field docs describe the engine's fallback semantics.

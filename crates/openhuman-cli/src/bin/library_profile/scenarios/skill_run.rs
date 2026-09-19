@@ -42,7 +42,7 @@
 
 use anyhow::{Context, Result};
 use openhuman_core::agent::harness::AgentDefinitionRegistry;
-use openhuman_core::agent::Agent;
+use openhuman_core::agent::OpenHumanSessionHost;
 use openhuman_core::config::Config;
 use openhuman_core::inference::provider::factory::test_provider_override;
 use openhuman_core::security::AutonomyLevel;
@@ -148,7 +148,7 @@ pub async fn run() -> Result<ProfileResult> {
         let futures = (0..concurrency).map(|idx| {
             let config = config.clone();
             async move {
-                let mut agent = Agent::from_config_for_agent(&config, CODE_AGENT)
+                let mut agent = OpenHumanSessionHost::from_config_for_agent(&config, CODE_AGENT)
                     .with_context(|| format!("building code_executor agent #{idx}"))?;
                 let reply = agent
                     .run_single(

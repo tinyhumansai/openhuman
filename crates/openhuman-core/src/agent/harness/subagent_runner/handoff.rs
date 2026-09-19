@@ -35,8 +35,8 @@
 // pre-migration module and in case a future caller needs them directly.
 #[allow(unused_imports)]
 pub(crate) use tinyagents_harness::handoff::{
-    build_handoff_placeholder, chunk_content, clean_tool_output, CachedResult, ResultHandoffCache,
-    HANDOFF_MAX_ENTRIES, HANDOFF_OVERSIZE_THRESHOLD_TOKENS, HANDOFF_PREVIEW_CHARS,
+    CachedResult, HANDOFF_MAX_ENTRIES, HANDOFF_OVERSIZE_THRESHOLD_TOKENS, HANDOFF_PREVIEW_CHARS,
+    ResultHandoffCache, build_handoff_placeholder, chunk_content, clean_tool_output,
 };
 
 /// Apply the progressive-disclosure handoff to a tool result. Resolves the

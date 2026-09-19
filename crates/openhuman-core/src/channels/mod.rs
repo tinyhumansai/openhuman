@@ -6,7 +6,7 @@
 //!
 //! * `traits` — a one-line re-export of the `tinychannels` `Channel` /
 //!   `SendMessage` traits, named by the always-on agent-harness interactive
-//!   loop (`agent::harness::session::runtime::run_interactive`).
+//!   loop (`agent::session_host::runtime::run_interactive`).
 //! * `cli` — `CliChannel`, the dependency-free local stdin/stdout REPL the same
 //!   interactive loop drives in every build.
 //!

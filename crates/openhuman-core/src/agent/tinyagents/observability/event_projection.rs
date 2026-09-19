@@ -245,8 +245,8 @@ impl EventListener for OpenhumanEventBridge {
                 // command (issue #4249, 07.3). A rejected command means the run's
                 // `SteeringPolicy` refused the kind and the crate is aborting the
                 // run with `TinyAgentsError::Steering`, so surface it louder. The
-                // bespoke ack plumbing in `harness/run_queue/` stays live (gated:
-                // web-channel followup/parallel still need a local owner); UI
+                // web-channel queue routing stays host-owned (gated: followup /
+                // parallel still need a local owner); UI
                 // projection of this event remains pending.
                 if *accepted {
                     tracing::debug!(

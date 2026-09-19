@@ -24,8 +24,8 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use super::lifecycle::recap_is_usable;
 use super::ArchivistHook;
+use super::lifecycle::recap_is_usable;
 use crate::memory::api::provider::episodic::EpisodicTurn;
 
 /// Segments re-summarised in one pass.

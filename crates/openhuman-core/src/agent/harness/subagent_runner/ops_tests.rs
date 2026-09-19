@@ -70,9 +70,9 @@ fn stub(name: &'static str) -> Box<dyn Tool> {
 // ── End-to-end runner tests with mock provider ────────────────────────
 
 use crate::agent::harness::fork_context::with_parent_context;
-use crate::agent::harness::run_queue::{QueueMode, QueuedMessage, RunQueue};
 use parking_lot::Mutex;
 use std::sync::Arc;
+use tinyagents_harness::run_queue::{QueueLane, RunQueue};
 use tinyinference_llm::message::{AssistantMessage, ContentBlock, Message, MessageDelta};
 use tinyinference_llm::model::{
     ChatModel, ModelProfile, ModelRequest, ModelResponse, ModelStream, ModelStreamItem,

@@ -1,6 +1,6 @@
 //! Comprehensive agent-loop test suite.
 //!
-//! Tests exercise the full `Agent.turn()` cycle with mock providers and tools,
+//! Tests exercise the full `OpenHumanSessionHost.turn()` cycle with mock providers and tools,
 //! covering every edge case an agentic tool loop must handle:
 //!
 //!   1. Simple text response (no tools)
@@ -24,8 +24,8 @@
 //!  19. Builder validation (missing required fields)
 //!  20. Idempotent system prompt insertion
 
-use crate::agent::harness::session::Agent;
 use crate::agent::messages::{ChatMessage, ConversationMessage, ToolResultMessage};
+use crate::agent::session_host::OpenHumanSessionHost;
 use crate::config::AgentConfig;
 use crate::inference::provider::{ChatResponse, ToolCall};
 use crate::memory::Memory;
@@ -244,14 +244,14 @@ fn make_retaining_memory() -> (Arc<dyn Memory>, tempfile::TempDir) {
 }
 
 /// Build an agent with an isolated temp workspace.
-/// Returns `(Agent, TempDir)` — hold `_tmp` in the test to keep the dir alive.
+/// Returns `(OpenHumanSessionHost, TempDir)` — hold `_tmp` in the test to keep the dir alive.
 fn build_agent_with(
     provider: Arc<dyn ChatModel<()>>,
     tools: Vec<Box<dyn Tool>>,
     dispatcher: Box<dyn ToolDialect>,
-) -> (Agent, tempfile::TempDir) {
+) -> (OpenHumanSessionHost, tempfile::TempDir) {
     let (mem, tmp) = make_memory();
-    let agent = Agent::builder()
+    let agent = OpenHumanSessionHost::builder()
         .chat_model(provider)
         .tools(tools)
         .memory(mem)
@@ -267,9 +267,9 @@ fn build_agent_with_memory(
     tools: Vec<Box<dyn Tool>>,
     mem: Arc<dyn Memory>,
     auto_save: bool,
-) -> (Agent, tempfile::TempDir) {
+) -> (OpenHumanSessionHost, tempfile::TempDir) {
     let tmp = tempfile::TempDir::new().unwrap();
-    let agent = Agent::builder()
+    let agent = OpenHumanSessionHost::builder()
         .chat_model(provider)
         .tools(tools)
         .memory(mem)
@@ -285,9 +285,9 @@ fn build_agent_with_config(
     provider: Arc<dyn ChatModel<()>>,
     tools: Vec<Box<dyn Tool>>,
     config: AgentConfig,
-) -> (Agent, tempfile::TempDir) {
+) -> (OpenHumanSessionHost, tempfile::TempDir) {
     let (mem, tmp) = make_memory();
-    let agent = Agent::builder()
+    let agent = OpenHumanSessionHost::builder()
         .chat_model(provider)
         .tools(tools)
         .memory(mem)

@@ -562,7 +562,7 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for WarnLayer {
         let mut message = Message(None);
         event.record(&mut message);
         if let Some(text) = message.0 {
-            self.0 .0.lock().unwrap().push(text);
+            self.0.0.lock().unwrap().push(text);
         }
     }
 }

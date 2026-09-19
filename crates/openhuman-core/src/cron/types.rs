@@ -230,7 +230,7 @@ pub struct CronJob {
     /// `"morning_briefing"`). When set, [`crate::cron::scheduler`]
     /// resolves the agent definition from the registry and runs with the
     /// definition's prompt, tool allowlist, iteration cap, and model hint
-    /// instead of the generic `Agent::from_config` path.
+    /// instead of the generic `OpenHumanSessionHost::from_config` path.
     pub agent_id: Option<String>,
     pub enabled: bool,
     pub delivery: DeliveryConfig,

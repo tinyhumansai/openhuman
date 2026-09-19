@@ -371,7 +371,7 @@ fn does_not_classify_unrelated_empty_response_phrases() {
         "[memory_tree_walk] turn=3 LLM gave up (empty response)",
         // learning/reflection.rs:576 — reflection skip, not a failure.
         "[learning] reflection skipped (empty response — gate off or local AI unavailable)",
-        // agent/harness/session/turn.rs:811 — "provider returned an empty
+        // agent/session_host/turn.rs:811 — "provider returned an empty
         // final response" uses subject "provider", not "model"; must not match.
         "[agent_loop] provider returned an empty final response (i=2, no text, no tool calls)",
     ] {

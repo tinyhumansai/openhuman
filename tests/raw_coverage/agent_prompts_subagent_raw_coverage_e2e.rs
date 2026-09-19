@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use openhuman_core::tinytools_agent::dialect::NativeDialect;
-use openhuman_core::agent::harness::session::Agent;
+use openhuman_core::agent::session_host::OpenHumanSessionHost;
 use openhuman_core::agent::harness::{
     run_subagent, with_parent_context, AgentDefinition, DefinitionSource, ModelSpec,
     ParentExecutionContext, PromptSource, SandboxMode, SubagentRunError, SubagentRunOptions,
@@ -477,19 +477,19 @@ fn subagent_prompt_renderer_covers_format_branches_and_missing_indices() {
 fn agent_builder_validation_reports_each_required_component() {
     let provider = ScriptedModel::new(vec![]);
 
-    let err = match Agent::builder().build() {
+    let err = match OpenHumanSessionHost::builder().build() {
         Ok(_) => panic!("builder without tools should fail"),
         Err(err) => err.to_string(),
     };
     assert!(err.contains("tools are required"));
 
-    let err = match Agent::builder().tools(Vec::new()).build() {
+    let err = match OpenHumanSessionHost::builder().tools(Vec::new()).build() {
         Ok(_) => panic!("builder without provider should fail"),
         Err(err) => err.to_string(),
     };
     assert!(err.contains("provider is required"));
 
-    let err = match Agent::builder()
+    let err = match OpenHumanSessionHost::builder()
         .tools(Vec::new())
         .chat_model(provider.clone())
         .build()
@@ -499,7 +499,7 @@ fn agent_builder_validation_reports_each_required_component() {
     };
     assert!(err.contains("memory is required"));
 
-    let err = match Agent::builder()
+    let err = match OpenHumanSessionHost::builder()
         .tools(Vec::new())
         .chat_model(provider)
         .memory(Arc::new(StubMemory))
@@ -510,7 +510,7 @@ fn agent_builder_validation_reports_each_required_component() {
     };
     assert!(err.contains("tool_dispatcher is required"));
 
-    let agent = Agent::builder()
+    let agent = OpenHumanSessionHost::builder()
         .tools(vec![tool("echo"), tool("echo")])
         .chat_model(ScriptedModel::new(vec![]))
         .memory(Arc::new(StubMemory))

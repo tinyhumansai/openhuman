@@ -85,7 +85,7 @@ use crate::memory::Memory;
 ///
 /// Holds the hook list rather than building it, because *which* hooks are
 /// installed is a composition decision the session builder already makes (see
-/// `agent/harness/session/builder/factory.rs`); duplicating that policy here
+/// `agent/session_host/builder/factory.rs`); duplicating that policy here
 /// would give the generic runtime a second, silently divergent hook set.
 /// [`OpenHumanLearningSink::from_learning_config`] is a convenience for the
 /// hooks that need nothing but config and memory.

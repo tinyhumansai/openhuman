@@ -66,7 +66,7 @@ runtime-wide".
 > (`run_turn_via_tinyagents_shared`). The legacy `run_turn_engine`, the three
 > hand-rolled loops, `turn_engine_adapter`, and the custom `agent_graph/` engine
 > described later in this page have been **removed**; the surviving shared seam,
-> `TurnProgress`, lives in `agent/harness/session/tool_progress.rs`. The dead
+> `TurnProgress`, lives in `agent/session_host/tool_progress.rs`. The dead
 > `token_budget.rs` (context trimming is now `MessageTrimMiddleware`) and the
 > vestigial `interrupt.rs` fence (cancellation is the tinyagents steering channel)
 > are gone; policy **stop hooks** (budget / thread-goal / iteration caps) now fire
@@ -223,7 +223,7 @@ loop {
 
 Every iteration emits a real-time `AgentProgress` event so the UI can render token-by-token streaming, "calling tool X" status, and per-iteration cost updates.
 
-**One engine, three entry points.** The loop lives in one place (the tinyagents `AgentHarness`, entered via `run_turn_via_tinyagents_shared` in `crates/openhuman-core/src/agent/tinyagents/mod.rs`) and every caller drives it: the chat turn (`harness/session/turn/core.rs` → `session/turn/graph.rs`), the channel/CLI bus turn (`harness/graph.rs`), and spawned sub-agents (`harness/subagent_runner/ops/graph.rs`). What varies per caller is supplied through the adapter seam: OpenHuman's provider wrapped as a `ChatModel` (`tinyagents/model.rs`), tools wrapped as tinyagents `Tool`s (`tinyagents/tools.rs`), an event bridge that projects harness `AgentEvent`s into `AgentProgress` + cost telemetry (`tinyagents/observability.rs`), `RunPolicy::unknown_tool` for hallucinated tool recovery, and a named middleware stack (`tinyagents/middleware.rs`) carrying the OpenHuman cross-cuts: approval/security gating (`ApprovalSecurityMiddleware`), tool policy and CLI/RPC-only denial (`ToolPolicyMiddleware`, `CliRpcOnlyMiddleware`), malformed-argument recovery (`ArgRecoveryMiddleware`), cost budget pre-checks (`CostBudgetMiddleware`), the repeated-tool-failure circuit breaker (`RepeatedToolFailureMiddleware`), and context trimming/compression. Policy stop hooks fire through `StopHookMiddleware` (`tinyagents/stop_hooks.rs`). The surviving OpenHuman-owned seam, `TurnProgress`, lives in `harness/session/tool_progress.rs`. Because all three entry points assemble the same harness, they can't drift.
+**One engine, three entry points.** The loop lives in one place (the tinyagents `AgentHarness`, entered via `run_turn_via_tinyagents_shared` in `crates/openhuman-core/src/agent/tinyagents/mod.rs`) and every caller drives it: the chat turn (`session_host/turn/core.rs` → `session/turn/graph.rs`), the channel/CLI bus turn (`harness/graph.rs`), and spawned sub-agents (`harness/subagent_runner/ops/graph.rs`). What varies per caller is supplied through the adapter seam: OpenHuman's provider wrapped as a `ChatModel` (`tinyagents/model.rs`), tools wrapped as tinyagents `Tool`s (`tinyagents/tools.rs`), an event bridge that projects harness `AgentEvent`s into `AgentProgress` + cost telemetry (`tinyagents/observability.rs`), `RunPolicy::unknown_tool` for hallucinated tool recovery, and a named middleware stack (`tinyagents/middleware.rs`) carrying the OpenHuman cross-cuts: approval/security gating (`ApprovalSecurityMiddleware`), tool policy and CLI/RPC-only denial (`ToolPolicyMiddleware`, `CliRpcOnlyMiddleware`), malformed-argument recovery (`ArgRecoveryMiddleware`), cost budget pre-checks (`CostBudgetMiddleware`), the repeated-tool-failure circuit breaker (`RepeatedToolFailureMiddleware`), and context trimming/compression. Policy stop hooks fire through `StopHookMiddleware` (`tinyagents/stop_hooks.rs`). The surviving OpenHuman-owned seam, `TurnProgress`, lives in `session_host/tool_progress.rs`. Because all three entry points assemble the same harness, they can't drift.
 
 ### Tool dispatch and tool-call dialects
 
@@ -525,7 +525,7 @@ The harness shell lives under `crates/openhuman-core/src/agent/`, with the tinya
 
 | File / dir                               | What lives there                                                                                              |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `harness/session/turn/core.rs`           | `Agent::turn` - the lifecycle described above; routes into the tinyagents runner via `session/turn/graph.rs`. |
+| `session_host/turn/core.rs`           | `Agent::turn` - the lifecycle described above; routes into the tinyagents runner via `session/turn/graph.rs`. |
 | `../tinyagents/mod.rs`                   | `run_turn_via_tinyagents_shared` - the shared tinyagents harness assembly (the live loop).                    |
 | `../tinyagents/middleware.rs`            | The named OpenHuman middleware stack (approval/security, tool policy, recovery, budgets, circuit breaker).    |
 | `harness/graph.rs`                       | The channel/CLI bus turn route into the tinyagents runner.                                                    |
@@ -534,7 +534,7 @@ The harness shell lives under `crates/openhuman-core/src/agent/`, with the tinya
 | `harness/definition.rs`                  | `AgentDefinition` - what an archetype declares.                                                               |
 | `harness/subagent_runner/ops/runner.rs`  | Integration-tool ranking uses canonical `tinyagents_harness::tool` APIs.                                      |
 | `../tinyagents/payload_summarizer.rs`    | Oversized-tool-result detour.                                                                                 |
-| `harness/session/tool_progress.rs`       | Surviving OpenHuman seam: `TurnProgress`.                                                                     |
+| `session_host/tool_progress.rs`       | Surviving OpenHuman seam: `TurnProgress`.                                                                     |
 | `message_convert.rs`                     | Concrete durable/provider conversion around canonical tool-call dialect APIs.                                  |
 | `triage/`                                | External-trigger classification + escalation.                                                                 |
 | `registry/agents/`                       | Built-in archetypes - one subdirectory per agent.                                                             |
@@ -596,7 +596,7 @@ Most agents reuse `blueprint::canonical_turn(id)` (the standard tool-calling loo
 
 ## Agent engine + orchestration on tinyagents (live)
 
-Every agent turn (chat via `harness/session/turn/core.rs`, channel/CLI via `harness/graph.rs`, and sub-agent via `harness/subagent_runner/ops/graph.rs`) drives through `crate::agent::tinyagents::run_turn_via_tinyagents_shared`, which runs the crate's `AgentHarness`. There is no in-house turn engine, tool loop, or routing gate left; dispatch is unconditional. The seam:
+Every agent turn (chat via `session_host/turn/core.rs`, channel/CLI via `harness/graph.rs`, and sub-agent via `harness/subagent_runner/ops/graph.rs`) drives through `crate::agent::tinyagents::run_turn_via_tinyagents_shared`, which runs the crate's `AgentHarness`. There is no in-house turn engine, tool loop, or routing gate left; dispatch is unconditional. The seam:
 
 | File (`crates/openhuman-core/src/agent/tinyagents/`)          | Role                                                                                                                                                                                                                                                                           |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |

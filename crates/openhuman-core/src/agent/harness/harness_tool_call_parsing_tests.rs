@@ -535,10 +535,12 @@ fn parse_glm_style_browser_open_url() {
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].0, "shell");
     assert!(calls[0].1["command"].as_str().unwrap().contains("curl"));
-    assert!(calls[0].1["command"]
-        .as_str()
-        .unwrap()
-        .contains("example.com"));
+    assert!(
+        calls[0].1["command"]
+            .as_str()
+            .unwrap()
+            .contains("example.com")
+    );
 }
 
 #[test]

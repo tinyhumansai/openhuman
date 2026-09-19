@@ -94,7 +94,7 @@ Scoring reads only artifacts the run already writes, in this order:
    `max_input_tokens` ceiling per case. The judge call is not included.
 4. **Judge** (cases with `"judge": true`). The production close-verification
    rubric from `close_verification_prompt` in
-   `agent/harness/session/turn_checkpoint.rs`, copied into `cases.json` rather
+   `agent/session_host/turn_checkpoint.rs`, copied into `cases.json` rather
    than widening that `pub(super)` function for an on-demand script. The
    verdict is read as `parse_close_verdict` reads it: the last standalone
    `ACCEPT`/`REJECT` token wins, so `UNACCEPTABLE` is not `ACCEPT`.

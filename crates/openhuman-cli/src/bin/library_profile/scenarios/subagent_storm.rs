@@ -35,7 +35,7 @@
 
 use anyhow::Result;
 use openhuman_core::agent::harness::AgentDefinitionRegistry;
-use openhuman_core::agent::Agent;
+use openhuman_core::agent::OpenHumanSessionHost;
 use openhuman_core::inference::provider::factory::test_provider_override;
 
 use crate::harness::{fixture, measure, ProfileResult, TurnLatency};
@@ -109,7 +109,7 @@ pub async fn run() -> Result<ProfileResult> {
     let mock_for_workload = mock.clone();
     let mut result = measure("subagent-storm", width, None, move |rec| async move {
         rec.checkpoint("baseline")?;
-        let mut agent = Agent::from_config_for_agent(&config, "orchestrator")?;
+        let mut agent = OpenHumanSessionHost::from_config_for_agent(&config, "orchestrator")?;
         let reply = agent.run_single(STORM_PROMPT).await?;
         rec.checkpoint("storm-turn-done")?;
         anyhow::ensure!(!reply.trim().is_empty(), "empty storm-turn response");

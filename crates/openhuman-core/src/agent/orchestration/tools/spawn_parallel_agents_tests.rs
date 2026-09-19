@@ -11,7 +11,7 @@ use crate::agent::orchestration::spawn_parallel_graph::{
 };
 use crate::agent::prompts::ToolCallFormat;
 use crate::agent::tinyagents::host::OpenHumanRunContext;
-use crate::agent::Agent;
+use crate::agent::OpenHumanSessionHost;
 use crate::config::AgentConfig;
 use crate::memory::{Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts};
 use async_trait::async_trait;
@@ -600,7 +600,7 @@ async fn agent_turn_runs_long_parallel_subagent_flow_with_many_nested_tool_calls
         }),
     ];
 
-    let mut agent = Agent::builder()
+    let mut agent = OpenHumanSessionHost::builder()
         .chat_model(Arc::new(provider.clone()))
         .tools(tools)
         .memory(mem)

@@ -53,7 +53,7 @@ the new orchestration crate, or a provider dialect for transcript persistence.
 OpenHuman replaces its local types and helpers with direct imports, then
 implements only an adapter at the existing host boundary where conversion from
 `ChatMessage` to crate-native messages is unavoidable. Do not retain
-`agent::harness::session::transcript::*` as a public facade.
+`agent::session_host::codec::*` as the OpenHuman transcript adapter.
 
 ## File map
 

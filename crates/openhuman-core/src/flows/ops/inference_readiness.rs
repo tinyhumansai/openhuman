@@ -189,7 +189,7 @@ pub(super) fn agent_node_role(config: &Config, node: &tinyflows::model::Node) ->
                 crate::flows::tinyflows::caps::resolve_node_model(&node.config, entry_model).map(
                     |model| crate::flows::tinyflows::caps::harness_model_default_override(&model),
                 );
-            return crate::agent::harness::session::provider_role_for_definition(
+            return crate::agent::session_host::provider_role_for_definition(
                 agent_ref,
                 override_model
                     .as_deref()

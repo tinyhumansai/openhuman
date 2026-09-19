@@ -23,6 +23,9 @@ use crate::agent::harness::tool_result_artifacts::ToolResultArtifactIndexStore;
 use crate::agent::progress::AgentProgress;
 use crate::agent::stop_hooks::StopHook;
 use crate::agent::tinyagents::turn_outcome::ToolOutcomeSink;
+use crate::agent::tinyagents::{
+    TurnContextMiddleware, turn_outcome::ToolCallOutcome, turn_policy::ToolPolicyEnforcement,
+};
 use crate::agent::turn_origin::AgentTurnOrigin;
 use tinyinference_llm::model::ResolvedModelRoute;
 
@@ -44,6 +47,33 @@ pub struct LastTurnUsage {
     pub cost_usd: f64,
     pub context_window: u64,
     pub subagents: Vec<SubagentUsageEntry>,
+}
+
+/// Runtime-written sidecars for one OpenHuman session transition.
+///
+/// The host supplies this explicit sink in `before_turn`; the driver and its
+/// middleware fill it without mutating a second host history or transcript.
+/// `after_commit` reads it only after the runtime durable append succeeds.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct SessionTurnSidecar {
+    pub model_calls: usize,
+    pub tool_calls: usize,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cached_input_tokens: u64,
+    pub cost_usd: f64,
+    /// The selected model's context window for this exact request.  The
+    /// provider response's generic usage cannot represent this host datum.
+    pub context_window: u64,
+    /// Completed child runs observed before the root driver returned.  This is
+    /// copied into the sidecar before transcript append so transcript billing
+    /// and the post-commit UI use the same complete ledger.
+    pub subagents: Vec<SubagentUsageEntry>,
+    pub duration: Option<Duration>,
+    pub tool_outcomes: Vec<ToolCallOutcome>,
+    pub hit_cap: bool,
+    pub wrap_up_injected: bool,
+    pub resolved_route: Option<ResolvedModelRoute>,
 }
 
 /// Immutable inputs to the host's pre-dispatch policy.
@@ -206,6 +236,23 @@ pub struct OpenHumanRunContext {
     pub workspace: Option<tinytools::WorkspaceDescriptor>,
     /// Per-turn tool result capture shared with the event bridge.
     pub(crate) tool_outcomes: Option<ToolOutcomeSink>,
+    /// Fail-closed OpenHuman tool-policy snapshot for this exact turn.
+    pub(crate) tool_policy: Option<ToolPolicyEnforcement>,
+    /// Exact executable durable tools selected by the host hook for this turn.
+    /// The driver must consume this request-scoped source rather than its
+    /// construction-time registry, so later visibility/revocation changes are
+    /// authoritative at execution as well as prompt rendering.
+    pub(crate) current_tools: Option<Arc<Vec<Box<dyn tinytools::Tool>>>>,
+    /// Exact executable dynamic/delegation tools selected with
+    /// [`Self::current_tools`] for this turn.
+    pub(crate) current_synthesized_tools: Option<Arc<Vec<Box<dyn tinytools::Tool>>>>,
+    /// Context middleware snapshot prepared for this exact turn.
+    pub(crate) context_middleware: Option<TurnContextMiddleware>,
+    /// Model/harness sidecars consumed only after a durable commit.
+    pub(crate) session_sidecar: Arc<Mutex<SessionTurnSidecar>>,
+    /// Required structured-output contract for this exact host turn. The
+    /// driver repairs it before returning a candidate to runtime validation.
+    pub(crate) required_output: Option<tinyagents_harness::config::RequiredOutput>,
 }
 
 impl Default for OpenHumanRunContext {
@@ -238,6 +285,12 @@ impl OpenHumanRunContext {
             thread_id: None,
             workspace: None,
             tool_outcomes: None,
+            tool_policy: None,
+            current_tools: None,
+            current_synthesized_tools: None,
+            context_middleware: None,
+            session_sidecar: Arc::new(Mutex::new(SessionTurnSidecar::default())),
+            required_output: None,
         }
     }
 

@@ -4088,6 +4088,7 @@ dependencies = [
  "tinyagents-harness",
  "tinyagents-orchestration",
  "tinyagents-registry",
+ "tinyagents-runtime",
  "tinyagents-session",
  "tinybus",
  "tinychannels",
@@ -6436,13 +6437,10 @@ version = "2.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
- "chrono",
  "futures",
- "reqwest",
  "rusqlite",
  "serde",
  "serde_json",
- "sha2 0.11.0",
  "tinyagents-harness",
  "tinyagents-language",
  "tinyagents-tracing",
@@ -6458,9 +6456,8 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64 0.22.1",
- "bytes",
  "chrono",
- "dirs 5.0.1",
+ "dirs 6.0.0",
  "flate2",
  "futures",
  "log",
@@ -6504,7 +6501,9 @@ dependencies = [
  "serde_json",
  "tinyagents-graph",
  "tinyagents-harness",
+ "tinyagents-runtime",
  "tinyagents-session",
+ "tinyinference-llm",
  "tokio",
  "uuid",
 ]
@@ -6517,11 +6516,24 @@ dependencies = [
  "serde",
  "serde_json",
  "tinyagents-definition",
- "tinyagents-graph",
  "tinyagents-harness",
  "tinyagents-language",
  "tinyinference-llm",
  "tinytools",
+]
+
+[[package]]
+name = "tinyagents-runtime"
+version = "2.1.2"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "thiserror 2.0.20",
+ "tinyagents-harness",
+ "tinyagents-session",
+ "tinyinference-llm",
+ "tinytools",
+ "tokio",
 ]
 
 [[package]]

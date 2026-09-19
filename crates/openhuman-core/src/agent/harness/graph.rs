@@ -34,8 +34,8 @@ use tokio::sync::mpsc::Sender;
 
 use crate::agent::messages::ChatMessage;
 use crate::agent::progress::AgentProgress;
-use crate::agent::tinyagents::run_turn_via_tinyagents_shared;
 use crate::agent::tinyagents::TurnModelSource;
+use crate::agent::tinyagents::run_turn_via_tinyagents_shared;
 use crate::config::{MultimodalConfig, MultimodalFileConfig};
 use tinytools::Tool;
 

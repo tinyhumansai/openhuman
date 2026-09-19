@@ -41,7 +41,7 @@
 //! **3. `ToolScope::Wildcard` has no crate representation.** The crate models
 //! tools as an explicit `Vec<String>` in which **empty means unrestricted**,
 //! matching the session builder ("an empty `visible` set means no filter" —
-//! `agent/harness/session/builder/factory.rs`). So an unrestricted wildcard
+//! `agent/session_host/builder/factory.rs`). So an unrestricted wildcard
 //! agent maps to an empty `tools` vec.
 //!
 //! That one value must not be made to carry three meanings. Three distinct
@@ -205,7 +205,7 @@ impl OpenHumanDefinitionRegistry {
     /// enabled custom-agent config fallback.
     ///
     /// Mirrors the lookup order the agent factory uses
-    /// (`agent/harness/session/builder/factory.rs` falls back to
+    /// (`agent/session_host/builder/factory.rs` falls back to
     /// [`find_custom_in_config`] on a harness-registry miss). The disabled and
     /// `Default`-source filters live inside [`find_custom_in_config`] and are
     /// deliberately not re-implemented here.
@@ -416,12 +416,12 @@ fn model_for(spec: &ModelSpec) -> Option<String> {
 /// Whether `name` is blocked by a definition's `disallowed_tools`.
 ///
 /// Mirrors the private `definition_disallows_tool` in
-/// `agent/harness/session/builder/factory.rs`, including its trailing-`*`
+/// `agent/session_host/builder/factory.rs`, including its trailing-`*`
 /// prefix-match form. Duplicated rather than imported because that helper is
 /// module-private and Phase 4 must not edit existing files.
 ///
 /// TODO(phase4): make `definition_disallows_tool` `pub(crate)` in
-/// `agent/harness/session/builder/factory.rs` and delete this copy, so the
+/// `agent/session_host/builder/factory.rs` and delete this copy, so the
 /// denylist grammar has one implementation.
 fn disallows_tool(disallowed: &[String], name: &str) -> bool {
     disallowed.iter().any(|entry| {

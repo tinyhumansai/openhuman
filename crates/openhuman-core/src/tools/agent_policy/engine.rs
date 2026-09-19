@@ -36,7 +36,7 @@ impl ToolPolicyEngine {
     ///
     /// A session agent's callable surface is split across two `Arc`s — the
     /// durable registry and the freshly-synthesised delegation set (see
-    /// `Agent::synthesized_tools`). Both must be classified, or a delegate tool
+    /// `OpenHumanSessionHost::synthesized_tools`). Both must be classified, or a delegate tool
     /// the model can see and call would carry no policy decision at all and
     /// fall through the per-channel permission gate.
     pub fn build_session_from_refs(

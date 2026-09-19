@@ -176,7 +176,7 @@ fn force_workflow_approval(
 /// referenced agent's LLM will pick — the graph only names the `agent_ref`, and
 /// the definition's `ToolScope` is the runtime pool. So the "trust root =
 /// static action" invariant that justifies the `intercept_audited` shortcut
-/// simply doesn't hold across the `Agent::run_single` boundary.
+/// simply doesn't hold across the `OpenHumanSessionHost::run_single` boundary.
 ///
 /// `Workflow { require_approval: true }` passes through unchanged (already
 /// user-forced HITL); other origins pass through unchanged (Cron / Web chat

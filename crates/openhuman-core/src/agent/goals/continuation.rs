@@ -30,7 +30,7 @@ use tokio::sync::Semaphore;
 use super::store;
 use super::{ThreadGoal, ThreadGoalStatus};
 use crate::agent::turn_origin::{with_origin, AgentTurnOrigin, TrustedAutomationSource};
-use crate::agent::Agent;
+use crate::agent::OpenHumanSessionHost;
 use crate::config::Config;
 use crate::threads::turn_state::{TurnLifecycle, TurnStateStore};
 
@@ -171,7 +171,7 @@ async fn dispatch_continuation(config: &Config, goal: &ThreadGoal) -> bool {
         "[thread_goals] dispatching continuation turn"
     );
 
-    let mut agent = match Agent::from_config_for_agent(config, "orchestrator") {
+    let mut agent = match OpenHumanSessionHost::from_config_for_agent(config, "orchestrator") {
         Ok(a) => a,
         Err(e) => {
             tracing::warn!(

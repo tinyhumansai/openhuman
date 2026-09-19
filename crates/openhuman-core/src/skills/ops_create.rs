@@ -406,7 +406,7 @@ pub(crate) fn create_workflow_inner(
         .ok_or_else(|| format!("created skill '{slug}' but failed to re-discover"))?;
 
     // Notify live agent sessions so they pick up the new skill in their
-    // `## Installed Skills` catalogue (see `Agent::refresh_workflows`).
+    // `## Installed Skills` catalogue (see `OpenHumanSessionHost::refresh_workflows`).
     crate::core::bus::BUS.publish(crate::core::events::DomainEvent::WorkflowsChanged {
         reason: "create".to_string(),
     });

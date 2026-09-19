@@ -46,7 +46,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::agent::progress::AgentProgress;
 use crate::agent::turn_origin::{with_origin, AgentTurnOrigin};
-use crate::agent::Agent;
+use crate::agent::OpenHumanSessionHost;
 
 use payloads::{
     AgentDescriptor, CapabilitiesRequest, CapabilitiesResult, RegisterAgents, TaskResult,
@@ -398,11 +398,15 @@ async fn drain_steer(steer_rx: &mut mpsc::UnboundedReceiver<String>) -> Option<S
 /// not the bare `agent_definition_name`. Without this, two `medulla:task_run`s
 /// on the same `agentId` would collide onto one shared transcript and the
 /// second would resume the first's history.
-async fn build_agent(agent_id: &str, task_id: &str, session_id: &str) -> Result<Agent, String> {
+async fn build_agent(
+    agent_id: &str,
+    task_id: &str,
+    session_id: &str,
+) -> Result<OpenHumanSessionHost, String> {
     let config = crate::config::rpc::load_config_with_timeout().await?;
     crate::agent::harness::AgentDefinitionRegistry::init_global(&config.workspace_dir)
         .map_err(|err| format!("failed to init agent definition registry: {err}"))?;
-    let mut agent = Agent::from_config_for_agent(&config, agent_id)
+    let mut agent = OpenHumanSessionHost::from_config_for_agent(&config, agent_id)
         .map_err(|err| format!("failed to build agent `{agent_id}`: {err}"))?;
     agent.set_event_context(format!("medulla:{task_id}"), "medulla_harness");
     // Scope the transcript/session key per medulla session so distinct sessions
@@ -417,7 +421,7 @@ async fn build_agent(agent_id: &str, task_id: &str, session_id: &str) -> Result<
 /// Derive a per-session agent-definition (transcript) key from the medulla
 /// `session_id`, namespaced by `agent_id`. The session id is truncated on a
 /// char boundary to keep transcript filenames bounded; the underlying
-/// [`Agent::set_agent_definition_name`] sanitizes any remaining non-filename
+/// [`OpenHumanSessionHost::set_agent_definition_name`] sanitizes any remaining non-filename
 /// characters.
 fn medulla_session_key(agent_id: &str, session_id: &str) -> String {
     let short: String = session_id.chars().take(32).collect();

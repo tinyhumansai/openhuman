@@ -187,7 +187,7 @@ Published from `ops/` via `crate::core::bus::BUS.publish` (`crate::core::events:
 - `crates/openhuman-core/src/tools/{mod,ops}.rs`, `tools/schemas/composio.rs` — wires agent tools into the tool registry.
 - `crates/openhuman-core/src/core/jsonrpc.rs` — at startup initializes trigger history and registers the three bus subscribers.
 - `crates/openhuman-core/src/channels/runtime/startup/start_channels.rs` (`start_channels`) — the one caller of `start_periodic_sync()`. `core/runtime/services.rs`'s `composio_integration_sync` job only runs `memory::sources::reconcile::ensure_composio_sources`; its comment explains why the periodic loop is not started there.
-- `crates/openhuman-core/src/agent/**` — harness/session/subagent spawning (`integrations_agent`), triage escalation, debug (e.g. `agent/harness/subagent_runner/`, `agent/orchestration/tools/`, `agent/debug/mod.rs`).
+- `crates/openhuman-core/src/agent/**` — session_host/subagent spawning (`integrations_agent`), triage escalation, debug (e.g. `agent/harness/subagent_runner/`, `agent/orchestration/tools/`, `agent/debug/mod.rs`).
 - `crates/openhuman-core/src/platform/socket/event_handlers.rs` — parses `composio:trigger` and publishes `ComposioTriggerReceived`.
 - `crates/openhuman-core/src/agent/learning/linkedin_enrichment*.rs`, `agent/learning/profile_md_renderer.rs` — connected-identity enrichment consumers.
 - `crates/openhuman-core/src/agent/prompts/connected_identities.rs` — renders connected identities into the agent prompt.

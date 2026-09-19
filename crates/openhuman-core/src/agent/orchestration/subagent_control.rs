@@ -16,12 +16,12 @@
 
 use serde_json::{json, Map, Value};
 
-use crate::agent::harness::run_queue::QueueMode;
 use crate::agent::orchestration::running_subagents::SteerError;
 use crate::agent::orchestration::{background_completions, running_subagents, subagent_sessions};
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::rpc::RpcOutcome;
+use tinyagents_harness::run_queue::QueueLane;
 
 /// Controller schemas exposed for detached sub-agent control.
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
@@ -160,9 +160,9 @@ fn handle_subagent_steer(params: Map<String, Value>) -> ControllerFuture {
         let cid = new_correlation_id();
         let task_id = require_str(&params, "taskId")?;
         let message = require_str(&params, "message")?;
-        let mode = match opt_str(&params, "mode").as_deref() {
-            Some("collect") => QueueMode::Collect,
-            _ => QueueMode::Steer,
+        let (lane, mode) = match opt_str(&params, "mode").as_deref() {
+            Some("collect") => (QueueLane::Collect, "collect"),
+            _ => (QueueLane::Steer, "steer"),
         };
         log::debug!(
             target: "subagent_control_rpc",
@@ -170,13 +170,13 @@ fn handle_subagent_steer(params: Map<String, Value>) -> ControllerFuture {
             message.chars().count()
         );
 
-        match running_subagents::steer_control(&task_id, message, mode).await {
+        match running_subagents::steer_control(&task_id, message, lane).await {
             Ok(()) => {
                 log::debug!(
                     target: "subagent_control_rpc",
                     "[subagent_control_rpc][{cid}] steer.done task_id={task_id} mode={mode} steered=true"
                 );
-                to_json(json!({ "steered": true, "taskId": task_id, "mode": mode.to_string() }))
+                to_json(json!({ "steered": true, "taskId": task_id, "mode": mode }))
             }
             Err(err) => {
                 let reason = match err {
@@ -189,6 +189,7 @@ fn handle_subagent_steer(params: Map<String, Value>) -> ControllerFuture {
                     // ownership and returns `NotOwned`. Kept here for the Phase 4
                     // SteeringRegistry ownership consolidation.
                     SteerError::NotOwned => "not_owned",
+                    SteerError::UnsupportedLane => "unsupported_lane",
                 };
                 log::debug!(
                     target: "subagent_control_rpc",
@@ -197,7 +198,7 @@ fn handle_subagent_steer(params: Map<String, Value>) -> ControllerFuture {
                 to_json(json!({
                     "steered": false,
                     "taskId": task_id,
-                    "mode": mode.to_string(),
+                    "mode": mode,
                     "reason": reason,
                 }))
             }

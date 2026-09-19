@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 use openhuman_core::agent::harness::AgentDefinitionRegistry;
-use openhuman_core::agent::Agent;
+use openhuman_core::agent::OpenHumanSessionHost;
 use openhuman_core::inference::provider::factory::test_provider_override;
 
 use crate::harness::{fixture, measure, ProfileResult};
@@ -35,7 +35,7 @@ pub async fn run() -> Result<ProfileResult> {
     let mock = PlainTextMock::new("Phoenix migration is healthy; no action needed.");
     let _provider = test_provider_override::install_model(mock.clone());
 
-    let mut agent = Agent::from_config_for_agent(&fixture.config, "subconscious")?;
+    let mut agent = OpenHumanSessionHost::from_config_for_agent(&fixture.config, "subconscious")?;
     eprintln!("[library-profile] long-agent: warming agent with one pre-measure turn");
     let warm = agent.run_single("Warm-up: confirm you are ready.").await?;
     anyhow::ensure!(!warm.trim().is_empty(), "empty warm-up reply");

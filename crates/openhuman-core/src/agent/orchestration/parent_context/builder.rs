@@ -31,7 +31,7 @@ use anyhow::{Context, Result};
 use crate::agent::harness::fork_context::{
     current_parent, with_parent_context, ParentExecutionContext,
 };
-use crate::agent::Agent;
+use crate::agent::OpenHumanSessionHost;
 use crate::config::Config;
 
 const LOG_TARGET: &str = "agent_orchestration::parent_context";
@@ -83,7 +83,7 @@ pub(crate) async fn build_root_parent(
         }
     }
 
-    let mut agent = Agent::from_config(config)
+    let mut agent = OpenHumanSessionHost::from_config(config)
         .context("build Agent from config for orchestration root parent")?;
 
     let integrations = crate::integrations::composio::fetch_connected_integrations(config).await;

@@ -1,6 +1,6 @@
 use super::{
-    apply_max_result_chars, format_deterministic_memory_hits, parse_memory_fast_path_enabled,
-    MEMORY_FAST_PATH_LIMIT,
+    MEMORY_FAST_PATH_LIMIT, apply_max_result_chars, format_deterministic_memory_hits,
+    parse_memory_fast_path_enabled,
 };
 use crate::memory::api::provider::retrieval::{RetrievalHit, RetrievalNodeKind, RetrievalResponse};
 use chrono::Utc;

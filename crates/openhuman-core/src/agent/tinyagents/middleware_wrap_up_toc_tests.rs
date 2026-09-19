@@ -140,8 +140,10 @@ fn sink_with(entries: &[(&str, &str)]) -> crate::agent::tinyagents::ToolOutcomeS
             .map(|(id, content)| crate::agent::tinyagents::ToolCallOutcome {
                 call_id: (*id).to_string(),
                 name: "fetch".to_string(),
+                arguments: serde_json::Value::Null,
                 success: true,
                 content: (*content).to_string(),
+                duration_ms: 0,
             })
             .collect(),
     ))

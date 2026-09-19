@@ -184,12 +184,16 @@ async fn typed_mode_system_prompt_includes_subagent_role_contract() {
         .find(|m| m.role == "system")
         .expect("system message should be present");
     assert!(system_msg.content.contains("## Sub-agent Role Contract"));
-    assert!(system_msg
-        .content
-        .contains("You are a sub-agent working for a parent OpenHuman agent"));
-    assert!(system_msg
-        .content
-        .contains("Keep your final response concise and synthesis-ready"));
+    assert!(
+        system_msg
+            .content
+            .contains("You are a sub-agent working for a parent OpenHuman agent")
+    );
+    assert!(
+        system_msg
+            .content
+            .contains("Keep your final response concise and synthesis-ready")
+    );
 }
 
 #[tokio::test]
@@ -283,18 +287,20 @@ async fn run_queue_steer_lands_in_subagent_history() {
     let parent = make_parent(provider.clone(), vec![stub("file_read")]);
     let def = make_def_named_tools(&[]);
 
-    let run_queue = RunQueue::new();
+    let run_queue = Arc::new(RunQueue::new());
     run_queue
-        .push(QueuedMessage {
-            text: "switch focus to memory safety".into(),
-            mode: QueueMode::Steer,
-            client_id: "steer_subagent".into(),
-            thread_id: "t-steer".into(),
-            queued_at_ms: 0,
-            model_override: None,
-            temperature: None,
-            locale: None,
-        })
+        .push(
+            QueueLane::Steer,
+            crate::agent::queued_turn::QueuedTurn {
+                text: "switch focus to memory safety".into(),
+                client_id: "steer_subagent".into(),
+                thread_id: "t-steer".into(),
+                queued_at_ms: 0,
+                model_override: None,
+                temperature: None,
+                locale: None,
+            },
+        )
         .await;
 
     let outcome = with_parent_context(parent, async {

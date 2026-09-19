@@ -4,7 +4,7 @@ Multi-agent orchestration domain. Owns the LLM tool-calling loop, sub-agent disp
 
 ## Public surface
 
-- `pub struct Agent` / `pub struct AgentBuilder` / `pub struct TurnOverrides` — `harness/session/types.rs`, re-exported from `harness::session` and `agent` — top-level conversation runtime; entry point for any chat turn. Constructors `Agent::from_config` and `from_config_for_agent` live in `harness/session/builder/factory.rs`; `run_single` / `run_interactive` in `harness/session/runtime/run_loop.rs`. The `builder/`, `runtime/`, and `turn/` submodules are private.
+- `pub struct OpenHumanSessionHost` / `pub struct SessionHostBuilder` / `pub struct TurnOverrides` — `session_host/types.rs`, re-exported from `agent` — top-level conversation runtime; entry point for any chat turn. Constructors live in `session_host/builder/factory.rs`; `run_single` / `run_interactive` in `session_host/runtime/run_loop.rs`. The `builder/`, `runtime/`, and `turn/` submodules are private.
 - `pub fn run_subagent` / `pub struct SubagentRunOptions` / `pub enum SubagentRunError` — `harness/subagent_runner/` — execute a hierarchical sub-agent from a parent tool loop.
 - `pub struct AgentDefinition` / `pub struct AgentDefinitionRegistry` / `pub enum SandboxMode` / `pub enum ToolScope` — `harness/definition/` (`agent_definition.rs`, `registry.rs`, `source.rs`, `tier.rs`, `execution_spec.rs`, `prompt_source.rs`, `subagents.rs`) — sub-agent archetypes loaded from built-ins + workspace TOML.
 - `pub mod harness::fork_context` — task-local parent context for KV-cache reuse.
@@ -75,7 +75,7 @@ Flat files: `bus.rs` (`agent.run_turn` native request handler), `cost.rs` (`pub(
 
 ## Tests
 
-- Unit: `agent_tests.rs`, `multimodal_tests.rs`, and direct TinyTools Agent dialect coverage in `pformat_tests.rs`, plus `*_tests.rs` files colocated with `bus.rs`, `cost.rs`, `error.rs`, `hooks.rs`, `host_runtime.rs`, `message_convert.rs`, `platform_shell.rs`, `progress_sink.rs`, `schemas.rs`, `stop_hooks.rs`, `task_board.rs`, `task_session.rs`, `tool_policy.rs`, `turn_origin.rs`, `turn_workspace.rs`, and under `harness/`, `harness/session/`, `triage/`.
+- Unit: `agent_tests.rs`, `multimodal_tests.rs`, and direct TinyTools Agent dialect coverage in `pformat_tests.rs`, plus `*_tests.rs` files colocated with `bus.rs`, `cost.rs`, `error.rs`, `hooks.rs`, `host_runtime.rs`, `message_convert.rs`, `platform_shell.rs`, `progress_sink.rs`, `schemas.rs`, `stop_hooks.rs`, `task_board.rs`, `task_session.rs`, `tool_policy.rs`, `turn_origin.rs`, `turn_workspace.rs`, and under `harness/`, `session_host/`, `triage/`.
 - Integration: `tests/agent_builder_public.rs`, `tests/agent_harness_public.rs`, `tests/agent_harness_e2e.rs`, `tests/agent_multimodal_public.rs`, `tests/agent_turn_overrides_e2e.rs`, `tests/agent_approval_memory_coverage_e2e.rs`.
 - Schema regression: `schemas_tests.rs` (`controller_schema_inventory_is_stable`).
 

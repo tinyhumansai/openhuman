@@ -10,8 +10,8 @@ use crate::agent::harness::definition::AgentDefinitionRegistry;
 // Only read by the `skills`-gated workflow-resolution branch below.
 #[cfg(feature = "skills")]
 use crate::agent::harness::definition::PromptSource;
-use crate::agent::harness::session::Agent;
 use crate::agent::harness::subagent_runner::with_autonomous_iter_cap;
+use crate::agent::session_host::OpenHumanSessionHost;
 use crate::agent::task_session;
 use crate::agent::todos::ops::{self, BoardLocation, CardPatch};
 use crate::agent::todos::runs::{self, RunOutcome};
@@ -124,7 +124,7 @@ pub(super) async fn run_autonomous(
         config.http_request.allowed_domains = vec!["*".to_string()];
     }
 
-    let mut agent = Agent::from_config_for_agent(&config, &executor.agent_id)
+    let mut agent = OpenHumanSessionHost::from_config_for_agent(&config, &executor.agent_id)
         .map_err(|e| format!("build agent: {e:#}"))?;
     // Issue #4868 — apply the autonomous task-run iteration budget AFTER
     // construction. The session builder now stamps the resolved agent

@@ -80,8 +80,15 @@ pub(crate) struct TinyagentsTurnOutcome {
 pub(crate) struct ToolCallOutcome {
     pub call_id: String,
     pub name: String,
+    /// The exact structured arguments supplied for this invocation.  They are
+    /// captured at `before_tool`, while the native `ToolCall` is still
+    /// available, so post-commit hooks and transcript usage never have to
+    /// reconstruct arguments from provider prose.
+    pub arguments: serde_json::Value,
     pub success: bool,
     pub content: String,
+    /// Measured wall-clock runtime for this concrete tool invocation.
+    pub duration_ms: u64,
 }
 
 /// Shared sink the [`ToolOutcomeCaptureMiddleware`](super::middleware::ToolOutcomeCaptureMiddleware)

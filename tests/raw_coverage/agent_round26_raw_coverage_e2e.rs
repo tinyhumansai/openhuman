@@ -10,7 +10,7 @@ use openhuman_core::agent::prompts::{
 };
 use openhuman_core::agent::debug::{dump_agent_prompt, DumpPromptOptions};
 use openhuman_core::tinytools_agent::dialect::NativeDialect;
-use openhuman_core::agent::Agent;
+use openhuman_core::agent::OpenHumanSessionHost;
 use openhuman_core::config::AgentConfig;
 use openhuman_core::memory::{
     Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts,
@@ -382,7 +382,7 @@ async fn builder_dedupes_visible_native_tools_and_seed_resume_bounds_history() -
     let mut visible = HashSet::new();
     visible.insert("round26_duplicate".to_string());
 
-    let mut agent = Agent::builder()
+    let mut agent = OpenHumanSessionHost::builder()
         .chat_model(provider.clone())
         .tools(tools)
         .visible_tool_names(visible)

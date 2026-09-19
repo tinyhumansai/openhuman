@@ -59,7 +59,7 @@ const PERSIST_CONCURRENCY: usize = 8;
 ///
 /// Background-first: callers should invoke this from a `tokio::spawn` so
 /// chat latency is unaffected (see
-/// `Agent::spawn_transcript_ingestion`). Failures are returned but the
+/// `OpenHumanSessionHost::spawn_transcript_ingestion`). Failures are returned but the
 /// caller should generally just log them — ingestion is best-effort and
 /// retried on the next transcript write.
 pub async fn ingest_transcript_path(

@@ -27,7 +27,7 @@ use tinyagents_harness::store::StoreRegistry;
 use tinyagents_registry::DiagnosticSeverity;
 
 use crate::agent::harness::tool_result_artifacts::TINYAGENTS_TOOL_RESULT_ARTIFACT_STORE;
-use crate::agent::harness::{run_queue::RunQueue, MAX_SPAWN_DEPTH};
+use crate::agent::harness::MAX_SPAWN_DEPTH;
 use crate::agent::messages::ChatMessage;
 use crate::agent::tinyagents::harness_assembly::{assemble_turn_harness, AssembledTurnHarness};
 use crate::agent::tinyagents::host::steering::shared_steering_registry;
@@ -41,6 +41,7 @@ use crate::agent::tinyagents::turn_run_error::map_turn_run_error;
 use crate::agent::tinyagents::turn_run_finalize::finalize_turn_outcome;
 use crate::agent::tinyagents::{journal, routes, steering_forwarder};
 use tinyagents_harness::ids::TaskId;
+use tinyagents_harness::run_queue::RunQueue;
 
 use super::ToolPolicyEnforcement;
 
@@ -252,7 +253,7 @@ pub(crate) async fn run_turn_via_tinyagents_shared(
     max_iterations: usize,
     subagent_scope: Option<SubagentScope>,
     context_window: Option<u64>,
-    run_queue: Option<Arc<RunQueue>>,
+    run_queue: Option<Arc<RunQueue<crate::agent::queued_turn::QueuedTurn>>>,
     early_exit_tools: &[&str],
     pause_at_cap: bool,
     max_output_tokens: Option<u32>,
@@ -312,7 +313,7 @@ pub(crate) async fn run_root_turn_via_hosted_agent(
     allowed: Option<HashSet<String>>,
     max_iterations: usize,
     context_window: Option<u64>,
-    run_queue: Option<Arc<RunQueue>>,
+    run_queue: Option<Arc<RunQueue<crate::agent::queued_turn::QueuedTurn>>>,
     early_exit_tools: &[&str],
     pause_at_cap: bool,
     max_output_tokens: Option<u32>,
@@ -356,7 +357,7 @@ async fn run_turn_via_tinyagents_inner(
     max_iterations: usize,
     subagent_scope: Option<SubagentScope>,
     context_window: Option<u64>,
-    run_queue: Option<Arc<RunQueue>>,
+    run_queue: Option<Arc<RunQueue<crate::agent::queued_turn::QueuedTurn>>>,
     early_exit_tools: &[&str],
     pause_at_cap: bool,
     max_output_tokens: Option<u32>,

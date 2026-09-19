@@ -13,13 +13,12 @@ use std::time::Instant;
 use crate::agent::file_state::with_file_state_agent_id;
 use crate::agent::harness::agent_graph::{AgentTurnRequest, AgentTurnUsage};
 use crate::agent::harness::artifact_offload::{
-    effective_offload_threshold, extract_artifact_paths, new_artifact_offload,
-    note_artifact_handoff, offload_oversized_result, DEFAULT_OFFLOAD_THRESHOLD_BYTES,
-    HANDOFF_STAGE_RECORDED,
+    DEFAULT_OFFLOAD_THRESHOLD_BYTES, HANDOFF_STAGE_RECORDED, effective_offload_threshold,
+    extract_artifact_paths, new_artifact_offload, note_artifact_handoff, offload_oversized_result,
 };
 use crate::agent::harness::definition::{
-    validate_tier_transition, AgentDefinition, AgentDefinitionRegistry, AgentTier, IterationPolicy,
-    PromptSource, SandboxMode as AgentSandboxMode,
+    AgentDefinition, AgentDefinitionRegistry, AgentTier, IterationPolicy, PromptSource,
+    SandboxMode as AgentSandboxMode, validate_tier_transition,
 };
 use crate::agent::harness::fork_context::ParentExecutionContext;
 use crate::agent::harness::subagent_runner::extract_tool::ExtractFromResultTool;
@@ -34,14 +33,14 @@ use crate::agent::harness::subagent_runner::types::{
     SubagentMode, SubagentRunError, SubagentRunOptions, SubagentRunOutcome, SubagentRunStatus,
     SubagentUsage,
 };
-use crate::agent::harness::{with_current_sandbox_mode, with_spawn_depth, MAX_SPAWN_DEPTH};
+use crate::agent::harness::{MAX_SPAWN_DEPTH, with_current_sandbox_mode, with_spawn_depth};
 use crate::agent::prompts::{
-    render_subagent_system_prompt_with_format, PromptContext, PromptTool, SubagentRenderOptions,
+    PromptContext, PromptTool, SubagentRenderOptions, render_subagent_system_prompt_with_format,
 };
 use crate::inference::provider::AGENT_TURN_MAX_OUTPUT_TOKENS;
 use crate::memory::api::provider::retrieval::{FastRetrieveQuery, RetrievalResponse};
 use crate::memory::source_scope::as_bus_scope;
-use tinyagents_harness::tool::{rank_tools_by_prompt, SelectableTool, MIN_CONFIDENT_HITS};
+use tinyagents_harness::tool::{MIN_CONFIDENT_HITS, SelectableTool, rank_tools_by_prompt};
 use tinytools::{
     SandboxMode as TinyagentsSandboxMode, Tool, ToolCategory, ToolSpec, WorkspaceDescriptor,
 };
@@ -50,7 +49,7 @@ use super::prompt::{
     append_artifact_offload_contract, append_subagent_role_contract, dedup_tool_specs_by_name,
 };
 use super::provider::{
-    resolve_subagent_source, user_is_signed_in_to_composio, LazyToolkitResolver,
+    LazyToolkitResolver, resolve_subagent_source, user_is_signed_in_to_composio,
 };
 
 /// Runtime spawn-hierarchy gate decision for one delegation hop.
@@ -1032,7 +1031,7 @@ async fn run_typed_mode(
             };
 
             use crate::integrations::composio::client::{
-                create_composio_client, ComposioClientKind,
+                ComposioClientKind, create_composio_client,
             };
             let client_kind = match create_composio_client(arc_config.as_ref()) {
                 Ok(k) => Some(k),
@@ -1321,7 +1320,7 @@ async fn run_typed_mode(
     for tool in &dynamic_tools {
         allowed_names.insert(tool.name().to_string());
     }
-    let filtered_specs = crate::agent::harness::session::dedup_visible_tool_specs(filtered_specs);
+    let filtered_specs = crate::agent::session_host::dedup_visible_tool_specs(filtered_specs);
     let filtered_specs = dedup_tool_specs_by_name(&definition.id, filtered_specs);
 
     tracing::debug!(

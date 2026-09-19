@@ -2,7 +2,7 @@ use serde_json::{json, Map, Value};
 use tinyinference_llm::tool::ToolSchema;
 
 use crate::agent::harness::AgentDefinitionRegistry;
-use crate::agent::Agent;
+use crate::agent::OpenHumanSessionHost;
 use crate::config::rpc as config_rpc;
 use crate::core::all;
 use crate::security::{SecurityPolicy, ToolOperation};
@@ -208,11 +208,12 @@ async fn load_config_and_init_registry() -> Result<crate::config::Config, ToolCa
     Ok(config)
 }
 
-async fn build_orchestrator_agent() -> Result<Agent, ToolCallError> {
+async fn build_orchestrator_agent() -> Result<OpenHumanSessionHost, ToolCallError> {
     let config = load_config_and_init_registry().await?;
-    let mut agent = Agent::from_config_for_agent(&config, "orchestrator").map_err(|err| {
-        ToolCallError::Internal(format!("failed to build orchestrator agent: {err}"))
-    })?;
+    let mut agent =
+        OpenHumanSessionHost::from_config_for_agent(&config, "orchestrator").map_err(|err| {
+            ToolCallError::Internal(format!("failed to build orchestrator agent: {err}"))
+        })?;
     agent.fetch_connected_integrations().await;
     agent.refresh_delegation_tools();
     Ok(agent)
@@ -358,9 +359,10 @@ async fn run_subagent_tool(params: &Map<String, Value>) -> Result<Value, ToolCal
     let child_depth = chain_depth + 1;
 
     let config = load_config_and_init_registry().await?;
-    let mut agent = Agent::from_config_for_agent(&config, &agent_id).map_err(|err| {
-        ToolCallError::InvalidParams(format!("failed to build agent `{agent_id}`: {err}"))
-    })?;
+    let mut agent =
+        OpenHumanSessionHost::from_config_for_agent(&config, &agent_id).map_err(|err| {
+            ToolCallError::InvalidParams(format!("failed to build agent `{agent_id}`: {err}"))
+        })?;
     agent.set_event_context(
         format!("mcp:{}:{}", agent_id, uuid::Uuid::new_v4()),
         "mcp_server",

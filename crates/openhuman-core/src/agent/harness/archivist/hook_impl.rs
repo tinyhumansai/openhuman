@@ -1,7 +1,7 @@
 //! `PostTurnHook` implementation for `ArchivistHook`.
 
 use super::helpers::extract_lesson_from_tools;
-use super::store::{record_turn, ArchivedTurn};
+use super::store::{ArchivedTurn, record_turn};
 use super::types::ArchivistHook;
 use crate::agent::hooks::{PostTurnHook, TurnContext};
 use crate::memory::api::provider::EpisodicTurn;

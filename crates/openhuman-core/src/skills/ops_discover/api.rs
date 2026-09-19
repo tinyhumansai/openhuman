@@ -55,7 +55,7 @@ pub fn discovery_home_dir() -> Option<PathBuf> {
 ///
 /// Delegates to [`discover_workflows`] with the current user's home directory
 /// so user-scope skills (`~/.openhuman/skills/`, `~/.agents/skills/`) are
-/// surfaced for existing production callers (`agent::harness::session::builder`,
+/// surfaced for existing production callers (`agent::session_host::builder`,
 /// `channels::runtime::startup`). Previously this shim passed `None` for the
 /// home directory, which silently dropped user-installed skills from the
 /// main runtime path.

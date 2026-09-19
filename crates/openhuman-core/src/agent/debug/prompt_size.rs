@@ -15,7 +15,7 @@
 //! # What is measured
 //!
 //! Everything comes from [`super::dump_agent_prompt`], which builds a real
-//! agent through `Agent::from_config_for_agent` and renders the turn-1 prompt.
+//! agent through `OpenHumanSessionHost::from_config_for_agent` and renders the turn-1 prompt.
 //! No numbers are re-derived from a second code path, so the report cannot
 //! drift from the dump.
 //!

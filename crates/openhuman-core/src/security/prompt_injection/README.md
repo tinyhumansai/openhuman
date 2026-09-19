@@ -55,7 +55,7 @@ No `crate::*` or `crate::core::*` dependencies — the module is self-contained.
 
 Consumers call `enforce_prompt_input` and treat any non-`Allow` action as a rejection (returning a user-facing guard message):
 
-- `crates/openhuman-core/src/agent/harness/session/runtime.rs` — gates agent session turns; emits `prompt_injection_blocked`.
+- `crates/openhuman-core/src/agent/session_host/runtime.rs` — gates agent session turns; emits `prompt_injection_blocked`.
 - `crates/openhuman-core/src/agent/bus.rs` — screens inbound prompts on the agent event path.
 - `crates/openhuman-core/src/agent/tinyagents/host/security_gate.rs` — `screen_input` stage of the tinyagents security gate.
 - `crates/openhuman-core/src/mcp/registry/mod.rs` — `scan_tool_definition` on remote tool metadata at registration.

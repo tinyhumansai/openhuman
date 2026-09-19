@@ -3,7 +3,7 @@
 //! `SessionCacheFingerprint` that decides whether a cached agent can be
 //! reused for the next turn on a thread.
 
-use crate::agent::Agent;
+use crate::agent::OpenHumanSessionHost;
 use crate::config::Config;
 use serde_json::json;
 
@@ -49,7 +49,7 @@ pub(super) fn build_session_agent(
     model_override: Option<String>,
     temperature: Option<f64>,
     locale: Option<&str>,
-) -> Result<Agent, String> {
+) -> Result<OpenHumanSessionHost, String> {
     let mut effective = config.clone();
     if let Some(model) = model_override {
         effective.default_model = Some(model);
@@ -78,7 +78,7 @@ pub(super) fn build_session_agent(
         );
     }
 
-    let agent_result = Agent::from_config_for_agent(&effective, target_agent_id);
+    let agent_result = OpenHumanSessionHost::from_config_for_agent(&effective, target_agent_id);
 
     agent_result
         .map(|mut agent| {

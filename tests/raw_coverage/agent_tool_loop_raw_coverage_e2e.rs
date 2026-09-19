@@ -5,7 +5,7 @@ use openhuman_core::agent::bus::{
 };
 use openhuman_core::agent::debug::{dump_agent_prompt, DumpPromptOptions};
 use openhuman_core::tinytools_agent::dialect::XmlDialect;
-use openhuman_core::agent::{Agent, AgentBuilder};
+use openhuman_core::agent::{OpenHumanSessionHost, SessionHostBuilder};
 use openhuman_core::config::{AgentConfig, MultimodalConfig, MultimodalFileConfig};
 use openhuman_core::agent::prompts::LearnedContextData;
 use openhuman_core::agent::messages::ChatMessage;
@@ -582,7 +582,7 @@ async fn agent_builder_prompt_and_debug_dump_cover_public_session_paths() {
     config.max_tool_iterations = 2;
     config.max_history_messages = 4;
 
-    let agent = AgentBuilder::new()
+    let agent = SessionHostBuilder::new()
         .chat_model(provider)
         .tools(vec![StaticTool::ok("echo", "ok")])
         .memory(Arc::new(NoopMemory::default()))
@@ -623,7 +623,7 @@ async fn agent_turn_blank_final_response_is_typed_error() {
     let workspace = round15_workspace("blank-final");
     std::fs::create_dir_all(&workspace).unwrap();
     let provider = ScriptedModel::new(vec![ModelResponse::assistant("")]);
-    let mut agent = Agent::builder()
+    let mut agent = OpenHumanSessionHost::builder()
         .chat_model(provider)
         .tools(vec![])
         .memory(Arc::new(NoopMemory::default()))

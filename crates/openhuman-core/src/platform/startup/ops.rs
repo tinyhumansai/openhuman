@@ -1,11 +1,14 @@
 use std::path::Path;
+use tinyagents_session::transcript::{migrate_layout_if_needed, TranscriptLayoutMigration};
 
 /// Run one-shot workspace migrations needed at process startup.
 ///
 /// Failures are logged and do not abort startup. Individual migration helpers
 /// remain responsible for their own idempotency markers.
 pub fn run_workspace_migrations(workspace_dir: &Path) {
-    match crate::agent::harness::session::migrate_session_layout_if_needed(workspace_dir) {
+    let layout_migration: anyhow::Result<TranscriptLayoutMigration> =
+        migrate_layout_if_needed(workspace_dir);
+    match layout_migration {
         Ok(outcome) if outcome.already_done => {
             log::debug!("[runtime] session_layout migration already applied");
         }
@@ -55,3 +58,7 @@ pub fn run_workspace_migrations(workspace_dir: &Path) {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "ops_tests.rs"]
+mod tests;

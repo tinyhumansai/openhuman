@@ -178,7 +178,7 @@ pub enum ExpectedErrorKind {
     /// (`text_chars=0 thinking_chars=0 tool_calls=0`), so the agent harness
     /// bailed with the user-facing `"The model returned an empty response.
     /// Please try again."` string
-    /// (`agent::harness::session::turn`). This is a model/user-config
+    /// (`agent::session_host::turn`). This is a model/user-config
     /// condition — a quirky or broken local fine-tune that returns nothing,
     /// a provider that dropped the stream — not a code bug. The UI already
     /// surfaces the typed error and the user can retry; Sentry has no
@@ -1959,7 +1959,7 @@ fn is_filesystem_user_path_invalid_message(lower: &str) -> bool {
 /// Detect the agent harness's empty-provider-response bail.
 ///
 /// Anchored on the literal user-facing string emitted at
-/// `agent::harness::session::turn` —
+/// `agent::session_host::turn` —
 /// `"The model returned an empty response. Please try again."` — which is
 /// preserved verbatim as the provider/model returns a body with
 /// `text_chars=0 thinking_chars=0 tool_calls=0`.
@@ -2856,7 +2856,7 @@ fn all_provider_attempts_are_transient(message: &str) -> bool {
 /// `crate::agent::error::MAX_ITERATIONS_ERROR_PREFIX`).
 ///
 /// Defense-in-depth filter for the Sentry `before_send` hook: the primary
-/// suppression lives at the call sites in `agent::harness::session::
+/// suppression lives at the call sites in `agent::session_host::
 /// runtime::run_single`, `channels::runtime::dispatch`, and
 /// `web_chat::run_chat_task`, all of which now skip
 /// `report_error` when this variant is detected. This filter catches any

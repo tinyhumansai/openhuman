@@ -168,7 +168,7 @@ fn classify_string_recognises_top_up_and_out_of_credits_as_budget_exhausted() {
 fn classify_string_recognises_prompt_guard_rejection_as_safety_flagged() {
     // OPENHUMAN-TAURI-X regression: the exact phrase our prompt-injection
     // guard emits from `agent::bus::enforce_prompt_input` /
-    // `agent::harness::session::runtime` when it refuses to dispatch a
+    // `agent::session_host::runtime` when it refuses to dispatch a
     // turn. Was previously classified as Fatal, which paged Sentry for
     // every adversarial Gmail message the triage agent saw.
     for raw in [

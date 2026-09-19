@@ -20,6 +20,9 @@ pub(crate) static TEST_FORCED_RUN_CHAT_TASK_ERROR: Lazy<Mutex<Option<String>>> =
 pub struct TestRunChatTaskBlock {
     pub started: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub dropped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Lets a test end a parked turn without using cancellation, so it can
+    /// exercise terminal queue handling such as follow-up dispatch.
+    pub release: std::sync::Arc<tokio::sync::Notify>,
 }
 
 #[cfg(any(test, debug_assertions))]

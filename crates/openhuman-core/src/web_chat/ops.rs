@@ -24,6 +24,8 @@ pub use channel_ops::{
 
 pub use start_chat::start_chat;
 
+#[cfg(test)]
+pub use state::drain_queued_turns_for_test;
 #[cfg(any(test, debug_assertions))]
 pub use state::parallel_in_flight_entries_for_test;
 pub(super) use state::THREAD_SESSIONS;

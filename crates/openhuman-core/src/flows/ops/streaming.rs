@@ -55,7 +55,7 @@ impl FlowStreamTarget {
 /// (turn end). `source` is a short trace-attribution label (e.g.
 /// `"flows_build"`).
 pub(super) fn attach_flow_progress_bridge(
-    agent: &mut crate::agent::Agent,
+    agent: &mut crate::agent::OpenHumanSessionHost,
     target: &FlowStreamTarget,
     source: &str,
     config: &Config,

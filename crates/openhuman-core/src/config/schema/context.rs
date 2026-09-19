@@ -105,7 +105,7 @@ pub struct ContextConfig {
     /// Master switch for native tool-output compaction (Stage 1a). When
     /// `true` (the default), large structured tool outputs (build/test logs,
     /// diffs, JSON arrays) are content-aware compressed in
-    /// `Agent::execute_tool_call` *before* the [`Self::tool_result_budget_bytes`]
+    /// `OpenHumanSessionHost::execute_tool_call` *before* the [`Self::tool_result_budget_bytes`]
     /// byte cap and before they enter history. The compression never drops the
     /// first/last/high-signal lines and only ever shrinks output, so it is on
     /// by default.

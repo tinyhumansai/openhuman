@@ -48,7 +48,7 @@ async fn find_egress_web_event(
                         .and_then(|s| s.as_str())
                         == Some(marker) =>
             {
-                return ev
+                return ev;
             }
             Ok(_) => continue,
             Err(broadcast::error::RecvError::Lagged(_)) => continue,

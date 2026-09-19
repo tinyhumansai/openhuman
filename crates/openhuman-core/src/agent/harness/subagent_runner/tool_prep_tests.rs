@@ -58,7 +58,7 @@ fn unprefixed_delegate_name_overrides_are_treated_as_spawn_tools() {
 // ── Essential-action reservation (#6033) ────────────────────────────────
 
 use crate::agent::prompts::ConnectedIntegrationTool;
-use tinyagents_harness::tool::{rank_tools_by_prompt, SelectableTool};
+use tinyagents_harness::tool::{SelectableTool, rank_tools_by_prompt};
 
 fn action(name: &str) -> ConnectedIntegrationTool {
     ConnectedIntegrationTool {
@@ -275,7 +275,10 @@ fn gmail_read_prompt_keeps_a_content_returning_action() {
             names.contains(&"GMAIL_FETCH_EMAILS"),
             "prompt {prompt:?} must keep a content-returning action; got {names:?}"
         );
-        assert!(selected.len() <= 12, "prompt {prompt:?} exceeded the budget");
+        assert!(
+            selected.len() <= 12,
+            "prompt {prompt:?} exceeded the budget"
+        );
         assert_eq!(
             selected.len(),
             selected

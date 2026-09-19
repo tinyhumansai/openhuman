@@ -15,7 +15,11 @@ const LINE_LIMIT = 750;
 // their current size makes the gate monotonic: they cannot grow, no new
 // exception can appear, and deleting an entry is the only way to relax it.
 const LEGACY_LIMITS = new Map([
-  ["crates/openhuman-core/src/agent/harness/session/builder/factory.rs", 1552],
+  // Session-host factory still assembles the product's deliberately coupled
+  // provider, security, memory, tool and prompt policy.  Generic session
+  // state moved to tinyagents-runtime; this remaining composition is split in
+  // a follow-up without reintroducing an old harness/session exception.
+  ["crates/openhuman-core/src/agent/session_host/builder/factory.rs", 1245],
   ["crates/openhuman-core/src/agent/harness/subagent_runner/ops/runner.rs", 1769],
   ["crates/openhuman-core/src/tools/ops.rs", 1502],
   ["crates/openhuman-core/src/web_chat/progress_bridge.rs", 1547],

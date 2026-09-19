@@ -156,7 +156,7 @@ async fn no_registry_returns_clear_error() {
         .unwrap();
     // Either: registry uninitialised → clear init error, OR
     // registry was initialised by a previous test → "no parent context"
-    // because we're not running inside an Agent::turn. Both are
+    // because we're not running inside an OpenHumanSessionHost::turn. Both are
     // acceptable: the tool gracefully refuses.
     assert!(result.is_error);
 }

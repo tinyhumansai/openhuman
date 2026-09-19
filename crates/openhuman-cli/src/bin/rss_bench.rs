@@ -1,8 +1,8 @@
 //! `rss-bench` — steady-state RSS benchmark for an embedded `openhuman_core`
 //! agent roster (#5046).
 //!
-//! Mirrors the OpenCompany embedding contract: a bare [`Agent`] built directly
-//! via [`Agent::builder`] (no `CoreBuilder`, no RPC, no background services)
+//! Mirrors the OpenCompany embedding contract: a bare [`OpenHumanSessionHost`] built directly
+//! via [`OpenHumanSessionHost::builder`] (no `CoreBuilder`, no RPC, no background services)
 //! with an injected mock model, an in-process `"none"` memory backend, and a
 //! per-agent temp workspace. Builds a 1-agent and an 8-agent roster, runs one
 //! deterministic warm-up turn per agent to fault in lazy allocations, settles,
@@ -26,7 +26,7 @@
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use openhuman_core::agent::Agent;
+use openhuman_core::agent::OpenHumanSessionHost;
 use openhuman_core::memory::{Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts};
 use openhuman_core::platform::proc_metrics::{
     self, BenchReport, ProcSample, RosterResult, REPORT_SCHEMA_VERSION, RSS_BUDGET_KIB,
@@ -153,7 +153,7 @@ impl Memory for NoopMemory {
 /// A built roster plus the temp workspaces that must outlive it — dropping the
 /// `TempDir`s would delete the agents' workspaces mid-measurement.
 struct Roster {
-    agents: Vec<Agent>,
+    agents: Vec<OpenHumanSessionHost>,
     _workspaces: Vec<TempDir>,
 }
 
@@ -168,7 +168,7 @@ fn build_roster(n: usize) -> Result<Roster> {
 
         let memory: Arc<dyn Memory> = Arc::new(NoopMemory);
 
-        let agent = Agent::builder()
+        let agent = OpenHumanSessionHost::builder()
             .chat_model(Arc::new(MockModel))
             .tools(vec![Box::new(EchoTool)])
             .memory(memory)

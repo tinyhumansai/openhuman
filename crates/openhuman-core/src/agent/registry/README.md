@@ -136,7 +136,7 @@ orchestrator tool synthesis in `tools/orchestrator_tools.rs` and
 - `agent/harness/builtin_definitions.rs` — `load_builtins()` seeds the
   process-global `AgentDefinitionRegistry`; `agent/harness/definition/registry.rs`
   calls `validate_tier_hierarchy` again after workspace overrides merge.
-- `agent/harness/session/builder/factory.rs` —
+- `agent/session_host/builder/factory.rs` —
   `Agent::from_config_for_agent` falls back to `find_custom_in_config` +
   `definition_from_registry_entry` when an id is not in the harness registry.
 - `agent/schemas.rs` — `agent.graph_topologies` and `agent.registry_snapshot`

@@ -274,10 +274,10 @@ async fn shadow_compare_journal_projection(
         Ok(observations) => observations,
         Err(err) => {
             log::warn!(
-                    "[agent-tracing][journal-shadow] read failed request_id={} journal_run_id={} err={err}",
-                    request_id,
-                    journal_run_id
-                );
+                "[agent-tracing][journal-shadow] read failed request_id={} journal_run_id={} err={err}",
+                request_id,
+                journal_run_id
+            );
             return None;
         }
     };

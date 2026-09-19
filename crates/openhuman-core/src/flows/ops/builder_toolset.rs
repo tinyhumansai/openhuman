@@ -66,13 +66,13 @@ pub(super) const FLOWS_BUILD_HIDDEN_TOOLS: &[&str] = &[
 /// Strip the live-run / resume / cancel tool(s) in [`FLOWS_BUILD_HIDDEN_TOOLS`]
 /// from `agent`'s callable set for the direct `flows_build` RPC path.
 ///
-/// Delegates to [`crate::agent::Agent::hide_tools`], which removes
+/// Delegates to [`crate::agent::OpenHumanSessionHost::hide_tools`], which removes
 /// the names from the builder's (already narrow) visible belt and rebuilds the
 /// session's `ToolPolicySession` so they resolve to `Deny` at the tool-call
 /// boundary — a hard execution guarantee even if the model requests the tool.
 /// The authoring tools (`propose`/`revise`/`save`/`dry_run`/reads/`create_workflow`/
 /// `duplicate_flow`) stay visible and untouched, so the turn never fail-closes.
-pub(super) fn restrict_builder_toolset(agent: &mut crate::agent::Agent) {
+pub(super) fn restrict_builder_toolset(agent: &mut crate::agent::OpenHumanSessionHost) {
     tracing::debug!(
         target: "flows",
         hidden = ?FLOWS_BUILD_HIDDEN_TOOLS,
@@ -129,7 +129,7 @@ pub(super) const FLOWS_BUILD_COPILOT_HIDDEN_TOOLS: &[&str] = &["run_workflow", "
 /// Strip only [`FLOWS_BUILD_COPILOT_HIDDEN_TOOLS`] from `agent`'s callable set
 /// on the streaming `flows_build` path (copilot pane with a real approval
 /// surface) — see that constant's doc for the full safety rationale.
-pub(super) fn restrict_builder_toolset_for_copilot(agent: &mut crate::agent::Agent) {
+pub(super) fn restrict_builder_toolset_for_copilot(agent: &mut crate::agent::OpenHumanSessionHost) {
     tracing::info!(
         target: "flows",
         hidden = ?FLOWS_BUILD_COPILOT_HIDDEN_TOOLS,

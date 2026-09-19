@@ -2,8 +2,10 @@
 //! already in flight on a thread, and the request- or thread-scoped
 //! cancellation paths that tear them down.
 
+use std::sync::Arc;
 use std::time::Duration;
 
+use tinyagents_harness::run_queue::RunQueue;
 use tokio_util::sync::CancellationToken;
 
 use crate::core::socketio::WebChannelEvent;
@@ -43,7 +45,7 @@ pub(crate) async fn spawn_parallel_turn(
     let user_message = message.to_string();
     // Forked turns don't participate in the steer/followup/collect queue, but
     // `run_chat_task` requires a queue handle — give each its own.
-    let run_queue = crate::agent::harness::run_queue::RunQueue::new();
+    let run_queue = Arc::new(RunQueue::new());
 
     let handle = tokio::spawn(crate::core::runtime::context::CoreContext::propagate(
         async move {
@@ -93,16 +95,16 @@ pub(crate) async fn spawn_parallel_turn(
                 }
                 Some(Err(err)) => {
                     log::warn!(
-                    "[web-channel] parallel run_chat_task failed client_id={} thread_id={} request_id={} error={}",
-                    client_id_task,
-                    thread_id_task,
-                    request_id_task,
-                    err
-                );
+                        "[web-channel] parallel run_chat_task failed client_id={} thread_id={} request_id={} error={}",
+                        client_id_task,
+                        thread_id_task,
+                        request_id_task,
+                        err
+                    );
                     let detailed = format!(
-                    "parallel run_chat_task failed client_id={} thread_id={} request_id={} error={}",
-                    client_id_task, thread_id_task, request_id_task, err
-                );
+                        "parallel run_chat_task failed client_id={} thread_id={} request_id={} error={}",
+                        client_id_task, thread_id_task, request_id_task, err
+                    );
                     let classified = classify_inference_error(&err);
                     let classified_type = classified.error_type;
 
@@ -164,10 +166,10 @@ pub(crate) async fn spawn_parallel_turn(
                 }
                 None => {
                     log::info!(
-                    "[web-channel] parallel turn cancelled cooperatively thread_id={} request_id={}",
-                    thread_id_task,
-                    request_id_task
-                );
+                        "[web-channel] parallel turn cancelled cooperatively thread_id={} request_id={}",
+                        thread_id_task,
+                        request_id_task
+                    );
                 }
             }
 
