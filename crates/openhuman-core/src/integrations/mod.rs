@@ -14,6 +14,7 @@ pub mod tools;
 pub mod types;
 
 pub use client::{build_client, pricing_for_config, IntegrationClient};
+pub use tinytools::ToolScope;
 pub use types::{
     BackendResponse, IntegrationPricing, IntegrationPricingEntry, PricingIntegrations,
 };

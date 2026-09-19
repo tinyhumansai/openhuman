@@ -122,7 +122,8 @@ async fn owned_spawn_shutdown_kills_child_and_clears_marker() {
     config.workspace_dir = tmp.path().to_path_buf();
     config.config_path = tmp.path().join("config.toml");
 
-    let service = LocalAiService::new(&config);
+    let runtime = openhuman_core::inference::local_runtime_config(&config);
+    let service = LocalAiService::new(&runtime);
 
     // Spawn a long-running stub process (acts as the "owned ollama" child).
     let mut cmd = if cfg!(windows) {
@@ -152,7 +153,7 @@ async fn owned_spawn_shutdown_kills_child_and_clears_marker() {
     );
 
     // Exercise the public shutdown hook.
-    service.shutdown_owned_ollama(&config).await;
+    service.shutdown_owned_ollama(&runtime).await;
 
     // Marker must be gone.
     assert!(
@@ -201,7 +202,8 @@ async fn external_adoption_shutdown_leaves_external_process_running() {
     config.workspace_dir = tmp.path().to_path_buf();
     config.config_path = tmp.path().join("config.toml");
 
-    let service = LocalAiService::new(&config);
+    let runtime = openhuman_core::inference::local_runtime_config(&config);
+    let service = LocalAiService::new(&runtime);
 
     // `owned_ollama` starts as None — external daemon was adopted, not spawned.
     assert!(
@@ -230,7 +232,7 @@ async fn external_adoption_shutdown_leaves_external_process_running() {
     let marker_path = marker_path_for(&config);
 
     // Call shutdown with no owned child.
-    service.shutdown_owned_ollama(&config).await;
+    service.shutdown_owned_ollama(&runtime).await;
 
     // Marker was never written, so it remains absent.
     assert!(
@@ -317,9 +319,10 @@ async fn crash_recovery_stale_marker_does_not_break_service() {
     );
 
     // A freshly constructed service must not panic and diagnostics must succeed.
-    let service = LocalAiService::new(&config);
+    let runtime = openhuman_core::inference::local_runtime_config(&config);
+    let service = LocalAiService::new(&runtime);
     let diag = service
-        .diagnostics(&config)
+        .diagnostics(&runtime)
         .await
         .expect("diagnostics must succeed even with a stale spawn marker");
 

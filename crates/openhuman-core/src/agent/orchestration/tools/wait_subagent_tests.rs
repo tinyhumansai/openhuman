@@ -49,13 +49,13 @@ fn running_wait_message_includes_agent_id_and_tick_instruction() {
 #[test]
 fn timeout_policy_is_owned_not_inherited() {
     let tool = WaitSubagentTool::new();
-    assert!(matches!(
+    assert_eq!(
         tool.timeout_policy(&json!({})),
-        ToolTimeout::Secs(DEFAULT_TIMEOUT_SECS)
-    ));
+        ToolTimeout::Millis(DEFAULT_TIMEOUT_SECS * 1000)
+    );
     assert!(matches!(
         tool.timeout_policy(&json!({"timeout_secs": 1800})),
-        ToolTimeout::Secs(1800)
+        ToolTimeout::Millis(1_800_000)
     ));
 }
 
@@ -72,10 +72,10 @@ fn policy_and_wait_resolve_the_same_seconds() {
         json!({"timeout_secs": 99_999}),
         json!({"timeout_secs": 0}),
     ] {
-        let ToolTimeout::Secs(policy) = tool.timeout_policy(&args) else {
-            panic!("wait_subagent must return an explicit Secs policy");
+        let ToolTimeout::Millis(policy) = tool.timeout_policy(&args) else {
+            panic!("wait_subagent must return an explicit Millis policy");
         };
-        assert_eq!(policy, requested_timeout_secs(&args));
+        assert_eq!(policy, requested_timeout_secs(&args) * 1000);
     }
 }
 

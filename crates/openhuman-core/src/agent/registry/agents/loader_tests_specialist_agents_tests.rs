@@ -214,10 +214,16 @@ fn specialist_agents_are_registered_with_narrow_tools() {
     assert!(matches!(scheduler.model, ModelSpec::Hint(ref h) if h == "burst"));
     match &scheduler.tools {
         ToolScope::Named(names) => {
-            for required in ["current_time", "cron_add", "cron_list", "cron_remove"] {
+            for required in ["current_time", "resolve_time", "cron"] {
                 assert!(
                     names.iter().any(|name| name == required),
                     "scheduler_agent missing `{required}`"
+                );
+            }
+            for legacy in ["cron_add", "cron_list", "cron_remove"] {
+                assert!(
+                    !names.iter().any(|name| name == legacy),
+                    "scheduler_agent must use collapsed `cron`, not `{legacy}`"
                 );
             }
         }

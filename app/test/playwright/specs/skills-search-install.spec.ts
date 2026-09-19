@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test';
 import {
   bootRuntimeReadyGuestPage,
   dismissWalkthroughIfPresent,
-  signInViaCallbackToken,
+  signInViaBypassUser,
   waitForAppReady,
 } from '../helpers/core-rpc';
 
@@ -54,7 +54,7 @@ async function openSkillsTab(page: import('@playwright/test').Page, userId: stri
     await route.continue();
   });
   await bootRuntimeReadyGuestPage(page);
-  await signInViaCallbackToken(page, userId);
+  await signInViaBypassUser(page, userId);
   await page.evaluate(() => {
     try {
       localStorage.setItem('openhuman:walkthrough_completed', 'true');
@@ -126,13 +126,17 @@ test.describe('Skills explorer — the search box debounces', () => {
 
 test.describe('Skills explorer — typing narrows what is on screen', () => {
   test('a query with no matches leaves no catalog rows', async ({ page }) => {
+    // A cold registry browse may need to refresh its upstream cache. Keep the
+    // test's own timeout above that request's budget so a slow-but-successful
+    // refresh is not mistaken for an empty catalog.
+    test.setTimeout(90_000);
     await openSkillsTab(page, 'pw-skills-nomatch');
 
     // Baseline: the catalog has something in it.
     await expect(page.getByRole('row').first()).toBeVisible({ timeout: 20_000 });
 
     const rows = page.locator('[data-testid^="registry-install-"]');
-    await expect(rows.first()).toBeVisible({ timeout: 20_000 });
+    await expect(rows.first()).toBeVisible({ timeout: 45_000 });
 
     await searchBox(page).fill('zzzz-no-such-skill-zzzz');
     // Any install button is a catalog row; none should survive this query.

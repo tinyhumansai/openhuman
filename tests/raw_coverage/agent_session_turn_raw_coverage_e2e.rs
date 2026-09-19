@@ -177,7 +177,7 @@ impl ChatModel<()> for ScriptedModel {
         let mut items = vec![ModelStreamItem::Started];
         items.extend(self.stream_events.iter().cloned());
         items.push(ModelStreamItem::Completed(response));
-        Ok(Box::pin(futures::stream::iter(items)))
+        Ok(ModelStream::new(Box::pin(futures::stream::iter(items))))
     }
 }
 
@@ -617,7 +617,7 @@ fn agent_with(
     model: Arc<dyn ChatModel<()>>,
     tools: Vec<Box<dyn Tool>>,
     workspace_path: PathBuf,
-    dispatcher: Box<dyn openhuman_core::tinytools_agent::dialect::ToolDialect>,
+    dispatcher: Box<dyn tinytools_agent::dialect::ToolDialect>,
     config: AgentConfig,
     context_config: ContextConfig,
 ) -> Agent {

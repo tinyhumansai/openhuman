@@ -256,22 +256,23 @@ async fn local_service_public_inference_assets_and_shutdown_use_loopback_ollama(
     config.local_ai.preload_stt_model = false;
     config.local_ai.preload_tts_voice = false;
 
-    let service = LocalAiService::new(&config);
+    let runtime = openhuman_core::inference::local_runtime_config(&config);
+    let service = LocalAiService::new(&runtime);
     let prompt = service
-        .prompt(&config, "Say hi", Some(8), true)
+        .prompt(&runtime, "Say hi", Some(8), true)
         .await
         .expect("prompt");
     assert_eq!(prompt, "chat:gemma3:1b-it-qat");
 
     let summarized = service
-        .summarize(&config, "one two three", Some(16))
+        .summarize(&runtime, "one two three", Some(16))
         .await
         .expect("summarize");
     assert_eq!(summarized, "chat:gemma3:1b-it-qat");
 
     let completion = service
         .inline_complete_interactive(
-            &config,
+            &runtime,
             "OpenHuman is",
             "concise",
             Some("short"),
@@ -282,7 +283,7 @@ async fn local_service_public_inference_assets_and_shutdown_use_loopback_ollama(
         .expect("inline");
     assert_eq!(completion, "chat:gemma3:1b-it-qat");
 
-    let assets = service.assets_status(&config).await.expect("assets");
+    let assets = service.assets_status(&runtime).await.expect("assets");
     assert!(assets.ollama_available);
     assert_eq!(assets.chat.state, "ready");
     assert_eq!(assets.embedding.state, "ready");
@@ -291,7 +292,7 @@ async fn local_service_public_inference_assets_and_shutdown_use_loopback_ollama(
         "ready" | "ondemand" | "missing"
     ));
 
-    let diagnostics = service.diagnostics(&config).await.expect("diagnostics");
+    let diagnostics = service.diagnostics(&runtime).await.expect("diagnostics");
     assert_eq!(diagnostics["ollama_running"], true);
     assert_eq!(diagnostics["expected"]["chat_found"], true);
     assert!(
@@ -302,18 +303,19 @@ async fn local_service_public_inference_assets_and_shutdown_use_loopback_ollama(
             >= 4
     );
 
-    let progress = service.downloads_progress(&config).await.expect("progress");
+    let progress = service.downloads_progress(&runtime).await.expect("progress");
     assert_eq!(progress.chat.id, "gemma3:1b-it-qat");
     assert_eq!(progress.embedding.id, "bge-m3");
 
     let disabled_config = Config::default();
+    let disabled_runtime = openhuman_core::inference::local_runtime_config(&disabled_config);
     let disabled_err = service
-        .prompt(&disabled_config, "disabled", None, false)
+        .prompt(&disabled_runtime, "disabled", None, false)
         .await
         .expect_err("disabled prompt");
     assert_eq!(disabled_err, "local ai is disabled");
 
-    service.shutdown_owned_ollama(&config).await;
+    service.shutdown_owned_ollama(&runtime).await;
     assert!(!service.has_owned_ollama());
 }
 

@@ -130,13 +130,13 @@ use openhuman_core::inference::provider::factory::{
     BYOK_INCOMPLETE_SENTINEL,
 };
 use openhuman_core::inference::provider::OpenHumanBackendModel;
-use openhuman_core::inference::provider::{
+use tinyinference_providers::{
     is_openai_compatible_unknown_model_message, is_provider_config_rejection_message,
 };
 use tinyinference_core::sanitize::{
     format_anyhow_chain, sanitize_api_error, scrub_secret_patterns,
 };
-use tinyinference_llm::classification::is_budget_exhausted_message;
+use openhuman_core::hosted::billing::classify::is_budget_exhausted_message;
 use openhuman_core::inference::provider::{
     ChatResponse, ProviderRuntimeOptions, ToolCall, UsageInfo,
 };
@@ -1317,16 +1317,17 @@ async fn inference_public_helpers_cover_context_windows_and_sentiment_fallbacks(
         .expect("artifact filename")
         .contains(':'));
 
-    let service = LocalAiService::new(&local_config);
+    let runtime = openhuman_core::inference::local_runtime_config(&local_config);
+    let service = LocalAiService::new(&runtime);
     assert!(!service.has_owned_ollama());
     assert_eq!(service.status().state, "idle");
     service.mark_degraded("mock provider unavailable".into());
     assert_eq!(service.status().state, "degraded");
-    service.reset_to_idle(&local_config);
+    service.reset_to_idle(&runtime);
     assert_eq!(service.status().state, "idle");
-    service.mark_disabled(&local_config);
+    service.mark_disabled(&runtime);
     assert_eq!(service.status().state, "disabled");
-    service.bootstrap(&local_config).await;
+    service.bootstrap(&runtime).await;
     assert_eq!(service.status().state, "disabled");
 
     let global_service = local_ai_global(&local_config);
@@ -1719,13 +1720,13 @@ async fn inference_voice_stt_and_tts_frontdoors_cover_validation_and_mocked_runt
 
     let empty_audio = transcribe_cloud(&config, "   ", &opts)
         .await
-        .expect_err("empty audio is rejected before auth lookup");
-    assert!(empty_audio.contains("audio_base64 is required"));
+        .expect_err("cloud transcription requires backend auth");
+    assert!(empty_audio.contains("sign in first"));
 
     let invalid_audio = transcribe_cloud(&config, "not base64!", &opts)
         .await
-        .expect_err("invalid base64 is rejected before auth lookup");
-    assert!(invalid_audio.contains("invalid base64 audio"));
+        .expect_err("cloud transcription checks auth before the payload");
+    assert!(invalid_audio.contains("sign in first"));
 
     let missing_session = transcribe_cloud(
         &config,

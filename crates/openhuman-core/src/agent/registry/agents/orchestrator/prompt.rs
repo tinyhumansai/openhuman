@@ -488,32 +488,38 @@ fn format_connected_mcp_block(
         } else {
             s.display_name.as_str()
         };
-        // The registry/install `description` is UNTRUSTED free-form metadata.
+        // The registry/install description and instructions are UNTRUSTED
+        // free-form metadata.
         // It is interpolated into the orchestrator system prompt verbatim, so
         // run it through the same strip-control + strip-instruction-fence +
         // byte-bound pipeline used for remote tool metadata before trusting it
-        // (a malicious description could otherwise smuggle routing-overriding
+        // (malicious metadata could otherwise smuggle routing-overriding
         // instructions into the prompt). Flatten newlines/tabs so a single
         // list item can't be broken or hijacked across lines.
-        let desc_raw = s
+        let capability_raw = s
             .description
             .as_deref()
-            .filter(|description| !description.trim().is_empty())
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                s.instructions
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+            })
             .unwrap_or("")
             .trim();
-        let desc = if desc_raw.is_empty() {
+        let capability = if capability_raw.is_empty() {
             String::new()
         } else {
-            crate::util::sanitize::sanitize_for_llm(desc_raw, 240)
+            crate::util::sanitize::sanitize_for_llm(capability_raw, 240)
                 .replace(['\n', '\t'], " ")
                 .trim()
                 .to_string()
         };
-        if !desc.is_empty() {
-            let _ = writeln!(out, "- **{name}** (`{}`): {desc}", s.qualified_name);
+        if !capability.is_empty() {
+            let _ = writeln!(out, "- **{name}** (`{}`): {capability}", s.qualified_name);
         } else {
-            // No registry description — fall back to a tool-count hint so the
-            // line still conveys the server has callable capability.
+            // No registry capability metadata — fall back to a tool-count
+            // hint so the line still conveys the server has callable capability.
             let _ = writeln!(
                 out,
                 "- **{name}** (`{}`) — {} tool{} available",

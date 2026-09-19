@@ -1694,6 +1694,7 @@ async fn orchestrator_tool_synthesis_covers_agent_and_integration_delegation_edg
         .expect("blank prompt returns tool error after slug normalization");
     assert!(blank_prompt.is_error);
     assert!(blank_prompt.output().contains("prompt"));
+
 }
 
 #[tokio::test]

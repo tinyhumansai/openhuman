@@ -210,6 +210,26 @@ export async function clickSend(): Promise<boolean> {
   }
 }
 
+/** Approve a tool call parked by the default desktop approval policy. */
+export async function approvePendingToolCall(timeoutMs = 20_000): Promise<boolean> {
+  try {
+    return await browser.waitUntil(
+      async () =>
+        (await browser.execute(() => {
+          const button = document.querySelector<HTMLButtonElement>(
+            '[data-analytics-id="chat-approval-approve-once"]'
+          );
+          if (!button || button.disabled) return false;
+          button.click();
+          return true;
+        })) as boolean,
+      { timeout: timeoutMs, interval: 200 }
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** Poll the Redux store until `socketStatus === 'connected'` for the
  *  active user.  Chat sends are blocked by `composerSendDecision` while
  *  the Socket.IO connection to the in-process Rust core is not yet up —

@@ -20,11 +20,11 @@ fn npm_timeout_policy_unbounded_by_default() {
 fn npm_timeout_policy_enforces_and_caps_explicit() {
     assert_eq!(
         npm_timeout_policy(&json!({"timeout_secs": 300})),
-        ToolTimeout::Secs(300)
+        ToolTimeout::Millis(300_000)
     );
     assert_eq!(
         npm_timeout_policy(&json!({"timeout_secs": 99999})),
-        ToolTimeout::Secs(NPM_TIMEOUT_MAX_SECS)
+        ToolTimeout::Millis(NPM_TIMEOUT_MAX_SECS * 1000)
     );
 }
 

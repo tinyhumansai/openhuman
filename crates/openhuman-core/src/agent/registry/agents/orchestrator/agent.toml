@@ -222,6 +222,10 @@ hint = "coding"
 # `integrations_agent` — the orchestrator never calls composio_list_tools
 # / composio_execute directly.
 named = [
+    # Tool packs add this proxy to the visible set when they withhold member
+    # schemas. The hosted runtime also enforces this definition as its dispatch
+    # allowlist, so the proxy must be declared here as well as injected there.
+    "use_skill",
     "read_workspace_state",
     "ask_user_clarification",
 # Direct coding surface. The Master Agent owns the normal inspect → edit →

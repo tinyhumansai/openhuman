@@ -61,7 +61,7 @@ mod wait_subagent;
 #[path = "tools/worker_thread.rs"]
 mod worker_thread;
 
-pub(crate) use dispatch::{dispatch_subagent, DelegationDispatch};
+pub(crate) use dispatch::{dispatch_subagent, DelegationDispatch, UseSkillDispatch};
 
 pub(crate) use agent_prepare_context::AgentPrepareContextDispatch;
 pub use agent_prepare_context::{

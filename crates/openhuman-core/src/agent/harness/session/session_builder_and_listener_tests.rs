@@ -521,8 +521,24 @@ async fn turn_without_tools_returns_text() {
 /// embedding OpenHuman as a library (e.g. the OpenCompany hosting platform's
 /// cost-metering hook) can read usage after a turn while the existing
 /// web-channel `take_last_turn_usage_totals` drain path still works.
-#[tokio::test]
-async fn last_turn_usage_is_public_and_non_draining() {
+#[test]
+fn last_turn_usage_is_public_and_non_draining() {
+    std::thread::Builder::new()
+        .name("last-turn-usage-test".to_string())
+        .stack_size(crate::core::runtime::AGENT_WORKER_STACK_BYTES)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build large-stack test runtime")
+                .block_on(last_turn_usage_is_public_and_non_draining_inner());
+        })
+        .expect("spawn large-stack last-turn usage test thread")
+        .join()
+        .expect("large-stack last-turn usage test thread panicked");
+}
+
+async fn last_turn_usage_is_public_and_non_draining_inner() {
     // The embedding seam fails loudly when unwired; before the memory
     // extraction this was a direct call and needed no setup.
     let workspace = tempfile::TempDir::new().expect("temp workspace");

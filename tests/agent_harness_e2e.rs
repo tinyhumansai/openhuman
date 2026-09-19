@@ -2362,7 +2362,6 @@ mod streaming_support {
     use openhuman_core::agent::Agent;
     use openhuman_core::config::{AgentConfig, ContextConfig};
     use openhuman_core::memory::Memory;
-    use openhuman_core::tinytools_agent::dialect::NativeDialect;
     use serde_json::json;
     use std::collections::VecDeque;
     use std::path::{Path, PathBuf};
@@ -2379,6 +2378,7 @@ mod streaming_support {
         PermissionLevel, Tool, ToolCallOptions, ToolContent, ToolResult,
         ToolScope as RuntimeToolScope,
     };
+    use tinytools_agent::dialect::NativeDialect;
 
     // ── ScriptedProvider ────────────────────────────────────────────────────
     // Copied (minimal) from tests/agent_session_turn_raw_coverage_e2e.rs:76-152.
@@ -2423,7 +2423,7 @@ mod streaming_support {
             let mut items = vec![ModelStreamItem::Started];
             items.extend(self.stream_events.iter().cloned());
             items.push(ModelStreamItem::Completed(response));
-            Ok(Box::pin(futures::stream::iter(items)))
+            Ok(ModelStream::new(Box::pin(futures::stream::iter(items))))
         }
     }
 
@@ -2453,6 +2453,8 @@ mod streaming_support {
             resolved_model: None,
             continue_turn: None,
             served_from_cache: false,
+            correlation: None,
+            resolved_route: None,
         }
     }
 
@@ -4154,8 +4156,8 @@ mod tool_policy_boundary_placement {
     use openhuman_core::memory::{
         Memory, MemoryCategory, MemoryEntry, NamespaceSummary as MemoryNamespaceSummary, RecallOpts,
     };
-    use openhuman_core::tinytools_agent::dialect::NativeDialect;
     use tinytools::{PermissionLevel, Tool, ToolResult};
+    use tinytools_agent::dialect::NativeDialect;
 
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};

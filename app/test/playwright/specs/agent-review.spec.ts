@@ -3,17 +3,17 @@ import { expect, test } from '@playwright/test';
 import {
   bootRuntimeReadyGuestPage,
   dismissWalkthroughIfPresent,
-  signInViaCallbackToken,
+  signInViaBypassUser,
   waitForAppReady,
 } from '../helpers/core-rpc';
 
 async function bootReviewedFlow(page: import('@playwright/test').Page, userId: string) {
   await bootRuntimeReadyGuestPage(page);
   try {
-    await signInViaCallbackToken(page, userId);
+    await signInViaBypassUser(page, userId);
   } catch {
     await bootRuntimeReadyGuestPage(page);
-    await signInViaCallbackToken(page, userId);
+    await signInViaBypassUser(page, userId);
   }
   await waitForAppReady(page);
   await dismissWalkthroughIfPresent(page);

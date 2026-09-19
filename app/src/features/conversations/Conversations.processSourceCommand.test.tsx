@@ -82,6 +82,10 @@ vi.mock('../../services/api/threadApi', () => ({
   },
 }));
 
+vi.mock('../../hooks/useUsageState', () => ({ useUsageState: mockUseUsageState }));
+
+vi.mock('../../components/chat/ChatNewWindowHero', () => ({ default: () => null }));
+
 vi.mock('../../lib/coreState/store', () => ({
   getCoreStateSnapshot: vi.fn(() => ({
     isBootstrapping: false,

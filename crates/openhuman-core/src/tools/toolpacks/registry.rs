@@ -280,12 +280,7 @@ pub const PACKS: &[ToolPack] = &[
         summary: "Reminders and scheduled jobs: create, list, update, remove, run and inspect one-shot and recurring jobs.",
         tools: &[
             "schedule_task",
-            "cron_add",
-            "cron_list",
-            "cron_remove",
-            "cron_update",
-            "cron_run",
-            "cron_runs",
+            "cron",
         ],
         owners: &["scheduler_agent"],
     },

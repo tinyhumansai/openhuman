@@ -81,6 +81,8 @@ fn project_managed_usage_recovers_charged_and_cached() {
         resolved_model: None,
         continue_turn: None,
         served_from_cache: false,
+        correlation: None,
+        resolved_route: None,
     };
 
     let projected = project_managed_usage(response);
@@ -122,6 +124,8 @@ fn project_managed_usage_is_noop_without_envelope() {
         resolved_model: None,
         continue_turn: None,
         served_from_cache: false,
+        correlation: None,
+        resolved_route: None,
     };
 
     let projected = project_managed_usage(response);

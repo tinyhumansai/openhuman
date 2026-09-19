@@ -13,9 +13,9 @@ fn fresh(thread_id: &str) -> (tempfile::TempDir, TurnStateMirror) {
 
 // ── Interrupted-partial → session transcript wiring (Task 1) ──────────
 
-use crate::agent::messages::ChatMessage;
 use tinyagents_session::transcript::{
-    self, read_transcript, read_transcript_display, DisplayRecord, TranscriptMeta,
+    self, read_transcript, read_transcript_display, DisplayRecord, TranscriptMessage,
+    TranscriptMeta,
 };
 
 fn seed_root_transcript(workspace: &std::path::Path, thread_id: &str) -> std::path::PathBuf {
@@ -38,8 +38,13 @@ fn seed_root_transcript(workspace: &std::path::Path, thread_id: &str) -> std::pa
         thread_id: Some(thread_id.to_string()),
         task_id: None,
     };
-    transcript::write_transcript(&path, &[ChatMessage::user("hello there")], &meta, None)
-        .expect("seed transcript");
+    transcript::write_transcript(
+        &path,
+        &[TranscriptMessage::new("user", "hello there")],
+        &meta,
+        None,
+    )
+    .expect("seed transcript");
     path
 }
 

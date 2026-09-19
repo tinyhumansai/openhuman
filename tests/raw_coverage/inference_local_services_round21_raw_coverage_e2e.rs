@@ -116,9 +116,10 @@ async fn local_services_cover_mocked_inference_assets_speech_and_ops_entry_point
     let _ollama_bin = EnvVarGuard::unset("OLLAMA_BIN");
     let _piper_bin = EnvVarGuard::unset("PIPER_BIN");
 
-    let service = LocalAiService::new(&config);
+    let runtime = openhuman_core::inference::local_runtime_config(&config);
+    let service = LocalAiService::new(&runtime);
 
-    let initial_assets = service.assets_status(&config).await.expect("assets");
+    let initial_assets = service.assets_status(&runtime).await.expect("assets");
     assert!(initial_assets.ollama_available);
     assert_eq!(initial_assets.chat.state, "ready");
     assert_eq!(initial_assets.vision.state, "disabled");
@@ -127,14 +128,14 @@ async fn local_services_cover_mocked_inference_assets_speech_and_ops_entry_point
 
     assert_eq!(
         service
-            .prompt(&config, " say hello ", Some(12), true)
+            .prompt(&runtime, " say hello ", Some(12), true)
             .await
             .expect("prompt"),
         "generated: say hello"
     );
     assert_eq!(
         service
-            .summarize(&config, "decision: ship tests", Some(32))
+            .summarize(&runtime, "decision: ship tests", Some(32))
             .await
             .expect("summary"),
         "generated: Summarize this text in concise bullet points. Preserve decisions and commitments.\n\ndecision: ship tests"
@@ -142,7 +143,7 @@ async fn local_services_cover_mocked_inference_assets_speech_and_ops_entry_point
     assert_eq!(
         service
             .inline_complete(
-                &config,
+                &runtime,
                 "The patch",
                 "concise",
                 Some("technical"),
@@ -154,9 +155,9 @@ async fn local_services_cover_mocked_inference_assets_speech_and_ops_entry_point
         "adds tests"
     );
 
-    let _progress = service.downloads_progress(&config).await.expect("progress");
+    let _progress = service.downloads_progress(&runtime).await.expect("progress");
     let after_tts = service
-        .download_asset(&config, "tts")
+        .download_asset(&runtime, "tts")
         .await
         .expect("download tts");
     assert_eq!(after_tts.tts.state, "ready");
@@ -166,8 +167,8 @@ async fn local_services_cover_mocked_inference_assets_speech_and_ops_entry_point
     // proxy with no local binary this offline test can stub.
 
     let tts_output = tmp.path().join("out").join("speech.wav");
-    let tts = service
-        .tts(
+    let tts = openhuman_core::inference::host_runtime::service::tts(
+        &service,
             &config,
             "hello from piper",
             Some(tts_output.to_string_lossy().as_ref()),

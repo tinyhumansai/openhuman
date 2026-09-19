@@ -109,10 +109,12 @@ async fn run_recorded_route(
             .await
             .expect("unary route run succeeds");
     }
-    slot.lock()
+    let resolved = slot
+        .lock()
         .expect("route slot")
         .clone()
-        .expect("middleware records canonical response route")
+        .expect("middleware records canonical response route");
+    resolved
 }
 
 fn scripted_success() -> Arc<dyn ChatModel<()>> {

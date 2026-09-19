@@ -176,7 +176,7 @@ impl ChatModel<()> for ScriptedModel {
             ModelStreamItem::Started,
             ModelStreamItem::Completed(self.pop()),
         ];
-        Ok(Box::pin(futures::stream::iter(items)))
+        Ok(ModelStream::new(Box::pin(futures::stream::iter(items))))
     }
 }
 
@@ -231,7 +231,7 @@ fn agent_with(
     model: Arc<dyn ChatModel<()>>,
     tools: Vec<Box<dyn Tool>>,
     workspace_path: PathBuf,
-    dispatcher: Box<dyn openhuman_core::tinytools_agent::dialect::ToolDialect>,
+    dispatcher: Box<dyn tinytools_agent::dialect::ToolDialect>,
 ) -> Agent {
     Agent::builder()
         .chat_model(model)

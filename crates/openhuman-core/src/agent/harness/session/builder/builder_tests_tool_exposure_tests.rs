@@ -7,7 +7,7 @@ fn visible_names(agent_id: &str) -> std::collections::HashSet<String> {
         .get(agent_id)
         .cloned()
         .unwrap_or_else(|| panic!("built-in agent definition not found: {agent_id}"));
-    let agent = crate::agent::Agent::from_config_with_definition(&config, &definition, None, None)
+    let agent = crate::agent::Agent::from_config_with_definition(&config, &definition)
         .unwrap_or_else(|e| panic!("{agent_id} session build: {e}"));
     agent
         .visible_tool_specs_arc()
@@ -24,9 +24,8 @@ fn resetting_wildcard_visibility_keeps_collapsed_exposure() {
         .get("tools_agent")
         .cloned()
         .expect("tools_agent built-in definition");
-    let mut agent =
-        crate::agent::Agent::from_config_with_definition(&config, &definition, None, None)
-            .expect("build tools agent");
+    let mut agent = crate::agent::Agent::from_config_with_definition(&config, &definition)
+        .expect("build tools agent");
 
     agent.set_visible_tool_names(std::collections::HashSet::new());
 
@@ -45,9 +44,8 @@ fn hiding_and_reseeding_wildcard_visibility_keeps_collapsed_exposure() {
         .get("tools_agent")
         .cloned()
         .expect("tools_agent built-in definition");
-    let mut agent =
-        crate::agent::Agent::from_config_with_definition(&config, &definition, None, None)
-            .expect("build tools agent");
+    let mut agent = crate::agent::Agent::from_config_with_definition(&config, &definition)
+        .expect("build tools agent");
 
     agent.set_visible_tool_names(std::collections::HashSet::new());
     agent.hide_tools(&[crate::memory::tools::MEMORY_TOOL_NAME]);

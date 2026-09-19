@@ -45,7 +45,11 @@ export async function callCoreRpc<T>(
 async function resetCoreForWebUser(userId: string): Promise<void> {
   await callCoreRpc('openhuman.auth_clear_session', {});
   await callCoreRpc('openhuman.config_set_onboarding_completed', { value: true });
-  await callCoreRpc('openhuman.auth_store_session', { token: buildBypassJwt(userId) });
+  await callCoreRpc('openhuman.auth_store_session', {
+    token: buildBypassJwt(userId),
+    userId,
+    user: { _id: userId, id: userId, displayName: 'Playwright User' },
+  });
 }
 
 export async function seedBrowserCoreMode(page: Page): Promise<void> {
@@ -75,7 +79,7 @@ async function applyBrowserCoreModeInPage(page: Page): Promise<void> {
 }
 
 async function completeAuthCallback(page: Page, token: string): Promise<void> {
-  await page.goto(`/#/callback/auth?token=${encodeURIComponent(token)}&key=auth`);
+  await page.goto(`/#/callback/auth?token=${encodeURIComponent(token)}`);
   try {
     // The app-side auth callback waits up to 15s for CoreStateProvider to
     // commit currentUser before navigating to the post-auth landing surface;
@@ -100,7 +104,7 @@ async function completeAuthCallback(page: Page, token: string): Promise<void> {
   }
 
   await applyBrowserCoreModeInPage(page);
-  await page.goto(`/#/callback/auth?token=${encodeURIComponent(token)}&key=auth`);
+  await page.goto(`/#/callback/auth?token=${encodeURIComponent(token)}`);
   try {
     await expect
       .poll(async () => page.evaluate(() => window.location.hash), {
@@ -146,8 +150,15 @@ export async function signInViaCallbackToken(page: Page, token: string): Promise
 }
 
 export async function signInViaBypassUser(page: Page, userId: string): Promise<void> {
-  await completeAuthCallback(page, buildBypassJwt(userId));
+  await resetCoreForWebUser(userId);
+  await applyBrowserCoreModeInPage(page);
+  await page.goto('/#/home');
   await waitForAuthenticatedSnapshot(page);
+  await expect
+    .poll(async () => page.evaluate(() => window.location.hash), {
+      timeout: AUTH_CALLBACK_HOME_TIMEOUT_MS,
+    })
+    .toMatch(/^#\/chat/);
   await waitForAppReady(page);
 }
 

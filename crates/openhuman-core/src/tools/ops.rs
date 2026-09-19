@@ -8,6 +8,8 @@ use crate::security::{AuditLogger, SecurityPolicy};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tinytools::Tool;
+#[cfg(test)]
+use tinytools::{ToolResult, ToolSpec};
 
 pub(crate) use super::capability::tool_capability;
 
@@ -251,6 +253,10 @@ pub fn all_tools_with_runtime(
         Box::new(ResolveTimeTool::new()),
         Box::new(DetectToolsTool::new()),
         Box::new(InstallToolTool::new(security.clone())),
+        // The compact, advertised scheduler surface. Keep the six legacy
+        // tools registered below as hidden aliases so saved transcripts and
+        // skills remain replayable.
+        Box::new(CronTool::new(config.clone(), security.clone())),
         Box::new(CronAddTool::new(config.clone(), security.clone())),
         Box::new(CronListTool::new(config.clone())),
         Box::new(CronRemoveTool::new(config.clone())),

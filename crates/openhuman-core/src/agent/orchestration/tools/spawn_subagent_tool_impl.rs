@@ -445,7 +445,7 @@ impl SpawnSubagentTool {
             let title: String = prompt.chars().take(60).collect();
             super::worker_thread::create_worker_thread(
                 p.workspace_dir.clone(),
-                &parent_thread_id,
+                parent_thread_id,
                 &definition.id,
                 &title,
                 &prompt,

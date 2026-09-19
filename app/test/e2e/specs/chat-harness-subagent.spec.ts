@@ -97,8 +97,8 @@ const KEYWORD_RULES = [
     toolCalls: [
       {
         id: 'call_research_1',
-        name: 'research',
-        arguments: JSON.stringify({ prompt: DELEGATE_PROMPT }),
+        name: 'delegate_to',
+        arguments: JSON.stringify({ agent: 'research', prompt: DELEGATE_PROMPT }),
       },
     ],
   },

@@ -374,7 +374,7 @@ impl ExperienceStore for OpenHumanExperienceStore {
             max_hits: self.candidate_hits(),
         };
 
-        let hits = retrieve_across_stores(&[self.store.clone()], query)
+        let hits = retrieve_across_stores(std::slice::from_ref(&self.store), query)
             .await
             .map_err(|e| TinyAgentsError::Memory(format!("recall agent experience: {e}")))?;
 

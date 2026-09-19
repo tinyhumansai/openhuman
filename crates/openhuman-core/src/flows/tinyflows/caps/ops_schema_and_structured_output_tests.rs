@@ -193,6 +193,8 @@ fn crate_model_response_preserves_flow_completion_contract() {
         resolved_model: None,
         continue_turn: None,
         served_from_cache: false,
+        correlation: None,
+        resolved_route: None,
     };
 
     let value = model_response_to_completion_value(&response);

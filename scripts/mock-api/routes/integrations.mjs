@@ -2,9 +2,42 @@ import { json } from "../http.mjs";
 import { behavior, parseBehaviorJson, setMockBehavior } from "../state.mjs";
 import { listMockLlmModels } from "./llm/shared.mjs";
 
+// The web E2E core must never fetch the public Hermes catalog. Keep the
+// fixture small but representative: registry smoke tests need sources and
+// browse results, while search tests need both `git` and `docker` matches.
+const SKILL_REGISTRY_CATALOG = [
+  {
+    name: "git-workflow",
+    description: "Inspect repositories and manage Git branches.",
+    category: "development",
+    source: "built-in",
+    docsPath: "bundled/development/git-workflow",
+    tags: ["git", "repository"],
+    platforms: ["linux", "macos", "windows"],
+    commands: ["git"],
+    envVars: [],
+  },
+  {
+    name: "docker-management",
+    description: "Inspect and manage Docker containers.",
+    category: "devops",
+    source: "optional",
+    docsPath: "optional/devops/devops-docker-management",
+    tags: ["docker", "containers"],
+    platforms: ["linux", "macos", "windows"],
+    commands: ["docker"],
+    envVars: [],
+  },
+];
+
 export function handleIntegrations(ctx) {
   const { method, url, parsedBody, res } = ctx;
   const mockBehavior = behavior();
+
+  if (method === "GET" && /^\/skills\/catalog\.json\/?(?:\?.*)?$/.test(url)) {
+    json(res, 200, SKILL_REGISTRY_CATALOG);
+    return true;
+  }
 
   // ── Telegram ───────────────────────────────────────────────
   if (method === "POST" && /^\/telegram\/command\/?$/.test(url)) {

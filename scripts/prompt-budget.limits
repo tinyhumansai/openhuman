@@ -202,28 +202,43 @@
 #               `toolpacks::registry` cites as its reason for never packing the
 #               fleet tools. Deleting the section wholesale would have removed
 #               a known bug's fix along with the redundancy.
+#
+#   2026-09-19  Re-measured after the coordinated vendor refresh. The updated
+#               agent/tool contracts make the pack proxy reachable on several
+#               narrow belts and expand the planner, profile-memory and trigger
+#               instructions; those are intentional upstream surfaces, not
+#               duplicated local prose. The same refresh removes 8,662 B of
+#               wildcard schemas from morning_briefing and tools_agent, and
+#               those savings are ratcheted here at the same time.
+#
+#   2026-09-19  Re-measured after merging the agent-runtime migration from
+#               upstream/main. The workflow builder's migrated contract adds
+#               3 B to both its fixed prompt and schemas. The same migration
+#               removes another 838 B of wildcard schemas (and 25 B of prompt)
+#               from morning_briefing and tools_agent; those savings are
+#               ratcheted here rather than left as stale headroom.
 
-morning_briefing:15295:76791
+morning_briefing:14962:67291
 trigger_triage:9207:0
-workflow_builder:79094:30397
+workflow_builder:79097:30400
 summarizer:9021:0
-tools_agent:9285:76791
-orchestrator:30294:30812
-code_executor:13320:12591
+tools_agent:8961:67291
+orchestrator:30213:30818
+code_executor:13294:14910
 crypto_agent:12986:12357
 task_manager_agent:7097:15834
-planner:9920:5917
+planner:10603:6559
 skill_creator:7304:12664
 flow_discovery:10780:9641
-profile_memory_agent:7554:12132
+profile_memory_agent:8237:12774
 settings_agent:7040:11065
-context_scout:11076:7343
-skill_executor:9594:7505
-scheduler_agent:9628:7227
+context_scout:11076:7349
+skill_executor:9594:7511
+scheduler_agent:9615:7047
 agent_memory:10422:6836
 mcp_setup:10361:5078
-skill_setup:7253:7598
-trigger_reactor:8264:6740
+skill_setup:7253:7604
+trigger_reactor:8877:7382
 mcp_agent:8920:4472
 flow_memory_agent:9687:3947
 tool_maker:6266:6087
@@ -245,7 +260,7 @@ critic:6215:2108
 #
 # Why the big ones are big, as of 2026-08-31:
 #
-#   memory (3,788) / cron (3,228) / todo (1,831)
+#   memory (3,788) / cron (3,340) / todo (1,831)
 #       Collapsed families. `memory` replaced eleven tools worth 7,879 B and
 #       `cron` six worth 3,938 B, so each is large *because* the surface got
 #       smaller. A union schema costs more than any one member and less than
@@ -298,14 +313,15 @@ critic:6215:2108
 #       Discovery tools. Both are the recovery path for a withheld surface, so
 #       their descriptions carry the "here is what you can still reach" copy.
 #
-# `memory`, `delegate_to` and `cron` were dropped 2026-09-18: no agent at
-# 93e9938f3 advertises them (nor does the default-features registry), so
-# the lookup below failed before any number was compared. The prose above
-# describes them as they were on 2026-09-01.
+# `memory` and `delegate_to` were dropped 2026-09-18: no agent at 93e9938f3
+# advertises them (nor does the default-features registry), so the lookup below
+# failed before any number was compared. The prose above describes them as they
+# were on 2026-09-01. `cron` returned when the scheduler's collapsed surface was
+# wired into the durable registry.
 tool:spawn_subagent:3554
 tool:propose_workflow:3170
 tool:memory_tree:3008
-tool:cron_add:3222
+tool:cron:3340
 tool:edit_workflow:2721
 tool:generate_presentation:2662
 tool:suggest_workflows:2445
@@ -314,4 +330,7 @@ tool:save_workflow:1957
 tool:spawn_parallel_agents:1851
 tool:todo:1831
 tool:search_tool_catalog:1695
-tool:use_skill:2090
+tool:use_skill:2096
+# One action-dispatched memory surface replaces the separately registered
+# memory operations while keeping read/write/forget routing explicit.
+tool:memory:3937

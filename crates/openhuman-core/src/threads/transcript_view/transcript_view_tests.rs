@@ -503,7 +503,7 @@ fn append_transcript_turn_projects_full_display_shape() {
         usage: usage(0.001),
         ts: "2026-07-21T09:00:01Z".into(),
         reasoning_content: Some("I should call the weather tool.".into()),
-        tool_calls: vec![crate::inference::provider::ToolCall {
+        tool_calls: vec![transcript::TranscriptToolCall {
             id: "call-1".into(),
             name: "get_weather".into(),
             arguments: r#"{"city":"NYC"}"#.into(),
@@ -522,12 +522,17 @@ fn append_transcript_turn_projects_full_display_shape() {
         iteration: 2,
     };
 
-    let msg = |id: Option<&str>, role: &str, content: &str| ChatMessage {
+    let msg = |id: Option<&str>, role: &str, content: &str| transcript::TranscriptMessage {
         id: id.map(str::to_string),
         role: role.into(),
         content: content.into(),
         extra_metadata: None,
         cache_breakpoints: Vec::new(),
+        turn_usage: None,
+        request_id: None,
+        preserve_request_id: false,
+        interrupted: false,
+        tool_failure: None,
     };
 
     let first = vec![

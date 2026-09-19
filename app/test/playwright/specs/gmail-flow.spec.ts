@@ -4,7 +4,7 @@ import {
   bootRuntimeReadyGuestPage,
   callCoreRpc,
   dismissWalkthroughIfPresent,
-  signInViaCallbackToken,
+  signInViaBypassUser,
   waitForAppReady,
 } from '../helpers/core-rpc';
 
@@ -55,10 +55,10 @@ async function bootSkillsPage(page: Page, userId: string) {
   await seedConnector();
   await bootRuntimeReadyGuestPage(page);
   try {
-    await signInViaCallbackToken(page, userId);
+    await signInViaBypassUser(page, userId);
   } catch {
     await bootRuntimeReadyGuestPage(page);
-    await signInViaCallbackToken(page, userId);
+    await signInViaBypassUser(page, userId);
   }
   await page.evaluate(() => {
     try {

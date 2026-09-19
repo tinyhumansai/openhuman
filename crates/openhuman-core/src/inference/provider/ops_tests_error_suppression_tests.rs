@@ -618,9 +618,10 @@ fn test_sanitize_api_error_utf8() {
     let input = "🦀".repeat(MAX_API_ERROR_CHARS + 10);
     let sanitized = sanitize_api_error(&input);
     assert!(sanitized.ends_with("..."));
-    // Should truncate at MAX_API_ERROR_CHARS crabs
+    assert_eq!(sanitized.chars().count(), MAX_API_ERROR_CHARS);
+    // The ellipsis is included in the maximum character count.
     let crabs_count = sanitized.chars().filter(|c| *c == '🦀').count();
-    assert_eq!(crabs_count, MAX_API_ERROR_CHARS);
+    assert_eq!(crabs_count, MAX_API_ERROR_CHARS - 3);
 }
 
 #[tokio::test]

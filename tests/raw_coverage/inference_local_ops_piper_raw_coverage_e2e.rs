@@ -83,7 +83,7 @@ fn env_lock() -> std::sync::MutexGuard<'static, ()> {
 }
 
 #[tokio::test]
-async fn piper_controller_installs_skips_existing_and_records_failures_from_mock_downloads() {
+async fn piper_controller_rejects_insecure_download_overrides() {
     let _lock = env_lock();
     let (base, state) = serve_piper_mock().await;
     let tmp = tempdir().expect("tempdir");
@@ -111,68 +111,21 @@ async fn piper_controller_installs_skips_existing_and_records_failures_from_mock
     let install = controller(&controllers, "install_piper");
     let status = controller(&controllers, "piper_install_status");
 
-    #[cfg(not(windows))]
-    {
-        set_mode(&state, PiperMockMode::Valid);
-        let queued = call(
-            install,
-            json!({"voice_id": "en_US-lessac-medium", "force": true}),
-        )
-        .await
-        .expect("queue install");
-        assert_eq!(queued["state"], "installing");
-
-        let installed = wait_for_piper_state(status, "installed").await;
-        assert_eq!(installed["progress"], 100);
-        assert_eq!(installed["stage"], "install complete");
-        let piper_bin = tmp.path().join(".openhuman/bin/piper/piper/piper");
-        assert!(piper_bin.is_file(), "workspace piper binary extracted");
-
-        call(
-            install,
-            json!({"voice_id": "en_US-lessac-medium", "force": false}),
-        )
-        .await
-        .expect("queue skip");
-        let skipped = wait_for_piper_stage(status, "already installed").await;
-        assert_eq!(skipped["state"], "installed");
-    }
-
-    set_mode(&state, PiperMockMode::SmallVoice);
     call(
         install,
-        json!({"voice_id": "en_US-lessac-smallfail-medium", "force": true}),
+        json!({"voice_id": "en_US-lessac-medium", "force": true}),
     )
     .await
-    .expect("queue small voice failure");
-    let failed = wait_for_piper_state(status, "error").await;
-    assert!(failed["error_detail"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("downloaded payload too small"));
-
-    set_mode(&state, PiperMockMode::InvalidArchive);
-    call(
-        install,
-        json!({"voice_id": "en_US-lessac-archivefail", "force": true}),
-    )
-    .await
-    .expect("queue invalid archive failure");
+    .expect("queue install");
     let failed = wait_for_piper_state(status, "error").await;
     let detail = failed["error_detail"].as_str().unwrap_or_default();
     assert!(
-        detail.contains("inflate tar.gz")
-            || detail.contains("parse zip")
-            || detail.contains("unpack tar"),
-        "unexpected archive error: {detail}"
+        detail.contains("artifact URL must use HTTPS and an approved release host"),
+        "unexpected download policy error: {detail}"
     );
 
     let requests = state.requests.lock().expect("requests").clone();
-    assert!(requests.iter().any(|path| path.ends_with(".onnx")));
-    assert!(requests.iter().any(|path| path.ends_with(".onnx.json")));
-    assert!(requests
-        .iter()
-        .any(|path| path.ends_with(".tar.gz") || path.ends_with(".zip")));
+    assert!(requests.is_empty(), "rejected URLs must not be requested");
 }
 
 #[tokio::test]

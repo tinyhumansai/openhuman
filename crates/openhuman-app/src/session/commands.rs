@@ -68,3 +68,7 @@ pub(crate) async fn auth_current_user(
         .await
         .map_err(err)
 }
+
+#[cfg(test)]
+#[path = "commands_tests.rs"]
+mod tests;

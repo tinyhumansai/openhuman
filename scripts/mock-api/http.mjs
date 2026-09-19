@@ -2,7 +2,7 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
   "Access-Control-Allow-Headers":
-    "Content-Type, Authorization, x-device-fingerprint, x-tauri-version, x-core-version, x-ios-version, x-android-version, x-web-version",
+    "Content-Type, Authorization, x-sdk-name, x-device-fingerprint, x-tauri-version, x-core-version, x-ios-version, x-android-version, x-web-version",
   "Access-Control-Max-Age": "86400",
 };
 

@@ -73,7 +73,7 @@ impl ChatModel<()> for ScriptedModel {
         let mut items = vec![ModelStreamItem::Started];
         items.extend(self.stream_events.iter().cloned());
         items.push(ModelStreamItem::Completed(response));
-        Ok(Box::pin(futures::stream::iter(items)))
+        Ok(ModelStream::new(Box::pin(futures::stream::iter(items))))
     }
 }
 

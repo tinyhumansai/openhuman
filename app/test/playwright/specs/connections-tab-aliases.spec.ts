@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test';
 import {
   bootRuntimeReadyGuestPage,
   dismissWalkthroughIfPresent,
-  signInViaCallbackToken,
+  signInViaBypassUser,
   waitForAppReady,
 } from '../helpers/core-rpc';
 
@@ -72,7 +72,7 @@ async function openConnections(
   route: string
 ) {
   await bootRuntimeReadyGuestPage(page);
-  await signInViaCallbackToken(page, userId);
+  await signInViaBypassUser(page, userId);
   await page.evaluate(target => {
     try {
       localStorage.setItem('openhuman:walkthrough_completed', 'true');

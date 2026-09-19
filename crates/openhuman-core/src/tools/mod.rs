@@ -68,4 +68,5 @@ pub use schemas::{
     all_controller_schemas as all_tools_controller_schemas,
     all_registered_controllers as all_tools_registered_controllers,
 };
+pub use tinytools::{PermissionLevel, ToolCategory, ToolResult, ToolScope, ToolSpec};
 pub(crate) use user_filter::filter_tools_by_user_preference;

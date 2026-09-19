@@ -168,22 +168,18 @@ fn classify_inference_error_generic_4xx_surfaces_provider_detail() {
 }
 
 #[test]
-fn classify_inference_error_deepseek_reasoning_400_stays_config_rejection() {
-    // ORDERING LOCK: the DeepSeek / Moonshot thinking-mode reasoning_content
-    // round-trip 400 is ALREADY claimed by the provider-config-rejection arm
-    // (the "thinking mode must be passed back" phrase, Sentry TAURI-RUST-2G /
-    // -2F), which is ordered BEFORE the generic 4xx arm. So it must keep its
-    // specific, actionable `model_unavailable` + Settings → LLM verdict and
-    // NOT be downgraded to the generic provider_request_rejected copy. The
-    // deeper round-trip fix (so the turn actually succeeds) is tracked in
-    // #3197; this only asserts the user-facing classification stays specific.
+fn classify_inference_error_deepseek_reasoning_400_stays_reportable_request_rejection() {
+    // The shared provider classifier deliberately keeps thinking-history
+    // contract failures reportable. Preserve that distinction here instead
+    // of treating the request-shape failure as provider configuration.
     let raw = r#"cloud API error (400 Bad Request): {"error":{"message":"The reasoning_content in the thinking mode must be passed back","type":"invalid_request_error"}}"#;
     let classified = classify_inference_error(raw);
     assert_eq!(
-        classified.error_type, "model_unavailable",
-        "DeepSeek reasoning_content 400 must stay config-rejection, not generic 4xx"
+        classified.error_type, "provider_request_rejected",
+        "DeepSeek reasoning_content 400 must stay reportable"
     );
-    assert_ne!(classified.error_type, "inference");
+    assert_eq!(classified.source, "provider");
+    assert!(!classified.retryable);
 }
 
 #[test]

@@ -53,7 +53,7 @@ pub fn disabled_local_ai_status(config: &crate::config::Config) -> LocalAiStatus
 }
 
 /// Projects OpenHuman configuration into TinyInference's local-runtime input.
-pub(crate) fn local_runtime_config(
+pub fn local_runtime_config(
     config: &crate::config::Config,
 ) -> tinyinference_local::service::RuntimeConfig {
     let local = &config.local_ai;

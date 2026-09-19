@@ -13,11 +13,11 @@ fn python_timeout_policy_unbounded_by_default() {
 fn python_timeout_policy_enforces_and_caps_explicit() {
     assert_eq!(
         python_timeout_policy(&json!({"timeout_secs": 120})),
-        ToolTimeout::Secs(120)
+        ToolTimeout::Millis(120_000)
     );
     assert_eq!(
         python_timeout_policy(&json!({"timeout_secs": 99999})),
-        ToolTimeout::Secs(PYTHON_TIMEOUT_MAX_SECS)
+        ToolTimeout::Millis(PYTHON_TIMEOUT_MAX_SECS * 1000)
     );
 }
 

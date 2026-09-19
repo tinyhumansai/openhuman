@@ -1,14 +1,13 @@
 use super::{
     all_web_channel_controller_schemas, all_web_channel_registered_controllers, cancel_chat,
-    classify_inference_error, compose_system_prompt_suffix, event_session_id_for,
-    extract_provider_error_detail, generic_inference_error_user_message,
-    in_flight_entries_for_test, inference_budget_exceeded_user_message,
-    is_inference_budget_exceeded_error, json_output, key_for, locale_reply_directive,
-    normalize_model_override, optional_f64, optional_string, parallel_in_flight_entries_for_test,
-    provider_role_for_model_override, required_string, schemas, sentry_suppression_reason,
-    set_test_forced_run_chat_task_error, set_test_run_chat_task_block, start_chat,
-    subscribe_web_channel_events, ChatRequestMetadata, ClassifiedError, TestRunChatTaskBlock,
-    WebChatParams,
+    classify_inference_error, event_session_id_for, extract_provider_error_detail,
+    generic_inference_error_user_message, in_flight_entries_for_test,
+    inference_budget_exceeded_user_message, is_inference_budget_exceeded_error, json_output,
+    key_for, locale_reply_directive, normalize_model_override, optional_f64, optional_string,
+    parallel_in_flight_entries_for_test, provider_role_for_model_override, required_string,
+    schemas, sentry_suppression_reason, set_test_forced_run_chat_task_error,
+    set_test_run_chat_task_block, start_chat, subscribe_web_channel_events, ChatRequestMetadata,
+    ClassifiedError, TestRunChatTaskBlock, WebChatParams,
 };
 use crate::core::TypeSchema;
 use std::sync::atomic::{AtomicBool, Ordering};

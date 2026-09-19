@@ -1,6 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use openhuman_core::tinytools_agent::dialect::NativeDialect;
+use tinytools_agent::dialect::NativeDialect;
 use openhuman_core::agent::harness::session::Agent;
 use openhuman_core::agent::harness::{
     run_subagent, with_parent_context, AgentDefinition, DefinitionSource, ModelSpec,

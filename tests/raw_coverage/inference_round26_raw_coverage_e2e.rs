@@ -109,8 +109,9 @@ async fn local_service_covers_mocked_bootstrap_assets_diagnostics_and_embed() {
     config.local_ai.preload_tts_voice = false;
     config.local_ai.tts_download_url = Some(format!("{base}/asset/tts"));
 
-    let service = LocalAiService::new(&config);
-    service.bootstrap(&config).await;
+    let runtime = openhuman_core::inference::local_runtime_config(&config);
+    let service = LocalAiService::new(&runtime);
+    service.bootstrap(&runtime).await;
     let status = service.status();
     assert_eq!(status.state, "ready");
     assert_eq!(status.embedding_state, "ready");
@@ -120,7 +121,7 @@ async fn local_service_covers_mocked_bootstrap_assets_diagnostics_and_embed() {
         Some("ollama://gemma3:1b-it-qat")
     );
 
-    let assets = service.assets_status(&config).await.expect("assets status");
+    let assets = service.assets_status(&runtime).await.expect("assets status");
     assert_eq!(assets.chat.state, "ready");
     assert_eq!(assets.embedding.state, "ready");
     assert_eq!(assets.vision.state, "disabled");
@@ -132,13 +133,13 @@ async fn local_service_covers_mocked_bootstrap_assets_diagnostics_and_embed() {
     assert!(assets.ollama_available);
 
     let progress = service
-        .downloads_progress(&config)
+        .downloads_progress(&runtime)
         .await
         .expect("downloads progress");
     assert_eq!(progress.chat.state, "ready");
     assert_eq!(progress.embedding.state, "ready");
 
-    let diagnostics = service.diagnostics(&config).await.expect("diagnostics");
+    let diagnostics = service.diagnostics(&runtime).await.expect("diagnostics");
     assert_eq!(diagnostics["ollama_running"], true);
     assert_eq!(diagnostics["expected"]["chat_found"], true);
     assert_eq!(diagnostics["expected"]["embedding_found"], true);
@@ -156,7 +157,7 @@ async fn local_service_covers_mocked_bootstrap_assets_diagnostics_and_embed() {
 
     let embedded = service
         .embed(
-            &config,
+            &runtime,
             &[
                 "  first input  ".to_string(),
                 "".to_string(),

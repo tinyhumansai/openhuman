@@ -32,8 +32,8 @@ use openhuman_core::platform::proc_metrics::{
     self, BenchReport, ProcSample, RosterResult, REPORT_SCHEMA_VERSION, RSS_BUDGET_KIB,
     RSS_HARD_CAP_KIB,
 };
-use openhuman_core::tinytools_agent::dialect::NativeDialect;
 use tinytools::{Tool, ToolResult};
+use tinytools_agent::dialect::NativeDialect;
 
 use std::path::PathBuf;
 use std::process::Stdio;

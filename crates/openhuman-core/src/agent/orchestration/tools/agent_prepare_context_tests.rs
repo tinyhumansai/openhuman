@@ -405,10 +405,7 @@ async fn catalog_lists_the_parents_synthesised_delegates_from_its_visible_specs(
             catalog_spec("agent_prepare_context", "this tool"),
         ],
     );
-    let catalog = crate::agent::harness::fork_context::with_parent_context(ctx, async {
-        AgentPrepareContextTool::render_parent_tool_catalog()
-    })
-    .await;
+    let catalog = AgentPrepareContextTool::render_parent_tool_catalog(Some(&ctx));
     assert!(
         catalog.contains("- delegate_to_integrations_agent: route to a connected integration\n"),
         "the parent's delegate must be recommendable: {catalog:?}"
@@ -433,9 +430,6 @@ async fn catalog_falls_back_to_all_tool_specs_when_visible_specs_are_absent() {
         Vec::new(),
     );
     ctx.visible_tool_names = std::iter::once("echo".to_string()).collect();
-    let catalog = crate::agent::harness::fork_context::with_parent_context(ctx, async {
-        AgentPrepareContextTool::render_parent_tool_catalog()
-    })
-    .await;
+    let catalog = AgentPrepareContextTool::render_parent_tool_catalog(Some(&ctx));
     assert_eq!(catalog, "- echo: durable\n");
 }

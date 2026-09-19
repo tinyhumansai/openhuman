@@ -1,6 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use openhuman_core::tinytools_agent::dialect::XmlDialect;
+use tinytools_agent::dialect::XmlDialect;
 use openhuman_core::agent::hooks::{PostTurnHook, TurnContext};
 use openhuman_core::agent::Agent;
 use openhuman_core::config::{AgentConfig, ContextConfig};
@@ -120,7 +120,7 @@ impl ChatModel<()> for ScriptedModel {
         let mut items = vec![ModelStreamItem::Started];
         items.extend(self.stream_events.iter().cloned());
         items.push(ModelStreamItem::Completed(response));
-        Ok(Box::pin(futures::stream::iter(items)))
+        Ok(ModelStream::new(Box::pin(futures::stream::iter(items))))
     }
 }
 

@@ -182,7 +182,9 @@ impl ChatModel<()> for ScriptedProvider {
             items.push(ModelStreamItem::MessageDelta(MessageDelta::text(text)));
         }
         items.push(ModelStreamItem::Completed(response));
-        Ok(Box::pin(futures::stream::iter(items)))
+        Ok(tinyinference_llm::model::ModelStream::new(Box::pin(
+            futures::stream::iter(items),
+        )))
     }
 }
 
@@ -210,6 +212,8 @@ fn text_response_with_reasoning(text: &str, reasoning: &str) -> ModelResponse {
         resolved_model: None,
         continue_turn: None,
         served_from_cache: false,
+        correlation: None,
+        resolved_route: None,
     }
 }
 
@@ -231,6 +235,8 @@ fn tool_response(name: &str, args: &str) -> ModelResponse {
         resolved_model: None,
         continue_turn: None,
         served_from_cache: false,
+        correlation: None,
+        resolved_route: None,
     }
 }
 

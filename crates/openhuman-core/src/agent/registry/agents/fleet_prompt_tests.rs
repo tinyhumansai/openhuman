@@ -257,7 +257,9 @@ const KNOWN_UNCALLABLE: &[(&str, &str, &str)] = &[
         "an example of a payload's source tool",
     ),
     ("workflow_builder", "http_request", "a flow node kind"),
+    ("workflow_builder", "memory", "a flow node kind"),
     ("workflow_builder", "schedule", "a flow trigger field"),
+    ("workflow_builder", "shell", "a flow node kind"),
     (
         "workflow_builder",
         "flow_memory_recall",
@@ -327,13 +329,7 @@ fn every_prompt_names_only_tools_its_agent_can_call() {
 
 /// Agents whose prompt defers to the rendered tool list instead of naming a
 /// tool; [`every_prompt_names_at_least_one_tool_it_can_call`] skips them.
-const NAMES_NO_TOOL: &[&str] = &[
-    "tools_agent",
-    "tool_maker",
-    "skill_creator",
-    "critic",
-    "archivist",
-];
+const NAMES_NO_TOOL: &[&str] = &["tools_agent", "tool_maker", "critic", "archivist"];
 
 const SKILL_SETUP_NAME: Option<&str> = if cfg!(feature = "skills") {
     Some("skill_setup")

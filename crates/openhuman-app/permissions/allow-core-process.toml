@@ -60,6 +60,19 @@ allow = [
     "get_active_user_id",
 
     # =========================
+    # SESSION OWNER
+    # =========================
+    # The renderer delegates login-token exchange, session validation, logout,
+    # and the current-user cache to the Tauri shell. Registering these commands
+    # in `generate_handler!` is not enough: Tauri v2 rejects every invoke until
+    # the active window capability also allows it.
+    "auth_login_with_token",
+    "auth_store_session",
+    "auth_logout",
+    "auth_state",
+    "auth_current_user",
+
+    # =========================
     # SERVICE MANAGEMENT
     # =========================
     "service_install_direct",

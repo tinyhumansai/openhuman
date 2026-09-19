@@ -99,27 +99,6 @@ fn locale_reply_directive_renders_known_locales() {
     assert!(zh.contains("Simplified Chinese"));
 }
 
-#[test]
-fn compose_system_prompt_suffix_combines_locale_and_profile() {
-    // Both present → locale first, blank line, then profile suffix.
-    let combined = compose_system_prompt_suffix(Some("LOCALE"), Some("PROFILE"))
-        .expect("Some output expected when either input is set");
-    assert_eq!(combined, "LOCALE\n\nPROFILE");
-
-    // Only locale.
-    assert_eq!(
-        compose_system_prompt_suffix(Some("LOCALE"), None).as_deref(),
-        Some("LOCALE")
-    );
-    // Only profile.
-    assert_eq!(
-        compose_system_prompt_suffix(None, Some("PROFILE")).as_deref(),
-        Some("PROFILE")
-    );
-    // Both absent → None preserves the agent's vanilla prompt.
-    assert!(compose_system_prompt_suffix(None, None).is_none());
-}
-
 // ── PTT field additions (Task 1 of global-ptt plan) ─────────────────────────
 
 #[test]
@@ -225,7 +204,6 @@ async fn start_chat_runs_distinct_threads_concurrently() {
         None,
         None,
         None,
-        None,
         ChatRequestMetadata::default(),
     )
     .await
@@ -234,7 +212,6 @@ async fn start_chat_runs_distinct_threads_concurrently() {
         "client-b",
         thread_b,
         "hello b",
-        None,
         None,
         None,
         None,
@@ -275,7 +252,6 @@ async fn cancel_chat_cooperatively_stops_in_flight_turn() {
         "cancel-client",
         thread_id,
         "park me",
-        None,
         None,
         None,
         None,
@@ -346,7 +322,6 @@ async fn wedged_turn_hits_wall_clock_backstop_and_emits_turn_timeout_chat_error(
         None,
         None,
         None,
-        None,
         ChatRequestMetadata::default(),
     )
     .await
@@ -406,7 +381,6 @@ async fn parallel_turn_runs_concurrently_with_primary_on_same_thread() {
         None,
         None,
         None,
-        None,
         ChatRequestMetadata::default(),
     )
     .await
@@ -419,7 +393,6 @@ async fn parallel_turn_runs_concurrently_with_primary_on_same_thread() {
         "pp-client",
         thread_id,
         "branch",
-        None,
         None,
         None,
         None,

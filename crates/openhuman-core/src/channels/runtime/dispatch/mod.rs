@@ -27,9 +27,6 @@ use processor::channel_has_approval_surface;
 use helpers::{build_channel_context_block, select_acknowledgment_reaction};
 
 #[cfg(test)]
-use helpers::{contains_any, starts_with_any};
-
-#[cfg(test)]
 use routing::{build_visible_tool_set, AgentScoping};
 
 #[cfg(any(test, debug_assertions))]

@@ -4,7 +4,7 @@ import {
   bootRuntimeReadyGuestPage,
   callCoreRpc,
   dismissWalkthroughIfPresent,
-  signInViaCallbackToken,
+  signInViaBypassUser,
   waitForAppReady,
 } from '../helpers/core-rpc';
 
@@ -37,7 +37,7 @@ const TEST_CONNECTION = /Test connection/i;
 
 async function openEmbeddingsTab(page: import('@playwright/test').Page, userId: string) {
   await bootRuntimeReadyGuestPage(page);
-  await signInViaCallbackToken(page, userId);
+  await signInViaBypassUser(page, userId);
   await page.evaluate(() => {
     try {
       localStorage.setItem('openhuman:walkthrough_completed', 'true');

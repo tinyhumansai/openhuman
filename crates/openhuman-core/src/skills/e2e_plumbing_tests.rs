@@ -77,6 +77,8 @@ fn tool_call(id: &str, name: &str, args: serde_json::Value) -> ModelResponse {
         resolved_model: None,
         continue_turn: None,
         served_from_cache: false,
+        correlation: None,
+        resolved_route: None,
     }
 }
 

@@ -318,8 +318,9 @@ async fn local_admin_covers_diagnostics_errors_assets_status_and_shutdown_with_f
     let _piper_bin = EnvVarGuard::unset("PIPER_BIN");
     let _whisper_bin = EnvVarGuard::unset("WHISPER_BIN");
 
-    let service = LocalAiService::new(&config);
-    let diag = service.diagnostics(&config).await.expect("diagnostics");
+    let runtime = openhuman_core::inference::local_runtime_config(&config);
+    let service = LocalAiService::new(&runtime);
+    let diag = service.diagnostics(&runtime).await.expect("diagnostics");
     assert_eq!(diag["ollama_running"], true);
     let issues = diag["issues"].as_array().expect("issues");
     assert!(issues.iter().any(|issue| issue
@@ -333,8 +334,9 @@ async fn local_admin_covers_diagnostics_errors_assets_status_and_shutdown_with_f
 
     let mut tags_500 = config.clone();
     tags_500.local_ai.base_url = Some(format!("{base}/tags-500"));
+    let tags_500_runtime = openhuman_core::inference::local_runtime_config(&tags_500);
     let diag_500 = service
-        .diagnostics(&tags_500)
+        .diagnostics(&tags_500_runtime)
         .await
         .expect("500 diagnostics");
     assert_eq!(diag_500["ollama_running"], false);
@@ -343,7 +345,7 @@ async fn local_admin_covers_diagnostics_errors_assets_status_and_shutdown_with_f
         .unwrap()
         .contains("not running or not reachable"));
 
-    let assets = service.assets_status(&config).await.expect("assets status");
+    let assets = service.assets_status(&runtime).await.expect("assets status");
     assert!(assets.ollama_available);
     assert_eq!(assets.chat.state, "missing");
     assert_eq!(assets.embedding.state, "missing");
@@ -356,7 +358,7 @@ async fn local_admin_covers_diagnostics_errors_assets_status_and_shutdown_with_f
         .expect("spawn fake owned ollama child");
     service.inject_owned_ollama(child);
     assert!(service.has_owned_ollama());
-    service.shutdown_owned_ollama(&config).await;
+    service.shutdown_owned_ollama(&runtime).await;
     assert!(!service.has_owned_ollama());
 }
 

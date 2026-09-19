@@ -60,11 +60,13 @@ function writeToolCall(callId: string, path: string, content: string) {
   };
 }
 
-/** A `research` delegation tool call (orchestrator → researcher subagent). */
+/** A collapsed delegation tool call (orchestrator → researcher subagent). */
 function researchToolCall(callId: string, prompt: string) {
   return {
     content: '',
-    toolCalls: [{ id: callId, name: 'research', arguments: JSON.stringify({ prompt }) }],
+    toolCalls: [
+      { id: callId, name: 'delegate_to', arguments: JSON.stringify({ agent: 'research', prompt }) },
+    ],
   };
 }
 

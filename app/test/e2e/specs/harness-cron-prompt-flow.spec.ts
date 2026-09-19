@@ -36,6 +36,7 @@
  */
 import { waitForApp } from '../helpers/app-helpers';
 import {
+  approvePendingToolCall,
   chatMounted,
   clickByTitle,
   clickSend,
@@ -214,6 +215,7 @@ describe('Harness — Cron prompt-flow', () => {
     );
 
     await navigateChatAndSend('remind me every morning at 9am');
+    expect(await approvePendingToolCall()).toBe(true);
 
     // Wait for final reply.
     await browser.waitUntil(async () => await textExists(CANARY), {
@@ -363,6 +365,7 @@ describe('Harness — Cron prompt-flow', () => {
     setMockBehavior('llmStreamChunkDelayMs', '10');
 
     await navigateChatAndSend('change my morning reminder to 8am');
+    expect(await approvePendingToolCall()).toBe(true);
 
     await browser.waitUntil(async () => await textExists(CANARY), {
       timeout: 60_000,
@@ -448,6 +451,7 @@ describe('Harness — Cron prompt-flow', () => {
     );
 
     await navigateChatAndSend('delete the morning reminder');
+    expect(await approvePendingToolCall()).toBe(true);
 
     await browser.waitUntil(async () => await textExists(CANARY), {
       timeout: 60_000,

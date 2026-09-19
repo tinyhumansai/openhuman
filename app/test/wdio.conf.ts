@@ -84,6 +84,10 @@ export const config: Options.Testrunner & Record<string, unknown> = {
   path: '/',
   specs: [testSpecsPath],
   rootDir: projectRoot,
+  // `tauri-driver` owns the native WebKit display lifecycle. WDIO's automatic
+  // `xvfb-run` wrapper drops the local-runner IPC descriptor, so workers exit
+  // before they can create a WebDriver session when $DISPLAY is absent.
+  autoXvfb: false,
   // Single session — the app is one instance.
   maxInstances: 1,
   capabilities: [

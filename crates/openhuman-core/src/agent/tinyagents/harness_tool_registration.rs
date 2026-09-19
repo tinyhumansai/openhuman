@@ -15,7 +15,7 @@ use crate::agent::orchestration::tools::{
     AgentPrepareContextDispatch, CloseSubagentDispatch, ContinueSubagentDispatch,
     DelegateGraphDispatch, DelegationDispatch, ListSubagentsDispatch, SpawnAsyncSubagentDispatch,
     SpawnParallelAgentsDispatch, SpawnSubagentDispatch, SpawnWorkerThreadDispatch,
-    SteerSubagentDispatch, WaitSubagentDispatch,
+    SteerSubagentDispatch, UseSkillDispatch, WaitSubagentDispatch,
 };
 use crate::agent::tinyagents::host::OpenHumanRunContext;
 use crate::agent::tinyagents::tools::{CanonicalSharedToolAdapter, EarlyExitHook};
@@ -133,6 +133,11 @@ pub(super) fn register_turn_tools_and_agents(
                     harness.register_tool_dispatch(Arc::new(TodoToolDispatch::new(adapter)));
                 } else if name == "update_task" {
                     harness.register_tool_dispatch(Arc::new(UpdateTaskDispatch::new(adapter)));
+                } else if name == crate::tools::toolpacks::USE_SKILL {
+                    harness.register_tool_dispatch(Arc::new(UseSkillDispatch::new(
+                        adapter,
+                        tool_sets.to_vec(),
+                    )));
                 } else if let Some(dispatch) = DelegationDispatch::for_tool(adapter.clone()) {
                     harness.register_tool_dispatch(Arc::new(dispatch));
                 } else {

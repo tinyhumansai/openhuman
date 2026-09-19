@@ -246,10 +246,6 @@ fn cached_models_and_help_responses_render_expected_text() {
     )
     .unwrap();
 
-    let preview = load_cached_model_preview(tempdir.path(), "openai");
-    assert_eq!(preview, vec!["gpt-5", "gpt-5-mini", "gpt-4.1"]);
-    assert!(load_cached_model_preview(tempdir.path(), "missing").is_empty());
-
     let current = ChannelRouteSelection {
         provider: "openai".into(),
         model: "gpt-5".into(),
@@ -259,7 +255,7 @@ fn cached_models_and_help_responses_render_expected_text() {
     assert!(models.contains("Cached model IDs"));
     assert!(models.contains("- `gpt-5-mini`"));
 
-    let providers = build_providers_help_response(&current);
+    let providers = build_providers_help_response(&current, &provider_descriptors());
     assert!(providers.contains("Switch provider with `/models <provider>`"));
     assert!(providers.contains("Available providers:"));
 }
@@ -292,7 +288,12 @@ fn load_cached_model_preview_returns_empty_when_cache_json_is_invalid() {
     )
     .unwrap();
 
-    assert!(load_cached_model_preview(tempdir.path(), "openai").is_empty());
+    let current = ChannelRouteSelection {
+        provider: "openai".into(),
+        model: "gpt-5".into(),
+    };
+    let response = build_models_help_response(&current, tempdir.path());
+    assert!(response.contains("No cached model list found for `openai`"));
 }
 
 #[tokio::test]

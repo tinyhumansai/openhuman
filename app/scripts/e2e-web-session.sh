@@ -165,6 +165,10 @@ if [ ! -x "$OPENHUMAN_CORE_BIN" ]; then
 fi
 
 export OPENHUMAN_CORE_TOKEN="$PW_CORE_RPC_TOKEN"
+# The skills registry defaults to a public HermesHub fetch. The browser E2E
+# lane must remain deterministic and offline, so serve its compact catalog
+# fixture from the local mock backend instead.
+export OPENHUMAN_SKILL_REGISTRY_CATALOG_URL="http://127.0.0.1:${E2E_MOCK_PORT}/skills/catalog.json"
 export OPENHUMAN_TELEGRAM_BOT_API_BASE="http://127.0.0.1:${E2E_MOCK_PORT}"
 export OPENHUMAN_COMPOSIO_DIRECT_BASE_V2="http://127.0.0.1:${E2E_MOCK_PORT}"
 export OPENHUMAN_COMPOSIO_DIRECT_BASE_V3="http://127.0.0.1:${E2E_MOCK_PORT}"

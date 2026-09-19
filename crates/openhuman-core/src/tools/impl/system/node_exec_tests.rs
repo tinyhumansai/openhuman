@@ -27,12 +27,12 @@ fn node_timeout_policy_unbounded_by_default() {
 fn node_timeout_policy_enforces_and_caps_explicit() {
     assert_eq!(
         node_timeout_policy(&json!({"timeout_secs": 120})),
-        ToolTimeout::Secs(120)
+        ToolTimeout::Millis(120_000)
     );
     // Clamped to the 1800s ceiling.
     assert_eq!(
         node_timeout_policy(&json!({"timeout_secs": 99999})),
-        ToolTimeout::Secs(NODE_TIMEOUT_MAX_SECS)
+        ToolTimeout::Millis(NODE_TIMEOUT_MAX_SECS * 1000)
     );
 }
 

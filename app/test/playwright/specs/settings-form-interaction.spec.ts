@@ -21,16 +21,16 @@ import {
  * so the second keystroke lands in the wrong place. This spec asks whether any
  * settings text input shares it.
  *
- * The profile editor is the sharpest place to ask. Its ID field is
+ * The agent editor is the sharpest place to ask. Its ID field is
  * *programmatically rewritten* while you type the Name
- * (`ProfileEditorPage.tsx:125-128`), which is the exact shape — a controlled
+ * (`AgentEditorPage.tsx`), which is the exact shape — a controlled
  * input whose value is reassigned during render — that produces caret jumps.
  */
 
-const NEW_PROFILE = '/#/settings/profiles/new';
+const NEW_AGENT = '/#/settings/agents/new';
 
-async function openProfileEditor(page: Page) {
-  await page.goto(NEW_PROFILE);
+async function openAgentEditor(page: Page) {
+  await page.goto(NEW_AGENT);
   await waitForAppReady(page);
   await dismissWalkthroughIfPresent(page);
   await expect(page.getByLabel('Name', { exact: true })).toBeVisible({ timeout: 30_000 });
@@ -52,7 +52,7 @@ async function placeCaret(input: Locator, offset: number) {
 test.describe('Settings forms — caret behaviour while typing', () => {
   test.beforeEach(async ({ page }) => {
     await bootAuthenticatedPage(page, 'pw-w1-forms');
-    await openProfileEditor(page);
+    await openAgentEditor(page);
   });
 
   test('typing at the end leaves the caret at the end', async ({ page }) => {
@@ -126,7 +126,7 @@ test.describe('Settings forms — caret behaviour while typing', () => {
 test.describe('Settings forms — the Name/ID coupling, driven by keyboard', () => {
   test.beforeEach(async ({ page }) => {
     await bootAuthenticatedPage(page, 'pw-w1-forms-coupling');
-    await openProfileEditor(page);
+    await openAgentEditor(page);
   });
 
   test('the ID auto-slugs from the Name as it is typed', async ({ page }) => {
@@ -171,7 +171,10 @@ test.describe('Settings forms — the Name/ID coupling, driven by keyboard', () 
   });
 
   test('the Create button enables only once a usable id exists', async ({ page }) => {
-    const create = page.getByRole('button', { name: 'Create' });
+    const create = page.getByRole('button', { name: 'Create agent' });
+    // Description is independently required by the current agent editor;
+    // satisfy it so this assertion isolates the generated ID gate.
+    await page.getByLabel('Description').fill('Caret interaction test agent.');
     await expect(create).toBeDisabled();
 
     // Punctuation-only slugs to '', so it must stay disabled.

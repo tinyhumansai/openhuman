@@ -27,8 +27,8 @@ const KEYWORD_RESPONSES = [
       {
         toolCall: {
           id: 'call_research_1',
-          name: 'research',
-          arguments: JSON.stringify({ prompt: 'Tell me a marker phrase' }),
+          name: 'spawn_async_subagent',
+          arguments: JSON.stringify({ agent_id: 'researcher', prompt: 'Tell me a marker phrase' }),
         },
       },
       { finish: 'tool_calls' },

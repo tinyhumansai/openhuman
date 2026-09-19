@@ -1,8 +1,8 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use openhuman_core::agent::Agent;
-use openhuman_core::tinytools_agent::dialect::NativeDialect;
 use tinytools::{PermissionLevel, Tool, ToolResult};
+use tinytools_agent::dialect::NativeDialect;
 
 use parking_lot::Mutex;
 use serde_json::json;
@@ -58,6 +58,8 @@ impl ChatModel<()> for MockCalendarModel {
                 resolved_model: None,
                 continue_turn: None,
                 served_from_cache: false,
+                correlation: None,
+                resolved_route: None,
             })
         } else {
             // End the loop

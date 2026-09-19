@@ -88,18 +88,21 @@ async fn aggregate_spills_largest_until_under_budget() {
             output: "a".repeat(100),
             success: true,
             tool_call_id: Some("small".into()),
+            trusted_verbatim: false,
         },
         ToolOutcome {
             name: "largest".into(),
             output: "b".repeat(2000),
             success: true,
             tool_call_id: Some("largest".into()),
+            trusted_verbatim: false,
         },
         ToolOutcome {
             name: "medium".into(),
             output: "c".repeat(900),
             success: true,
             tool_call_id: Some("medium".into()),
+            trusted_verbatim: false,
         },
     ];
 
@@ -125,18 +128,21 @@ async fn aggregate_forces_budget_when_envelope_has_no_savings() {
             output: "a".repeat(350),
             success: true,
             tool_call_id: Some("one".into()),
+            trusted_verbatim: false,
         },
         ToolOutcome {
             name: "two".into(),
             output: "b".repeat(350),
             success: true,
             tool_call_id: Some("two".into()),
+            trusted_verbatim: false,
         },
         ToolOutcome {
             name: "three".into(),
             output: "c".repeat(350),
             success: true,
             tool_call_id: Some("three".into()),
+            trusted_verbatim: false,
         },
     ];
 

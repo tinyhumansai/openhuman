@@ -122,9 +122,10 @@ async fn local_admin_covers_assets_diagnostics_downloads_and_ops_errors() {
     let _piper_bin = EnvVarGuard::unset("PIPER_BIN");
     let _whisper_bin = EnvVarGuard::unset("WHISPER_BIN");
 
-    let service = LocalAiService::new(&config);
+    let runtime = openhuman_core::inference::local_runtime_config(&config);
+    let service = LocalAiService::new(&runtime);
 
-    let diagnostics = service.diagnostics(&config).await.expect("diagnostics");
+    let diagnostics = service.diagnostics(&runtime).await.expect("diagnostics");
     assert_eq!(diagnostics["ollama_running"], true);
     assert_eq!(diagnostics["expected"]["chat_found"], false);
     assert_eq!(diagnostics["expected"]["embedding_found"], true);
@@ -136,7 +137,7 @@ async fn local_admin_covers_assets_diagnostics_downloads_and_ops_errors() {
         .iter()
         .any(|issue| issue.as_str().unwrap().contains("gemma3n:e4b-it-q8_0")));
 
-    let assets = service.assets_status(&config).await.expect("assets");
+    let assets = service.assets_status(&runtime).await.expect("assets");
     assert!(assets.ollama_available);
     assert_eq!(assets.chat.state, "missing");
     assert_eq!(assets.vision.state, "missing");
@@ -144,22 +145,22 @@ async fn local_admin_covers_assets_diagnostics_downloads_and_ops_errors() {
     assert_eq!(assets.tts.state, "ondemand");
 
     let unknown = service
-        .download_asset(&config, " nope ")
+        .download_asset(&runtime, " nope ")
         .await
         .expect_err("unknown asset");
     assert!(unknown.contains("Unknown capability"));
 
     let after_tts = service
-        .download_asset(&config, "tts")
+        .download_asset(&runtime, "tts")
         .await
         .expect("tts download succeeds even if sidecar url fails");
     assert_eq!(after_tts.tts.state, "ready");
-    let progress = service.downloads_progress(&config).await.expect("progress");
+    let progress = service.downloads_progress(&runtime).await.expect("progress");
     assert_eq!(progress.tts.state, "ready");
     assert_eq!(progress.warning, Some("Downloading tts asset".to_string()));
 
     let after_chat = service
-        .download_asset(&config, "chat")
+        .download_asset(&runtime, "chat")
         .await
         .expect("ollama pull chat model");
     assert_eq!(after_chat.chat.state, "ready");
@@ -172,16 +173,18 @@ async fn local_admin_covers_assets_diagnostics_downloads_and_ops_errors() {
 
     let mut lm_config = config.clone();
     lm_config.local_ai.provider = "lmstudio".to_string();
+    let lm_runtime = openhuman_core::inference::local_runtime_config(&lm_config);
     let lm_err = service
-        .download_asset(&lm_config, "chat")
+        .download_asset(&lm_runtime, "chat")
         .await
         .expect_err("lm studio owns chat downloads");
     assert!(lm_err.contains("LM Studio manages"));
 
     let mut disabled_config = config.clone();
     disabled_config.local_ai.runtime_enabled = false;
+    let disabled_runtime = openhuman_core::inference::local_runtime_config(&disabled_config);
     let disabled_err = service
-        .download_asset(&disabled_config, "embedding")
+        .download_asset(&disabled_runtime, "embedding")
         .await
         .expect_err("disabled");
     assert_eq!(disabled_err, "local ai is disabled");
@@ -304,16 +307,17 @@ async fn local_admin_reports_unhealthy_runtime_and_lm_studio_issue_shapes() {
     config.local_ai.runtime_enabled = true;
     config.local_ai.base_url = Some("http://127.0.0.1:9".to_string());
     let _ollama_base = EnvVarGuard::set("OPENHUMAN_OLLAMA_BASE_URL", "http://127.0.0.1:9");
-    let service = LocalAiService::new(&config);
+    let runtime = openhuman_core::inference::local_runtime_config(&config);
+    let service = LocalAiService::new(&runtime);
 
-    let unhealthy = service.diagnostics(&config).await.expect("unhealthy diag");
+    let unhealthy = service.diagnostics(&runtime).await.expect("unhealthy diag");
     assert_eq!(unhealthy["ollama_running"], false);
     assert!(unhealthy["issues"][0]
         .as_str()
         .unwrap()
         .contains("not running or not reachable"));
     let assets = service
-        .assets_status(&config)
+        .assets_status(&runtime)
         .await
         .expect("unhealthy assets");
     assert!(!assets.ollama_available);
@@ -324,8 +328,9 @@ async fn local_admin_reports_unhealthy_runtime_and_lm_studio_issue_shapes() {
     lm_config.local_ai.provider = "lm-studio".to_string();
     lm_config.local_ai.base_url = Some(format!("{base}/lm-empty/v1"));
     lm_config.local_ai.chat_model_id = "loaded-chat".to_string();
+    let mut lm_runtime = openhuman_core::inference::local_runtime_config(&lm_config);
     let lm_empty = service
-        .diagnostics(&lm_config)
+        .diagnostics(&lm_runtime)
         .await
         .expect("lm studio empty");
     assert_eq!(lm_empty["provider"], "lm_studio");
@@ -336,8 +341,9 @@ async fn local_admin_reports_unhealthy_runtime_and_lm_studio_issue_shapes() {
         .contains("no models are loaded"));
 
     lm_config.local_ai.base_url = Some(format!("{base}/lm-wrong/v1"));
+    lm_runtime = openhuman_core::inference::local_runtime_config(&lm_config);
     let lm_wrong = service
-        .diagnostics(&lm_config)
+        .diagnostics(&lm_runtime)
         .await
         .expect("lm studio wrong model");
     assert!(lm_wrong["issues"][0]
@@ -346,8 +352,9 @@ async fn local_admin_reports_unhealthy_runtime_and_lm_studio_issue_shapes() {
         .contains("not loaded"));
 
     lm_config.local_ai.base_url = Some(format!("{base}/lm-error/v1"));
+    lm_runtime = openhuman_core::inference::local_runtime_config(&lm_config);
     let lm_error = service
-        .diagnostics(&lm_config)
+        .diagnostics(&lm_runtime)
         .await
         .expect("lm studio error payload");
     assert!(lm_error["issues"][0]

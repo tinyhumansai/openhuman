@@ -193,7 +193,6 @@ async fn start_chat_chat_error_event_serializes_structured_fields_to_json_wire()
         None,
         None,
         None,
-        None,
         ChatRequestMetadata::default(),
     )
     .await
@@ -284,7 +283,6 @@ async fn start_chat_emits_structured_rate_limit_metadata_on_chat_error_event() {
         "rate-limit-client",
         "rate-limit-thread",
         "Please summarize this in one line.",
-        None,
         None,
         None,
         None,

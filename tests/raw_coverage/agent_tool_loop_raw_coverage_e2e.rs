@@ -4,7 +4,7 @@ use openhuman_core::agent::bus::{
     register_agent_handlers, AgentTurnRequest, AgentTurnResponse, AGENT_RUN_TURN_METHOD,
 };
 use openhuman_core::agent::debug::{dump_agent_prompt, DumpPromptOptions};
-use openhuman_core::tinytools_agent::dialect::XmlDialect;
+use tinytools_agent::dialect::XmlDialect;
 use openhuman_core::agent::{Agent, AgentBuilder};
 use openhuman_core::config::{AgentConfig, MultimodalConfig, MultimodalFileConfig};
 use openhuman_core::agent::prompts::LearnedContextData;
@@ -92,7 +92,7 @@ impl ChatModel<()> for ScriptedModel {
         let mut items = vec![ModelStreamItem::Started];
         items.extend(self.stream_events.iter().cloned());
         items.push(ModelStreamItem::Completed(response));
-        Ok(Box::pin(futures::stream::iter(items)))
+        Ok(ModelStream::new(Box::pin(futures::stream::iter(items))))
     }
 }
 

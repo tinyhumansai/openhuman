@@ -1,29 +1,5 @@
 use super::*;
 
-#[test]
-fn contains_any_hits_at_least_one_word() {
-    assert!(contains_any("hello world", &["world"]));
-    assert!(contains_any("hello world", &["not there", "world"]));
-}
-
-#[test]
-fn contains_any_returns_false_when_none_match() {
-    assert!(!contains_any("hello world", &["nope"]));
-    assert!(!contains_any("hello world", &[]));
-}
-
-#[test]
-fn starts_with_any_detects_leading_prefix() {
-    assert!(starts_with_any("hello world", &["hello"]));
-    assert!(starts_with_any("hey you", &["yo", "hey"]));
-}
-
-#[test]
-fn starts_with_any_returns_false_when_none_match() {
-    assert!(!starts_with_any("bonjour", &["hello", "hey"]));
-    assert!(!starts_with_any("x", &[]));
-}
-
 // ── select_acknowledgment_reaction ────────────────────────────
 
 fn is_in(emoji: &str, options: &[&str]) -> bool {

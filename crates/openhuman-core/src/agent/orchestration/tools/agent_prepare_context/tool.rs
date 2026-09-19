@@ -250,7 +250,7 @@ impl AgentPrepareContextTool {
                 "[agent_prepare_context] skipped because agent context is already prepared for this turn"
             );
             return Ok(ToolResult::success(already_prepared_context_bundle(
-                &prepared_sources,
+                prepared_sources,
             )));
         }
 

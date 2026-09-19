@@ -74,9 +74,9 @@ pub(super) fn lookup_cancel_signal(run_id: &str) -> Option<WorkflowCancelSignal>
 /// losing stop cannot cancel a successor installed by resume.
 pub(super) fn cancel_signal_if_current(run_id: &str, signal: &WorkflowCancelSignal) -> bool {
     let current = lookup_cancel_signal(run_id);
-    if !current
+    if current
         .as_ref()
-        .is_some_and(|current| current.generation == signal.generation)
+        .is_none_or(|current| current.generation != signal.generation)
     {
         return false;
     }
@@ -104,28 +104,5 @@ pub(super) fn clear_cancel_signal(run_id: &str, signal: &WorkflowCancelSignal) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn resume_token_survives_old_cleanup_and_stop_cancels_the_successor() {
-        let run_id = format!("workflow-cancel-race-{}", uuid::Uuid::new_v4());
-        let old = register_cancel_signal(&run_id);
-        let successor = replace_cancel_signal(&run_id);
-
-        // Deterministic old-loop cleanup after resume must leave the newer
-        // generation installed.
-        clear_cancel_signal(&run_id, &old);
-        assert!(is_current_cancel_signal(&run_id, &successor));
-        assert!(!successor.token.is_cancelled());
-
-        // stop_workflow_run calls this helper after its lifecycle CAS; it
-        // reaches the current generation, not the old fenced-loop token.
-        assert!(cancel_signal_if_current(&run_id, &successor));
-        assert!(successor.token.is_cancelled());
-        assert!(successor.flag.load(Ordering::SeqCst));
-        assert!(!old.token.is_cancelled());
-
-        clear_cancel_signal(&run_id, &successor);
-    }
-}
+#[path = "cancel_tests.rs"]
+mod tests;

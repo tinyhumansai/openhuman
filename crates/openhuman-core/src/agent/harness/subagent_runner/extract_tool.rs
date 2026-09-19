@@ -559,7 +559,7 @@ fn write_extract_transcript(
         Err(err) => (format!("[error] {err}"), true),
     };
 
-    let messages = vec![
+    let messages = [
         ChatMessage {
             id: None,
             role: "system".into(),

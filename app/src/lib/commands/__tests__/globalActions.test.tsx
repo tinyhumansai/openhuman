@@ -102,7 +102,7 @@ describe('registerGlobalActions', () => {
   });
 
   it('exports GROUP_ORDER', () => {
-    expect(GROUP_ORDER).toEqual(['Navigation', 'Profiles', 'Chat', 'View', 'General']);
+    expect(GROUP_ORDER).toEqual(['Navigation', 'Chat', 'View', 'General']);
   });
 
   it('wires profile-switch shortcuts but keeps them hidden (disabled) until profiles exist', () => {

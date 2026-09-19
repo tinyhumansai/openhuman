@@ -9,7 +9,7 @@ use openhuman_core::agent::prompts::{
     UserIdentity,
 };
 use openhuman_core::agent::debug::{dump_agent_prompt, DumpPromptOptions};
-use openhuman_core::tinytools_agent::dialect::NativeDialect;
+use tinytools_agent::dialect::NativeDialect;
 use openhuman_core::agent::Agent;
 use openhuman_core::config::AgentConfig;
 use openhuman_core::memory::{

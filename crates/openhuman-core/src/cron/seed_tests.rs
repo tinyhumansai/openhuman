@@ -101,7 +101,6 @@ fn seed_prunes_legacy_welcome_job() {
         true,
         Some(LEGACY_WELCOME_JOB_NAME.to_string()),
         true, // enabled
-        None,
     )
     .expect("seed legacy welcome");
     assert_eq!(list_jobs(&config).unwrap().len(), 1);
@@ -144,7 +143,6 @@ fn startup_prune_removes_retired_tinyplace_autopilot_jobs() {
         false,
         Some(RETIRED_TINYPLACE_AUTOPILOT_AGENT_ID.to_string()),
         true,
-        None,
     )
     .expect("seed retired autopilot");
 
@@ -173,7 +171,6 @@ fn retired_autopilot_prune_uses_immutable_agent_id() {
         false,
         Some(RETIRED_TINYPLACE_AUTOPILOT_AGENT_ID.to_string()),
         true,
-        None,
     )
     .expect("seed renamed retired autopilot");
     add_agent_job_with_definition(
@@ -191,7 +188,6 @@ fn retired_autopilot_prune_uses_immutable_agent_id() {
         false,
         Some("unrelated_agent".to_string()),
         true,
-        None,
     )
     .expect("seed unrelated same-name job");
 

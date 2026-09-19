@@ -313,7 +313,14 @@ if [ "$OS" = "Linux" ] && [ "${E2E_USE_TAURI_DRIVER:-0}" = "1" ]; then
   TAURI_DRIVER_PORT="${TAURI_DRIVER_PORT:-4444}"
   TAURI_DRIVER_LOG="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/tauri-driver-${LOG_SUFFIX}.log"
   echo "[runner] Starting tauri-driver on port $TAURI_DRIVER_PORT"
-  tauri-driver --port "$TAURI_DRIVER_PORT" --native-driver "${WEBKIT_WEBDRIVER:-/usr/bin/WebKitWebDriver}" \
+  # Keep the native GUI process under Xvfb in a headless Linux environment.
+  # WDIO itself must not be wrapped: its local runner uses an IPC descriptor
+  # that xvfb-run does not retain (see autoXvfb: false in wdio.conf.ts).
+  DRIVER_COMMAND=(tauri-driver --port "$TAURI_DRIVER_PORT" --native-driver "${WEBKIT_WEBDRIVER:-/usr/bin/WebKitWebDriver}")
+  if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
+    DRIVER_COMMAND=(xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" -- "${DRIVER_COMMAND[@]}")
+  fi
+  "${DRIVER_COMMAND[@]}" \
     > "$TAURI_DRIVER_LOG" 2>&1 &
   APP_PID=$!
   export TAURI_DRIVER_PORT
