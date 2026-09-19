@@ -1,8 +1,10 @@
 use super::*;
-use crate::security::credentials::{AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME};
 use axum::{
     routing::{get, post},
     Json, Router,
+};
+use openhuman_core::security::credentials::{
+    AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
 };
 use tempfile::TempDir;
 

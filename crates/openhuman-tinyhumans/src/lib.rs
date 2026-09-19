@@ -9,7 +9,9 @@
 //! - **this crate** implements the port with the vendored `tinyhumans-sdk`
 //!   ([`SdkBackendTransport`]), installs it into a process ([`install`]),
 //!   offers a [`RuntimeBuilder`] that boots an embed runtime already
-//!   connected, and owns the host-side **login and backend session**
+//!   connected, registers the hosted-backend RPC proxies ([`hosted`]:
+//!   billing, team, referral, announcements) with the core's controller
+//!   registry, and owns the host-side **login and backend session**
 //!   ([`session`]: [`SessionManager`], [`SessionClient`], [`CoreLink`]) — the
 //!   core only ever *takes* a credential.
 //!
@@ -34,12 +36,14 @@
 
 pub use openhuman_embed as embed;
 
+pub mod hosted;
 mod install;
 pub mod jwt;
 mod runtime;
 pub mod session;
 pub mod transport;
 
+pub use hosted::extension as hosted_controllers;
 pub use install::{install, is_installed, InstallError, InstallOptions};
 pub use openhuman_embed::{
     BackendRequest, BackendTransport, BackendTransportError, TransportProfile,

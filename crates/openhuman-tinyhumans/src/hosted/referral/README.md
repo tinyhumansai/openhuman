@@ -14,9 +14,9 @@ Thin RPC adapter domain for the referral program. It does **not** own any busine
 
 | File | Role |
 | --- | --- |
-| `crates/openhuman-core/src/hosted/referral/mod.rs` | Export-only. Re-exports `ops::*` and the schema/controller pair (`all_referral_controller_schemas`, `all_referral_registered_controllers`, `referral_schemas`). |
-| `crates/openhuman-core/src/hosted/referral/ops.rs` | Business logic: `require_token`, `get_stats`, `claim_referral`. Builds a `BackendOAuthClient` against the effective backend URL and issues authed JSON requests. Includes inline tests against an Axum mock backend. |
-| `crates/openhuman-core/src/hosted/referral/schemas.rs` | Controller schemas + `handle_*` fns that load config and delegate to `ops`. Defines `ReferralClaimParams` (camelCase deserialization) and helpers (`to_json`, `deserialize_params`, `json_output`). |
+| `crates/openhuman-tinyhumans/src/hosted/referral/mod.rs` | Export-only. Re-exports `ops::*` and the schema/controller pair (`all_referral_controller_schemas`, `all_referral_registered_controllers`, `referral_schemas`). |
+| `crates/openhuman-tinyhumans/src/hosted/referral/ops.rs` | Business logic: `require_token`, `get_stats`, `claim_referral`. Builds a `BackendOAuthClient` against the effective backend URL and issues authed JSON requests. Includes inline tests against an Axum mock backend. |
+| `crates/openhuman-tinyhumans/src/hosted/referral/schemas.rs` | Controller schemas + `handle_*` fns that load config and delegate to `ops`. Defines `ReferralClaimParams` (camelCase deserialization) and helpers (`to_json`, `deserialize_params`, `json_output`). |
 
 ## Public surface
 

@@ -11,23 +11,45 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use openhuman_core::api::transport::{install_backend_transport, installed_backend_transport};
 use openhuman_core::api::{set_product_identity, ProductIdentity};
+use openhuman_core::core::all::register_controller_extension;
 
 use crate::transport::SdkBackendTransport;
 
 /// What [`install`] sets up.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct InstallOptions {
     /// The `x-sdk-name` this process reports on every backend request. `None`
     /// keeps whatever identity is already set (the core's default is
     /// `"openhuman"`). Set it here, before the transport is built, because the
     /// transport captures the attribution headers once.
     pub product_identity: Option<ProductIdentity>,
+    /// Register the hosted-backend RPC proxies (`billing`, `team`, `referral`,
+    /// `announcements`) with the core's controller registry. Default `true`;
+    /// a host whose `DomainSet` excludes `hosted` may leave it on — the group
+    /// gate hides them — or turn it off to keep them out of the registry
+    /// entirely.
+    pub hosted_controllers: bool,
+}
+
+impl Default for InstallOptions {
+    fn default() -> Self {
+        Self {
+            product_identity: None,
+            hosted_controllers: true,
+        }
+    }
 }
 
 impl InstallOptions {
     /// Report `identity` as this process's product on every backend request.
     pub fn product_identity(mut self, identity: ProductIdentity) -> Self {
         self.product_identity = Some(identity);
+        self
+    }
+
+    /// Whether to register the hosted RPC proxies (default `true`).
+    pub fn hosted_controllers(mut self, enabled: bool) -> Self {
+        self.hosted_controllers = enabled;
         self
     }
 }
@@ -38,6 +60,9 @@ pub enum InstallError {
     /// The SDK transport's HTTP client could not be built.
     #[error("failed to build the TinyHumans backend transport: {0:#}")]
     Transport(anyhow::Error),
+    /// The hosted controllers collided with the core's registry.
+    #[error("failed to register the hosted RPC controllers: {0}")]
+    Registry(String),
 }
 
 static INSTALLED: OnceLock<Mutex<Option<Arc<SdkBackendTransport>>>> = OnceLock::new();
@@ -61,6 +86,12 @@ pub fn install(options: InstallOptions) -> Result<Arc<SdkBackendTransport>, Inst
         set_product_identity(identity);
         // A new identity means new attribution headers; rebuild below.
         *guard = None;
+    }
+
+    if options.hosted_controllers {
+        // Idempotent in the core: an identical re-registration is a no-op.
+        register_controller_extension(crate::hosted::extension())
+            .map_err(InstallError::Registry)?;
     }
 
     if let Some(existing) = guard.as_ref() {

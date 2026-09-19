@@ -6,11 +6,11 @@
 use reqwest::Method;
 use serde_json::{json, Map, Value};
 
-use crate::api::config::effective_backend_api_url;
-use crate::api::jwt::get_session_token;
-use crate::api::BackendOAuthClient;
-use crate::config::Config;
-use crate::rpc::RpcOutcome;
+use openhuman_core::api::config::effective_backend_api_url;
+use openhuman_core::api::jwt::get_session_token;
+use openhuman_core::api::BackendOAuthClient;
+use openhuman_core::config::Config;
+use openhuman_core::rpc::RpcOutcome;
 
 fn require_token(config: &Config) -> Result<String, String> {
     get_session_token(config)?

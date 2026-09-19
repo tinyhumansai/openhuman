@@ -13,18 +13,18 @@ use reqwest::Method;
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use crate::api::config::effective_backend_api_url;
-use crate::api::BackendOAuthClient;
-use crate::config::Config;
-use crate::rpc::RpcOutcome;
+use openhuman_core::api::config::effective_backend_api_url;
+use openhuman_core::api::BackendOAuthClient;
+use openhuman_core::config::Config;
+use openhuman_core::rpc::RpcOutcome;
 
 /// Canonical authed-session guard. Delegates to `require_live_session_token`,
 /// which rejects an expired token locally (publishing `SessionExpired`) instead
 /// of firing a doomed backend 401 — see #3297 / `session_support`.
 fn require_token(
     config: &Config,
-) -> Result<crate::security::credentials::session_support::BackendCredential, String> {
-    crate::security::credentials::session_support::resolve_backend_credential(config)
+) -> Result<openhuman_core::security::credentials::session_support::BackendCredential, String> {
+    openhuman_core::security::credentials::session_support::resolve_backend_credential(config)
 }
 
 async fn get_authed_value(
@@ -44,7 +44,7 @@ async fn get_authed_value(
     client
         .authed_json(&token, method, path, body)
         .await
-        .map_err(crate::api::flatten_authed_error)
+        .map_err(openhuman_core::api::flatten_authed_error)
 }
 
 pub async fn get_current_plan(config: &Config) -> Result<RpcOutcome<Value>, String> {
@@ -62,7 +62,7 @@ pub async fn get_summary(config: &Config) -> Result<RpcOutcome<Value>, String> {
     let data = client
         .fetch_billing_summary(&token)
         .await
-        .map_err(crate::api::flatten_authed_error)?;
+        .map_err(openhuman_core::api::flatten_authed_error)?;
     Ok(RpcOutcome::single_log(data, "billing summary fetched"))
 }
 

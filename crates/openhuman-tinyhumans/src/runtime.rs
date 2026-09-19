@@ -52,6 +52,13 @@ impl RuntimeBuilder {
         self
     }
 
+    /// Whether the hosted RPC proxies (`billing`, `team`, …) are registered
+    /// (default `true`; the runtime's `DomainSet` still gates them).
+    pub fn hosted_controllers(mut self, enabled: bool) -> Self {
+        self.install.hosted_controllers = enabled;
+        self
+    }
+
     /// See [`openhuman_embed::RuntimeBuilder::workspace`].
     pub fn workspace(mut self, workspace: Workspace) -> Self {
         self.inner = self.inner.workspace(workspace);

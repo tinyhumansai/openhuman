@@ -82,12 +82,6 @@ pub fn resolve_backend_transport() -> Result<Arc<dyn BackendTransport>, BackendT
     }
     #[cfg(not(test))]
     {
-        // P1 shim: the SDK-backed transport compiled into the core until every
-        // host installs one from `openhuman-tinyhumans`. Removed with the SDK
-        // dependency.
-        if let Some(transport) = super::sdk_compat::SdkCompatTransport::shared() {
-            return Ok(transport);
-        }
         log::debug!("[backend-transport] no transport installed; backend unavailable");
         Err(BackendTransportError::Unavailable)
     }

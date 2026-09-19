@@ -241,3 +241,34 @@ async fn backend_client_round_trips_through_the_installed_transport() {
         .unwrap();
     assert_eq!(value, json!({"id": "a1"}));
 }
+
+/// `install` registers the hosted RPC proxies with the core's registry: the
+/// billing controller is dispatchable by its unchanged wire name and reaches
+/// the backend through the SDK transport.
+#[tokio::test]
+async fn install_registers_hosted_controllers_that_dispatch_through_the_transport() {
+    use openhuman_core::core::all::{
+        namespace_description, rpc_method_from_parts, schema_for_rpc_method,
+    };
+
+    let _guard = global_lock().lock().await;
+    let _t = crate::install(crate::InstallOptions::default()).unwrap();
+
+    for (ns, f) in [
+        ("billing", "get_balance"),
+        ("team", "get_usage"),
+        ("referral", "get_stats"),
+        ("announcements", "get_latest"),
+    ] {
+        assert!(
+            rpc_method_from_parts(ns, f).is_some(),
+            "{ns}.{f} must be registered after install()"
+        );
+    }
+    assert!(schema_for_rpc_method("openhuman.billing_get_balance").is_some());
+    assert!(namespace_description("billing").is_some());
+    assert!(namespace_description("team").is_some());
+
+    // A second install is a no-op for the registry, not a collision.
+    crate::install(crate::InstallOptions::default()).unwrap();
+}

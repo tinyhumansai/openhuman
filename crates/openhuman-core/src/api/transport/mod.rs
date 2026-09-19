@@ -25,7 +25,6 @@ pub mod error;
 pub mod install;
 #[cfg(test)]
 pub mod plain;
-pub mod sdk_compat;
 
 pub use error::BackendTransportError;
 pub use install::{

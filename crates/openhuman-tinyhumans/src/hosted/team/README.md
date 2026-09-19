@@ -16,10 +16,10 @@ Team management RPC adapters. This domain is a **thin proxy to the hosted backen
 
 | File | Role |
 | --- | --- |
-| `crates/openhuman-core/src/hosted/team/mod.rs` | Export-only: declares `ops`/`schemas`, re-exports all ops fns and the controller-schema pair. |
-| `crates/openhuman-core/src/hosted/team/ops.rs` | Business logic — async fns that build a path, attach the session JWT, call the backend, and wrap the response in `RpcOutcome::single_log`. Contains URL-path builder + id-normalization helpers and their unit tests. |
-| `crates/openhuman-core/src/hosted/team/schemas.rs` | Controller schemas (`all_team_controller_schemas`, `all_team_registered_controllers`, `team_schemas`), param structs, and `handle_*` adapters that load config, deserialize params, and delegate to `ops`. |
-| `crates/openhuman-core/src/hosted/team/schemas_tests.rs` | Sibling test module for `schemas.rs` (wired via `#[path]`). |
+| `crates/openhuman-tinyhumans/src/hosted/team/mod.rs` | Export-only: declares `ops`/`schemas`, re-exports all ops fns and the controller-schema pair. |
+| `crates/openhuman-tinyhumans/src/hosted/team/ops.rs` | Business logic — async fns that build a path, attach the session JWT, call the backend, and wrap the response in `RpcOutcome::single_log`. Contains URL-path builder + id-normalization helpers and their unit tests. |
+| `crates/openhuman-tinyhumans/src/hosted/team/schemas.rs` | Controller schemas (`all_team_controller_schemas`, `all_team_registered_controllers`, `team_schemas`), param structs, and `handle_*` adapters that load config, deserialize params, and delegate to `ops`. |
+| `crates/openhuman-tinyhumans/src/hosted/team/schemas_tests.rs` | Sibling test module for `schemas.rs` (wired via `#[path]`). |
 
 ## Public surface
 

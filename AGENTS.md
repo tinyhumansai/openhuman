@@ -352,10 +352,16 @@ sits above `openhuman-embed` and is installed once per process
 agents, memory, tools and RPC without any TinyHumans connection and answers
 backend-touching calls with `BackendApiError::BackendUnavailable` /
 `BACKEND_UNAVAILABLE:`. Never add `tinyhumans-sdk` back to the core; the only
-crate allowed to depend on it is `openhuman-tinyhumans`. Every host that boots
-a core (`crates/openhuman-app/src/main.rs` and `lib.rs::run`,
-`crates/openhuman-tui/src/runner.rs`) calls `openhuman_tinyhumans::install`
-first.
+crate allowed to depend on it is `openhuman-tinyhumans` (`cargo tree -p
+openhuman -i tinyhumans-sdk` must stay empty). Every host that boots a core
+(`crates/openhuman-app/src/main.rs` and `lib.rs::run`,
+`crates/openhuman-tui/src/runner.rs`, `crates/openhuman-cli/src/main.rs`)
+calls `openhuman_tinyhumans::install` first; it also registers the hosted RPC
+proxies (`billing`, `team`, `referral`, `announcements` —
+`crates/openhuman-tinyhumans/src/hosted/`) into the core's controller
+registry through `core::all::register_controller_extension`
+(`DomainGroup::Hosted`). New backend-only proxy domains belong there, not in
+the core.
 
 Add missing backend routes to the vendored SDK (its unexposed-route registry
 is the route policy the transport enforces) and name them from the core;

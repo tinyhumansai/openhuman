@@ -59,16 +59,11 @@ crate-type = ["rlib"]
 
 [dependencies]
 openhuman-rpc.workspace = true
-# tinyhumans-sdk — the typed Rust client for the TinyHumans backend API
-# (https://github.com/tinyhumansai/sdk). Vendored as a git submodule under
-# `vendor/` beside the other tiny* crates and consumed by path: the crate is not
-# published to crates.io, so there is no `[patch.crates-io]` entry for it.
-# This is the single source of truth for backend routes — `crates/openhuman-core/src/api/` is the
-# OpenHuman-local adapter layer (session tokens, config, observability) that
-# sits on top of it, not a second HTTP client. Anything missing here belongs
-# upstream in the SDK repo, not re-implemented in `crates/openhuman-core/src/api/`.
-# After cloning: `git submodule update --init vendor/tinyhumans-sdk`.
-tinyhumans-sdk = { path = "../../vendor/tinyhumans-sdk", default-features = false }
+# The TinyHumans SDK is deliberately NOT a dependency of the core. The core
+# reaches the hosted backend only through `api::transport::BackendTransport`;
+# the SDK-backed implementation is `crates/openhuman-tinyhumans`, which hosts
+# install at boot. `scripts/assert-shed.sh` / `cargo tree -i tinyhumans-sdk`
+# must stay empty for this package.
 # tinyflows — host-agnostic workflow engine (typed node graph → validate → compile →
 # run on tinyagents). Powers the "Workflows" feature via the seam in
 # `crates/openhuman-core/src/tinyflows/` + the `flows::` domain. Pulls tinyagents 2.1 transitively

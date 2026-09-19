@@ -21,7 +21,7 @@ know it, then name it from the core as usual.
 
 | File | Purpose |
 | --- | --- |
-| `transport/` | `BackendTransport` port, `BackendRequest`, `BackendTransportError`, process-global install/resolve; `plain.rs` is the `cfg(test)`-only reqwest fallback; `sdk_compat.rs` is the transitional in-core SDK shim (deleted once every host installs `openhuman-tinyhumans`) |
+| `transport/` | `BackendTransport` port, `BackendRequest`, `BackendTransportError`, process-global install/resolve; `plain.rs` is the `cfg(test)`-only reqwest fallback; production has no fallback — a host installs the transport from `openhuman-tinyhumans` |
 | `headers.rs` | Attribution headers (`x-core-version`, `x-tauri-version`, `x-sdk-name`) and the per-`TransportProfile` `reqwest::ClientBuilder` every transport implementation builds from |
 | `classify.rs` | `is_budget_exhausted_message` — backend/provider budget-exhaustion body classification shared by inference, agent loop guards, scheduler, web chat and telemetry |
 | `config.rs` | Backend/inference URL resolution and local-vs-hosted classification |

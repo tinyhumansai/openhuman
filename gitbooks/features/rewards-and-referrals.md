@@ -42,7 +42,7 @@ Reward amounts, conversion rules, and eligibility are all enforced **server-side
 
 ### Under the hood
 
-The referral domain (`crates/openhuman-core/src/hosted/referral/`) is a stateless RPC adapter, not business logic. It exists because the desktop WebView `fetch` can fail with a generic "Load failed" (CORS/TLS/WebKit), so these calls reuse the same server-side `reqwest` path as billing.
+The referral domain (`crates/openhuman-tinyhumans/src/hosted/referral/`) is a stateless RPC adapter, not business logic. It exists because the desktop WebView `fetch` can fail with a generic "Load failed" (CORS/TLS/WebKit), so these calls reuse the same server-side `reqwest` path as billing.
 
 | RPC                  | Backend call           | Purpose                                                               |
 | -------------------- | ---------------------- | --------------------------------------------------------------------- |
