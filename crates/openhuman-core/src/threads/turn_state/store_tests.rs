@@ -53,6 +53,20 @@ fn put_then_get_roundtrips_state() {
     assert_eq!(loaded, state);
 }
 
+#[cfg(windows)]
+#[test]
+fn put_roundtrips_snapshot_with_a_path_longer_than_max_path() {
+    let dir = tempdir().expect("tempdir");
+    let workspace = dir.path().join("w".repeat(50));
+    let thread_id = "t".repeat(43);
+    let request_id = "r".repeat(36);
+    let state = turn(&thread_id, &request_id, "2026-05-04T10:00:00Z");
+    let store = TurnStateStore::new(workspace);
+
+    store.put(&state).expect("persist a snapshot past MAX_PATH");
+    assert_eq!(store.get(&thread_id).expect("get"), Some(state));
+}
+
 #[test]
 fn roundtrips_subagent_interleaved_transcript_with_full_fidelity() {
     // A settled turn whose subagent streamed reasoning, called a tool, then
