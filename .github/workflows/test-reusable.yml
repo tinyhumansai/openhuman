@@ -109,6 +109,7 @@ jobs:
         run: bash scripts/ci-cancel-aware.sh pnpm test:coverage
         env:
           NODE_ENV: test
+          VITEST_MAX_WORKERS: "4"
       - name: Upload coverage reports
         if: always()
         uses: actions/upload-artifact@v7
@@ -328,12 +329,5 @@ jobs:
             crates/openhuman-app -> target
           cache-on-failure: true
           key: tauri
-      - name: Cache CEF binary distribution
-        uses: actions/cache@v6
-        with:
-          path: ~/.cache/tauri-cef
-          key: cef-ubuntu-22.04-${{ hashFiles('crates/openhuman-app/Cargo.toml') }}
-          restore-keys: |
-            cef-ubuntu-22.04-
       - name: Test Tauri shell (OpenHuman)
         run: bash scripts/ci-cancel-aware.sh cargo test --manifest-path crates/openhuman-app/Cargo.toml

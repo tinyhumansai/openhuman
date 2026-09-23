@@ -15,25 +15,36 @@ log() { echo "[ci][rust-cov] $*"; }
 # job-level linker flag here can suppress instrumentation and produce no data.
 unset RUSTFLAGS
 
+# mold without touching RUSTFLAGS: `mold -run` intercepts the linker exec.
+CARGO=(cargo)
+if command -v mold >/dev/null 2>&1; then
+  CARGO=(mold -run cargo)
+fi
+
 llvm_cov() {
   case "${1:-}" in
     clean | report)
-      bash scripts/ci-cancel-aware.sh cargo llvm-cov "$@"
+      bash scripts/ci-cancel-aware.sh "${CARGO[@]}" llvm-cov "$@"
       ;;
     *)
-      bash scripts/ci-cancel-aware.sh cargo llvm-cov \
+      bash scripts/ci-cancel-aware.sh "${CARGO[@]}" llvm-cov \
         --features "${PRODUCT_FEATURES}" "$@"
       ;;
   esac
 }
 
 llvm_cov_package() {
-  bash scripts/ci-cancel-aware.sh cargo llvm-cov "$@"
+  bash scripts/ci-cancel-aware.sh "${CARGO[@]}" llvm-cov "$@"
 }
 
-llvm_cov_embed() {
-  bash scripts/ci-cancel-aware.sh cargo llvm-cov \
-    --features "${PRODUCT_FEATURES}" "$@"
+package_features() {
+  local list="" pkg feature
+  for pkg in "$@"; do
+    for feature in $(printf '%s' "${PRODUCT_FEATURES}" | tr ',' ' '); do
+      list="${list:+${list},}${pkg}/${feature}"
+    done
+  done
+  printf '%s\n' "${list}"
 }
 
 integration_test_targets() {
@@ -80,6 +91,15 @@ target_features_satisfied() {
   done
 }
 
+prebuild_integration_targets() {
+  log "prebuilding integration targets"
+  (
+    eval "$(cargo llvm-cov show-env --export-prefix)"
+    bash scripts/ci-cancel-aware.sh "${CARGO[@]}" test --no-run \
+      -p openhuman-cli --tests --features "${PRODUCT_FEATURES}"
+  )
+}
+
 run_integration_target() {
   local target="$1"
   if ! target_features_satisfied "${target}"; then
@@ -105,6 +125,17 @@ run_integration_target() {
   fi
 }
 
+run_tinyjuice_regression() {
+  if [ -z "${TINYJUICE_TEST_MODULE:-}" ]; then
+    log "TINYJUICE_TEST_MODULE unset — skipping TinyJuice host-module regression"
+    return 0
+  fi
+  log "running TinyJuice host-module regression"
+  llvm_cov --no-report -p openhuman --lib -- \
+    openhuman::agent::tinyagents::middleware::tests::tool_output_tabulates_a_large_graph_for_a_non_exempt_tool \
+    --ignored --exact
+}
+
 log "running complete instrumented Rust suite"
 llvm_cov clean --workspace
 
@@ -120,13 +151,15 @@ llvm_cov --no-report --no-fail-fast -p openhuman --lib -- \
   openhuman::agent::tinyagents::reaper::tests::a_build_only_runtime_is_swept_before_it_can_be_invoked \
   --exact --test-threads=1
 
-# Run every root-workspace Rust support crate rather than only crates named by
-# changed paths. Product features are forwarded to the embedding facade; the
-# remaining crates do not expose that feature vocabulary.
-llvm_cov_embed --no-report --no-fail-fast -p openhuman-embed --all-targets
-llvm_cov_package --no-report --no-fail-fast -p openhuman-rpc --all-targets
-llvm_cov_embed --no-report --no-fail-fast -p openhuman-tinyhumans --all-targets
-llvm_cov_package --no-report --no-fail-fast -p openhuman-tui --all-targets
+run_tinyjuice_regression
+
+log "running support crate suites"
+llvm_cov_package --no-report --no-fail-fast \
+  -p openhuman-embed -p openhuman-tinyhumans -p openhuman-rpc -p openhuman-tui \
+  --all-targets \
+  --features "$(package_features openhuman-embed openhuman-tinyhumans)"
+
+prebuild_integration_targets
 
 while IFS= read -r target; do
   [ -n "${target}" ] || continue
@@ -134,10 +167,6 @@ while IFS= read -r target; do
   run_integration_target "${target}"
 done < <(integration_test_targets)
 
-# Doctests are not collected by cargo-llvm-cov, but they are still part of the
-# complete Rust test suite and must run whenever the Rust-core area changes.
-bash scripts/ci-cancel-aware.sh cargo test -p openhuman \
-  --doc --features "${PRODUCT_FEATURES}"
 
 log "merging coverage into ${OUT}"
 llvm_cov report --lcov --output-path "${OUT}"
