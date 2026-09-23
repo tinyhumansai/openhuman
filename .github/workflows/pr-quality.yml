@@ -12,52 +12,76 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref || github.ref }}
   cancel-in-progress: true
 jobs:
-  # All three jobs are `continue-on-error: true` for the first ~2 weeks after
-  # this workflow lands, so we can tune the parsers + matrix gates without
-  # blocking merges. Flip to hard-fail once the false-positive rate is stable.
+  changes:
+    name: Detect Changed Areas
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'docs') && !contains(github.event.pull_request.labels.*.name, 'chore') }}
+    outputs:
+      docs: ${{ steps.filter.outputs.docs }}
+      release-scripts: ${{ steps.filter.outputs.release_scripts }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@v4
+        with:
+          filters: |
+            docs:
+              - '.github/workflows/pr-quality.yml'
+              - 'docs/**/*.md'
+              - 'src/**/README.md'
+              - '.github/PULL_REQUEST_TEMPLATE.md'
+            release_scripts:
+              - '.github/workflows/pr-quality.yml'
+              - 'scripts/release/**'
   checklist-guard:
     name: PR Submission Checklist
-    runs-on: ubuntu-22.04
+    needs: [changes]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
-    container:
-      image: ghcr.io/tinyhumansai/openhuman_ci:latest
     continue-on-error: true
-    if: ${{ !contains(github.event.pull_request.labels.*.name, 'docs') && !contains(github.event.pull_request.labels.*.name, 'chore') }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
         with:
           fetch-depth: 1
+          persist-credentials: false
       - name: Verify Submission Checklist
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: node scripts/check-pr-checklist.mjs
   coverage-matrix:
     name: Coverage Matrix Sync
-    runs-on: ubuntu-22.04
+    needs: [changes]
+    if: github.event.action != 'edited'
+    runs-on: ubuntu-latest
     timeout-minutes: 10
-    container:
-      image: ghcr.io/tinyhumansai/openhuman_ci:latest
     continue-on-error: true
-    if: ${{ !contains(github.event.pull_request.labels.*.name, 'docs') && !contains(github.event.pull_request.labels.*.name, 'chore') }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
         with:
           fetch-depth: 1
+          persist-credentials: false
       - name: Verify Coverage Matrix
         run: node scripts/check-coverage-matrix.mjs
   markdown-link-check:
     name: Markdown Link Check
+    needs: [changes]
+    if: github.event.action != 'edited' && needs.changes.outputs.docs == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     continue-on-error: true
-    if: ${{ !contains(github.event.pull_request.labels.*.name, 'docs') && !contains(github.event.pull_request.labels.*.name, 'chore') }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
         with:
           fetch-depth: 1
+          persist-credentials: false
       - name: Lychee link check
         uses: lycheeverse/lychee-action@v2
         with:
@@ -87,15 +111,17 @@ jobs:
           fail: true
   appimage-rpath-guard:
     name: AppImage RPATH + libxdo guard
+    needs: [changes]
+    if: github.event.action != 'edited' && needs.changes.outputs.release-scripts == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     continue-on-error: true
-    if: ${{ !contains(github.event.pull_request.labels.*.name, 'docs') && !contains(github.event.pull_request.labels.*.name, 'chore') }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
         with:
           fetch-depth: 1
+          persist-credentials: false
       - name: Install patchelf
         run: sudo apt-get update -qq && sudo apt-get install -y -qq patchelf
       - name: Syntax check release scripts

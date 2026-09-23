@@ -94,13 +94,11 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
     RUSTFLAGS: "-C link-arg=-fuse-ld=mold",
   };
   // Instrumented builds: no sccache (cargo-llvm-cov owns the wrapper and
-  // RUSTFLAGS, exactly as in ci-lite), no DWARF, a large test stack, and on
-  // hosted the serialized build ci-lite needs to fit the runner's disk.
+  // RUSTFLAGS, exactly as in ci-lite), no DWARF, a large test stack.
   const covEnv = {
     ...rustEnv,
     CARGO_PROFILE_DEV_DEBUG: "0",
     RUST_MIN_STACK: "67108864",
-    ...(ex63 ? {} : { CARGO_BUILD_JOBS: "1" }),
   };
   const modulesDir = ex63
     ? `${scratch}/test-modules`
@@ -109,26 +107,16 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
   const withModules = (cmd) =>
     `set -a && . ${modulesEnvFile} && set +a && ${cmd}`;
 
-  // Non-instrumented, but needs the downloaded modules. On ex63 it rides the
-  // lint lane's graph instead of lengthening the coverage critical path; on
-  // hosted it stays in the coverage job beside the modules, as in ci-lite.
-  const juiceRegression = {
-    name: "tinyjuice-host-regression",
-    when: core,
-    needs: [ex63 ? "rust-cov:test-modules" : "test-modules"],
-    run: withModules(
-      "cargo test --lib --features modules" +
-        " openhuman::agent::tinyagents::middleware::tests::tool_output_tabulates_a_large_graph_for_a_non_exempt_tool" +
-        " -- --ignored --exact",
-    ),
-  };
-
   /** @type {Lane[]} */
   const lanes = [
     {
       name: "static",
       checks: [
-        { name: "rust-fmt", when: rust, run: "cargo fmt --all -- --check" },
+        {
+          name: "rust-fmt",
+          when: rust,
+          run: "cargo fmt --all -- --check && cargo fmt --manifest-path crates/openhuman-app/Cargo.toml --all -- --check",
+        },
         {
           name: "rust-layout",
           when: core,
@@ -206,7 +194,7 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           name: "prettier",
           when: areas.frontend,
           needs: ["pnpm-install"],
-          run: "pnpm --filter openhuman-app format:check",
+          run: "pnpm --filter openhuman-app exec prettier --check .",
         },
         {
           name: "eslint",
@@ -271,13 +259,13 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           run: `bash scripts/ci/self-hosted/install-test-modules.sh "${modulesDir}" ${modulesEnvFile}`,
         },
         {
+          // Includes the TinyJuice host regression on the instrumented lib.
           name: "rust-core-coverage",
           when: core,
           needs: ["test-modules"],
           env: { OUT: "ci-out/lcov/lcov-core.info" },
           run: withModules("bash scripts/ci/rust-coverage.sh"),
         },
-        ...(ex63 ? [] : [juiceRegression]),
       ],
     },
     {
@@ -296,10 +284,11 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           when: core,
           run: "cargo clippy -p openhuman -- -D warnings",
         },
+        // Embed and tinyhumans in one invocation so the core builds once.
         {
-          name: "embed-clippy",
+          name: "facade-clippy",
           when: core,
-          run: "cargo clippy -p openhuman-embed --all-targets -- -D warnings",
+          run: "cargo clippy -p openhuman-embed -p openhuman-tinyhumans --all-targets -- -D warnings",
         },
         {
           name: "embed-check-no-default",
@@ -307,26 +296,20 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           run: "cargo check -p openhuman-embed --no-default-features",
         },
         {
-          name: "embed-test",
+          name: "facade-test",
           when: core,
-          run: "cargo test -p openhuman-embed",
-        },
-        {
-          name: "tinyhumans-clippy",
-          when: core,
-          run: "cargo clippy -p openhuman-tinyhumans --all-targets -- -D warnings",
-        },
-        {
-          name: "tinyhumans-test",
-          when: core,
-          run: "cargo test -p openhuman-tinyhumans",
+          run: "cargo test -p openhuman-embed -p openhuman-tinyhumans",
         },
         {
           name: "prompt-budget",
           when: core,
           run: "bash scripts/check-prompt-budget.sh --verbose",
         },
-        ...(ex63 ? [juiceRegression] : []),
+        {
+          name: "doctests",
+          when: core,
+          run: `cargo test -p openhuman --doc --features ${PRODUCT}`,
+        },
         // Report-only in ci-lite (never in the gate), so report-only here.
         {
           name: "rss-bench-fixture-tests",
@@ -341,16 +324,7 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
       targetDir: targetDir("gatesoff"),
       env: { ...rustEnv, ...sccache, RUST_MIN_STACK: "67108864" },
       checks: [
-        {
-          name: "check-gates-off",
-          when: rust,
-          run: "cargo check --manifest-path Cargo.toml -p openhuman --no-default-features",
-        },
-        {
-          name: "check-e2e-test-support",
-          when: rust,
-          run: "cargo check --manifest-path Cargo.toml -p openhuman --no-default-features --features e2e-test-support",
-        },
+        // The test builds are also the gates-off compile checks.
         {
           name: "gate-contract-tests",
           when: rust,
@@ -361,17 +335,11 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
             " openhuman::config:: openhuman::platform::socket::event_handlers:: tools::schemas:: tools::ops::tests::",
         },
         {
-          name: "gate-contract-tests-mcp",
-          when: rust,
-          run: "cargo test --manifest-path Cargo.toml -p openhuman --no-default-features --features mcp --lib -- mcp::server::resources::",
-        },
-        {
-          // Scoped to `introspect::` on purpose; see ci-lite.yml for the hole.
-          name: "gate-contract-tests-e2e-support",
+          name: "gate-contract-tests-mcp-e2e-support",
           when: rust,
           run:
-            "cargo test --manifest-path Cargo.toml -p openhuman --no-default-features --features e2e-test-support --lib --" +
-            " test_support::introspect::",
+            "cargo test --manifest-path Cargo.toml -p openhuman --no-default-features --features mcp,e2e-test-support --lib --" +
+            " mcp::server::resources:: test_support::introspect::",
         },
         {
           name: "kernel-floor",
@@ -404,7 +372,7 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           env: { ...covEnv },
           run:
             "unset RUSTFLAGS RUSTC_WRAPPER" +
-            " && cargo llvm-cov clean --manifest-path crates/openhuman-app/Cargo.toml" +
+            " && cargo llvm-cov clean --workspace --manifest-path crates/openhuman-app/Cargo.toml" +
             " && cargo llvm-cov --no-rustc-wrapper --manifest-path crates/openhuman-app/Cargo.toml" +
             " --lcov --output-path ci-out/lcov/lcov-tauri.info",
         },

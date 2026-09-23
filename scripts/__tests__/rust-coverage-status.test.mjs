@@ -92,3 +92,52 @@ test("an integration target with all required product features runs", () => {
   assert.equal(result.status, 0, result.output);
   assert.match(result.output, /RAN-TARGET/);
 });
+
+test("the TinyJuice regression runs the ignored middleware test under llvm-cov when the module is installed", () => {
+  const res = withRunnerFunctions(
+    ["run_tinyjuice_regression"],
+    [
+      "TINYJUICE_TEST_MODULE=/opt/modules/libtinyjuice_module.so",
+      "log() { printf '%s\\n' \"$*\"; }",
+      "llvm_cov() { printf 'LLVM_COV'; printf ' <%s>' \"$@\"; printf '\\n'; }",
+    ].join("\n"),
+    "run_tinyjuice_regression",
+  );
+
+  assert.equal(res.status, 0, res.output);
+  assert.match(
+    res.output,
+    /LLVM_COV <--no-report> <-p> <openhuman> <--lib> <--> <openhuman::agent::tinyagents::middleware::tests::tool_output_tabulates_a_large_graph_for_a_non_exempt_tool> <--ignored> <--exact>/,
+  );
+});
+
+test("the TinyJuice regression is skipped, not failed, without the module", () => {
+  const res = withRunnerFunctions(
+    ["run_tinyjuice_regression"],
+    [
+      "unset TINYJUICE_TEST_MODULE",
+      "log() { printf '%s\\n' \"$*\"; }",
+      "llvm_cov() { echo 'RAN-THE-TEST'; return 0; }",
+    ].join("\n"),
+    'run_tinyjuice_regression; echo "rc=$?"',
+  );
+
+  assert.equal(res.status, 0, res.output);
+  assert.match(res.output, /skipping TinyJuice/);
+  assert.doesNotMatch(res.output, /RAN-THE-TEST/);
+  assert.match(res.output, /rc=0/);
+});
+
+test("product gates are spelled per package so one invocation covers several crates", () => {
+  const res = withRunnerFunctions(
+    ["package_features"],
+    'PRODUCT_FEATURES="voice,web3"',
+    "package_features openhuman-embed openhuman-tinyhumans",
+  );
+
+  assert.equal(res.status, 0, res.output);
+  assert.equal(
+    res.output.trim(),
+    "openhuman-embed/voice,openhuman-embed/web3,openhuman-tinyhumans/voice,openhuman-tinyhumans/web3",
+  );
+});

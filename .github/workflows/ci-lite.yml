@@ -32,6 +32,7 @@ env:
   # Consumed by scripts/ci-cancel-aware.sh's cancellation watchdog.
   GH_TOKEN: ${{ github.token }}
   NPM_CONFIG_STORE_DIR: .pnpm-store
+  CACHE_SAVE: ${{ github.ref == 'refs/heads/main' }}
 
 # Keep only the newest run per PR/branch. Long Rust/Tauri build commands must
 # run through scripts/ci-cancel-aware.sh so cancellation reaches descendants.
@@ -54,6 +55,7 @@ jobs:
       docs: ${{ steps.filter.outputs.docs }}
       rust-core: ${{ steps.filter.outputs['rust-core'] }}
       rust-tauri: ${{ steps.filter.outputs['rust-tauri'] }}
+      rust: ${{ steps.filter.outputs['rust-core'] == 'true' || steps.filter.outputs['rust-tauri'] == 'true' }}
       # Mock backend + shared scripts → run the scripts self-test suite.
       scripts: ${{ steps.filter.outputs.scripts }}
       # Test wiring surface (workflows, package.json, all.rs, tests/, script
@@ -96,22 +98,6 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      # The RPC-catalog drift guard reads tinychannels, while the app's
-      # `rust:format:check` now formats the virtual root workspace. Cargo must
-      # load every local path dependency's manifest before rustfmt can select
-      # workspace packages, so initialize the complete root vendor graph.
-      #
-      # `actions/checkout` scopes its own `safe.directory` config to a
-      # temporary HOME for the duration of the checkout step only — it does
-      # not persist into this container job's real HOME, so a bare `git`
-      # invocation in a later step hits "detected dubious ownership" here.
-      # Add the workspace as a safe directory ourselves before touching git.
-      - name: Init Rust workspace submodules
-        if: needs.changes.outputs.frontend == 'true'
-        run: |
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          git submodule update --init --recursive vendor/
-
       - name: Cache pnpm store
         id: pnpm-cache
         if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.i18n == 'true'
@@ -127,7 +113,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Save pnpm store cache
-        if: always() && (needs.changes.outputs.frontend == 'true' || needs.changes.outputs.i18n == 'true') && steps.pnpm-cache.outputs.cache-hit != 'true'
+        if: always() && env.CACHE_SAVE == 'true' && (needs.changes.outputs.frontend == 'true' || needs.changes.outputs.i18n == 'true') && steps.pnpm-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .pnpm-store
@@ -141,7 +127,7 @@ jobs:
 
       - name: Check Prettier formatting
         if: needs.changes.outputs.frontend == 'true'
-        run: pnpm --filter openhuman-app format:check
+        run: pnpm --filter openhuman-app exec prettier --check .
         env:
           NODE_ENV: test
 
@@ -170,6 +156,7 @@ jobs:
         run: bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app test:coverage
         env:
           NODE_ENV: test
+          VITEST_MAX_WORKERS: "4"
 
       - name: Normalize lcov source paths to repo root
         if: needs.changes.outputs.frontend == 'true'
@@ -188,14 +175,57 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-  rust-quality:
-    name: Rust Quality (fmt, clippy)
+  rust-static:
+    name: Rust Static Checks (fmt, layout, ratchets)
     needs: [changes]
-    if: needs.changes.outputs['rust-core'] == 'true' || needs.changes.outputs['rust-tauri'] == 'true'
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-22.04
-    # This lane compiles the product and contributor core graphs, executes the
-    # embedding facade tests, then checks the detached Tauri Cargo world. A cold
-    # runner needs more than the former 20-minute budget to reach Tauri clippy.
+    timeout-minutes: 40
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Check Rust formatting
+        id: fmt
+        if: ${{ !cancelled() }}
+        run: cargo fmt --all -- --check
+
+      - name: Check Tauri shell formatting
+        id: fmt_tauri
+        if: ${{ !cancelled() }}
+        run: cargo fmt --manifest-path crates/openhuman-app/Cargo.toml --all -- --check
+
+      - name: Enforce OpenHuman Rust file layout
+        id: layout
+        if: ${{ !cancelled() && needs.changes.outputs['rust-core'] == 'true' }}
+        run: node scripts/ci/check-openhuman-rust-layout.mjs
+
+      - name: Enforce agent runtime ownership boundary
+        id: runtime_boundary
+        if: ${{ !cancelled() && needs.changes.outputs['rust-core'] == 'true' }}
+        run: pnpm agent:runtime-boundary
+
+      - name: Enforce the ignored-test ratchet
+        id: ignored_tests
+        if: ${{ !cancelled() }}
+        run: pnpm rust:ignored-tests
+
+      - name: Enforce Linux TLS dependency policy
+        id: linux_tls
+        if: ${{ !cancelled() }}
+        run: bash scripts/check-linux-tls-dependencies.sh
+
+  rust-quality:
+    name: Rust Quality (product clippy, prompt budget, doctests)
+    needs: [changes]
+    if: needs.changes.outputs['rust-core'] == 'true'
+    runs-on: ubuntu-22.04
     timeout-minutes: 40
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:latest
@@ -213,169 +243,30 @@ jobs:
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: |
-            . -> target
-            crates/openhuman-app -> target
+          workspaces: . -> target
           cache-on-failure: true
-          # shared-key (not key) so the cache name is stable and not suffixed
-          # with the job id. Swatinem caches the full target/, which is why we
-          # no longer layer sccache on top (it logged 0% hits under a warm
-          # rust-cache and just doubled the cache footprint).
           shared-key: pr-rust-quality
-
-      # `!cancelled()` on every independent check below, so one failure stops
-      # concealing the rest (#6451). A step's `if` defaults to `success()`, so
-      # today a red `cargo fmt` reports the remaining eleven steps as SKIPPED —
-      # which reads as "not applicable" rather than "never ran".
-      #
-      # NOT `continue-on-error`. That SUPPRESSES the failure, making the job's
-      # redness depend on an aggregation step being written correctly — a
-      # false-green path installed into the gate that guards everything else.
-      # `!cancelled()` runs the step without suppressing it: each still fails
-      # the job on its own, exactly as today. `!cancelled()` rather than
-      # `always()` so a cancelled run still stops promptly instead of grinding
-      # through every remaining check.
-      - name: Check Rust formatting
-        id: fmt
-        if: ${{ !cancelled() }}
-        run: cargo fmt --all -- --check
-
-      - name: Enforce OpenHuman Rust file layout
-        id: layout
-        if: ${{ !cancelled() && needs.changes.outputs['rust-core'] == 'true' }}
-        run: node scripts/ci/check-openhuman-rust-layout.mjs
-
-      - name: Enforce agent runtime ownership boundary
-        id: runtime_boundary
-        if: ${{ !cancelled() && needs.changes.outputs['rust-core'] == 'true' }}
-        run: pnpm agent:runtime-boundary
-
-      - name: Enforce the ignored-test ratchet
-        # Counts `#[ignore]` attributes in the source tree per crate and refuses
-        # any increase. Deliberately static: `#[ignore]` is a source attribute,
-        # so this needs no build, no feature-set choice and no dependence on the
-        # dispatch-only full-suite lane (#5021) — which is why it can sit here,
-        # ahead of clippy, rather than waiting for a lane that runs tests.
-        # Covers openhuman-app too, hence both filters.
-        if: needs.changes.outputs['rust-core'] == 'true' || needs.changes.outputs['rust-tauri'] == 'true'
-        run: pnpm rust:ignored-tests
-
-      - name: Enforce Linux TLS dependency policy
-        id: linux_tls
-        if: ${{ !cancelled() && (needs.changes.outputs['rust-core'] == 'true' || needs.changes.outputs['rust-tauri'] == 'true') }}
-        run: bash scripts/check-linux-tls-dependencies.sh
+          save-if: ${{ env.CACHE_SAVE == 'true' }}
 
       - name: Run clippy (core crate, product feature set)
         id: clippy_product
-        if: ${{ !cancelled() && needs.changes.outputs['rust-core'] == 'true' }}
-        # `--features` is load-bearing. `[features] default` is the CONTRIBUTOR
-        # set (see the comment above it in Cargo.toml) and omits voice, web3,
-        # documents, meet, contacts, inference and crash-reporting — so a bare
-        # `cargo clippy` no longer lints code that ships. Product set:
-        # scripts/ci/product-features.txt, asserted equal to the shell's
-        # forwarding list by check-feature-forwarding.mjs.
+        if: ${{ !cancelled() }}
         run: |
           bash scripts/ci-cancel-aware.sh cargo clippy -p openhuman \
             --features "$(bash scripts/ci/product-features.sh)" -- -D warnings
 
-      - name: Run clippy (core crate, contributor default set)
-        id: clippy_default
-        if: ${{ !cancelled() && needs.changes.outputs['rust-core'] == 'true' }}
-        # The set a contributor's editor and pre-push hook actually compile. A
-        # lint that only fires with those gates OFF — an import left unused once
-        # a domain is compiled out, say — is invisible to the product lane above
-        # and would land red on every contributor's machine while CI stayed
-        # green. Cheap: this graph is ~356 packages against the product's ~567.
-        run: bash scripts/ci-cancel-aware.sh cargo clippy -p openhuman -- -D warnings
-
-      # Split one-command-per-step (#6451). These were a single `run:` block, and
-      # GitHub runs those under `bash -e`: a clippy failure meant the `check` and
-      # the TEST SUITE below it never ran and were reported as NOTHING — not even
-      # "skipped". Job-level, concealed work at least looks skipped; inside a
-      # multi-command step it looks like work that does not exist. Worse here
-      # because the step is named "Check", so reading the step list does not
-      # reveal that a test suite sits behind a lint.
-      - name: Lint embedding facade
-        id: embed_clippy
-        if: ${{ !cancelled() && needs.changes.outputs['rust-core'] == 'true' }}
-        run: bash scripts/ci-cancel-aware.sh cargo clippy -p openhuman-embed --all-targets -- -D warnings
-
-      - name: Check embedding facade builds without default features
-        id: embed_check
-        if: ${{ !cancelled() && needs.changes.outputs['rust-core'] == 'true' }}
-        run: bash scripts/ci-cancel-aware.sh cargo check -p openhuman-embed --no-default-features
-
-      - name: Test embedding facade
-        id: embed_test
-        if: ${{ !cancelled() && needs.changes.outputs['rust-core'] == 'true' }}
-        run: bash scripts/ci-cancel-aware.sh cargo test -p openhuman-embed
-
-      # `openhuman-tinyhumans` is the SDK-backed backend transport plus the
-      # host-side login/session owner shared by the Tauri shell and the TUI.
-      # Its tests run against wiremock / in-process stubs, never the backend.
-      # Split for the same reason as the embedding facade above.
-      - name: Lint tinyhumans crate
-        id: tinyhumans_clippy
-        if: ${{ !cancelled() && needs.changes.outputs['rust-core'] == 'true' }}
-        run: bash scripts/ci-cancel-aware.sh cargo clippy -p openhuman-tinyhumans --all-targets -- -D warnings
-
-      - name: Test tinyhumans crate
-        id: tinyhumans_test
-        if: ${{ !cancelled() && needs.changes.outputs['rust-core'] == 'true' }}
-        run: bash scripts/ci-cancel-aware.sh cargo test -p openhuman-tinyhumans
-
-      # Unchained because the step BELOW it needs what it produces, not because
-      # it is independent. "Independent" is not "self-sufficient": `Run clippy
-      # (Tauri shell)` is logically unrelated to the core checks, but it needs
-      # the CEF binary distribution this restore puts on disk. This restore sits
-      # after the core checks, so leaving it chained while unchaining the clippy
-      # would have that clippy compile with no CEF present whenever any earlier
-      # step failed — failing or crawling for a reason unrelated to the code
-      # under test, and reading as a new flake rather than as a missing cache.
-      # When unchaining a step, check what it consumes, not only what it checks.
-      - name: Cache CEF binary distribution
-        if: ${{ !cancelled() && needs.changes.outputs['rust-tauri'] == 'true' }}
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: |
-            ~/Library/Caches/tauri-cef
-            ~/.cache/tauri-cef
-          key: cef-x86_64-unknown-linux-gnu-v2-${{ hashFiles('crates/openhuman-app/Cargo.toml') }}
-          restore-keys: |
-            cef-x86_64-unknown-linux-gnu-v2-
-
-      - name: Run clippy (Tauri shell)
-        id: clippy_tauri
-        if: ${{ !cancelled() && needs.changes.outputs['rust-tauri'] == 'true' }}
-        run: bash scripts/ci-cancel-aware.sh cargo clippy --manifest-path crates/openhuman-app/Cargo.toml -- -D warnings
-
-      # LAST on purpose. A failing step halts its job, so every step after it
-      # reports SKIPPED rather than running. This guard went red between
-      # 2026-09-21T21:26Z and 22:24Z (#6423) and from then on skipped the five
-      # steps that used to sit behind it on every Rust-touching PR -- including
-      # `cargo test -p openhuman-embed` and `cargo test -p openhuman-tinyhumans`,
-      # which are test suites, not lints. Keeping this step last means a budget
-      # overrun can never conceal a lint or a test suite again. It is NOT
-      # suppressed: the step still runs, still fails, the job still goes red and
-      # `PR CI Gate` still blocks the PR.
-      #
-      # It builds openhuman-core with the product feature set from
-      # scripts/ci/product-features.sh, the same set the clippy steps above use.
       - name: Guard — the fixed prompt prefix may not grow
         id: prompt_budget
-        if: ${{ !cancelled() && needs.changes.outputs['rust-core'] == 'true' }}
+        if: ${{ !cancelled() }}
         run: bash scripts/ci-cancel-aware.sh bash scripts/check-prompt-budget.sh --verbose
 
-      # Report every check's own outcome (#6451).
-      #
-      # `skipped` and `success` are easy to conflate when scanning a job: a
-      # skipped step reads as "not applicable" rather than "never ran". This
-      # lists each check with its actual outcome so the distinction is explicit.
-      #
-      # INFORMATIONAL ONLY. It never fails and never decides the job's result —
-      # every check above still fails the job on its own. A reporting step that
-      # could gate would be a place for a red job to come out green, which is
-      # the whole defect this change exists to remove.
+      - name: Run doctests (product feature set)
+        id: doctests
+        if: ${{ !cancelled() }}
+        run: |
+          bash scripts/ci-cancel-aware.sh cargo test -p openhuman --doc \
+            --features "$(bash scripts/ci/product-features.sh)"
+
       - name: Summarise Rust Quality checks
         if: ${{ always() }}
         continue-on-error: true
@@ -398,6 +289,83 @@ jobs:
             echo "\`skipped\` means the step did not run. It is not a pass."
           } >> "$GITHUB_STEP_SUMMARY"
 
+  rust-quality-contrib:
+    name: Rust Quality (contributor clippy, embed + tinyhumans)
+    needs: [changes]
+    if: needs.changes.outputs['rust-core'] == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:latest
+    env:
+      CARGO_INCREMENTAL: "0"
+      RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          cache-on-failure: true
+          shared-key: pr-rust-quality-contrib
+          save-if: ${{ env.CACHE_SAVE == 'true' }}
+
+      - name: Run clippy (core crate, contributor default set)
+        id: clippy_default
+        if: ${{ !cancelled() }}
+        run: bash scripts/ci-cancel-aware.sh cargo clippy -p openhuman -- -D warnings
+
+      - name: Lint embedding facade and tinyhumans crate
+        id: facade_clippy
+        if: ${{ !cancelled() }}
+        run: bash scripts/ci-cancel-aware.sh cargo clippy -p openhuman-embed -p openhuman-tinyhumans --all-targets -- -D warnings
+
+      - name: Check embedding facade builds without default features
+        id: embed_check
+        if: ${{ !cancelled() }}
+        run: bash scripts/ci-cancel-aware.sh cargo check -p openhuman-embed --no-default-features
+
+      - name: Test embedding facade and tinyhumans crate
+        id: facade_test
+        if: ${{ !cancelled() }}
+        run: bash scripts/ci-cancel-aware.sh cargo test -p openhuman-embed -p openhuman-tinyhumans
+
+  rust-quality-tauri:
+    name: Rust Quality (Tauri shell clippy)
+    needs: [changes]
+    if: needs.changes.outputs['rust-tauri'] == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:latest
+    env:
+      CARGO_INCREMENTAL: "0"
+      RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/openhuman-app -> target
+          cache-on-failure: true
+          shared-key: pr-rust-quality-tauri
+          save-if: ${{ env.CACHE_SAVE == 'true' }}
+
+      - name: Run clippy (Tauri shell)
+        run: bash scripts/ci-cancel-aware.sh cargo clippy --manifest-path crates/openhuman-app/Cargo.toml -- -D warnings
+
   # Feature-gate smoke: proves the core still compiles with a domain gate turned
   # OFF. The disabled build is the ONLY thing that catches stub-facade signature
   # drift (see AGENTS.md "Compile-time domain gates"), so it must run in CI, not
@@ -407,10 +375,8 @@ jobs:
   rust-feature-gate-smoke:
     name: Rust Feature-Gate Smoke (gates off)
     needs: [changes]
-    if: needs.changes.outputs['rust-core'] == 'true' || needs.changes.outputs['rust-tauri'] == 'true'
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-22.04
-    # Was 25; raised because the lane now links (--all-targets) and runs a test
-    # binary, not just `cargo check`.
     timeout-minutes: 40
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:latest
@@ -431,94 +397,22 @@ jobs:
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: |
-            . -> target
+          workspaces: . -> target
           cache-on-failure: true
           shared-key: pr-rust-feature-gate-smoke
-
-      - name: Check core builds with the default domain gates disabled
-        # Lib-scoped on purpose. `--all-targets` would additionally compile the
-        # `tests/` integration crates, which today name gated symbols
-        # (voice::reply_speech::test_seam, mcp::registry::store, web3::x402::tools) without
-        # a #[cfg] and so do not compile with the gates off. That cleanup is tracked
-        # in #5021 alongside running the full gates-off suite; until it lands, this
-        # lane checks the lib and RUNS the gate-contract lib tests below.
-        run: bash scripts/ci-cancel-aware.sh cargo check --manifest-path Cargo.toml -p openhuman --no-default-features
-
-      - name: Check the gate that is in neither the contributor nor the product set
-        # This gate is default-OFF *and* absent from the product set, so
-        # nothing else in CI compiles them: the product lanes do not select
-        # them, the contributor lanes no longer default them on, and the
-        # gates-off check above turns them off.
-        #
-        #   e2e-test-support  — the `test`/`test_support` RPC family, turned on
-        #                       only by app/scripts/e2e-build.sh for the packaged
-        #                       desktop E2E binary. It includes
-        #                       `openhuman.test_reset`, a destructive in-place
-        #                       wipe, which is exactly why it must stay out of
-        #                       every product lane — so a compile-only smoke
-        #                       check here is the right shape, not enabling it
-        #                       somewhere that ships.
-        #
-        # Without this step those families rot silently — the same shape of
-        # failure as #4901, pointed at a gate instead of at the shipped app.
-        # `e2e-test-support` sat in this position from the day it was added
-        # until #6086 and was never `cargo check`ed by CI in either state.
-        #
-        # If a future gate lands in this same neither-set position, add it here
-        # AND to the list in CLAUDE.md's "gate in neither set" note.
-        run: |
-          bash scripts/ci-cancel-aware.sh cargo check --manifest-path Cargo.toml -p openhuman --no-default-features --features e2e-test-support
+          save-if: ${{ env.CACHE_SAVE == 'true' }}
 
       - name: Run the gate-contract tests with the default domain gates disabled
-        # `cargo check` (even --all-targets) never RUNS tests, so a gated family that
-        # is asserted WITHOUT a matching #[cfg] compiles fine and only fails at
-        # runtime — exactly how the two ungated `voice` asserts sat red on main
-        # (#5022). This step executes the gate-contract test modules so that class of
-        # regression fails CI, not just a local pre-push.
-        #
-        # `memory::people::address_book::tests` used to be here and was removed: the
-        # address-book tests moved into the tinycortex dependency crate with the code
-        # they cover, and a dependency's unit tests are not collected by this crate's
-        # `--lib` harness — so the filter matched zero tests while reading like
-        # coverage. `contacts_gate_tests` is the live replacement (its off-macOS arm
-        # compiles on Linux, which is where this lane runs).
-        #
-        # Scope is deliberate: the full gates-off `--lib` run aborts on a pre-existing
-        # task_local stack overflow (`agent::harness::session::tests::
-        # turn_dispatches_spawn_subagent_through_full_path`) that reproduces in the
-        # gates-ON build too, and also OOMs unscoped. These filters route AROUND that
-        # test by scope, not by skip. Running the full suite is tracked in #5021.
         run: |
           bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml \
             -p openhuman --no-default-features --lib -- \
             core::all:: core::cli:: core::jsonrpc:: core::legacy_aliases:: core::runtime:: agent::registry::agents::loader:: memory::people::contacts_gate_tests:: openhuman::config:: openhuman::platform::socket::event_handlers:: tools::schemas:: tools::ops::tests::
+
+      - name: Run the gate-contract tests for mcp and e2e-test-support
+        run: |
           bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml \
-            -p openhuman --no-default-features --features mcp --lib -- \
-            mcp::server::resources::
-          # `test_support` is behind `e2e-test-support`, a gate in neither the
-          # contributor nor the product set, so no other lane RUNS these — the
-          # smoke check above only compiles them. That distinction is the whole
-          # point of this step: `resolve_workspace_relative`'s traversal guard
-          # (#6085) failed open for every path that did not exist, from the day
-          # it landed in #1892, and no `cargo check` anywhere could have caught
-          # it because the code compiled perfectly. These are the tests that
-          # would have.
-          #
-          # SCOPED TO `introspect::` ON PURPOSE, and this is a hole, not a
-          # tidy-up: the first run of the unscoped `test_support::` filter found
-          # `test_support::rpc::wipe_memory_tree_removes_content_dirs_and_reports_summary`
-          # already failing here —
-          #   "test_reset: memory_tree wipe failed: wipe_all: driver
-          #    'tinymemory' does not serve Maintenance"
-          # `memory-engine-seams` (= dep:tinymemory-core) is in `default` but not
-          # in product-features.txt, so it is off in this profile. Widening the
-          # feature list to go green would hide exactly what this lane exists to
-          # expose, so the filter is narrowed and the gap is named instead.
-          # Re-widen to `test_support::` once that is resolved.
-          bash scripts/ci-cancel-aware.sh cargo test --manifest-path Cargo.toml \
-            -p openhuman --no-default-features --features e2e-test-support --lib -- \
-            test_support::introspect::
+            -p openhuman --no-default-features --features mcp,e2e-test-support --lib -- \
+            mcp::server::resources:: test_support::introspect::
 
       - name: Guard — the kernel dependency floor may not grow
         # The `--no-default-features --features flows` profile is the surface a
@@ -555,7 +449,7 @@ jobs:
   rust-rss-bench:
     name: Rust RSS Benchmark (report-only)
     needs: [changes]
-    if: needs.changes.outputs['rust-core'] == 'true'
+    if: github.event_name == 'push' && needs.changes.outputs['rust-core'] == 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 40
     container:
@@ -578,6 +472,7 @@ jobs:
             . -> target
           cache-on-failure: true
           shared-key: pr-rust-rss-bench
+          save-if: ${{ env.CACHE_SAVE == 'true' }}
 
       # Fixture-contract signal: the gated bin's unit tests (build_roster,
       # warm-up turn) never enter the default coverage lane, so run them here.
@@ -598,20 +493,14 @@ jobs:
 
   rust-core-coverage:
     name: Rust Core Coverage (cargo-llvm-cov)
-    needs: [changes, rust-quality]
-    if: always() && needs.changes.outputs['rust-core'] == 'true' && needs['rust-quality'].result == 'success'
+    needs: [changes, rust-static]
+    if: always() && needs.changes.outputs['rust-core'] == 'true' && needs['rust-static'].result == 'success'
     runs-on: ubuntu-22.04
-    # 30 min was only ever enough because a stack overflow aborted the run early
-    # (see RUST_MIN_STACK below). With the overflow fixed the job runs the full
-    # instrumented suite plus the embed/TUI and sequential integration targets
-    # end-to-end. The expanded workspace now runs past 50 minutes on a warm
-    # runner, so retain enough headroom for the integration tail to complete.
     timeout-minutes: 90
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:latest
     env:
       CARGO_INCREMENTAL: "0"
-      RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
       # Coverage-instrumented test binaries are dominated by DWARF debug info,
       # which exhausts the runner disk and SIGBUSes the linker. Drop debug info
       # entirely for this job — llvm-cov line/region coverage is read from the
@@ -627,6 +516,7 @@ jobs:
       # stack so coverage runs don't abort. (Virtual reservation only — no real
       # memory cost.)
       RUST_MIN_STACK: "67108864"
+      CARGO_BUILD_JOBS: "4"
     steps:
       - name: Free disk space
         run: |
@@ -650,9 +540,10 @@ jobs:
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: . -> target
+          workspaces: . -> target/llvm-cov-target
           cache-on-failure: false
           shared-key: pr-rust-core-cov
+          save-if: ${{ env.CACHE_SAVE == 'true' }}
 
       - name: Prune stale coverage test executables
         run: |
@@ -712,22 +603,10 @@ jobs:
           echo "TINYCONNECTORS_TEST_MODULE=$connectors_dir/libtinyconnectors.so" \
             >> "$GITHUB_ENV"
 
-      - name: Run TinyJuice host-module regression
-        run: |
-          cargo test --lib --features modules \
-            openhuman::agent::tinyagents::middleware::tests::tool_output_tabulates_a_large_graph_for_a_non_exempt_tool \
-            -- --ignored --exact
-        env:
-          CARGO_BUILD_JOBS: "1"
-
       - name: Run complete root Rust suite with cargo llvm-cov
         run: bash scripts/ci/rust-coverage.sh
         env:
-          CARGO_BUILD_JOBS: "1"
           OUT: lcov-core.info
-          # The tinyagents harness is the agent engine on every build now
-          # (issue #4249); the suite exercises it by default. The legacy engine
-          # is being removed.
 
       - name: Prune coverage test executables before cache save
         if: always()
@@ -746,8 +625,8 @@ jobs:
 
   rust-tauri-coverage:
     name: Rust Tauri Coverage (cargo-llvm-cov)
-    needs: [changes, rust-quality]
-    if: always() && needs.changes.outputs['rust-tauri'] == 'true' && needs['rust-quality'].result == 'success'
+    needs: [changes, rust-static]
+    if: always() && needs.changes.outputs['rust-tauri'] == 'true' && needs['rust-static'].result == 'success'
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     container:
@@ -755,7 +634,7 @@ jobs:
     env:
       CARGO_INCREMENTAL: "0"
       RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
-      # The instrumented Tauri shell binary (whole tauri/zbus/CEF graph) is
+      # The instrumented Tauri shell binary (whole tauri/zbus graph) is
       # dominated by DWARF debug info, which exhausts the runner disk and
       # SIGBUSes the linker (collect2: ld terminated with signal 7) during the
       # final link. Drop debug info — llvm-cov reads coverage from the embedded
@@ -786,37 +665,20 @@ jobs:
           persist-credentials: false
           submodules: recursive
 
+      # Cache the instrumented tree itself, so tauri/wry are not rebuilt per run.
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: |
-            . -> target
-            crates/openhuman-app -> target
+          workspaces: crates/openhuman-app -> target/llvm-cov-target
           cache-on-failure: true
-          # Tauri shell coverage (instrumented) — its own stable cache; reuses
-          # its warm dependency tree run-over-run.
           shared-key: pr-rust-tauri-cov
-
-      - name: Cache CEF binary distribution
-        id: cef-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: |
-            ~/Library/Caches/tauri-cef
-            ~/.cache/tauri-cef
-          key: cef-x86_64-unknown-linux-gnu-v2-${{ hashFiles('crates/openhuman-app/Cargo.toml') }}
-          restore-keys: |
-            cef-x86_64-unknown-linux-gnu-v2-
+          save-if: ${{ env.CACHE_SAVE == 'true' }}
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Clear stale Tauri coverage artifacts
-        # rust-cache restores crates/openhuman-app/target, including llvm-cov-target.
-        # cargo's fingerprints do not distinguish a previously restored
-        # non-instrumented test executable, which then runs successfully but
-        # produces no .profraw file for cargo-llvm-cov to merge.
-        run: cargo llvm-cov clean --manifest-path crates/openhuman-app/Cargo.toml
+        run: cargo llvm-cov clean --workspace --manifest-path crates/openhuman-app/Cargo.toml
 
       - name: Run cargo llvm-cov for Tauri shell
         run: |
@@ -833,15 +695,6 @@ jobs:
           # instrumented Tauri-shell link (SIGBUS otherwise). Mirrors
           # rust-core-coverage.
           CARGO_BUILD_JOBS: "1"
-
-      - name: Save CEF binary distribution cache
-        if: always() && steps.cef-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: |
-            ~/Library/Caches/tauri-cef
-            ~/.cache/tauri-cef
-          key: ${{ steps.cef-cache.outputs.cache-primary-key }}
 
       - name: Upload tauri lcov
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -881,7 +734,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Save pnpm store cache
-        if: always() && steps.pnpm-cache.outputs.cache-hit != 'true'
+        if: always() && env.CACHE_SAVE == 'true' && steps.pnpm-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .pnpm-store
@@ -894,10 +747,8 @@ jobs:
     name: Test Inventory (orphan + controller-domain guard)
     needs: [changes]
     if: needs.changes.outputs.inventory == 'true'
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     timeout-minutes: 10
-    container:
-      image: ghcr.io/tinyhumansai/openhuman_ci:latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -905,31 +756,13 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      # Node-only guard (no workspace deps): asserts every script-level test is
-      # invoked by a package.json script/workflow, and every controller domain
-      # in crates/openhuman-core/src/core/all.rs is referenced under tests/.
       - name: Run test-inventory guard
-        run: pnpm test:inventory
+        run: corepack enable && pnpm test:inventory
 
-  toolchain-image-drift:
-    name: Toolchain Image Drift Guard
+  repo-gates:
+    name: Repository Gates (orch IP, feature forwarding, toolchain drift)
     needs: [changes]
-    if: needs.changes.outputs['toolchain-image'] == 'true'
-    runs-on: ubuntu-22.04
-    timeout-minutes: 5
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Verify CI image and Rust toolchain pins
-        run: node scripts/ci/check-toolchain-image.mjs
-
-  orch-ip-gate:
-    name: Orchestration IP Gate (no local brain re-entry)
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Checkout code
@@ -941,31 +774,16 @@ jobs:
       # Fail if the retired local orchestration brain (reasoning/wake graph,
       # prompt assets, or per-agent model routing) re-enters the open repo.
       - name: Run orchestration IP gate
+        if: ${{ !cancelled() }}
         run: bash scripts/ci/orch-ip-gate.sh
 
-  feature-forwarding-gate:
-    name: Feature Forwarding Gate (shell forwards core defaults)
-    runs-on: ubuntu-22.04
-    timeout-minutes: 5
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-
-      # The shell sets `default-features = false` on `openhuman_core`, so it does
-      # NOT inherit the core's default gates — each must be forwarded by hand.
-      # When that list drifts, the domain is compiled out of the shipped app with
-      # no build error and no failing test: that is how #4901 (voice — 56 users,
-      # ~93k Sentry events) and #4918 (tokenjuice-treesitter — silent) shipped.
-      #
-      # Deliberately NOT filtered on `changes`: drift can be introduced by
-      # editing either manifest, so a path filter watching one would miss it, and
-      # a skipped job counts as a pass in the gate below. The check is a few
-      # seconds of pure Node with no dependencies.
       - name: Verify the desktop shell forwards every default-ON core gate
+        if: ${{ !cancelled() }}
         run: node scripts/ci/check-feature-forwarding.mjs
+
+      - name: Verify CI image and Rust toolchain pins
+        if: ${{ !cancelled() && needs.changes.outputs['toolchain-image'] == 'true' }}
+        run: node scripts/ci/check-toolchain-image.mjs
 
   module-pin-gate:
     name: Module Pin Gate (registry pin matches submodule pin)
@@ -1045,15 +863,17 @@ jobs:
     needs:
       - changes
       - frontend-checks
+      - rust-static
       - rust-quality
+      - rust-quality-contrib
+      - rust-quality-tauri
+      - rust-feature-gate-smoke
       - rust-core-coverage
       - rust-tauri-coverage
       - scripts-tests
       - test-inventory
-      - toolchain-image-drift
       - pester-install
-      - orch-ip-gate
-      - feature-forwarding-gate
+      - repo-gates
       - module-pin-gate
     if: always()
     runs-on: ubuntu-latest
@@ -1065,15 +885,17 @@ jobs:
           declare -A results=(
             ["Detect Changed Areas"]="${{ needs.changes.result }}"
             ["Frontend Checks"]="${{ needs['frontend-checks'].result }}"
+            ["Rust Static Checks"]="${{ needs['rust-static'].result }}"
             ["Rust Quality"]="${{ needs['rust-quality'].result }}"
+            ["Rust Quality (contributor)"]="${{ needs['rust-quality-contrib'].result }}"
+            ["Rust Quality (Tauri)"]="${{ needs['rust-quality-tauri'].result }}"
+            ["Rust Feature-Gate Smoke"]="${{ needs['rust-feature-gate-smoke'].result }}"
             ["Rust Core Coverage"]="${{ needs['rust-core-coverage'].result }}"
             ["Rust Tauri Coverage"]="${{ needs['rust-tauri-coverage'].result }}"
             ["Scripts Self-Tests"]="${{ needs['scripts-tests'].result }}"
             ["Test Inventory"]="${{ needs['test-inventory'].result }}"
-            ["Toolchain Image Drift Guard"]="${{ needs['toolchain-image-drift'].result }}"
             ["PowerShell Install Test"]="${{ needs['pester-install'].result }}"
-            ["Orchestration IP Gate"]="${{ needs['orch-ip-gate'].result }}"
-            ["Feature Forwarding Gate"]="${{ needs['feature-forwarding-gate'].result }}"
+            ["Repository Gates"]="${{ needs['repo-gates'].result }}"
             ["Module Pin Gate"]="${{ needs['module-pin-gate'].result }}"
           )
 

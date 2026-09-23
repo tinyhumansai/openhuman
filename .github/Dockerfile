@@ -40,14 +40,10 @@ RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && corepack enable \
     && corepack prepare pnpm@10.10.0 --activate
 
-# Install ALSA, X11, input, and E2E automation dependencies
+# ALSA, X11 and input dependencies (cmake and webkit2gtk-driver are above).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libasound2-dev libxdo-dev libxtst-dev libx11-dev libevdev-dev \
-    webkit2gtk-driver \
     && rm -rf /var/lib/apt/lists/*
-
-# Install system dependencies (cmake, ALSA, X11)
-RUN apt-get update && apt-get install -y --no-install-recommends cmake libasound2-dev libxdo-dev libxtst-dev libx11-dev libevdev-dev && rm -rf /var/lib/apt/lists/*
 
 # sccache (pre-installed so the action only needs to configure it)
 RUN curl -fsSL https://github.com/mozilla/sccache/releases/download/v0.10.0/sccache-v0.10.0-x86_64-unknown-linux-musl.tar.gz \
