@@ -26,7 +26,7 @@ fn default_composio_mode() -> String {
     COMPOSIO_MODE_BACKEND.into()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct ComposioConfig {
     #[serde(default)]
@@ -72,6 +72,111 @@ pub struct ComposioConfig {
     /// memory.
     #[serde(default)]
     pub gmail_sync_query: String,
+
+    /// A direct-mode credential an embedder pinned for one agent. Never
+    /// persisted. While set, Composio tools resolve against this config
+    /// rather than reloading `config_path`, and its key wins over the
+    /// shared credential store. Set it with [`ComposioConfig::pin_host_credential`].
+    #[serde(skip)]
+    pub host_credential: Option<ComposioHostCredential>,
+}
+
+impl ComposioConfig {
+    /// Pin `credential` as this agent's Composio identity: direct mode,
+    /// its key and entity, and no fallback to the shared credential store.
+    pub fn pin_host_credential(&mut self, credential: ComposioHostCredential) {
+        self.mode = COMPOSIO_MODE_DIRECT.into();
+        self.api_key = Some(credential.api_key.clone());
+        self.entity_id = credential.entity_id.clone();
+        self.host_credential = Some(credential);
+    }
+}
+
+impl std::fmt::Debug for ComposioConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ComposioConfig")
+            .field("enabled", &self.enabled)
+            .field("entity_id", &self.entity_id)
+            .field("triage_disabled", &self.triage_disabled)
+            .field("triage_disabled_toolkits", &self.triage_disabled_toolkits)
+            .field("mode", &self.mode)
+            .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
+            .field("gmail_sync_query", &self.gmail_sync_query)
+            .field("host_credential", &self.host_credential)
+            .finish()
+    }
+}
+
+/// Composio v2/v3 API roots for a pinned direct-mode credential.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComposioDirectBaseUrls {
+    pub v2: String,
+    pub v3: String,
+}
+
+/// A per-agent Composio direct-mode credential supplied by an embedder.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ComposioHostCredential {
+    api_key: String,
+    entity_id: String,
+    base_urls: Option<ComposioDirectBaseUrls>,
+}
+
+impl ComposioHostCredential {
+    /// A direct-mode credential for `api_key`, on the `"default"` entity.
+    pub fn direct(api_key: impl Into<String>) -> Self {
+        Self {
+            api_key: api_key.into().trim().to_string(),
+            entity_id: default_entity_id(),
+            base_urls: None,
+        }
+    }
+
+    /// The Composio entity (user id) this agent acts as.
+    #[must_use]
+    pub fn entity_id(mut self, entity_id: impl Into<String>) -> Self {
+        let entity_id = entity_id.into();
+        let trimmed = entity_id.trim();
+        self.entity_id = if trimmed.is_empty() {
+            default_entity_id()
+        } else {
+            trimmed.to_string()
+        };
+        self
+    }
+
+    /// Route this credential's calls to other Composio API roots. Must be
+    /// HTTPS; loopback HTTP is accepted only in debug builds.
+    #[must_use]
+    pub fn base_urls(mut self, v2: impl Into<String>, v3: impl Into<String>) -> Self {
+        self.base_urls = Some(ComposioDirectBaseUrls {
+            v2: v2.into(),
+            v3: v3.into(),
+        });
+        self
+    }
+
+    pub fn api_key(&self) -> &str {
+        &self.api_key
+    }
+
+    pub fn entity(&self) -> &str {
+        &self.entity_id
+    }
+
+    pub fn direct_base_urls(&self) -> Option<&ComposioDirectBaseUrls> {
+        self.base_urls.as_ref()
+    }
+}
+
+impl std::fmt::Debug for ComposioHostCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ComposioHostCredential")
+            .field("api_key", &"<redacted>")
+            .field("entity_id", &self.entity_id)
+            .field("base_urls", &self.base_urls)
+            .finish()
+    }
 }
 
 fn default_entity_id() -> String {
@@ -88,6 +193,7 @@ impl Default for ComposioConfig {
             mode: default_composio_mode(),
             api_key: None,
             gmail_sync_query: String::new(),
+            host_credential: None,
         }
     }
 }
