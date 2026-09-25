@@ -229,6 +229,13 @@ export const BUILTIN_CLOUD_PROVIDERS: BuiltinCloudProvider[] = [
     tone: TONE.indigo,
     keyPlaceholder: 'ms-...',
   },
+  {
+    slug: 'cheaperinference',
+    label: 'Cheaper Inference',
+    endpoint: 'https://api.cheaperinference.com/v1',
+    authStyle: 'bearer',
+    tone: TONE.emerald,
+  },
 ];
 
 // NOTE: Claude Code CLI is intentionally NOT a builtin chip. It is a

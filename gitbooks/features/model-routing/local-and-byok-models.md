@@ -138,7 +138,7 @@ BYOK keeps the routing, memory, tools, and agent harness exactly as they are, an
 
 Add your key in the desktop app under the LLM settings, which stores it in the OS keyring rather than in plain config. OpenHuman ships presets for these slugs, so you do not need to supply an endpoint:
 
-`openai`, `anthropic`, `google`, `openrouter`, `orcarouter`, `groq`, `mistral`, `deepseek`, `together`, `fireworks`, `cerebras`, `xai`, `moonshot`, `gmi`, `huggingface`, `nvidia`, `zai`, `minimax`, `stepfun`, `kilocode`, `deepinfra`, `novita`, `venice`, `vercel-ai-gateway`, `sumopod`, `modelscope`
+`openai`, `anthropic`, `google`, `openrouter`, `orcarouter`, `groq`, `mistral`, `deepseek`, `together`, `fireworks`, `cerebras`, `xai`, `moonshot`, `gmi`, `huggingface`, `nvidia`, `zai`, `minimax`, `stepfun`, `kilocode`, `deepinfra`, `novita`, `venice`, `vercel-ai-gateway`, `sumopod`, `modelscope`, `cheaperinference`
 
 Anything else that speaks the OpenAI-compatible API works too: register it with your own slug and endpoint, and it routes the same way.
 

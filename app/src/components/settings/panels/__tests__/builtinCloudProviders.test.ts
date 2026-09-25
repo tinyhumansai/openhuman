@@ -19,10 +19,19 @@ describe('builtinCloudProviders', () => {
     ['minimax', 'https://api.minimax.io/v1', 'bearer'],
     ['sumopod', 'https://ai.sumopod.com/v1', 'bearer'],
     ['modelscope', 'https://api-inference.modelscope.cn/v1', 'bearer'],
+    ['cheaperinference', 'https://api.cheaperinference.com/v1', 'bearer'],
   ] as const)('maps %s to its endpoint and auth style', (slug, endpoint, authStyle) => {
     expect(defaultEndpointForBuiltinCloudProvider(slug)).toBe(endpoint);
     expect(authStyleForBuiltinCloudProvider(slug)).toBe(authStyle);
   });
+
+  it.each(['cheaper-inference', 'CheaperInference', 'cheaperinference.com', ''])(
+    'does not resolve the unknown slug %j',
+    slug => {
+      expect(defaultEndpointForBuiltinCloudProvider(slug)).toBe('');
+      expect(authStyleForBuiltinCloudProvider(slug)).toBeUndefined();
+    }
+  );
 
   it('contains the full phase one provider set', () => {
     expect(BUILTIN_CLOUD_PROVIDERS.map(provider => provider.slug)).toEqual(
@@ -46,6 +55,7 @@ describe('builtinCloudProviders', () => {
         'vercel-ai-gateway',
         'sumopod',
         'modelscope',
+        'cheaperinference',
       ])
     );
   });
