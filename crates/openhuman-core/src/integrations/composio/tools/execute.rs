@@ -7,10 +7,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
+use super::live_config::live_composio_config;
+use super::redact::redact_composio_outcome;
 use crate::agent::harness::current_sandbox_mode;
 use crate::agent::harness::current_task_recency_window;
 use crate::agent::harness::definition::SandboxMode;
-use super::live_config::live_composio_config;
 use crate::config::Config;
 use tinytools::{PermissionLevel, Tool, ToolCategory, ToolResult};
 
@@ -100,6 +101,13 @@ impl Tool for ComposioExecuteTool {
         ToolCategory::Workflow
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        let outcome = Box::pin(self.execute_unredacted(args)).await;
+        redact_composio_outcome(&self.config, outcome)
+    }
+}
+
+impl ComposioExecuteTool {
+    async fn execute_unredacted(&self, args: Value) -> anyhow::Result<ToolResult> {
         let tool = args
             .get("tool")
             .and_then(|v| v.as_str())

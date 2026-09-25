@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use super::live_config::live_composio_config;
+use super::redact::redact_composio_outcome;
 use crate::config::Config;
 use tinytools::{PermissionLevel, Tool, ToolCategory, ToolResult};
 
@@ -45,7 +46,14 @@ impl Tool for ComposioListConnectionsTool {
     fn category(&self) -> ToolCategory {
         ToolCategory::Workflow
     }
-    async fn execute(&self, _args: Value) -> anyhow::Result<ToolResult> {
+    async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        let outcome = Box::pin(self.execute_unredacted(args)).await;
+        redact_composio_outcome(&self.config, outcome)
+    }
+}
+
+impl ComposioListConnectionsTool {
+    async fn execute_unredacted(&self, _args: Value) -> anyhow::Result<ToolResult> {
         tracing::debug!("[composio] tool list_connections.execute");
         // Mirror `ops::composio_list_connections`: route through the mode-aware
         // factory so the agent sees the correct tenant's connections in both

@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use super::live_config::live_composio_config;
+use super::redact::redact_composio_outcome;
 use crate::config::Config;
 use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolCategory, ToolResult};
 
@@ -91,6 +92,21 @@ impl Tool for ComposioListToolsTool {
         args: Value,
         options: ToolCallOptions,
     ) -> anyhow::Result<ToolResult> {
+        let outcome = Box::pin(self.execute_unredacted(args, options)).await;
+        redact_composio_outcome(&self.config, outcome)
+    }
+
+    fn supports_markdown(&self) -> bool {
+        true
+    }
+}
+
+impl ComposioListToolsTool {
+    async fn execute_unredacted(
+        &self,
+        args: Value,
+        options: ToolCallOptions,
+    ) -> anyhow::Result<ToolResult> {
         let toolkits = args.get("toolkits").and_then(|v| v.as_array()).map(|arr| {
             arr.iter()
                 .filter_map(|v| v.as_str().map(str::to_string))
@@ -130,16 +146,15 @@ impl Tool for ComposioListToolsTool {
         // pattern. Surfacing the empty list explicitly is correct
         // fail-mode: the alternative — falling through to the backend
         // path — is exactly the bug we're closing (#1710).
-        let live_config =
-            match live_composio_config(self.config.as_ref()).await {
-                Ok(c) => c,
-                Err(e) => {
-                    tracing::warn!(error = %e, "[composio] tool: load_config failed");
-                    return Ok(ToolResult::error(format!(
-                        "composio: failed to load live config: {e}"
-                    )));
-                }
-            };
+        let live_config = match live_composio_config(self.config.as_ref()).await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(error = %e, "[composio] tool: load_config failed");
+                return Ok(ToolResult::error(format!(
+                    "composio: failed to load live config: {e}"
+                )));
+            }
+        };
         let client = match create_composio_client(&live_config) {
             Ok(ComposioClientKind::Backend(client)) => {
                 tracing::debug!("[composio] list_tools.execute: backend variant");
@@ -236,9 +251,5 @@ impl Tool for ComposioListToolsTool {
                 "composio_list_tools failed: {e}"
             ))),
         }
-    }
-
-    fn supports_markdown(&self) -> bool {
-        true
     }
 }

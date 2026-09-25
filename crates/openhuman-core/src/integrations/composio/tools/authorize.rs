@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use super::live_config::live_composio_config;
+use super::redact::redact_composio_outcome;
 use crate::config::Config;
 use tinytools::{PermissionLevel, Tool, ToolCategory, ToolResult};
 
@@ -54,6 +55,13 @@ impl Tool for ComposioAuthorizeTool {
         ToolCategory::Workflow
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        let outcome = Box::pin(self.execute_unredacted(args)).await;
+        redact_composio_outcome(&self.config, outcome)
+    }
+}
+
+impl ComposioAuthorizeTool {
+    async fn execute_unredacted(&self, args: Value) -> anyhow::Result<ToolResult> {
         let toolkit = args
             .get("toolkit")
             .and_then(|v| v.as_str())
@@ -72,16 +80,15 @@ impl Tool for ComposioAuthorizeTool {
         // the backend's `/agent-integrations/composio/authorize`
         // route, so we refuse this verb explicitly instead of
         // silently routing through the wrong tenant.
-        let live_config =
-            match live_composio_config(self.config.as_ref()).await {
-                Ok(c) => c,
-                Err(e) => {
-                    tracing::warn!(error = %e, "[composio] tool: load_config failed");
-                    return Ok(ToolResult::error(format!(
-                        "composio: failed to load live config: {e}"
-                    )));
-                }
-            };
+        let live_config = match live_composio_config(self.config.as_ref()).await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(error = %e, "[composio] tool: load_config failed");
+                return Ok(ToolResult::error(format!(
+                    "composio: failed to load live config: {e}"
+                )));
+            }
+        };
         let client = match create_composio_client(&live_config) {
             Ok(ComposioClientKind::Backend(client)) => {
                 tracing::debug!("[composio] authorize.execute: backend variant");

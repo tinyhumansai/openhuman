@@ -244,6 +244,16 @@ impl Tool for ComposioActionTool {
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        let outcome = Box::pin(self.execute_unredacted(args)).await;
+        match self.config.as_deref() {
+            Some(config) => super::tools::redact_composio_outcome(config, outcome),
+            None => outcome,
+        }
+    }
+}
+
+impl ComposioActionTool {
+    async fn execute_unredacted(&self, args: Value) -> anyhow::Result<ToolResult> {
         // Agent-level sandbox gate (issue #685, CodeRabbit follow-up on
         // PR #904) — mirrors the check in
         // [`super::tools::ComposioExecuteTool::execute`] so a read-only
