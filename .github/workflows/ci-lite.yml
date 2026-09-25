@@ -961,11 +961,19 @@ jobs:
       # no build error and no failing test: that is how #4901 (voice — 56 users,
       # ~93k Sentry events) and #4918 (tokenjuice-treesitter — silent) shipped.
       #
+      # The same drift happens one layer down, in the library chain the core is
+      # re-declared by: openhuman-embed -> openhuman-tinyhumans -> openhuman-cli
+      # (#6364). A gate added to the core and forgotten there is off for every
+      # embedder while the product lanes, which resolve names against
+      # openhuman-cli, stay green.
+      #
       # Deliberately NOT filtered on `changes`: drift can be introduced by
-      # editing either manifest, so a path filter watching one would miss it, and
-      # a skipped job counts as a pass in the gate below. The check is a few
-      # seconds of pure Node with no dependencies.
-      - name: Verify the desktop shell forwards every default-ON core gate
+      # editing any of those manifests, so a path filter watching one would miss
+      # it, and a skipped job counts as a pass in the gate below. The check is a
+      # few seconds of pure Node with no dependencies.
+      #
+      # The job name stays as it is: it is a required status check.
+      - name: Verify the shell and the library chain forward every core gate
         run: node scripts/ci/check-feature-forwarding.mjs
 
   module-pin-gate:

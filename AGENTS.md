@@ -411,7 +411,10 @@ Cargo default features define the contributor build;
 `scripts/ci/product-features.txt` defines the shipped product. The Tauri shell
 disables default features, so product gates must be forwarded explicitly in
 `crates/openhuman-app/Cargo.toml` and checked by
-`scripts/ci/check-feature-forwarding.mjs`. Test both enabled and disabled
+`scripts/ci/check-feature-forwarding.mjs`. The same gate checks the library
+chain: a core gate must be forwarded by `openhuman-embed`, then
+`openhuman-tinyhumans`, then `openhuman-cli`, or be listed in
+`CHAIN_GATES_NOT_FORWARDED` / `CHAIN_LOCAL_GATES` with a reason. Test both enabled and disabled
 builds after changing a gate. Use `scripts/assert-shed.sh` or
 `scripts/dep-sim.py` before claiming a dependency reduction.
 

@@ -399,3 +399,236 @@ export function formatReport(result, { coreDefaults, shell, allowlist = {} }) {
     lines.push('', 'OK: every default-ON core gate is forwarded to the desktop shell.');
   return lines.join('\n');
 }
+
+// ── the library chain: core → embed → tinyhumans → cli (#6364) ─────────────
+//
+// The shell is not the only manifest that re-declares the core's gates. The
+// library layers forward them 1:1 three more times:
+//
+//   openhuman-embed       <gate> = ["openhuman-core/<gate>"]
+//   openhuman-tinyhumans  <gate> = ["openhuman-embed/<gate>"]
+//   openhuman-cli         <gate> = ["openhuman-core/<gate>", "openhuman-tinyhumans/<gate>"]
+//
+// Nothing enforced those three lists, and they fail in both directions:
+//
+//   - A gate REMOVED from the core and left in a layer is a hard cargo error
+//     ("package openhuman-cli depends on openhuman with feature peripheral-rpi
+//     but openhuman does not have that feature") — loud, but only once someone
+//     builds that crate, and it reads as a dependency problem rather than
+//     drift. That is #6360.
+//   - A gate ADDED to the core and forgotten by a layer fails SILENTLY. The
+//     product lanes pass `--features "$(scripts/ci/product-features.sh)"` to
+//     `openhuman-cli`, where the name still resolves, so CI stays green while
+//     the gate is off for every embedder.
+//
+// Same failure shape as #4901/#4918 one layer down, so it gets the same
+// treatment: an explicit list, and an exclusion that must carry a reason.
+
+/**
+ * Core gates a layer deliberately does NOT carry, mapped to why.
+ *
+ * Keyed by the crate that omits the gate. Like `INTENTIONALLY_NOT_FORWARDED`,
+ * the reason string is the whole point: it is what lets a reviewer tell
+ * "excluded on purpose" from "forgotten" without going archaeology.
+ */
+export const CHAIN_GATES_NOT_FORWARDED = {
+  'openhuman-embed': {
+    'e2e-test-support':
+      'Exposes the destructive `openhuman.test_reset` RPC for the E2E build only. An embedder must never be able to turn a data wipe on.',
+    landlock:
+      'Back-compat alias for `sandbox-landlock` in the core; the embed facade forwards the canonical name instead of both spellings.',
+    'rss-bench':
+      'Library-side hook for the embedded-RSS benchmark (#5046). Its binaries live in `openhuman-cli`, which forwards the gate directly.',
+  },
+};
+
+/**
+ * Gates a crate declares that belong to it alone, mapped to why.
+ *
+ * These have no twin upstream, so the chain check would otherwise read them as
+ * a stale forward of a deleted core gate — the exact #6360 symptom it exists to
+ * catch. An entry here says "this one is local by design".
+ */
+export const CHAIN_LOCAL_GATES = {
+  'openhuman-tinyhumans': {
+    jev: 'This crate owns the gate: the Jev-backed `tool_search` ranker (`tinytools-jev` over the TinyHumans System One proxy).',
+  },
+  'openhuman-cli': {
+    'bin-tools': 'CLI argument parsing + logger init for the `openhuman-fleet` binary.',
+    'rss-bench-dhat':
+      'dhat heap profiling for the `library-profile` binary; perturbs RSS, so it is opt-in and has no core twin.',
+  },
+};
+
+/**
+ * The `[features]` table of any manifest, as `name -> [items]`.
+ *
+ * Same scanner as `parseCoreFeatureGraph` (which now delegates here) — the
+ * shape is not core-specific, and the chain check reads three more manifests
+ * with it.
+ */
+export function parseFeatureTable(toml) {
+  return parseCoreFeatureGraph(toml);
+}
+
+/**
+ * Assertion 4: one link of the chain forwards its sources' gates.
+ *
+ * `sources` are the crates this one sits on top of:
+ *
+ *   `{ crate, gates, required: true }`  — every gate must be declared here and
+ *      must forward to `<crate>/<gate>`. That is core → embed, embed →
+ *      tinyhumans, core → cli.
+ *   `{ crate, gates, required: false }` — only gates this crate ALREADY
+ *      declares have to carry the forward. That is tinyhumans → cli: the cli
+ *      forwards to both parents, but only for the gates tinyhumans has, and a
+ *      core-only gate like `e2e-test-support` must not be demanded of it.
+ *
+ * A forward is checked by TARGET, not just by name: a gate declared as
+ * `voice = ["openhuman-core/web3"]` is as broken as a missing one and looks
+ * identical to a name-only check.
+ */
+export function diffChainForwarding({
+  crate,
+  features,
+  sources,
+  notForwarded = {},
+  localGates = {},
+}) {
+  const declared = new Set([...features.keys()].filter(name => name !== 'default'));
+  const missing = [];
+  const misrouted = [];
+  const allowed = [];
+  for (const source of sources) {
+    for (const gate of source.gates) {
+      if (gate === 'default') continue;
+      if (!declared.has(gate)) {
+        // Only a required source can be missing from here: an optional source
+        // (tinyhumans → cli) says nothing about gates this crate never took.
+        if (!source.required) continue;
+        if (Object.prototype.hasOwnProperty.call(notForwarded, gate)) allowed.push(gate);
+        else missing.push({ gate, source: source.crate });
+        continue;
+      }
+      const forward = `${source.crate}/${gate}`;
+      if (!(features.get(gate) ?? []).includes(forward)) {
+        misrouted.push({ gate, source: source.crate, expected: forward });
+      }
+    }
+  }
+  // A forward to a gate the crate below does not declare. This is the #6360
+  // error verbatim — cargo refuses it — but it surfaces there as a dependency
+  // resolution failure on whoever builds that crate first, with nothing naming
+  // it as forwarding drift. Catching it here says what it is.
+  const dangling = [];
+  for (const gate of declared) {
+    for (const item of features.get(gate) ?? []) {
+      const slash = item.indexOf('/');
+      if (slash === -1) continue;
+      const source = sources.find(candidate => candidate.crate === item.slice(0, slash));
+      if (!source) continue;
+      const target = item.slice(slash + 1);
+      if (!source.gates.includes(target)) dangling.push({ gate, item });
+    }
+  }
+  const upstream = new Set(sources.flatMap(source => source.gates));
+  // Declared here, in no source, and not claimed as local: either a gate the
+  // core dropped (the #6360 shape) or a local gate nobody documented.
+  const unknown = [...declared].filter(
+    gate =>
+      !upstream.has(gate) && !Object.prototype.hasOwnProperty.call(localGates, gate)
+  );
+  // A "local" gate an upstream crate now declares is no longer local, and the
+  // entry would hide a genuinely missing forward for it. One this crate has
+  // since dropped is stale for the opposite reason: it describes nothing, and
+  // would silently excuse a gate by that name the day one reappears.
+  const staleLocal = Object.keys(localGates).filter(
+    gate => upstream.has(gate) || !declared.has(gate)
+  );
+  // Mirrors `diffForwarding`'s stale check, in both directions: an exclusion
+  // for a gate that IS carried here is wrong and would mask the day it gets
+  // dropped, and an exclusion for a gate no source declares any more excuses a
+  // name that no longer exists — it also stops appearing in the `allowed:`
+  // report, so nothing draws attention to it.
+  const requiredUpstream = new Set(
+    sources.filter(source => source.required).flatMap(source => source.gates)
+  );
+  const staleExclusion = Object.keys(notForwarded).filter(
+    gate => declared.has(gate) || !requiredUpstream.has(gate)
+  );
+  return {
+    ok:
+      missing.length === 0 &&
+      misrouted.length === 0 &&
+      dangling.length === 0 &&
+      unknown.length === 0 &&
+      staleLocal.length === 0 &&
+      staleExclusion.length === 0,
+    crate,
+    missing,
+    misrouted,
+    dangling,
+    unknown,
+    staleLocal,
+    staleExclusion,
+    allowed,
+  };
+}
+
+export function formatChainReport(result, { notForwarded = {} } = {}) {
+  const lines = [`${result.crate}:`];
+  for (const gate of result.allowed) {
+    lines.push(`  allowed: ${gate} — ${notForwarded[gate]}`);
+  }
+  if (result.missing.length > 0) {
+    lines.push('', `Gates ${result.crate} does not forward:`);
+    for (const { gate, source } of result.missing) lines.push(`  - ${gate} (declared by ${source})`);
+    lines.push(
+      '',
+      `Add \`${result.missing[0].gate} = ["${result.missing[0].source}/${result.missing[0].gate}"]\` to that crate's [features] table,`,
+      'or, if the omission is deliberate, add it to CHAIN_GATES_NOT_FORWARDED in',
+      'scripts/lib/feature-forwarding.mjs with a reason. A gate missing here is off',
+      'for every embedder while the CLI product lanes still resolve the name.'
+    );
+  }
+  if (result.misrouted.length > 0) {
+    lines.push('', `Gates ${result.crate} declares but does not forward to their source:`);
+    for (const { gate, expected } of result.misrouted) lines.push(`  - ${gate} (expected "${expected}")`);
+  }
+  if (result.dangling.length > 0) {
+    lines.push('', `Forwards from ${result.crate} to a gate that no longer exists:`);
+    for (const { gate, item } of result.dangling) lines.push(`  - ${gate} -> "${item}"`);
+    lines.push(
+      '',
+      'cargo rejects this outright ("depends on <crate> with feature <gate> but',
+      '<crate> does not have that feature"), but only for whoever builds that crate',
+      'first, and it reads as a dependency problem rather than forwarding drift (#6360).'
+    );
+  }
+  if (result.unknown.length > 0) {
+    lines.push('', `Gates ${result.crate} declares that no crate below it has:`);
+    for (const gate of result.unknown) lines.push(`  - ${gate}`);
+    lines.push(
+      '',
+      'Either the gate was removed from the core and this forward is stale (#6360:',
+      'a `cargo check` error, not a gate check), or it is local to this crate and',
+      'belongs in CHAIN_LOCAL_GATES with a reason.'
+    );
+  }
+  if (result.staleLocal.length > 0) {
+    lines.push(
+      '',
+      `Stale CHAIN_LOCAL_GATES entries (a crate below now declares the gate, or ${result.crate} no longer does):`
+    );
+    for (const gate of result.staleLocal) lines.push(`  - ${gate}`);
+  }
+  if (result.staleExclusion.length > 0) {
+    lines.push(
+      '',
+      'Stale CHAIN_GATES_NOT_FORWARDED entries (the gate IS forwarded, or no crate below declares it any more):'
+    );
+    for (const gate of result.staleExclusion) lines.push(`  - ${gate}`);
+  }
+  if (result.ok) lines.push(`  OK: forwards every gate of the crates below it.`);
+  return lines.join('\n');
+}

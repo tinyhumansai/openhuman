@@ -1,18 +1,23 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import {
+  CHAIN_GATES_NOT_FORWARDED,
+  CHAIN_LOCAL_GATES,
   checkProductForwarding,
+  diffChainForwarding,
   diffForwarding,
+  formatChainReport,
   INTENTIONALLY_NOT_FORWARDED,
   parseCoreDefaultFeatures,
   parseCoreFeatureGraph,
   parseCoreFeatureNames,
+  parseFeatureTable,
   parseProductFeatures,
   parseShellForwardedFeatures,
   resolveEnabledFeatures,
@@ -475,4 +480,373 @@ test('an apostrophe inside a basic string does not open a literal string', () =>
     "don't",
     'media',
   ]);
+});
+
+// ── the library chain: core → embed → tinyhumans → cli (#6364) ─────────────
+
+const CORE_CHAIN_FIXTURE = `
+[features]
+default = ["media"]
+media = []
+voice = ["dep:cpal"]
+e2e-test-support = []
+`;
+
+function chainLink(toml, sources, extra = {}) {
+  return diffChainForwarding({
+    crate: 'openhuman-embed',
+    features: parseFeatureTable(toml),
+    sources,
+    ...extra,
+  });
+}
+
+function coreSource() {
+  return {
+    crate: 'openhuman-core',
+    gates: [...parseFeatureTable(CORE_CHAIN_FIXTURE).keys()].filter(n => n !== 'default'),
+    required: true,
+  };
+}
+
+test('a layer that forwards every core gate passes', () => {
+  const result = chainLink(
+    `
+[features]
+default = ["openhuman-core/default"]
+media = ["openhuman-core/media"]
+voice = ["openhuman-core/voice"]
+e2e-test-support = ["openhuman-core/e2e-test-support"]
+`,
+    [coreSource()]
+  );
+  assert.ok(result.ok, formatChainReport(result));
+});
+
+test('a core gate the layer forgets is reported missing, naming crate and gate', () => {
+  // The silent direction: `--features voice` still resolves on openhuman-cli,
+  // so CI stays green while the gate is off for every embedder.
+  const result = chainLink(
+    `
+[features]
+default = ["openhuman-core/default"]
+media = ["openhuman-core/media"]
+e2e-test-support = ["openhuman-core/e2e-test-support"]
+`,
+    [coreSource()]
+  );
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.missing, [{ gate: 'voice', source: 'openhuman-core' }]);
+  const report = formatChainReport(result);
+  assert.match(report, /openhuman-embed/);
+  assert.match(report, /voice \(declared by openhuman-core\)/);
+});
+
+test('reproduces #6360: a gate the core dropped but a layer still forwards is flagged', () => {
+  const result = chainLink(
+    `
+[features]
+default = ["openhuman-core/default"]
+media = ["openhuman-core/media"]
+voice = ["openhuman-core/voice"]
+e2e-test-support = ["openhuman-core/e2e-test-support"]
+peripheral-rpi = ["openhuman-core/peripheral-rpi"]
+`,
+    [coreSource()]
+  );
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.unknown, ['peripheral-rpi']);
+  assert.match(formatChainReport(result), /no crate below it has/);
+});
+
+test('a forward that names the wrong gate is caught, not just a missing one', () => {
+  // A name-only check reads this as forwarded. It is not: enabling `voice`
+  // would turn `web3` on in the core and leave voice compiled out.
+  const result = chainLink(
+    `
+[features]
+default = ["openhuman-core/default"]
+media = ["openhuman-core/media"]
+voice = ["openhuman-core/web3"]
+e2e-test-support = ["openhuman-core/e2e-test-support"]
+`,
+    [coreSource()]
+  );
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.misrouted, [
+    { gate: 'voice', source: 'openhuman-core', expected: 'openhuman-core/voice' },
+  ]);
+  assert.match(formatChainReport(result), /expected "openhuman-core\/voice"/);
+});
+
+test('an allow-listed omission passes and is reported as intentional', () => {
+  const notForwarded = { 'e2e-test-support': 'Destructive test_reset RPC; never for embedders.' };
+  const result = chainLink(
+    `
+[features]
+default = ["openhuman-core/default"]
+media = ["openhuman-core/media"]
+voice = ["openhuman-core/voice"]
+`,
+    [coreSource()],
+    { notForwarded }
+  );
+  assert.ok(result.ok, formatChainReport(result, { notForwarded }));
+  assert.deepEqual(result.allowed, ['e2e-test-support']);
+  assert.match(formatChainReport(result, { notForwarded }), /allowed: e2e-test-support/);
+});
+
+test('an allow-list entry for a gate that IS forwarded is flagged as stale', () => {
+  const result = chainLink(
+    `
+[features]
+default = ["openhuman-core/default"]
+media = ["openhuman-core/media"]
+voice = ["openhuman-core/voice"]
+e2e-test-support = ["openhuman-core/e2e-test-support"]
+`,
+    [coreSource()],
+    { notForwarded: { 'e2e-test-support': 'never for embedders' } }
+  );
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.staleExclusion, ['e2e-test-support']);
+});
+
+test('an exclusion for a gate no crate below declares any more is flagged as stale', () => {
+  // The other half of the stale check: once the core drops the gate, nothing
+  // declares it, so it stops appearing in the `allowed:` report too — and the
+  // entry would silently exclude a gate by that name if one ever came back.
+  const result = chainLink(
+    `
+[features]
+default = ["openhuman-core/default"]
+media = ["openhuman-core/media"]
+voice = ["openhuman-core/voice"]
+e2e-test-support = ["openhuman-core/e2e-test-support"]
+`,
+    [coreSource()],
+    { notForwarded: { 'peripheral-rpi': 'a gate the core deleted' } }
+  );
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.staleExclusion, ['peripheral-rpi']);
+  assert.match(formatChainReport(result), /no crate below declares it any more/);
+});
+
+test('a crate-local entry for a gate this crate no longer declares is flagged as stale', () => {
+  const result = chainLink(
+    `
+[features]
+default = ["openhuman-core/default"]
+media = ["openhuman-core/media"]
+voice = ["openhuman-core/voice"]
+e2e-test-support = ["openhuman-core/e2e-test-support"]
+`,
+    [coreSource()],
+    { localGates: { jev: 'This crate owns the gate.' } }
+  );
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.staleLocal, ['jev']);
+  assert.match(formatChainReport(result), /no longer does/);
+});
+
+test('a documented crate-local gate passes', () => {
+  const result = chainLink(
+    `
+[features]
+default = ["openhuman-core/default"]
+media = ["openhuman-core/media"]
+voice = ["openhuman-core/voice"]
+e2e-test-support = ["openhuman-core/e2e-test-support"]
+jev = ["dep:tinytools-jev"]
+`,
+    [coreSource()],
+    { localGates: { jev: 'This crate owns the gate.' } }
+  );
+  assert.ok(result.ok, formatChainReport(result));
+  assert.deepEqual(result.unknown, []);
+});
+
+test('a crate-local entry for a gate the core now declares is flagged as stale', () => {
+  // Otherwise the entry would excuse a missing forward for a real core gate.
+  const result = chainLink(
+    `
+[features]
+default = ["openhuman-core/default"]
+media = ["openhuman-core/media"]
+voice = ["openhuman-core/voice"]
+e2e-test-support = ["openhuman-core/e2e-test-support"]
+`,
+    [coreSource()],
+    { localGates: { voice: 'local, honest' } }
+  );
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.staleLocal, ['voice']);
+});
+
+test('a forward to a gate the crate below no longer has is named as drift', () => {
+  // #6360 verbatim: cargo rejects this, but only for whoever builds that crate
+  // first, and the error reads as a dependency problem.
+  const result = diffChainForwarding({
+    crate: 'openhuman-cli',
+    features: parseFeatureTable(`
+[features]
+default = ["openhuman-core/default"]
+media = ["openhuman-core/media", "openhuman-tinyhumans/media"]
+voice = ["openhuman-core/voice", "openhuman-tinyhumans/voice"]
+e2e-test-support = ["openhuman-core/e2e-test-support"]
+`),
+    sources: [
+      coreSource(),
+      // tinyhumans dropped `voice`; the cli still points at it.
+      { crate: 'openhuman-tinyhumans', gates: ['media'], required: false },
+    ],
+  });
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.dangling, [{ gate: 'voice', item: 'openhuman-tinyhumans/voice' }]);
+  assert.match(formatChainReport(result), /no longer exists/);
+});
+
+test('the cli must forward to tinyhumans as well where tinyhumans has the gate', () => {
+  const result = diffChainForwarding({
+    crate: 'openhuman-cli',
+    features: parseFeatureTable(`
+[features]
+default = ["openhuman-core/default"]
+media = ["openhuman-core/media"]
+voice = ["openhuman-core/voice"]
+e2e-test-support = ["openhuman-core/e2e-test-support"]
+`),
+    sources: [
+      coreSource(),
+      { crate: 'openhuman-tinyhumans', gates: ['media', 'voice'], required: false },
+    ],
+  });
+  assert.equal(result.ok, false);
+  assert.deepEqual(
+    result.misrouted.map(m => m.expected),
+    ['openhuman-tinyhumans/media', 'openhuman-tinyhumans/voice']
+  );
+});
+
+test('an optional source never demands a gate the crate below it does not have', () => {
+  // `e2e-test-support` is core-only: requiring `openhuman-tinyhumans/e2e-test-support`
+  // would be a forward to a gate that does not exist, i.e. a cargo error.
+  const result = diffChainForwarding({
+    crate: 'openhuman-cli',
+    features: parseFeatureTable(`
+[features]
+default = ["openhuman-core/default"]
+media = ["openhuman-core/media", "openhuman-tinyhumans/media"]
+voice = ["openhuman-core/voice", "openhuman-tinyhumans/voice"]
+e2e-test-support = ["openhuman-core/e2e-test-support"]
+`),
+    sources: [
+      coreSource(),
+      { crate: 'openhuman-tinyhumans', gates: ['media', 'voice'], required: false },
+    ],
+  });
+  assert.ok(result.ok, formatChainReport(result));
+});
+
+test('the checked-in embed, tinyhumans and cli manifests forward the whole chain', () => {
+  const read = name => readFileSync(resolve(REPO_ROOT, `crates/${name}/Cargo.toml`), 'utf8');
+  const core = parseCoreFeatureNames(
+    readFileSync(resolve(REPO_ROOT, 'crates/openhuman-core/Cargo.toml'), 'utf8')
+  );
+  const embed = parseFeatureTable(read('openhuman-embed'));
+  const tinyhumans = parseFeatureTable(read('openhuman-tinyhumans'));
+  const cli = parseFeatureTable(read('openhuman-cli'));
+  // Guards the guard: empty tables would make every assertion below vacuous.
+  assert.ok(core.length > 0, 'expected to parse at least one core gate');
+  for (const [name, table] of [
+    ['openhuman-embed', embed],
+    ['openhuman-tinyhumans', tinyhumans],
+    ['openhuman-cli', cli],
+  ]) {
+    assert.ok(table.size > 0, `expected to parse features from ${name}`);
+  }
+  const gatesOf = table => [...table.keys()].filter(n => n !== 'default');
+  const links = [
+    {
+      crate: 'openhuman-embed',
+      features: embed,
+      sources: [{ crate: 'openhuman-core', gates: core, required: true }],
+    },
+    {
+      crate: 'openhuman-tinyhumans',
+      features: tinyhumans,
+      sources: [{ crate: 'openhuman-embed', gates: gatesOf(embed), required: true }],
+    },
+    {
+      crate: 'openhuman-cli',
+      features: cli,
+      sources: [
+        { crate: 'openhuman-core', gates: core, required: true },
+        { crate: 'openhuman-tinyhumans', gates: gatesOf(tinyhumans), required: false },
+      ],
+    },
+  ];
+  for (const link of links) {
+    const notForwarded = CHAIN_GATES_NOT_FORWARDED[link.crate] ?? {};
+    const result = diffChainForwarding({
+      ...link,
+      notForwarded,
+      localGates: CHAIN_LOCAL_GATES[link.crate] ?? {},
+    });
+    assert.ok(result.ok, formatChainReport(result, { notForwarded }));
+  }
+});
+
+test('every chain allow-list entry carries a reason', () => {
+  // A blank reason is how "excluded on purpose" and "forgotten" start looking
+  // the same again — the ambiguity that let #4918 sit unnoticed.
+  for (const table of [CHAIN_GATES_NOT_FORWARDED, CHAIN_LOCAL_GATES]) {
+    for (const [crate, gates] of Object.entries(table)) {
+      for (const [gate, reason] of Object.entries(gates)) {
+        assert.equal(typeof reason, 'string', `${crate}/${gate}`);
+        assert.ok(reason.trim().length > 10, `${crate}/${gate} needs a real reason`);
+      }
+    }
+  }
+});
+
+test('the checker reports the chain and fails when a layer drops a gate', () => {
+  // End-to-end through the CLI: a core gate that embed never took must exit 1
+  // with the crate and gate named.
+  const dir = join(tmpdir(), `feature-chain-${process.pid}`);
+  const corePath = join(dir, 'core.toml');
+  const embedPath = join(dir, 'embed.toml');
+  try {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      corePath,
+      readFileSync(resolve(REPO_ROOT, 'crates/openhuman-core/Cargo.toml'), 'utf8')
+    );
+    writeFileSync(
+      embedPath,
+      readFileSync(resolve(REPO_ROOT, 'crates/openhuman-embed/Cargo.toml'), 'utf8').replace(
+        /^voice = .*$/m,
+        ''
+      )
+    );
+    const result = spawnSync(
+      'node',
+      [
+        CHECKER,
+        corePath,
+        resolve(REPO_ROOT, 'crates/openhuman-app/Cargo.toml'),
+        resolve(REPO_ROOT, 'scripts/ci/product-features.txt'),
+        embedPath,
+        resolve(REPO_ROOT, 'crates/openhuman-tinyhumans/Cargo.toml'),
+        resolve(REPO_ROOT, 'crates/openhuman-cli/Cargo.toml'),
+      ],
+      { encoding: 'utf8' }
+    );
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(result.stdout, /Library chain/);
+    assert.match(result.stdout, /openhuman-embed/);
+    assert.match(result.stdout, /voice \(declared by openhuman-core\)/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

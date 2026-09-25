@@ -14,19 +14,31 @@
 // `[features] default` — `default` is the contributor set now and is
 // deliberately smaller.
 //
+// It also checks the library chain the core is re-declared by — embed,
+// tinyhumans and cli (#6364). Those three lists were maintained by hand: a gate
+// dropped from the core and left behind is a cargo error nobody reads as drift
+// (#6360), and a gate ADDED to the core and forgotten is silent, because the
+// product lanes only ever resolve names against `openhuman-cli`.
+//
 // Usage: check-feature-forwarding.mjs [core-manifest] [shell-manifest] [product-features]
+//                                     [embed-manifest] [tinyhumans-manifest] [cli-manifest]
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  CHAIN_GATES_NOT_FORWARDED,
+  CHAIN_LOCAL_GATES,
   checkProductForwarding,
+  diffChainForwarding,
   diffForwarding,
+  formatChainReport,
   formatProductReport,
   formatReport,
   INTENTIONALLY_NOT_FORWARDED,
   parseCoreDefaultFeatures,
   parseCoreFeatureNames,
+  parseFeatureTable,
   parseProductFeatures,
   parseShellForwardedFeatures,
 } from '../lib/feature-forwarding.mjs';
@@ -34,10 +46,14 @@ import {
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
 function usage() {
-  return 'Usage: check-feature-forwarding.mjs [core-manifest] [shell-manifest] [product-features]';
+  return (
+    'Usage: check-feature-forwarding.mjs [core-manifest] [shell-manifest] [product-features]\n' +
+    '                                    [embed-manifest] [tinyhumans-manifest] [cli-manifest]'
+  );
 }
 
-const [coreArg, shellArg, productArg, extra] = process.argv.slice(2);
+const [coreArg, shellArg, productArg, embedArg, tinyhumansArg, cliArg, extra] =
+  process.argv.slice(2);
 if (coreArg === '--help' || coreArg === '-h') {
   console.log(usage());
   process.exit(0);
@@ -54,14 +70,27 @@ const shellPath = shellArg ? resolve(shellArg) : resolve(REPO_ROOT, 'crates/open
 const productPath = productArg
   ? resolve(productArg)
   : resolve(REPO_ROOT, 'scripts/ci/product-features.txt');
+const embedPath = embedArg
+  ? resolve(embedArg)
+  : resolve(REPO_ROOT, 'crates/openhuman-embed/Cargo.toml');
+const tinyhumansPath = tinyhumansArg
+  ? resolve(tinyhumansArg)
+  : resolve(REPO_ROOT, 'crates/openhuman-tinyhumans/Cargo.toml');
+const cliPath = cliArg ? resolve(cliArg) : resolve(REPO_ROOT, 'crates/openhuman-cli/Cargo.toml');
 
 let coreToml;
 let shellToml;
 let productText;
+let embedToml;
+let tinyhumansToml;
+let cliToml;
 try {
   coreToml = readFileSync(corePath, 'utf8');
   shellToml = readFileSync(shellPath, 'utf8');
   productText = readFileSync(productPath, 'utf8');
+  embedToml = readFileSync(embedPath, 'utf8');
+  tinyhumansToml = readFileSync(tinyhumansPath, 'utf8');
+  cliToml = readFileSync(cliPath, 'utf8');
 } catch (err) {
   console.error(`Could not read inputs: ${err.message}`);
   process.exit(2);
@@ -108,4 +137,70 @@ const defaults = diffForwarding({
 console.log('');
 console.log(formatReport(defaults, { coreDefaults, shell, allowlist: INTENTIONALLY_NOT_FORWARDED }));
 
-process.exit(product.ok && defaults.ok ? 0 : 1);
+// Assertion 4: the library chain (#6364). The core's gates are re-declared by
+// embed, then tinyhumans, then cli, and each hop can drop one.
+const embedFeatures = parseFeatureTable(embedToml);
+const tinyhumansFeatures = parseFeatureTable(tinyhumansToml);
+const cliFeatures = parseFeatureTable(cliToml);
+
+// Guard the guard, same as above: a parser that found nothing would turn every
+// chain assertion into a rubber stamp.
+for (const [path, table] of [
+  [embedPath, embedFeatures],
+  [tinyhumansPath, tinyhumansFeatures],
+  [cliPath, cliFeatures],
+]) {
+  if (table.size === 0) {
+    console.error(
+      `FAIL: parsed zero features from ${path}.\n` +
+        'Either the manifest changed shape or the parser is broken — refusing to pass vacuously.'
+    );
+    process.exit(2);
+  }
+}
+
+const embedGates = [...embedFeatures.keys()].filter(name => name !== 'default');
+const tinyhumansGates = [...tinyhumansFeatures.keys()].filter(name => name !== 'default');
+
+const chain = [
+  {
+    crate: 'openhuman-embed',
+    features: embedFeatures,
+    sources: [{ crate: 'openhuman-core', gates: coreFeatureNames, required: true }],
+  },
+  {
+    crate: 'openhuman-tinyhumans',
+    features: tinyhumansFeatures,
+    sources: [{ crate: 'openhuman-embed', gates: embedGates, required: true }],
+  },
+  {
+    crate: 'openhuman-cli',
+    features: cliFeatures,
+    sources: [
+      { crate: 'openhuman-core', gates: coreFeatureNames, required: true },
+      // Optional: the cli forwards to both parents, but only for the gates
+      // tinyhumans actually has — `e2e-test-support` is core-only.
+      { crate: 'openhuman-tinyhumans', gates: tinyhumansGates, required: false },
+    ],
+  },
+].map(link =>
+  diffChainForwarding({
+    ...link,
+    notForwarded: CHAIN_GATES_NOT_FORWARDED[link.crate] ?? {},
+    localGates: CHAIN_LOCAL_GATES[link.crate] ?? {},
+  })
+);
+
+console.log('');
+console.log('Library chain (core -> embed -> tinyhumans -> cli):');
+for (const result of chain) {
+  console.log(
+    formatChainReport(result, {
+      notForwarded: CHAIN_GATES_NOT_FORWARDED[result.crate] ?? {},
+    })
+  );
+}
+
+const chainOk = chain.every(result => result.ok);
+
+process.exit(product.ok && defaults.ok && chainOk ? 0 : 1);
