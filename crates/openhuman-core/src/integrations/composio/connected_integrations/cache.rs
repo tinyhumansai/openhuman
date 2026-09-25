@@ -22,10 +22,9 @@ pub(crate) struct CachedIntegrations {
     pub(crate) cached_at: Instant,
 }
 
-/// Process-wide cache for connected integrations, keyed by the config
-/// identity (the `config_path` string) so different user contexts don't
-/// collide. Each entry is populated on first fetch and returned on
-/// subsequent calls until explicitly invalidated or the process exits.
+/// Process-wide cache for connected integrations, keyed by the Composio
+/// credential identity ([`cache_key`]) so two agents on different
+/// credentials never read each other's connections.
 pub(crate) static INTEGRATIONS_CACHE: LazyLock<RwLock<HashMap<String, CachedIntegrations>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
@@ -46,11 +45,36 @@ pub(crate) fn composio_cache_test_lock() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|e| e.into_inner())
 }
 
-/// Derive a stable cache key from a [`Config`]. We use the stringified
-/// `config_path` because it uniquely identifies a user context (it
-/// resolves to the per-user openhuman dir).
+/// The Composio credential identity a [`Config`] resolves to: its credential
+/// store (`config_path`), mode, entity, and any inline or host-pinned key.
+/// Hashed so the key material never appears in the cache key or its logs.
 pub(crate) fn cache_key(config: &Config) -> String {
-    config.config_path.display().to_string()
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let composio = &config.composio;
+    let mut hasher = DefaultHasher::new();
+    config.config_path.hash(&mut hasher);
+    composio.mode.trim().hash(&mut hasher);
+    composio.entity_id.trim().hash(&mut hasher);
+    composio
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|k| !k.is_empty())
+        .hash(&mut hasher);
+    composio
+        .host_credential
+        .as_ref()
+        .map(|c| {
+            (
+                c.api_key(),
+                c.entity(),
+                c.direct_base_urls().map(|u| (u.v2.as_str(), u.v3.as_str())),
+            )
+        })
+        .hash(&mut hasher);
+    format!("composio:{:016x}", hasher.finish())
 }
 
 /// Clear cached connected integrations so the next call to
