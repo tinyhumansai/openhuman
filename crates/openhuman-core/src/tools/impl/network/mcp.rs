@@ -1,4 +1,4 @@
-use crate::mcp::config_servers::{McpRegistrySource, McpServerRegistry};
+use crate::mcp::config_servers::{McpDefinitionAuth, McpRegistrySource, McpServerRegistry};
 use crate::security::{SecurityPolicy, ToolOperation};
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -49,12 +49,13 @@ impl Tool for McpListServersTool {
             .map(|server| {
                 json!({
                     "name": server.name,
-                    "endpoint": server.endpoint,
+                    "endpoint": endpoint_without_query(&server.endpoint),
                     "description": server.description,
                     "timeout_secs": server.timeout_secs,
                     "allowed_tools": server.allowed_tools,
                     "disallowed_tools": server.disallowed_tools,
-                    "auth": server.auth,
+                    "auth_configured": !matches!(server.auth, McpDefinitionAuth::None),
+                    "auth_kind": auth_kind(&server.auth),
                     "source": server.source,
                 })
             })
@@ -73,20 +74,8 @@ impl Tool for McpListServersTool {
                 md.push_str(&format!(
                     "\n- **{}** ({source})\n  - endpoint: `{}`\n  - auth: `{}`",
                     server.name,
-                    server.endpoint,
-                    match &server.auth {
-                        tinymcp_bus::McpAuthConfig::None => "none",
-                        tinymcp_bus::McpAuthConfig::BearerToken { .. } => "bearer_token",
-                        tinymcp_bus::McpAuthConfig::Basic { .. } => "basic",
-                        tinymcp_bus::McpAuthConfig::Header { .. } => "header",
-                        tinymcp_bus::McpAuthConfig::Headers { .. } => "headers",
-                        tinymcp_bus::McpAuthConfig::QueryParam { .. } => "query_param",
-                        // The contract's auth enum is `#[non_exhaustive]`, so a
-                        // kind a newer one adds is reported rather than failing
-                        // the build. This is a label in a listing; an unknown
-                        // one is honest.
-                        _ => "unknown",
-                    }
+                    endpoint_without_query(&server.endpoint),
+                    auth_kind(&server.auth)
                 ));
                 if let Some(description) = server.description.as_deref() {
                     md.push_str(&format!("\n  - {description}"));
@@ -284,6 +273,24 @@ impl Tool for McpCallTool {
         self.execute_with_options(args, ToolCallOptions::default())
             .await
     }
+}
+
+fn auth_kind(auth: &McpDefinitionAuth) -> &'static str {
+    match auth {
+        McpDefinitionAuth::None => "none",
+        McpDefinitionAuth::BearerToken { .. } => "bearer_token",
+        McpDefinitionAuth::Basic { .. } => "basic",
+        McpDefinitionAuth::Header { .. } => "header",
+        McpDefinitionAuth::Headers { .. } => "headers",
+        McpDefinitionAuth::QueryParam { .. } => "query_param",
+        _ => "unknown",
+    }
+}
+
+fn endpoint_without_query(endpoint: &str) -> &str {
+    endpoint
+        .find(['?', '#'])
+        .map_or(endpoint, |cut| &endpoint[..cut])
 }
 
 fn required_string_arg(args: &Value, key: &str) -> anyhow::Result<String> {
