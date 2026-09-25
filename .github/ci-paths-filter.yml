@@ -77,6 +77,8 @@ rust-core:
   - 'scripts/ci/check-ignored-tests.mjs'
   - 'scripts/ci/ignored-test-baseline.json'
   - 'scripts/ci/list-feature-gated-rust-tests.mjs'
+  - 'scripts/ci/list-module-gated-tests.mjs'
+  - 'scripts/ci/run-module-gated-tests.sh'
   - 'Cargo.toml'
   - 'crates/openhuman-core/**'
   - 'crates/openhuman-embed/**'
@@ -150,6 +152,8 @@ scripts:
   # pin its clauses, or the counter's anchoring and its
   # cfg_attr guard can be loosened with nothing watching.
   - 'scripts/ci/check-ignored-tests.mjs'
+  - 'scripts/ci/list-module-gated-tests.mjs'
+  - 'scripts/ci/run-module-gated-tests.sh'
   # The web E2E build/session contract has script-level regression
   # tests; run them when either participant or Vite changes.
   - 'app/scripts/e2e-web-build.sh'

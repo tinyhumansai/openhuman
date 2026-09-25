@@ -709,11 +709,8 @@ jobs:
           echo "TINYCONNECTORS_TEST_MODULE=$connectors_dir/libtinyconnectors.so" \
             >> "$GITHUB_ENV"
 
-      - name: Run TinyJuice host-module regression
-        run: |
-          cargo test --lib --features modules \
-            openhuman::agent::tinyagents::middleware::tests::tool_output_tabulates_a_large_graph_for_a_non_exempt_tool \
-            -- --ignored --exact
+      - name: Run module-gated Rust tests
+        run: bash scripts/ci/run-module-gated-tests.sh
         env:
           CARGO_BUILD_JOBS: "1"
 

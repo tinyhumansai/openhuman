@@ -97,7 +97,7 @@ test("ex63 runs the core's unit tests under nextest; hosted keeps cargo's runner
   );
 });
 
-test("doctests, tui coverage and the TinyJuice regression are left to pushes to main", () => {
+test("doctests, tui coverage and module-gated tests are left to pushes to main", () => {
   for (const plan of plans()) {
     const cov = plan.lanes
       .find((l) => l.name === "rust-cov")
@@ -116,10 +116,7 @@ test("doctests, tui coverage and the TinyJuice regression are left to pushes to 
     "utf8",
   );
   assert.match(lite, /on:\s*\n\s*push:\s*\n\s*branches: \[main\]/);
-  assert.match(
-    lite,
-    /tool_output_tabulates_a_large_graph_for_a_non_exempt_tool/,
-  );
+  assert.match(lite, /run: bash scripts\/ci\/run-module-gated-tests\.sh/);
   assert.match(lite, /run: bash scripts\/ci\/rust-coverage\.sh/);
   for (const cmd of [
     "cargo test -p openhuman-embed",
