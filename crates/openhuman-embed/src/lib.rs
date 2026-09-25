@@ -64,6 +64,7 @@ pub use openhuman_core::api::transport::{
     BackendTransportError, TransportProfile,
 };
 pub use openhuman_core::api::{product_identity, set_product_identity, ProductIdentity};
+pub use openhuman_core::config::ComposioHostCredential;
 pub use openhuman_core::config::Config as RuntimeConfig;
 pub use openhuman_core::security::TrustedAccess;
 pub use openhuman_core::tools::toolpacks::{GroupMode, ToolGroups};

@@ -3,12 +3,13 @@
 //! An [`AgentSpec`] is pure data: it is applied by
 //! [`Runtime::agent`](crate::Runtime::agent), in a fixed order, onto a clone
 //! of the runtime's base config — access tier, provider model, MCP servers,
-//! then the [`config`](AgentSpec::config) escape hatch last — and onto a
+//! Composio credential, then the [`config`](AgentSpec::config) escape hatch
+//! last — and onto a
 //! [`AgentDefinitionSpec`].
 
 use std::path::PathBuf;
 
-use openhuman_core::config::Config;
+use openhuman_core::config::{ComposioHostCredential, Config};
 use openhuman_core::core::runtime::DomainSet;
 use openhuman_core::security::TrustedAccess;
 use openhuman_core::tools::toolpacks::ToolGroups;
@@ -47,6 +48,7 @@ pub struct AgentSpec {
     include_user_skills: bool,
     action_dir: Option<PathBuf>,
     trusted: Vec<(String, TrustedAccess)>,
+    composio: Option<ComposioHostCredential>,
     config_fn: Option<ConfigEdit>,
     host_tools: Option<openhuman_core::agent::HostTools>,
 }
@@ -76,6 +78,7 @@ impl AgentSpec {
             include_user_skills: false,
             action_dir: None,
             trusted: Vec::new(),
+            composio: None,
             config_fn: None,
             host_tools: None,
         }
@@ -188,6 +191,17 @@ impl AgentSpec {
         self
     }
 
+    /// This agent's own Composio credential.
+    ///
+    /// The built-in Composio tools then call Composio with this key and
+    /// entity only: never the runtime's stored Composio key, and never
+    /// another agent's. Connected-integration caches are partitioned by it.
+    #[must_use]
+    pub fn composio(mut self, credential: ComposioHostCredential) -> Self {
+        self.composio = Some(credential);
+        self
+    }
+
     /// Arbitrary edits to the agent's config, applied last.
     ///
     /// The escape hatch for the config fields the spec does not model — not
@@ -289,6 +303,7 @@ impl AgentSpec {
             include_user_skills: self.include_user_skills,
             action_dir: self.action_dir,
             trusted: self.trusted,
+            composio: self.composio,
             config_fn: self.config_fn,
             host_tools: self.host_tools,
         }
@@ -312,6 +327,7 @@ pub(crate) struct AgentSpecParts {
     pub(crate) include_user_skills: bool,
     pub(crate) action_dir: Option<PathBuf>,
     pub(crate) trusted: Vec<(String, TrustedAccess)>,
+    pub(crate) composio: Option<ComposioHostCredential>,
     pub(crate) config_fn: Option<ConfigEdit>,
     pub(crate) host_tools: Option<openhuman_core::agent::HostTools>,
 }
@@ -323,6 +339,7 @@ impl std::fmt::Debug for AgentSpec {
             .field("id", &self.id)
             .field("access", &self.access)
             .field("action_dir", &self.action_dir)
+            .field("composio", &self.composio)
             .finish_non_exhaustive()
     }
 }

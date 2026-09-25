@@ -45,3 +45,16 @@ fn tool_groups_may_only_narrow_the_runtime() {
     let err = check_tool_groups_narrow(&widened, &runtime).expect_err("widens");
     assert!(matches!(err, AgentError::WidensRuntime(_)), "{err:?}");
 }
+
+#[test]
+fn composio_credential_is_carried_to_the_build_step_and_kept_out_of_debug() {
+    use openhuman_core::config::ComposioHostCredential;
+    let spec = AgentSpec::new("alpha")
+        .composio(ComposioHostCredential::direct("ck_secret_alpha").entity_id("tenant-a"));
+    let debug = format!("{spec:?}");
+    assert!(!debug.contains("ck_secret_alpha"), "{debug}");
+    let parts = spec.into_parts();
+    let credential = parts.composio.expect("composio credential");
+    assert_eq!(credential.api_key(), "ck_secret_alpha");
+    assert_eq!(credential.entity(), "tenant-a");
+}

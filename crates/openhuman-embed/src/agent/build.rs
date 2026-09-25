@@ -1,8 +1,8 @@
 //! Turning an [`AgentSpec`] into an [`AgentInner`] on a [`Runtime`].
 //!
 //! Order matters and is fixed here: validate the id, lay out directories,
-//! assemble the per-agent `Config` (base → access → provider → MCP → escape
-//! hatch), build the definition, copy skills, check the
+//! assemble the per-agent `Config` (base → access → provider → MCP →
+//! Composio → escape hatch), build the definition, copy skills, check the
 //! narrowing rules, derive the context.
 
 use std::path::Path;
@@ -69,6 +69,11 @@ pub(crate) fn instantiate(runtime: &Runtime, spec: AgentSpec) -> Result<AgentInn
                 .cloned()
                 .map(crate::harness::McpServer::into_config),
         );
+    }
+
+    if let Some(credential) = parts.composio {
+        log::debug!("[embed][agent] id={id} pins its own composio credential");
+        config.composio.pin_host_credential(credential);
     }
 
     if let Some(f) = parts.config_fn {
