@@ -27,12 +27,21 @@ check_world() {
 
   # Tauri legitimately owns reqwest 0.13 for its dev proxy/updater. Sentry
   # must never own that tree: OpenHuman supplies its reqwest 0.12 transport.
-  mapfile -t reqwest_013_versions < <(
+  #
+  # A `while read` loop rather than `mapfile`, which needs bash 4: the stock
+  # macOS /bin/bash is 3.2, where `mapfile` dies with exit 127 partway
+  # through the run and reads like a policy failure. The `${arr[@]+...}`
+  # form is the bash 3.2 spelling of "expand this array, empty or not"
+  # without tripping `set -u`.
+  reqwest_013_versions=()
+  while IFS= read -r version; do
+    [[ -n "$version" ]] && reqwest_013_versions+=("$version")
+  done < <(
     printf '%s\n' "$tree" |
       sed -nE 's/^reqwest v(0\.13\.[^ ]+).*/\1/p' |
       sort -u
   )
-  for version in "${reqwest_013_versions[@]}"; do
+  for version in ${reqwest_013_versions[@]+"${reqwest_013_versions[@]}"}; do
     owners="$(
       cargo tree --locked --manifest-path "$manifest" --target "$target" \
         --invert "reqwest@$version" 2>/dev/null || true
