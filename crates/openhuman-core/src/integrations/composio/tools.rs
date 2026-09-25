@@ -32,6 +32,7 @@ mod execute;
 mod list_connections;
 mod list_toolkits;
 mod list_tools;
+mod live_config;
 mod registry;
 mod visibility;
 
@@ -44,6 +45,7 @@ mod tests;
 pub use direct::{ComposioAction, ComposioConnectedAccount, ComposioTool};
 pub use execute::ComposioExecuteTool;
 pub use registry::all_composio_agent_tools;
+pub(crate) use live_config::live_composio_config;
 
 // Brought into this module's own namespace (private `use`, not `pub use`)
 // so `tools_tests.rs` — declared as a direct child module of `tools` above

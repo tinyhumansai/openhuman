@@ -169,7 +169,7 @@ impl ComposioActionTool {
     /// snapshot when there is one, else the core's read path.
     async fn live_config(&self) -> Result<Config, String> {
         match self.config.as_deref() {
-            Some(snapshot) => config_rpc::reload_config_snapshot_with_timeout(snapshot).await,
+            Some(snapshot) => super::tools::live_composio_config(snapshot).await,
             None => config_rpc::load_config_with_timeout().await,
         }
     }

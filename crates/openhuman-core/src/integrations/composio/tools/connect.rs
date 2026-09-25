@@ -8,7 +8,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use crate::config::rpc as config_rpc;
+use super::live_config::live_composio_config;
 use crate::config::Config;
 use tinytools::{PermissionLevel, Tool, ToolCategory, ToolResult};
 
@@ -191,12 +191,9 @@ impl Tool for ComposioConnectTool {
             )));
         }
 
-        // Reload config per call so a mid-session `composio.mode` toggle is
-        // honoured (#1710), then skip the card entirely if the toolkit is
-        // already connected — avoids a flash of a Connect card that would
-        // immediately resolve.
+        // Skip the card when the toolkit is already connected.
         let live_config =
-            match config_rpc::reload_config_snapshot_with_timeout(self.config.as_ref()).await {
+            match live_composio_config(self.config.as_ref()).await {
                 Ok(c) => c,
                 Err(e) => {
                     tracing::warn!(error = %e, "[composio] connect.execute: load_config failed");

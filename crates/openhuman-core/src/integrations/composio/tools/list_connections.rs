@@ -5,7 +5,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use crate::config::rpc as config_rpc;
+use super::live_config::live_composio_config;
 use crate::config::Config;
 use tinytools::{PermissionLevel, Tool, ToolCategory, ToolResult};
 
@@ -53,16 +53,7 @@ impl Tool for ComposioListConnectionsTool {
         // empty list regardless of the user's actual Composio connections,
         // which caused the agent to incorrectly conclude that no integrations
         // were linked and prompt unnecessary re-authorization (#1710).
-        // [#1710 Wave 4] Reload config fresh per execute so a mid-session
-        // `composio.mode` toggle takes effect at the very next tool call.
-        // Anchor the reload to this tool's original config path rather
-        // than re-resolving process-global `OPENHUMAN_WORKSPACE`; the
-        // tool is scoped to the user/workspace it was created for.
-        let live_config = match config_rpc::reload_config_snapshot_with_timeout(
-            self.config.as_ref(),
-        )
-        .await
-        {
+        let live_config = match live_composio_config(self.config.as_ref()).await {
             Ok(c) => c,
             Err(e) => {
                 tracing::warn!(error = %e, "[composio] list_connections.execute: load_config failed");
