@@ -8,7 +8,6 @@ use crate::security::SecurityPolicy;
 use reqwest::Client;
 use std::sync::Arc;
 
-#[cfg(debug_assertions)]
 use super::types::is_loopback_http_base;
 
 pub(super) fn normalize_entity_id(entity_id: &str) -> String {
@@ -64,6 +63,33 @@ impl ComposioTool {
             base_v2,
             base_v3,
             true,
+        ))
+    }
+
+    /// Construct against explicit v2/v3 API roots. Both must be HTTPS;
+    /// loopback HTTP is accepted only in debug builds.
+    pub fn new_with_base_urls(
+        api_key: &str,
+        default_entity_id: Option<&str>,
+        security: Arc<SecurityPolicy>,
+        base_v2: String,
+        base_v3: String,
+    ) -> anyhow::Result<Self> {
+        let allow_loopback = cfg!(debug_assertions);
+        for base in [&base_v2, &base_v3] {
+            let accepted =
+                base.starts_with("https://") || (allow_loopback && is_loopback_http_base(base));
+            if !accepted {
+                anyhow::bail!("Composio base URL must be HTTPS");
+            }
+        }
+        Ok(Self::new_internal(
+            api_key,
+            default_entity_id,
+            security,
+            base_v2,
+            base_v3,
+            allow_loopback,
         ))
     }
 
