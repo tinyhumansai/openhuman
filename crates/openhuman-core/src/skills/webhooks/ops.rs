@@ -236,6 +236,14 @@ pub async fn trigger_agent(
             }),
             format!("webhooks.trigger_agent deferred for {source}/{caller_id}"),
         )),
+        crate::agent::triage::TriageOutcome::Terminal { reason } => Ok(RpcOutcome::single_log(
+            serde_json::json!({
+                "decision": "terminal",
+                "resolution_path": "terminal",
+                "reason": reason,
+            }),
+            format!("webhooks.trigger_agent failed terminally for {source}/{caller_id}: {reason}"),
+        )),
     }
 }
 

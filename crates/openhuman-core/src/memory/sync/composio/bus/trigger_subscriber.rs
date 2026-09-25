@@ -238,6 +238,13 @@ impl EventHandler<DomainEvent> for ComposioTriggerSubscriber {
                         "[composio][triage] run_triage deferred"
                     );
                 }
+                Ok(TriageOutcome::Terminal { reason }) => {
+                    tracing::warn!(
+                        label = %envelope.display_label,
+                        reason = %reason,
+                        "[composio][triage] run_triage reached terminal state"
+                    );
+                }
                 Err(e) => {
                     // Route through the central observability classifier
                     // so user-config / budget-exhausted / provider-state

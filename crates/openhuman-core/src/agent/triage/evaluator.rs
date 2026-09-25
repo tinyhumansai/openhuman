@@ -11,7 +11,7 @@
 //!
 //! local fallback
 //!   ├── ok ──► resolution_path = LocalFallback
-//!   └── failed ──► TriageOutcome::Deferred { until_ms, reason }
+//!   └── failed ──► TriageOutcome::Terminal { reason }
 //! ```
 //!
 //! Non-transient cloud failures (auth, malformed prompt, model not
@@ -34,6 +34,12 @@ mod outcome;
 mod prompt;
 
 pub use arm::TRIGGER_TRIAGE_AGENT_ID;
+#[cfg(test)]
+pub(crate) use chain::begin_outage_attempt;
+#[cfg(test)]
+pub(crate) use chain::record_outage;
+#[cfg(test)]
+pub(crate) use chain::run_triage_with_arms_for_test_with_state;
 pub use chain::{run_triage, run_triage_with_arms};
 pub use outcome::{TriageOutcome, TriageResolutionPath, TriageRun};
 

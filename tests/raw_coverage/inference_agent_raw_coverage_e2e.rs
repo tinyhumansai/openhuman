@@ -2059,16 +2059,14 @@ async fn agent_triage_evaluator_covers_native_dispatch_decision_and_deferred_pat
         &TriggerEnvelope::from_cron("job-coverage", "daily", "done"),
     )
     .await
-    .expect("budget becomes deferred without local arm");
+    .expect("budget becomes terminal without local arm");
     match deferred {
-        TriageOutcome::Deferred {
-            defer_until_ms,
-            reason,
-        } => {
-            assert!(defer_until_ms > chrono::Utc::now().timestamp_millis());
+        TriageOutcome::Terminal { reason } => {
             assert_eq!(reason, "cloud budget exhausted; local arm unavailable");
         }
-        TriageOutcome::Decision(_) => panic!("budget exhaustion should defer"),
+        TriageOutcome::Decision(_) | TriageOutcome::Deferred { .. } => {
+            panic!("budget exhaustion should be terminal")
+        }
     }
 
     let attempts = Arc::new(AtomicUsize::new(0));

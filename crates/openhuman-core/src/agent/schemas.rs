@@ -467,6 +467,12 @@ fn handle_triage_evaluate(params: Map<String, Value>) -> ControllerFuture {
                     "dry_run": dry_run,
                 }))
             }
+            crate::agent::triage::TriageOutcome::Terminal { reason } => Ok(serde_json::json!({
+                "decision": "terminal",
+                "resolution_path": "terminal",
+                "reason": reason,
+                "dry_run": dry_run,
+            })),
         }
     })
 }

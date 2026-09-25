@@ -101,6 +101,14 @@ async fn dispatch_triage(source: &TaskSource, enriched: &EnrichedTask) -> Result
                 "[task_sources:route] triage deferred (task stays in the ledger)"
             );
         }
+        TriageOutcome::Terminal { reason } => {
+            tracing::warn!(
+                source_id = %source.id,
+                external_id = %task.external_id,
+                reason = %reason,
+                "[task_sources:route] triage reached terminal state"
+            );
+        }
     }
     Ok(())
 }

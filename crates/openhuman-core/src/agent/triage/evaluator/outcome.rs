@@ -38,9 +38,8 @@ pub struct TriageRun {
     pub resolution_path: TriageResolutionPath,
 }
 
-/// Outcome of [`run_triage`]. Either a parsed decision or a
-/// deferral asking the caller to retry the whole chain after
-/// `defer_until_ms` (Unix epoch millis).
+/// Outcome of [`run_triage`]. Either a parsed decision, a retryable
+/// deferral, or a terminal outcome when no fallback exists.
 #[derive(Debug, Clone)]
 pub enum TriageOutcome {
     Decision(TriageRun),
@@ -51,13 +50,19 @@ pub enum TriageOutcome {
         /// Short human-readable reason — already scrubbed; safe to log.
         reason: String,
     },
+    /// No local fallback is configured and the cloud retry budget is
+    /// exhausted. Callers must record this state instead of scheduling
+    /// another fixed-interval model invocation.
+    Terminal {
+        reason: String,
+    },
 }
 
 impl TriageOutcome {
     pub fn into_decision(self) -> Option<TriageRun> {
         match self {
             TriageOutcome::Decision(run) => Some(run),
-            TriageOutcome::Deferred { .. } => None,
+            TriageOutcome::Deferred { .. } | TriageOutcome::Terminal { .. } => None,
         }
     }
 }

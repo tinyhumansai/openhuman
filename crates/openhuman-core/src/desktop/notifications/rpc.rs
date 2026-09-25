@@ -228,6 +228,13 @@ pub async fn handle_ingest(params: Map<String, Value>) -> Result<Value, String> 
                     "[notification_intel] triage deferred"
                 );
             }
+            Ok(TriageOutcome::Terminal { reason }) => {
+                tracing::warn!(
+                    id = %id_for_triage,
+                    reason = %reason,
+                    "[notification_intel] triage reached terminal state"
+                );
+            }
             Err(e) => {
                 tracing::warn!(
                     id = %id_for_triage,

@@ -353,7 +353,9 @@ async fn cloud_then_local_failure_returns_deferred() {
                 "reason should reference the upstream failure: {reason}"
             );
         }
-        TriageOutcome::Decision(_) => panic!("expected Deferred, got Decision"),
+        TriageOutcome::Decision(_) | TriageOutcome::Terminal { .. } => {
+            panic!("expected Deferred, got another terminal outcome")
+        }
     }
     assert_eq!(counter.load(Ordering::SeqCst), 3, "1 + retry + local = 3");
 }
@@ -493,7 +495,7 @@ async fn cloud_budget_exhausted_on_retry_falls_through_to_local() {
 }
 
 #[tokio::test]
-async fn cloud_budget_exhausted_without_local_returns_deferred_not_err() {
+async fn cloud_budget_exhausted_without_local_returns_terminal_not_err() {
     AgentDefinitionRegistry::init_global_builtins().expect("init_global_builtins");
     let counter = StdArc::new(AtomicUsize::new(0));
     let counter_for_stub = StdArc::clone(&counter);
@@ -512,16 +514,18 @@ async fn cloud_budget_exhausted_without_local_returns_deferred_not_err() {
 
     let outcome = run_triage_with_arms_for_test(cloud_arm(), None, &envelope())
         .await
-        .expect("budget-exhausted with no local must be Deferred, not Err");
+        .expect("budget-exhausted with no local must be terminal, not Err");
 
     match outcome {
-        TriageOutcome::Deferred { reason, .. } => {
+        TriageOutcome::Terminal { reason } => {
             assert!(
                 reason.to_lowercase().contains("budget"),
                 "deferral reason should name the budget cause: {reason}"
             );
         }
-        TriageOutcome::Decision(_) => panic!("expected Deferred, got Decision"),
+        TriageOutcome::Decision(_) | TriageOutcome::Deferred { .. } => {
+            panic!("expected Terminal, got another outcome")
+        }
     }
     assert_eq!(
         counter.load(Ordering::SeqCst),
@@ -563,7 +567,9 @@ async fn cloud_safety_flagged_then_local_flagged_defers_not_errs() {
                 "deferral reason should name the prompt-guard cause: {reason}"
             );
         }
-        TriageOutcome::Decision(_) => panic!("expected Deferred, got Decision"),
+        TriageOutcome::Decision(_) | TriageOutcome::Terminal { .. } => {
+            panic!("expected Deferred, got another terminal outcome")
+        }
     }
     assert_eq!(
         counter.load(Ordering::SeqCst),
