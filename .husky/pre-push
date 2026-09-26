@@ -22,6 +22,81 @@ run_check() {
   return "$CHECK_EXIT"
 }
 
+# git hands the hook `<remote-name> <remote-url>` in argv and one
+# `<local-ref> <local-oid> <remote-ref> <remote-oid>` line per pushed ref on
+# stdin. Read it once, up front: the checks below consume no stdin of their
+# own, and a second read would come back empty.
+REMOTE_NAME="${1:-origin}"
+PUSH_REFS="$(cat)"
+
+# git pads a missing side of a push with an all-zero OID: a zero local OID is
+# a branch deletion, a zero remote OID is a branch the remote has not seen.
+# Length varies (40 hex for SHA-1, 64 for SHA-256), so test the digits.
+is_zero_oid() {
+  case "$1" in
+    "") return 1 ;;
+    *[!0]*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+# Every path this push would change, one per line.
+#
+# `UNRESOLVED` is emitted whenever the range cannot be worked out — an
+# unrooted new branch, a missing object, a hook run by hand with no stdin.
+# It is treated as "assume Rust changed" below, because the cost of guessing
+# wrong that way is a slow push, and the other way is an unchecked one.
+changed_paths_for_push() {
+  while read -r _local_ref local_oid _remote_ref remote_oid; do
+    [ -n "$local_oid" ] || continue
+    # A deletion carries no content to check.
+    if is_zero_oid "$local_oid"; then
+      continue
+    fi
+    if is_zero_oid "$remote_oid"; then
+      # New branch: diff from the parent of the oldest commit the remote does
+      # not already have, so the range is what this push actually adds.
+      OLDEST="$(git rev-list "$local_oid" --not --remotes="$REMOTE_NAME" 2>/dev/null | tail -n 1)"
+      if [ -z "$OLDEST" ] || ! git rev-parse --verify --quiet "$OLDEST^" >/dev/null 2>&1; then
+        echo "UNRESOLVED"
+        continue
+      fi
+      git diff --name-only "$OLDEST^" "$local_oid" 2>/dev/null || echo "UNRESOLVED"
+    else
+      git diff --name-only "$remote_oid" "$local_oid" 2>/dev/null || echo "UNRESOLVED"
+    fi
+  done
+}
+
+PUSHED_PATHS="$(printf '%s\n' "$PUSH_REFS" | changed_paths_for_push)"
+
+# Does this push touch anything clippy would have an opinion about?
+#
+# `pnpm rust:clippy` compiles three crates plus the Tauri shell with
+# `-D warnings`, so before this gate existed ANY clippy error anywhere in the
+# workspace blocked EVERY push — a README edit included — and the person
+# pushing could not satisfy it from their own diff. CI gates its Rust lanes on
+# changed areas for the same reason; this mirrors that.
+#
+# The narrower question of whether clippy belongs in a pre-push hook at all,
+# given `--no-verify` is the habitual push, is left open deliberately: this
+# removes the misattribution without deciding it. Set PRE_PUSH_FORCE_CLIPPY=1
+# to run it regardless of what changed.
+push_touches_rust() {
+  if [ -n "${PRE_PUSH_FORCE_CLIPPY:-}" ]; then
+    return 0
+  fi
+  # No ref lines at all — run by hand, or by something that does not speak the
+  # pre-push protocol. Nothing to scope to, so run it. A push that DID report
+  # refs and resolved no paths (a deletion, an empty commit) has no Rust in it
+  # by construction and is left to skip.
+  if [ -z "$PUSH_REFS" ]; then
+    return 0
+  fi
+  printf '%s\n' "$PUSHED_PATHS" | grep -Eq \
+    '(^|/)[^/]+\.rs$|(^|/)Cargo\.(toml|lock)$|(^|/)rust-toolchain\.toml$|^\.cargo/|^\.gitmodules$|^crates/|^vendor/|^UNRESOLVED$'
+}
+
 # Windows Git Bash can miss Node/Pnpm in PATH when hooks run.
 # Recover from common PATH drift by hydrating from where.exe.
 has_node() {
@@ -104,20 +179,31 @@ COMPILE_EXIT=$?
 set -e
 
 # Run Clippy for both Rust codebases; Clippy also performs compile checks.
-set +e
-run_check pnpm rust:clippy
-RUST_CLIPPY_EXIT=$?
-set -e
+# Only when the push carries Rust — see `push_touches_rust`.
+RUST_CLIPPY_EXIT=0
+if push_touches_rust; then
+  set +e
+  run_check pnpm rust:clippy
+  RUST_CLIPPY_EXIT=$?
+  set -e
+else
+  echo "No Rust changes in this push — skipping rust:clippy."
+  echo "(PRE_PUSH_FORCE_CLIPPY=1 runs it anyway.)"
+fi
 
-# Enforce scoped cmd-* tokens in components/commands/
+# Enforce scoped cmd-* tokens in components/commands/.
+# Capture each exit separately: reading `$?` after the second one discarded the
+# first, so a lint:commands-tokens failure passed silently whenever
+# lint:ui-tokens succeeded.
 set +e
 run_check pnpm --dir app run lint:commands-tokens
-run_check pnpm --dir app run lint:ui-tokens
 CMD_TOKENS_EXIT=$?
+run_check pnpm --dir app run lint:ui-tokens
+UI_TOKENS_EXIT=$?
 set -e
 
 # Exit with error if any command still fails after fixes
-if [ $FORMAT_EXIT -ne 0 ] || [ $LINT_EXIT -ne 0 ] || [ $COMPILE_EXIT -ne 0 ] || [ $RUST_CLIPPY_EXIT -ne 0 ] || [ $CMD_TOKENS_EXIT -ne 0 ]; then
+if [ $FORMAT_EXIT -ne 0 ] || [ $LINT_EXIT -ne 0 ] || [ $COMPILE_EXIT -ne 0 ] || [ $RUST_CLIPPY_EXIT -ne 0 ] || [ $CMD_TOKENS_EXIT -ne 0 ] || [ $UI_TOKENS_EXIT -ne 0 ]; then
   echo
   echo "============================================================"
   echo "Pre-push checks failed."
@@ -127,7 +213,7 @@ if [ $FORMAT_EXIT -ne 0 ] || [ $LINT_EXIT -ne 0 ] || [ $COMPILE_EXIT -ne 0 ] || 
     echo "    git add -A && git commit -m 'chore: apply auto-fixes'"
     echo "    git push"
   fi
-  if [ $COMPILE_EXIT -ne 0 ] || [ $RUST_CLIPPY_EXIT -ne 0 ] || [ $CMD_TOKENS_EXIT -ne 0 ]; then
+  if [ $COMPILE_EXIT -ne 0 ] || [ $RUST_CLIPPY_EXIT -ne 0 ] || [ $CMD_TOKENS_EXIT -ne 0 ] || [ $UI_TOKENS_EXIT -ne 0 ]; then
     echo "Fix the remaining errors above (TypeScript / Rust / cmd-tokens)"
     echo "before re-pushing — these have no auto-fix path."
   fi
