@@ -37,8 +37,14 @@ impl ToolPack {
         self.tools.contains(&tool)
     }
 
-    /// Whether `agent_id` is the specialist this pack's family belongs to.
+    /// Whether `agent_id` owns this pack, including a web-chat thread name
+    /// formed as `<owner>_<thread>` after the session is built.
     pub fn is_owner(&self, agent_id: &str) -> bool {
-        self.owners.contains(&agent_id)
+        self.owners.iter().any(|owner| {
+            agent_id == *owner
+                || agent_id
+                    .strip_prefix(*owner)
+                    .is_some_and(|suffix| suffix.starts_with('_'))
+        })
     }
 }

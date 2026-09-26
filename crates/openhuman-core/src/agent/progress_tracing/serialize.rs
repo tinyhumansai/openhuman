@@ -18,18 +18,73 @@ pub(super) const MAX_ERROR_MESSAGE_CHARS: usize = 500;
 /// full message array (system prompt included) — but still bounded so a
 /// 100k-token context can't push the ingestion batch past Langfuse's event
 /// size limits.
-pub(super) const MAX_MODEL_CONTENT_CHARS: usize = 25_000;
+pub(super) const MAX_MODEL_CONTENT_CHARS: usize = 200_000;
 
-/// Capture a model-payload JSON value for a span: kept structured when it
-/// serializes within [`MAX_MODEL_CONTENT_CHARS`], else degraded to a truncated
-/// string (readable in Langfuse, bounded in size).
+/// Keep large model requests as structured messages so Langfuse can render
+/// roles and tool calls. Retain the most recent messages within the bound.
 pub(super) fn capture_model_content(value: &serde_json::Value) -> serde_json::Value {
     let serialized = value.to_string();
     if serialized.chars().count() <= MAX_MODEL_CONTENT_CHARS {
-        value.clone()
-    } else {
-        serde_json::Value::String(truncate_chars(&serialized, MAX_MODEL_CONTENT_CHARS))
+        return value.clone();
     }
+    if let Some(messages) = value.as_array() {
+        let mut kept = Vec::new();
+        let mut used = 0;
+        for message in messages.iter().rev() {
+            let mut message = message.clone();
+            let size = message.to_string().chars().count();
+            if size > MAX_MODEL_CONTENT_CHARS / 2 {
+                if let Some(content) = message.get_mut("content") {
+                    *content = serde_json::Value::String(format!(
+                        "{}…[message content truncated]",
+                        truncate_chars(
+                            &content.as_str().map(str::to_owned).unwrap_or_else(|| content.to_string()),
+                            MAX_MODEL_CONTENT_CHARS / 2
+                        )
+                    ));
+                }
+            }
+            let size = message.to_string().chars().count();
+            if used + size > MAX_MODEL_CONTENT_CHARS.saturating_sub(128) {
+                break;
+            }
+            used += size;
+            kept.push(message);
+        }
+        kept.reverse();
+        let omitted = messages.len().saturating_sub(kept.len());
+        if omitted > 0 {
+            kept.insert(
+                0,
+                serde_json::json!({
+                    "role": "system",
+                    "content": format!("[{omitted} earlier messages omitted from telemetry]"),
+                }),
+            );
+        }
+        return serde_json::Value::Array(kept);
+    }
+    if let Some(fields) = value.as_object() {
+        let mut kept = fields.clone();
+        if let Some(content) = kept.get_mut("content") {
+            *content = serde_json::Value::String(truncate_chars(
+                &content.as_str().map(str::to_owned).unwrap_or_else(|| content.to_string()),
+                MAX_MODEL_CONTENT_CHARS / 2,
+            ));
+            if serde_json::Value::Object(kept.clone())
+                .to_string()
+                .chars()
+                .count()
+                <= MAX_MODEL_CONTENT_CHARS
+            {
+                return serde_json::Value::Object(kept);
+            }
+        }
+    }
+    serde_json::json!({
+        "truncated": true,
+        "preview": truncate_chars(&serialized, MAX_MODEL_CONTENT_CHARS / 2),
+    })
 }
 
 /// Truncate `text` to `max` characters, appending an explicit truncation

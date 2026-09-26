@@ -123,6 +123,11 @@ pub(super) fn decrypt_config_secrets(config: &mut Config, openhuman_dir: &Path) 
         &mut config.search.tavily.api_key,
         "search.tavily.api_key",
     )?;
+    decrypt_optional_secret(
+        &store,
+        &mut config.search.gemini.api_key,
+        "search.gemini.api_key",
+    )?;
 
     let ch = &mut config.channels_config;
     if let Some(ref mut tg) = ch.telegram {
@@ -232,6 +237,11 @@ pub(super) fn encrypt_config_secrets(config: &mut Config) -> Result<()> {
         &mut config.search.tavily.api_key,
         "search.tavily.api_key",
     )?;
+    encrypt_optional_secret(
+        &store,
+        &mut config.search.gemini.api_key,
+        "search.gemini.api_key",
+    )?;
 
     let ch = &mut config.channels_config;
     if let Some(ref mut tg) = ch.telegram {
@@ -301,4 +311,28 @@ pub(super) fn encrypt_config_secrets(config: &mut Config) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gemini_key_round_trips_with_encryption_enabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        config.config_path = dir.path().join("config.toml");
+        config.secrets.encrypt = true;
+        config.search.gemini.api_key = Some("gemini-sentinel".into());
+
+        encrypt_config_secrets(&mut config).unwrap();
+        let ciphertext = config.search.gemini.api_key.as_deref().unwrap();
+        assert!(ciphertext.starts_with("enc2:"));
+        assert!(!ciphertext.contains("gemini-sentinel"));
+        assert!(!decrypt_config_secrets(&mut config, dir.path()).unwrap());
+        assert_eq!(
+            config.search.gemini.api_key.as_deref(),
+            Some("gemini-sentinel")
+        );
+    }
 }

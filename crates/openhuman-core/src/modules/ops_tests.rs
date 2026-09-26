@@ -10,6 +10,77 @@ use crate::modules::ops::{self, install_dir, list};
 use crate::modules::registry;
 use crate::modules::types::ModuleState;
 
+fn test_bundled_record() -> &'static crate::modules::types::ModuleRecord {
+    use crate::modules::types::{LoadPolicy, ModuleRecord, PlatformAsset};
+
+    let host_key = Box::leak(
+        crate::modules::platform::host_candidates()[0]
+            .clone()
+            .into_boxed_str(),
+    );
+    let assets = Box::leak(Box::new([PlatformAsset {
+        host_key,
+        archive: "test-bundled-module.zip",
+        // SHA-256 of the empty archive staged by the test.
+        sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    }]));
+    Box::leak(Box::new(ModuleRecord {
+        id: "test-bundled-module",
+        description: "test module",
+        bus_name: "test.BundledModule",
+        object_path: "/test/BundledModule",
+        version: "0.0.0",
+        release_url: "https://github.com/tinyhumansai/tinydocs/releases/tag/v0.1.16",
+        assets,
+        load: LoadPolicy::Lazy,
+    }))
+}
+
+#[tokio::test]
+async fn invalid_installer_bundle_is_reported_without_falling_back_to_the_cache() {
+    let record = test_bundled_record();
+    let bundled = tempfile::tempdir().unwrap();
+    let user_cache = tempfile::tempdir().unwrap();
+    let bundle_dir = ops::artifact_dir(bundled.path(), record, record.assets[0].host_key).unwrap();
+    std::fs::create_dir_all(&bundle_dir).unwrap();
+    std::fs::write(bundle_dir.join(record.assets[0].archive), b"").unwrap();
+
+    let runtime = crate::modules::host::runtime().await.unwrap();
+    let error = ops::load_cached(
+        runtime,
+        record,
+        user_cache.path(),
+        serde_json::json!({}),
+        false,
+        Some(bundled.path()),
+    )
+    .unwrap_err();
+
+    assert!(error.contains("installer bundle"), "{error}");
+    assert!(error.contains("repairing the installation"), "{error}");
+    assert!(!user_cache.path().join(record.id).exists());
+}
+
+#[tokio::test]
+async fn absent_installer_bundle_uses_the_existing_cache_miss_path() {
+    let record = test_bundled_record();
+    let bundled = tempfile::tempdir().unwrap();
+    let user_cache = tempfile::tempdir().unwrap();
+    let runtime = crate::modules::host::runtime().await.unwrap();
+    let error = ops::load_cached(
+        runtime,
+        record,
+        user_cache.path(),
+        serde_json::json!({}),
+        false,
+        Some(bundled.path()),
+    )
+    .unwrap_err();
+
+    assert!(error.contains("downloads are disabled"), "{error}");
+    assert!(!error.contains("installer bundle"), "{error}");
+}
+
 /// A config with modules on but downloads off, so nothing reaches the network.
 fn offline_config() -> Config {
     let mut config = Config::default();

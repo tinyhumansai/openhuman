@@ -20,6 +20,13 @@ pub(super) fn handle_update_search_settings(params: Map<String, Value>) -> Contr
             }
         };
         let patch = config_rpc::SearchSettingsPatch {
+            enabled: update.enabled,
+            enabled_providers: update.enabled_providers,
+            presentation: update.presentation,
+            presentation_provider: update.presentation_provider,
+            parallel_route: update.parallel_route,
+            gemini_route: update.gemini_route,
+            gemini_api_key: update.gemini_api_key,
             engine: update.engine,
             max_results: update.max_results,
             timeout_secs: update.timeout_secs,

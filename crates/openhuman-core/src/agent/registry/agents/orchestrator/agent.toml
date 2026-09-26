@@ -147,17 +147,6 @@ allowlist = [
     # the agent enforces a strict read → simulate → confirm → execute
     # contract that the generic delegation surface does not.
     "crypto_agent",
-    # MCP execution specialist. Synthesised into a `delegate_use_mcp_server`
-    # tool at agent-build time. Route any request that should be fulfilled by
-    # calling a tool on an ALREADY-CONNECTED MCP server (e.g. "answer from the
-    # connected docs MCP", "query the connected X server") here — the agent
-    # discovers connected servers, lists the chosen server's tools, and invokes
-    # the right one. Installing a NEW server is the user's own action in
-    # Connections → MCP Servers (mcp.json); this entry is the "use what's
-    # connected" route
-    # (the orchestrator carries no `mcp_registry_*` tool itself and must not
-    # carry every connected server's full toolset; #6302).
-    "mcp_agent",
     # Skill registry specialists. `skill_setup` discovers, installs, and
     # manages agent skills from community registries (OpenHuman, HermesHub,
     # ClawHub). `skill_executor` runs an installed skill by loading its
@@ -337,18 +326,14 @@ named = [
     # whether or not it is already connected. Validates against the backend
     # allowlist and raises the in-chat Connect card.
     "composio_connect",
-    # No `mcp_registry_*` and no `skill_registry_*` tools here (#6302). The
-    # orchestrator uses MCP servers and installs and uses skills only by handing
-    # the task to the specialist that owns the family: `use_mcp_server`
-    # (mcp_agent), `setup_skills` (skill_setup)
-    # and `run_skill` (skill_executor), all synthesised from `[subagents]` and
-    # advertised directly. With those hand-offs on its belt, the `integrations`
-    # and `skills` packs are closed to it (`toolpacks::closed_by_direct_handoff`),
-    # so the raw tools are not one `use_skill` away either. The
-    # `## Connected MCP Servers` block is rendered from the live connection map,
-    # not from `mcp_registry_status`, and a server that connects mid-session is
-    # announced on the next user turn. Enumerating and calling a server's tools
-    # stays `mcp_agent`'s job, which also keeps this schema small (#3495).
+    # Connected MCP actions are deferred registrations found through
+    # `tool_search`. These generic registry tools remain a direct fallback for
+    # status, reconnection, and schema-driven calls. Installing servers remains
+    # a user action.
+    "mcp_registry_status",
+    "mcp_registry_list_tools",
+    "mcp_registry_connect",
+    "mcp_registry_tool_call",
     # Deterministic time resolver. As the chat-facing agent, the orchestrator
     # is what reads a user's relative phrase ("last 24h", "since Monday")
     # first. It must resolve the window here via `resolve_time` and hand the

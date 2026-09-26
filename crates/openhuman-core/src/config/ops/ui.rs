@@ -30,6 +30,13 @@ pub struct AnalyticsSettingsPatch {
 
 #[derive(Debug, Clone, Default)]
 pub struct SearchSettingsPatch {
+    pub enabled: Option<bool>,
+    pub enabled_providers: Option<Vec<String>>,
+    pub presentation: Option<String>,
+    pub presentation_provider: Option<String>,
+    pub parallel_route: Option<String>,
+    pub gemini_route: Option<String>,
+    pub gemini_api_key: Option<String>,
     /// One of `disabled` | `managed` | `parallel` | `brave` | `querit` |
     /// `exa` | `tavily`.
     /// Empty/unknown values are rejected by `apply_search_settings`.
@@ -228,6 +235,9 @@ pub async fn apply_search_settings(
         match trimmed {
             "disabled" | "managed" | "parallel" | "brave" | "querit" | "exa" | "tavily" => {
                 config.search.engine = trimmed.to_string();
+                if update.enabled.is_none() {
+                    config.search.enabled = Some(trimmed != "disabled");
+                }
             }
             other => {
                 return Err(format!(
@@ -235,6 +245,49 @@ pub async fn apply_search_settings(
                 ));
             }
         }
+    }
+    if let Some(enabled) = update.enabled {
+        config.search.enabled = Some(enabled);
+    }
+    if let Some(providers) = update.enabled_providers {
+        let mut selected = std::collections::BTreeSet::new();
+        for raw in providers {
+            let name = raw.trim().to_ascii_lowercase();
+            if !crate::config::schema::SEARCH_PROVIDERS.contains(&name.as_str()) {
+                return Err(format!("unknown search provider: {name}"));
+            }
+            selected.insert(name);
+        }
+        config.search.enabled_providers = Some(selected);
+    }
+    if let Some(mode) = update.presentation {
+        if !["all_tools", "router", "one_provider"].contains(&mode.as_str()) {
+            return Err("presentation must be all_tools/router/one_provider".into());
+        }
+        config.search.presentation = mode;
+    }
+    if let Some(provider) = update.presentation_provider {
+        let provider = provider.trim().to_ascii_lowercase();
+        if !provider.is_empty()
+            && !crate::config::schema::SEARCH_PROVIDERS.contains(&provider.as_str())
+        {
+            return Err(format!("unknown search presentation provider: {provider}"));
+        }
+        config.search.presentation_provider = (!provider.is_empty()).then_some(provider);
+    }
+    for (route, target) in [
+        (update.parallel_route, &mut config.search.parallel_route),
+        (update.gemini_route, &mut config.search.gemini_route),
+    ] {
+        if let Some(route) = route {
+            if route != "direct" && route != "backend" {
+                return Err("search route must be direct or backend".into());
+            }
+            *target = route;
+        }
+    }
+    if let Some(key) = update.gemini_api_key {
+        config.search.gemini.api_key = nonempty(key);
     }
     if let Some(n) = update.max_results {
         if !(1..=20).contains(&n) {
@@ -322,7 +375,9 @@ pub async fn apply_search_settings(
         );
     }
     config.save().await.map_err(|e| e.to_string())?;
-    let snapshot = snapshot_config_json(config)?;
+    #[cfg(feature = "modules")]
+    crate::modules::search::refresh_loaded(config).await?;
+    let snapshot = search_settings_json(config);
     Ok(RpcOutcome::new(
         snapshot,
         vec![format!(
@@ -339,22 +394,28 @@ pub async fn load_and_apply_search_settings(
     apply_search_settings(&mut config, update).await
 }
 
-/// Read the current search engine settings (with API keys redacted to a
-/// presence boolean so the UI can show "configured" without ever rendering
-/// the raw secret).
-pub async fn get_search_settings() -> Result<RpcOutcome<serde_json::Value>, String> {
-    let config = load_config_with_timeout().await?;
-    let result = serde_json::json!({
+fn search_settings_json(config: &Config) -> serde_json::Value {
+    let credential_available =
+        crate::security::credentials::session_support::resolve_backend_credential(config).is_ok();
+    serde_json::json!({
+        "enabled": config.search.is_enabled(),
+        "enabled_providers": config.search.providers(credential_available, config.integrations.tinyfish.is_active(), config.seltz.enabled && config.seltz.api_key.as_deref().is_some_and(|key| !key.trim().is_empty()), config.searxng.enabled),
         "engine": config.search.requested_engine_str(),
-        "effective_engine": match config.search.effective_engine() {
-            crate::config::SearchEngine::Disabled => "disabled",
-            crate::config::SearchEngine::Managed => "managed",
-            crate::config::SearchEngine::Parallel => "parallel",
-            crate::config::SearchEngine::Brave => "brave",
-            crate::config::SearchEngine::Querit => "querit",
-            crate::config::SearchEngine::Exa => "exa",
-            crate::config::SearchEngine::Tavily => "tavily",
-        },
+        "effective_engine": if config.search.is_enabled() {
+            match config.search.effective_engine() {
+                crate::config::SearchEngine::Disabled => "disabled",
+                crate::config::SearchEngine::Managed => "managed",
+                crate::config::SearchEngine::Parallel => "parallel",
+                crate::config::SearchEngine::Brave => "brave",
+                crate::config::SearchEngine::Querit => "querit",
+                crate::config::SearchEngine::Exa => "exa",
+                crate::config::SearchEngine::Tavily => "tavily",
+            }
+        } else { "disabled" },
+        "presentation": config.search.presentation,
+        "presentation_provider": config.search.presentation_provider,
+        "parallel_route": config.search.parallel_route,
+        "gemini_route": config.search.gemini_route,
         "max_results": config.search.max_results,
         "timeout_secs": config.search.timeout_secs,
         "parallel_configured": config.search.parallel.has_key(),
@@ -362,9 +423,22 @@ pub async fn get_search_settings() -> Result<RpcOutcome<serde_json::Value>, Stri
         "querit_configured": config.search.querit.has_key(),
         "exa_configured": config.search.exa.has_key(),
         "tavily_configured": config.search.tavily.has_key(),
+        "gemini_configured": config.search.gemini.has_key(),
+        "managed_configured": credential_available,
+        "tinyfish_enabled": config.integrations.tinyfish.is_active(),
+        "seltz_configured": config.seltz.api_key.as_deref().is_some_and(|key| !key.trim().is_empty()),
+        "searxng_configured": !config.searxng.base_url.trim().is_empty(),
         "allowed_domains": config.http_request.allowed_domains,
         "allow_all": config.http_request.allowed_domains.iter().any(|d| d == "*"),
-    });
+    })
+}
+
+/// Read the current search engine settings (with API keys redacted to a
+/// presence boolean so the UI can show "configured" without ever rendering
+/// the raw secret).
+pub async fn get_search_settings() -> Result<RpcOutcome<serde_json::Value>, String> {
+    let config = load_config_with_timeout().await?;
+    let result = search_settings_json(&config);
     Ok(RpcOutcome::new(
         result,
         vec!["search settings read".to_string()],

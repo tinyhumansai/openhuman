@@ -112,3 +112,38 @@ fn unknown_engine_falls_back_to_managed() {
     };
     assert_eq!(cfg.effective_engine(), SearchEngine::Managed);
 }
+
+#[test]
+fn legacy_disabled_and_key_migration() {
+    let cfg: SearchConfig =
+        toml::from_str("engine = 'disabled'\n[parallel]\napi_key = 'secret'").unwrap();
+    assert!(!cfg.is_enabled());
+    assert!(cfg.providers(true, false, false, false).is_empty());
+    let cfg: SearchConfig = toml::from_str("[parallel]\napi_key = 'secret'").unwrap();
+    assert_eq!(
+        cfg.providers(true, true, false, false),
+        ["managed", "parallel", "tinyfish"]
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+    );
+}
+
+#[test]
+fn explicit_provider_selection_overrides_migration() {
+    let cfg: SearchConfig = toml::from_str(
+        "enabled = true\nenabled_providers = ['gemini']\n[parallel]\napi_key = 'secret'",
+    )
+    .unwrap();
+    assert_eq!(
+        cfg.providers(true, false, false, false),
+        ["gemini".to_string()].into()
+    );
+}
+
+#[test]
+fn separate_legacy_providers_migrate_when_enabled() {
+    let cfg = SearchConfig::default();
+    assert!(cfg.providers(false, false, true, true).contains("seltz"));
+    assert!(cfg.providers(false, false, true, true).contains("searxng"));
+}

@@ -32,12 +32,23 @@
 //! as still loading instead of hanging into that deadline.
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use super::resolution::{self, Claim, Resolution, ResolutionState, ResolutionTable, Waited};
 use super::types::{ModuleRecord, ModuleState, ModuleStatus};
 use super::{host, platform, registry};
 use crate::config::Config;
+
+/// Installer-owned, read-only release cache. The desktop host sets this before
+/// starting the embedded core; other hosts continue using the user cache.
+static BUNDLED_RELEASES: OnceLock<PathBuf> = OnceLock::new();
+
+/// Register the directory of release archives shipped with the desktop app.
+/// Its contents still pass the compiled digest and TinyBus admission gates.
+pub fn set_bundled_releases_dir(path: PathBuf) -> Result<(), PathBuf> {
+    BUNDLED_RELEASES.set(path)
+}
 
 /// Why a bounded [`ensure_loaded_within`] did not end with the module serving.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -226,24 +237,21 @@ async fn resolve(config: &Config, record: &'static ModuleRecord) -> Result<(), S
     let allow_download = config.modules.allow_download;
     let module_config = module_config(config, record.id);
     let cache_root = root.clone();
-    let outcome =
-        blocking(move || load_cached(runtime, record, &cache_root, module_config, allow_download))
-            .await;
+    let outcome = blocking(move || {
+        load_cached(
+            runtime,
+            record,
+            &cache_root,
+            module_config,
+            allow_download,
+            BUNDLED_RELEASES.get().map(PathBuf::as_path),
+        )
+    })
+    .await;
     match outcome {
         Ok(()) => {
             prune_stale_versions(&root, record);
             Ok(())
-        }
-        Err(reason) if !allow_download => {
-            log::debug!(
-                "[modules] '{}' release cache miss with downloads disabled: {reason}",
-                record.id
-            );
-            Err(format!(
-                "module '{}' is unavailable: no local artifact is installed and downloads are \
-                 disabled in configuration",
-                record.id
-            ))
         }
         Err(reason) => Err(reason),
     }
@@ -282,6 +290,7 @@ fn load_cached(
     install_root: &Path,
     module_config: serde_json::Value,
     allow_download: bool,
+    bundled_root: Option<&Path>,
 ) -> Result<(), String> {
     let candidates = platform::host_candidates();
     let assets: Vec<_> = candidates
@@ -297,6 +306,49 @@ fn load_cached(
     }
 
     let mut last_error = String::new();
+    let mut found_bundled = false;
+    if let Some(bundled_root) = bundled_root {
+        for asset in &assets {
+            let Some(cache_dir) = artifact_dir(bundled_root, record, asset.host_key) else {
+                continue;
+            };
+            if !cache_dir.join(asset.archive).is_file() {
+                continue;
+            }
+            found_bundled = true;
+            let release = tinybus::module::CachedRelease {
+                release_url: record.release_url,
+                asset_name: asset.archive,
+                expected_sha256: Some(asset.sha256),
+                cache_dir: &cache_dir,
+                allow_download: false,
+            };
+            match runtime
+                .host()
+                .load_github_release_cached(&release, module_config.clone())
+            {
+                Ok(_) => {
+                    log::info!("[modules] loaded '{}' from the installer bundle", record.id);
+                    return Ok(());
+                }
+                Err(err) => {
+                    last_error = err.to_string();
+                    log::warn!(
+                        "[modules] bundled '{}' artifact for {} was not admitted: {last_error}",
+                        record.id,
+                        asset.host_key
+                    );
+                }
+            }
+        }
+    }
+    if found_bundled {
+        return Err(format!(
+            "module '{}' could not be loaded from the installer bundle: {last_error}. \
+             Restart the app after repairing the installation",
+            record.id
+        ));
+    }
     for asset in assets {
         let Some(cache_dir) = artifact_dir(install_root, record, asset.host_key) else {
             last_error =
@@ -334,6 +386,17 @@ fn load_cached(
                 );
             }
         }
+    }
+    if !allow_download {
+        log::debug!(
+            "[modules] '{}' release cache miss with downloads disabled: {last_error}",
+            record.id
+        );
+        return Err(format!(
+            "module '{}' is unavailable: no local artifact is installed and downloads are \
+             disabled in configuration",
+            record.id
+        ));
     }
     Err(format!(
         "module '{}' could not be loaded: {last_error}. This is terminal for the running \
@@ -458,6 +521,10 @@ pub(super) fn load_local(
 /// Credentials are intentionally absent. TinyMemory calls back into the host
 /// for embedding and chat compute; the other modules need no host config.
 fn module_config(config: &Config, id: &str) -> serde_json::Value {
+    if id == super::search::MODULE_ID {
+        return serde_json::to_value(super::search::module_config(config))
+            .expect("TinySearch config serializes");
+    }
     if id == super::desktop::MODULE_ID {
         return super::desktop::module_config(config);
     }

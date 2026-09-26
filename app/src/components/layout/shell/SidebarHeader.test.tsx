@@ -7,6 +7,8 @@ import SidebarHeader from './SidebarHeader';
 
 const mockNavigate = vi.fn();
 const mockHide = vi.fn();
+const mockIsWindowsDesktop = vi.fn(() => false);
+vi.mock('./WindowsWindowControls', () => ({ isWindowsDesktop: () => mockIsWindowsDesktop() }));
 
 vi.mock('react-router-dom', async importOriginal => {
   const actual = await importOriginal<typeof import('react-router-dom')>();
@@ -19,7 +21,16 @@ vi.mock('../../../utils/openUrl', () => ({ openUrl: (...args: unknown[]) => open
 vi.mock('../../../lib/i18n/I18nContext', () => ({ useT: () => ({ t: (k: string) => k }) }));
 
 describe('SidebarHeader', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIsWindowsDesktop.mockReturnValue(false);
+  });
+
+  it('centers the utility icons on Windows', () => {
+    mockIsWindowsDesktop.mockReturnValue(true);
+    const { container } = renderWithProviders(<SidebarHeader />, { initialEntries: ['/home'] });
+    expect(container.querySelector('[data-tauri-drag-region]')).toHaveClass('justify-center');
+  });
 
   it('renders Discord, Search, Settings, and Collapse buttons', () => {
     renderWithProviders(<SidebarHeader />, { initialEntries: ['/home'] });

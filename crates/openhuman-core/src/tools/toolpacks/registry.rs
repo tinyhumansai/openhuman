@@ -88,10 +88,8 @@ pub const PACKS: &[ToolPack] = &[
     },
     ToolPack {
         id: "integrations",
-        // The use hand-off (`use_mcp_server`) is not a member: it is the
-        // orchestrator's direct route into this family. See
-        // `DELIBERATELY_UNPACKED_HANDOFFS`. There is no install tool — servers
-        // are declared by the user in mcp.json.
+        // The orchestrator carries a narrow named set of MCP tools directly;
+        // keep those schemas visible without exposing every server tool.
         summary: "MCP servers: search the catalog, connect, disconnect, check status, call tools.",
         tools: &[
             "mcp_registry_status",
@@ -104,7 +102,7 @@ pub const PACKS: &[ToolPack] = &[
             "mcp_registry_tool_call",
             "mcp_registry_uninstall",
         ],
-        owners: &["mcp_agent", "planner"],
+        owners: &["mcp_agent", "planner", "orchestrator"],
     },
     ToolPack {
         id: "composio",
@@ -405,12 +403,11 @@ pub(crate) const DELIBERATELY_UNPACKED_FLEET_TOOLS: &[&str] = &[
     "spawn_parallel_agents",
 ];
 
-/// The MCP and skill hand-offs are deliberately NOT packed either (#6302).
+/// The skill hand-offs are deliberately not packed (#6302).
 ///
-/// `use_mcp_server`, `setup_skills` and `run_skill` are the orchestrator's
-/// whole route into two families: it uses MCP servers and installs and uses
-/// skills only by handing the task to the specialist that owns that family. Packed, they sat in the same listing as the raw
-/// `mcp_registry_*` / `skill_registry_*` tools, one `use_skill` round trip
+/// `setup_skills` and `run_skill` are the orchestrator's route into the
+/// skills family. Packed, they sat in the same listing as the raw
+/// `skill_registry_*` tools, one `use_skill` round trip
 /// away, and a live account showed the cost: across 11 turns the orchestrator
 /// called the raw tools itself, guessed at tool names, and never handed off.
 /// Handing off is the most common thing it does with these families, so the
@@ -424,8 +421,7 @@ pub(crate) const DELIBERATELY_UNPACKED_FLEET_TOOLS: &[&str] = &[
 /// token-cost decision, and the same closing rule takes effect for any of them
 /// as soon as it is unpacked and listed here.
 #[cfg(test)]
-pub(crate) const DELIBERATELY_UNPACKED_HANDOFFS: &[&str] =
-    &["use_mcp_server", "setup_skills", "run_skill"];
+pub(crate) const DELIBERATELY_UNPACKED_HANDOFFS: &[&str] = &["setup_skills", "run_skill"];
 
 pub fn pack(id: &str) -> Option<&'static ToolPack> {
     PACKS.iter().find(|p| p.id == id)
@@ -443,9 +439,9 @@ pub fn all_packed_tool_names() -> Vec<&'static str> {
 
 /// Every packed tool name that applies to `agent_id`.
 ///
-/// A pack is skipped entirely for the specialist that owns its family — see
-/// [`ToolPack::owners`]. The orchestrator owns no pack, so it sees the full
-/// withholding.
+/// A pack is skipped entirely for agents listed as its owners — see
+/// [`ToolPack::owners`]. The orchestrator owns the MCP integrations pack so
+/// its small named MCP tool set remains directly callable.
 pub fn packed_tool_names_for_agent(agent_id: &str) -> Vec<&'static str> {
     PACKS
         .iter()

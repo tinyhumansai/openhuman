@@ -28,7 +28,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.64.1"
+version = "0.64.4"
 edition = "2021"
 license = "GPL-3.0-only"
 repository = "https://github.com/tinyhumansai/openhuman"

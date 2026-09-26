@@ -19,17 +19,22 @@
 use std::time::Duration;
 
 mod environment;
+#[allow(dead_code)] // Legacy batch exporter remains for compatibility tests.
 mod ingestion_batch;
+#[allow(dead_code)] // Child-run rooting is still shared with the OTLP path.
 mod journal_export;
+#[allow(dead_code)] // Legacy batch exporter remains for compatibility tests.
 mod span_export;
 
-pub(crate) use environment::{environment_for_base, ingestion_url};
+pub(crate) use environment::{environment_for_base, ingestion_url, skip_push};
+#[cfg(test)]
 pub(crate) use journal_export::push_observations;
 pub(crate) use journal_export::root_subagent_observations;
+pub(crate) use journal_export::journal_push_ready;
+#[cfg(test)]
 pub(crate) use span_export::push_spans;
 
 use super::{SpanStatus, TraceContext, TraceSpan};
-use environment::skip_push;
 
 #[cfg(test)]
 use crate::config::Config;

@@ -243,6 +243,18 @@ pub(super) fn insert_run_telemetry_generation(
 /// exporter. The journal is already redacted before persistence, and this
 /// exporter additionally strips model/tool payloads unless `capture_content`
 /// is explicitly enabled.
+/// Whether [`push_observations`] would actually send for `config`: the same
+/// gates it checks, for a caller that must read a journal and build
+/// observations first. Without a live session (unit tests, a signed-out or
+/// embedder host) or on a skipped environment, that work is discarded
+/// anyway — and reading a whole child journal is not free.
+pub(crate) fn journal_push_ready(config: &Config) -> bool {
+    let url = ingestion_url(config);
+    !skip_push(environment_for_base(&url))
+        && url.starts_with("http")
+        && require_live_session_token(config).is_ok()
+}
+
 pub(crate) async fn push_observations(
     config: &Config,
     trace_ctx: &TraceContext,

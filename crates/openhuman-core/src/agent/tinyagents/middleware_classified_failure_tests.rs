@@ -222,3 +222,26 @@ async fn legitimate_wait_polling_does_not_consume_transient_budget() {
     }
     assert_eq!(drain_pause_count(&handle), 0);
 }
+
+/// An unknown-tool answer echoes the attempted name and every valid tool name.
+/// None of those names is the failure: a guess named `forbidden_tool`, or a
+/// belt with a tool whose name carries `unauthorized`, used to classify as
+/// `authentication` (zero retries) and halt the run on the first wrong guess.
+#[test]
+fn an_unknown_tool_is_a_correctable_call_not_a_blocker() {
+    for error in [
+        "unknown tool `forbidden_tool` (arguments: {}); valid tools: [file_read]",
+        "unknown tool `ranges` (arguments: {}); valid tools: [GITHUB_LIST_UNAUTHORIZED_USERS, file_write]",
+    ] {
+        assert_eq!(
+            super::super::repeated_failure::recovery_policy("forbidden_tool", error, false),
+            Some(("validation", 1)),
+            "{error}"
+        );
+    }
+    // A genuine credential failure is still one.
+    assert_eq!(
+        super::super::repeated_failure::recovery_policy("gmail_send", "401 Unauthorized", false),
+        Some(("authentication", 0))
+    );
+}

@@ -27,7 +27,7 @@
 //! token/cost figures (model labels are `{provider_id}.{model}`, e.g.
 //! `managed.hint:chat`). While `observability.agent_tracing.capture_content` is
 //! on (the default), content is additionally recorded as span `input`/`output` — the turn's
-//! prompt/reply, each generation's **truncated** request messages (system
+//! prompt/reply, each generation's bounded structured request messages (system
 //! prompt included) + completion, **truncated** tool arguments/results, and
 //! each subagent's delegated prompt + final output. With the flag off,
 //! none of that content ever reaches the in-memory span, so
@@ -55,6 +55,7 @@
 pub(crate) mod journal_projection;
 /// Langfuse ingestion exporter (remote push through the configured backend).
 pub(crate) mod langfuse;
+mod otlp;
 
 /// The [`SpanCollector`] state machine that folds progress events into spans.
 mod collector;

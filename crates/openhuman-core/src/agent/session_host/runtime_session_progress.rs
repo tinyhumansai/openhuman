@@ -32,11 +32,20 @@ pub(super) async fn send_committed_turn_progress(
     output: &str,
     iterations: u32,
 ) -> bool {
-    let _ = progress.try_send(AgentProgress::TurnContent {
+    let content = AgentProgress::TurnContent {
         input: Some(input.to_string()),
         output: Some(output.to_string()),
-    });
-    match tokio::time::timeout(
+    };
+    // With two free slots, preserve the usual content-then-completion order.
+    // A full channel must reserve its next slot for the terminal fence. Send
+    // content after that fence on a short-lived clone so trace IO is still
+    // captured when the bridge catches up.
+    let delayed_content = if progress.capacity() >= 2 {
+        progress.try_send(content).err().map(|err| err.into_inner())
+    } else {
+        Some(content)
+    };
+    let completed = match tokio::time::timeout(
         COMMITTED_TURN_PROGRESS_TIMEOUT,
         progress.send(AgentProgress::TurnCompleted { iterations }),
     )
@@ -56,5 +65,22 @@ pub(super) async fn send_committed_turn_progress(
             );
             false
         }
+    };
+    if completed {
+        if let Some(content) = delayed_content {
+            let progress = progress.clone();
+            tokio::spawn(async move {
+                if !matches!(
+                    tokio::time::timeout(COMMITTED_TURN_PROGRESS_TIMEOUT, progress.send(content))
+                        .await,
+                    Ok(Ok(()))
+                ) {
+                    log::warn!(
+                        "[agent_session] committed turn content not delivered after completion"
+                    );
+                }
+            });
+        }
     }
+    completed
 }

@@ -48,6 +48,8 @@ mod spawn_subagent;
 pub mod spawn_worker_thread;
 #[path = "tools/steer_subagent.rs"]
 mod steer_subagent;
+#[path = "tools/subagent_abort_report.rs"]
+mod subagent_abort_report;
 #[cfg(test)]
 #[path = "tools/tools_e2e_tests.rs"]
 mod tools_e2e_tests;

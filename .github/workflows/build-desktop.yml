@@ -371,6 +371,11 @@ jobs:
             "${{ steps.core-paths.outputs.sidecar_base }}"
 
       # ---- Tauri build -------------------------------------------------------
+      - name: Bundle pinned Windows native modules
+        if: matrix.settings.platform == 'windows-latest'
+        shell: bash
+        run: node scripts/release/stage-windows-modules.mjs
+
       # Vite is invoked via tauri.conf.json's beforeBuildCommand inside
       # `cargo tauri build`, so all VITE_* env must be present here for the
       # bundle to bake them in. macOS signing is intentionally skipped here

@@ -21,7 +21,6 @@ import {
   SidebarRail,
 } from '../../ui';
 import ContentSurface from './ContentSurface';
-import WindowDragBar from './WindowDragBar';
 
 const log = debugFactory('sidebar');
 
@@ -298,11 +297,6 @@ export default function RootShellLayout({
       <div
         className="relative flex w-full min-w-0 flex-1 flex-col overflow-hidden"
         data-testid="root-shell-content">
-        {/* Empty macOS overlay-title-bar band. It is absolutely positioned and
-            fully transparent, so it is draggable without shifting or painting
-            over the page. No-op off macOS / outside Tauri, where the native
-            title bar owns this area. */}
-        <WindowDragBar />
         <ContentSurface unframed={unframed}>
           <div
             data-testid="root-shell-routed-content"

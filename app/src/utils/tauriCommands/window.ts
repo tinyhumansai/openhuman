@@ -95,6 +95,12 @@ export async function closeWindow(): Promise<void> {
   await getCurrentWindow().close();
 }
 
+/** Exit the desktop host and its embedded core. */
+export async function quitApp(): Promise<void> {
+  if (!isTauri()) return;
+  await invoke('app_quit');
+}
+
 /**
  * Set the window title
  */

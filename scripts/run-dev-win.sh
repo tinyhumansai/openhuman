@@ -7,7 +7,7 @@ APP_DIR="$REPO_ROOT/app"
 cd "$APP_DIR"
 
 # Load .env first so project env vars are available, but before we compute
-# Windows-specific paths so tailored values (CEF_PATH, PATH, etc.) are set
+# Windows-specific paths so tailored values (PATH, etc.) are set
 # after .env is applied and cannot be clobbered by it. A missing .env is
 # fine on a fresh clone, matching the macOS dev script.
 if [[ -f "$REPO_ROOT/.env" ]]; then
@@ -275,11 +275,6 @@ echo "[run-dev-win] linker pinned: $msvc_link_win"
 # you get the "ninja: error: loading 'build.ninja'" mismatch.
 export CMAKE_GENERATOR=Ninja
 
-# CEF runtime lives under LOCALAPPDATA on Windows.
-# The Tauri/CEF setup stages it here; fall back to a default if unset.
-CEF_PATH="${CEF_PATH:-$(cygpath -u "$LOCALAPPDATA")/tauri-cef}"
-export CEF_PATH
-
 to_unix_path() {
   if [[ -z "${1:-}" ]]; then
     return 1
@@ -484,6 +479,20 @@ fi
 export PATH="$CARGO_DIR:$PATH"
 echo "[run-dev-win] cargo dir prepended to PATH: $CARGO_DIR"
 
+# Cargo build scripts run for the Rust host, even when a different target is
+# requested. Catch a host/MSVC mismatch before it surfaces as LNK4272 and a
+# long list of unresolved Windows symbols.
+RUST_HOST="$(rustc -vV | sed -n 's/^host: //p')"
+MSVC_TARGET_ARCH="$(basename "$msvc_cl_dir")"
+case "$RUST_HOST:$MSVC_TARGET_ARCH" in
+  x86_64-pc-windows-msvc:x64|aarch64-pc-windows-msvc:arm64) ;;
+  *)
+    echo "[run-dev-win] Rust host $RUST_HOST does not match MSVC target $MSVC_TARGET_ARCH." >&2
+    echo "[run-dev-win] Select a matching Rust toolchain or install matching MSVC C++ tools." >&2
+    exit 1
+    ;;
+esac
+
 PNPM_EXE="$(find_pnpm || true)"
 if [[ -z "$PNPM_EXE" ]]; then
   echo "[run-dev-win] pnpm not found. Install pnpm and retry."
@@ -523,15 +532,7 @@ if [[ -z "$NINJA_EXE" ]]; then
 fi
 export CMAKE_MAKE_PROGRAM="$NINJA_EXE"
 
-CEF_RUNTIME_PATH="$(ls -d "$CEF_PATH"/*/cef_windows_x86_64 2>/dev/null | sort -Vr | head -n1 || true)"
-if [[ -n "$CEF_RUNTIME_PATH" ]]; then
-  export CEF_RUNTIME_PATH
-fi
-
 PATH_PREFIX="/c/Program Files/CMake/bin:$(dirname "$NINJA_EXE")"
-if [[ -n "${CEF_RUNTIME_PATH:-}" ]]; then
-  PATH_PREFIX="$PATH_PREFIX:$CEF_RUNTIME_PATH"
-fi
 # Ensure the workspace node_modules/.bin is on PATH so pnpm's child
 # spawns (e.g. `pnpm tauri dev` → `tauri.CMD`) can resolve the shims.
 # Pnpm normally prepends `./node_modules/.bin` for script execution, but
@@ -556,52 +557,7 @@ export PATH="$PATH_PREFIX:$PATH"
 # is used directly below. `core:stage` remains a no-op in this version.
 "$PNPM_EXE" core:stage
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Stage the CEF runtime next to the dev OpenHuman.exe.
-#
-# `cargo tauri build` (release) copies CEF into the bundle automatically, but
-# `cargo tauri dev` doesn't — the dev .exe lands at <target>/debug/OpenHuman.exe
-# alone, and Windows can't find libcef.dll. The .exe panics during boot with
-# `cef::library_loader::LibraryLoader::new` errors (or just refuses to launch
-# with "libcef.dll not found"). Without this step every fresh contributor
-# session hits the wall.
-#
-# We stage by copying (not symlinking) so the script runs without admin /
-# Developer-Mode privileges. `cp -ru` only copies entries newer than the
-# destination, so subsequent dev runs are essentially free.
-# ─────────────────────────────────────────────────────────────────────────────
-if [[ -n "${CEF_RUNTIME_PATH:-}" && -f "$CEF_RUNTIME_PATH/libcef.dll" ]]; then
-  # The dev OpenHuman.exe is produced by the *Tauri shell* crate
-  # (crates/openhuman-app/Cargo.toml), not the root core crate. When
-  # CARGO_TARGET_DIR is set both workspaces share it; when unset, the
-  # Tauri shell builds into crates/openhuman-app/target while the root crate
-  # builds into target/. Stage CEF next to where OpenHuman.exe will
-  # actually live so Windows' DLL search order finds libcef.dll
-  # regardless of how the exe is launched (terminal, OAuth deep-link,
-  # double-click, etc).
-  if [[ -n "${CARGO_TARGET_DIR:-}" ]]; then
-    CEF_STAGE_DIR="$(to_unix_path "$CARGO_TARGET_DIR" 2>/dev/null || printf '%s' "$CARGO_TARGET_DIR")/debug"
-  else
-    CEF_STAGE_DIR="$REPO_ROOT/crates/openhuman-app/target/debug"
-  fi
-  mkdir -p "$CEF_STAGE_DIR"
-  if [[ ! -f "$CEF_STAGE_DIR/libcef.dll" \
-        || "$CEF_RUNTIME_PATH/libcef.dll" -nt "$CEF_STAGE_DIR/libcef.dll" ]]; then
-    echo "[run-dev-win] staging CEF runtime → $CEF_STAGE_DIR (first run only — copies ~270MB)"
-    cp -ru "$CEF_RUNTIME_PATH"/. "$CEF_STAGE_DIR/"
-    echo "[run-dev-win] CEF runtime staged"
-  else
-    echo "[run-dev-win] CEF runtime already staged at $CEF_STAGE_DIR (libcef.dll up to date)"
-  fi
-else
-  echo "[run-dev-win] WARNING: CEF_RUNTIME_PATH not set or libcef.dll missing — the dev exe will fail to load" >&2
-  echo "[run-dev-win] expected: $CEF_PATH/<version>/cef_windows_x86_64/libcef.dll" >&2
-fi
-
-# Use the vendored tauri-cef CLI (via the pnpm tauri script) so the
-# CEF runtime is correctly bundled. APPLE_SIGNING_IDENTITY is macOS-only
-# and is intentionally omitted here.
-#
+# APPLE_SIGNING_IDENTITY is macOS-only and is intentionally omitted here.
 # OPENHUMAN_DEV_PORT lets parallel worktree dev sessions avoid the
 # hardcoded 1420 collision. Vite reads the same env var directly; the
 # tauri-cli inline override patches tauri.conf.json's `devUrl` so the
@@ -680,6 +636,7 @@ if [[ -z "$NODE_EXE_UNIX" || ! -f "$NODE_EXE_UNIX" ]]; then
   exit 1
 fi
 NODE_EXE_WIN="$(cygpath -w "$NODE_EXE_UNIX" 2>/dev/null || printf '%s' "$NODE_EXE_UNIX")"
+APP_DIR_WIN="$(cygpath -w "$APP_DIR" 2>/dev/null || printf '%s' "$APP_DIR")"
 
 WRAPPER_DIR_UNIX="$(cygpath -u "${TEMP:-${TMP:-/tmp}}" 2>/dev/null || echo /tmp)/openhuman-dev"
 mkdir -p "$WRAPPER_DIR_UNIX"
@@ -689,6 +646,7 @@ VITE_WRAPPER_UNIX="$WRAPPER_DIR_UNIX/run-vite.bat"
 # which fails inside cargo-tauri's cmd child (no node on PATH).
 {
   printf '@echo off\r\n'
+  printf 'cd /d "%s"\r\n' "$APP_DIR_WIN"
   printf '"%s" "%s" %%*\r\n' "$NODE_EXE_WIN" "$VITE_JS_WIN"
 } > "$VITE_WRAPPER_UNIX"
 VITE_WRAPPER_WIN="$(cygpath -w "$VITE_WRAPPER_UNIX" 2>/dev/null || printf '%s' "$VITE_WRAPPER_UNIX")"

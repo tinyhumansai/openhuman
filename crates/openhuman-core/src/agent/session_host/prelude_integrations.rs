@@ -37,6 +37,8 @@ impl OpenHumanTurnPrelude {
         // actions, and no `tool_search` bridge for the whole thread.
         // `refresh_cold_integrations` is a no-op once hydrated.
         self.refresh_cold_integrations().await;
+        #[cfg(feature = "mcp")]
+        self.refresh_connected_mcp_tools().await;
         if !cold {
             self.refresh_dynamic_announcements().await;
         }
@@ -44,6 +46,51 @@ impl OpenHumanTurnPrelude {
         // announcements. Refresh the delegation executable set and rebuild
         // its schema/policy in the same hook pass before the driver sees it.
         self.refresh_delegation_tool_surface();
+    }
+
+    /// Snapshot the currently connected server actions for this workspace.
+    /// A disconnected server drops out of the next turn's search catalogue.
+    #[cfg(feature = "mcp")]
+    async fn refresh_connected_mcp_tools(&self) {
+        let servers = match self.runtime_config.as_deref() {
+            Some(config) => {
+                crate::mcp::registry::connections::connected_overview_for_config(config).await
+            }
+            None => Vec::new(),
+        };
+        let count = servers
+            .iter()
+            .map(|server| server.tools.len())
+            .sum::<usize>();
+        tracing::debug!(
+            agent = %self.agent_definition_id,
+            servers = servers.len(),
+            tools = count,
+            "[mcp] refreshed deferred tool catalogue"
+        );
+        self.mutable
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .connected_mcp_tools = servers;
+    }
+
+    /// Construct searchable MCP actions from the workspace's current snapshot.
+    /// Called before the tool-surface lock is taken to keep lock order stable.
+    #[cfg(feature = "mcp")]
+    pub(super) fn collect_mcp_search_tools(&self) -> Vec<Box<dyn tinytools::Tool>> {
+        if self.agent_definition_id != "orchestrator" {
+            return Vec::new();
+        }
+        let Some(config) = self.runtime_config.as_ref() else {
+            return Vec::new();
+        };
+        let servers = self
+            .mutable
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .connected_mcp_tools
+            .clone();
+        crate::mcp::registry::action_tool::deferred_connected_tools(Arc::clone(config), &servers)
     }
 
     pub(super) async fn refresh_cold_integrations(&self) {

@@ -144,6 +144,10 @@ struct OpenHumanTurnPreludeMutable {
     pending_integration_announcement: Vec<String>,
     announced_mcp_servers: std::collections::HashSet<String>,
     pending_mcp_announcement: Vec<String>,
+    /// Live MCP tool definitions for this workspace, refreshed before each
+    /// turn so disconnects remove their deferred executors immediately.
+    #[cfg(feature = "mcp")]
+    connected_mcp_tools: Vec<crate::mcp::registry::types::ConnectedServerOverview>,
     announced_skills: std::collections::HashSet<String>,
     pending_skill_announcement: Vec<String>,
     pending_skill_retraction: Vec<String>,
@@ -434,11 +438,15 @@ impl OpenHumanTurnPrelude {
                 mutable.connected_integrations_authoritative,
             )
         };
+        #[cfg(feature = "mcp")]
+        let mcp_tools = self.collect_mcp_search_tools();
         let mut surface = self
             .tool_surface
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut collected = collect_orchestrator_tools(&definition, registry, &integrations);
+        #[cfg(feature = "mcp")]
+        collected.extend(mcp_tools);
         // Integration actions the thread already declared stay executable
         // even when this process has not (re)fetched their integration yet.
         // Only an agent that carries integration actions at all gets them.
@@ -1551,6 +1559,8 @@ impl OpenHumanSessionHost {
                     pending_integration_announcement: self.pending_integration_announcement.clone(),
                     announced_mcp_servers: self.announced_mcp_servers.clone(),
                     pending_mcp_announcement: self.pending_mcp_announcement.clone(),
+                    #[cfg(feature = "mcp")]
+                    connected_mcp_tools: Vec::new(),
                     announced_skills: self.announced_skills.clone(),
                     pending_skill_announcement: self.pending_skill_announcement.clone(),
                     pending_skill_retraction: self.pending_skill_retraction.clone(),

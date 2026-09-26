@@ -22,21 +22,16 @@ content).
   `observability.share_usage_data` is on (the default), and local NDJSON
   export to `export_path` or the app log when
   `observability.agent_tracing.enabled` is on (opt-in).
-- `langfuse.rs` + `langfuse/` (`environment.rs`, `ingestion_batch.rs`,
-  `span_export.rs`, `journal_export.rs`) — Langfuse
-  ingestion exporter: `push_spans` (live spans) and `push_observations`
-  (journal observations plus the run-ledger `RunTelemetry` aggregate). Both
-  POST to the backend's `/telemetry/langfuse/ingestion` proxy, derived from
-  `effective_backend_api_url`, authenticated with the session bearer; the
-  backend injects the Langfuse project keys and forwards to
-  `/api/public/ingestion`. `push_spans` builds a bare `reqwest` request and
-  stamps `x-sdk-name` via `crate::api::product::product_identity_header`
-  (AGENTS.md "Backend API"); `push_observations` sends through the vendored
-  `tinyagents_harness::LangfuseClient::proxy`, splitting the batch at 500
-  events. Pushes are allowlisted to the canonical production API and `staging`/`development` hosts
-  (`environment_for_base`, `LANGFUSE_PUSH_ENVIRONMENTS`) and skipped elsewhere
-  with one `info` log per process. Failures are logged and swallowed so
-  tracing never breaks a turn.
+- `otlp.rs` — the remote agent-turn exporter. It turns completed live spans
+  into OTLP/HTTP JSON, preserves the root turn's input/output, maps
+  TinyInference messages into role-labeled conversations, puts usage only on
+  model generations, and summarizes repeated internal tool discovery.
+  It POSTs through the authenticated backend's
+  `/telemetry/langfuse/otel/v1/traces` proxy; the backend supplies project
+  keys and authoritative user attribution. Export is on by default through
+  `observability.share_usage_data`; local NDJSON export remains optional.
+- `langfuse.rs` + `langfuse/` retain the legacy batch projection for
+  compatibility tests and the flow-run exporter. Agent turns use `otlp.rs`.
 - `journal_projection.rs` — `spans_from_observations` rebuilds spans from the
   durable `AgentObservation` journal instead of the live stream, by folding
   journalled events through the same `SpanCollector`, so a UI/supervisor can
@@ -57,9 +52,8 @@ Tests live in this directory as `*_tests.rs` files, e.g.
   `spans_from_observations` over the run journal, then calls
   `export_run_trace_from_journal` (journal available) or `export_run_trace`.
 
-`flows/tinyflows/langfuse_export.rs` is the flow-run counterpart: it mirrors
-the proxy route, bearer auth, and timeout of `push_spans` but has its own
-copy and does not call this module.
+`flows/tinyflows/langfuse_export.rs` is the separate flow-run exporter and
+currently still uses the legacy batch proxy.
 
 ## Related docs
 

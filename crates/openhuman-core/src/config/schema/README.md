@@ -62,6 +62,12 @@ is mounted as a submodule of `load/dirs.rs` via `#[path]`.
 `mcp.rs` (`McpServerConfig`, `McpClientConfig`, `GitbooksConfig`),
 `multimodal.rs` (`MultimodalConfig`, `MultimodalFileConfig`), `search.rs`
 (`SearchConfig`, `WebSearchConfig`, `SearxngConfig`, `SeltzConfig`).
+`SearchConfig.enabled_providers` is an explicit provider set. When omitted,
+legacy settings enable providers with saved keys, the managed backend when a
+credential is available, and the separate TinyFish/Seltz/SearXNG toggles.
+`engine = "disabled"` still disables search. TinySearch uses one route per
+provider: explicit direct Parallel wins over managed backend Parallel when
+both are selected.
 
 Most sections have a matching `*_tests.rs` (some further split into several
 `*_tests.rs` siblings, e.g. `types_model_pin_tests.rs`); this is the repo's

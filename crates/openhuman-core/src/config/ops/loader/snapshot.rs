@@ -8,7 +8,13 @@ use crate::rpc::RpcOutcome;
 
 /// Serializes the current configuration into a JSON snapshot for the UI.
 pub fn snapshot_config_json(config: &Config) -> Result<serde_json::Value, String> {
-    let value = serde_json::to_value(config).map_err(|e| e.to_string())?;
+    let mut value = serde_json::to_value(config).map_err(|e| e.to_string())?;
+    // The full snapshot is sent over RPC. Keep search settings visible while
+    // removing credentials, including the legacy Seltz key.
+    for provider in ["parallel", "brave", "querit", "exa", "tavily", "gemini"] {
+        value["search"][provider]["api_key"] = serde_json::Value::Null;
+    }
+    value["seltz"]["api_key"] = serde_json::Value::Null;
     #[cfg(feature = "modules")]
     let browser_billing_route = match crate::modules::browser_task::billing_route(config) {
         crate::modules::browser_task::BillingRoute::DirectOpenRouter => "direct_openrouter",

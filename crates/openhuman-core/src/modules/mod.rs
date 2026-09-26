@@ -56,6 +56,7 @@ pub mod registry;
 mod resolution;
 pub mod runtime;
 pub mod schemas;
+pub mod search;
 mod tokenjuice_host;
 pub mod types;
 #[cfg(feature = "voice")]

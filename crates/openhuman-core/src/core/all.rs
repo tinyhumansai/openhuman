@@ -139,7 +139,7 @@ pub enum DomainGroup {
 
 impl DomainGroup {
     /// Number of variants. Kept in sync by `domain_group_all_lists_every_variant`.
-    pub const COUNT: usize = 21;
+    pub const COUNT: usize = 20;
 
     /// Every variant, for exhaustive iteration in drift guards.
     ///

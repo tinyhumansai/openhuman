@@ -45,7 +45,7 @@ fn new_drops_header_unsafe_characters() {
         "opencompanyx-admin1"
     );
     assert_eq!(
-        ProductIdentity::new("med ulla").unwrap().as_str(),
+        ProductIdentity::new("open company").unwrap().as_str(),
         "opencompany"
     );
 }

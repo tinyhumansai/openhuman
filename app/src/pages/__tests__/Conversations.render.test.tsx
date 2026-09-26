@@ -1180,7 +1180,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     return { store: store!, thread };
   }
 
-  it('preserves the partial reply marked stopped when Stop is clicked mid-stream (#4862)', async () => {
+  it('requests the cancel on Stop and leaves saving the partial to the confirmed cancel (#4862)', async () => {
     const { thread } = await renderStreamingConversation({ streamingContent: 'half a thought' });
 
     const stopButton = await screen.findByRole('button', { name: 'Stop generating' });
@@ -1189,18 +1189,15 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
 
     expect(chatCancel).toHaveBeenCalledWith(thread.id);
-    // The partial stream is persisted as its own agent message flagged stopped
-    // so it survives the cancel instead of vanishing with the live preview.
-    await waitFor(() => {
-      expect(threadApi.appendMessage).toHaveBeenCalledWith(
-        thread.id,
-        expect.objectContaining({
-          content: 'half a thought',
-          sender: 'agent',
-          extraMetadata: expect.objectContaining({ stopped: true }),
-        })
-      );
+    // The stopped partial is saved when the core confirms the cancel
+    // (`chat_cancelled` → ChatRuntimeProvider's `onCancelled`, covered in
+    // ChatRuntimeProvider.test.tsx: "persists the live partial as a stopped
+    // reply"), not optimistically here. Saving on click raced the core's own
+    // save and left a stopped bubble behind when the cancel did not land.
+    await act(async () => {
+      await Promise.resolve();
     });
+    expect(threadApi.appendMessage).not.toHaveBeenCalled();
   });
 
   it('does not persist a stopped message when nothing has streamed yet (#4862)', async () => {
@@ -1262,7 +1259,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     expect(threadApi.appendMessage).not.toHaveBeenCalled();
   });
 
-  it('persists the stopped reply only once across repeated Stop clicks (#4862)', async () => {
+  it('never saves a partial locally across repeated Stop clicks (#4862)', async () => {
     const { thread } = await renderStreamingConversation({ streamingContent: 'half a thought' });
 
     const stopButton = await screen.findByRole('button', { name: 'Stop generating' });
@@ -1273,14 +1270,13 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
 
     expect(chatCancel).toHaveBeenCalledWith(thread.id);
-    // The one-shot requestId guard keeps the partial from being appended twice.
-    await waitFor(() => {
-      expect(threadApi.appendMessage).toHaveBeenCalledTimes(1);
+    // One save happens later, from the confirmed cancel, deduped per request
+    // (ChatRuntimeProvider.test.tsx: "does not double-persist a partial").
+    // Repeated clicks must not add a local save of their own.
+    await act(async () => {
+      await Promise.resolve();
     });
-    expect(threadApi.appendMessage).toHaveBeenCalledWith(
-      thread.id,
-      expect.objectContaining({ extraMetadata: expect.objectContaining({ stopped: true }) })
-    );
+    expect(threadApi.appendMessage).not.toHaveBeenCalled();
   });
 
   it('interrupts the stream and restores the last prompt into the composer on ESC (#4862)', async () => {

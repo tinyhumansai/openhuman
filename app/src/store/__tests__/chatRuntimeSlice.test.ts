@@ -15,14 +15,17 @@ import reducer, {
   endInferenceTurn,
   hydrateRuntimeFromRunLedger,
   hydrateRuntimeFromSnapshot,
+  isActiveTimelineStatus,
   markInferenceTurnStreaming,
   removeArtifactForThread,
   setInferenceStatusForThread,
   setPendingApprovalForThread,
   setStreamingAssistantForThread,
   setToolTimelineForThread,
+  setTurnTimelinesForThread,
   streamDeltaReceived,
   subagentAwaitingUser,
+  subagentCancelResolved,
   subagentDone,
   subagentIterationStarted,
   subagentSpawned,
@@ -1452,6 +1455,70 @@ describe('subagent event reducers (Phase 3)', () => {
     // A second done cannot re-settle a terminal row.
     const again = reducer(state, subagentDone({ threadId: 't1', rowId: row, success: false }));
     expect(again.toolTimelineByThread['t1'][0].status).toBe('success');
+  });
+
+  it('subagentCancelResolved settles a spinning row by task id from the cancel answer', () => {
+    // Aborted: the run was cancelled.
+    const aborted = reducer(spawn(), subagentCancelResolved({ taskId: 'task-1', cancelled: true }));
+    const row = aborted.toolTimelineByThread['t1'][0];
+    expect(row.status).toBe('cancelled');
+    // Consumers decide "still running?" from these, not the raw strings: the
+    // settled row and its nested activity must both read as inactive.
+    expect(isActiveTimelineStatus(row.status)).toBe(false);
+    expect(row.subagent?.status).toBe('cancelled');
+    expect(isActiveTimelineStatus(row.subagent?.status)).toBe(false);
+
+    // Not running any more: settle on how the core says it ended — never
+    // assume success. A failed run stays failed; an unknown one reads as
+    // cancelled (the user asked to stop it and nothing is running).
+    const settle = (outcome?: 'completed' | 'failed' | 'unknown') => {
+      const r = reducer(
+        spawn(),
+        subagentCancelResolved({ taskId: 'task-1', cancelled: false, outcome })
+      ).toolTimelineByThread['t1'][0];
+      return [r.status, r.subagent?.status];
+    };
+    expect(settle('completed')).toEqual(['success', 'completed']);
+    expect(settle('failed')).toEqual(['error', 'failed']);
+    expect(settle('unknown')).toEqual(['cancelled', 'cancelled']);
+    expect(settle(undefined)).toEqual(['cancelled', 'cancelled']);
+
+    // Another task's answer leaves this row alone.
+    const other = reducer(spawn(), subagentCancelResolved({ taskId: 'task-2', cancelled: true }));
+    expect(other.toolTimelineByThread['t1'][0].status).toBe('running');
+  });
+
+  it('subagentCancelResolved also settles a row restored into a past-turn timeline', () => {
+    const restored = reducer(
+      undefined,
+      setTurnTimelinesForThread({
+        threadId: 't1',
+        timelines: {
+          'req-old': [
+            {
+              id: 't1:subagent:task-1:researcher',
+              name: 'subagent:researcher',
+              round: 0,
+              seq: 0,
+              status: 'running',
+              subagent: { taskId: 'task-1', agentId: 'researcher', toolCalls: [] },
+            },
+          ],
+        },
+      })
+    );
+    const state = reducer(restored, subagentCancelResolved({ taskId: 'task-1', cancelled: true }));
+    expect(state.turnTimelinesByThread['t1']['req-old'][0].status).toBe('cancelled');
+  });
+
+  it('subagentCancelResolved never rewrites a row that already settled', () => {
+    const row = 't1:subagent:task-1:researcher';
+    let state = reducer(spawn(), subagentDone({ threadId: 't1', rowId: row, success: false }));
+    state = reducer(
+      state,
+      subagentCancelResolved({ taskId: 'task-1', cancelled: false, outcome: 'completed' })
+    );
+    expect(state.toolTimelineByThread['t1'][0].status).toBe('error');
   });
 
   it('subagentSpawned is idempotent — a redelivered event does not duplicate the row', () => {

@@ -430,10 +430,16 @@ impl SpanCollector {
                 };
                 if let Some(span) = self.spans.get_mut(index) {
                     if let Some(text) = input {
-                        span.input = Some(serde_json::Value::String(text.clone()));
+                        span.input = Some(serde_json::Value::String(truncate_chars(
+                            text,
+                            MAX_MODEL_CONTENT_CHARS,
+                        )));
                     }
                     if let Some(text) = output {
-                        span.output = Some(serde_json::Value::String(text.clone()));
+                        span.output = Some(serde_json::Value::String(truncate_chars(
+                            text,
+                            MAX_MODEL_CONTENT_CHARS,
+                        )));
                     }
                     log::debug!(
                         target: "agent-tracing",

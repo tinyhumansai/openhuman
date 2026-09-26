@@ -7,6 +7,7 @@
 use std::sync::Arc;
 use tinyagents_harness::run_queue::RunQueue;
 
+use crate::agent::progress::AgentProgress;
 use crate::config::rpc as config_rpc;
 use crate::threads::turn_state::TurnStateStore;
 
@@ -125,6 +126,12 @@ pub(crate) async fn run_chat_task(
     // defense-in-depth; extraction of durable state (like a workflow
     // proposal) must not depend on any single progress event surviving.
     let (progress_tx, progress_rx) = tokio::sync::mpsc::channel(256);
+    // The channel is fresh here. Record the user input even if the turn fails
+    // before a committed reply can emit its final TurnContent event.
+    let _ = progress_tx.try_send(AgentProgress::TurnContent {
+        input: Some(message.to_string()),
+        output: None,
+    });
     agent.set_on_progress(Some(progress_tx));
     agent.set_run_queue(Some(run_queue));
     agent.set_thread_id(Some(thread_id));

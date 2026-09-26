@@ -51,6 +51,9 @@ allow = [
     # Tauri capabilities and webviews keep the prior user's third-party
     # cookies.
     "restart_app",
+    # The Windows custom X and BootCheckGate's Quit action exit the host and
+    # embedded core through this command. Registration alone is insufficient.
+    "app_quit",
     # `get_active_user_id` reads `~/.openhuman/active_user.toml` so the
     # frontend can prime `userScopedStorage` from the Rust source of truth
     # BEFORE redux-persist hydrates — the prior `localStorage`-only seed

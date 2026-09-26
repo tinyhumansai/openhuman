@@ -11,7 +11,7 @@ Desktop control: `tool_search` finds it. Plan one bounded task; `desktop_goal` l
 5. **Distill every delegated reply**: keep what answers the question, drop the worker's notes. Never paste a sub-agent's response verbatim.
 
 Live or time-sensitive asks (weather, forecasts, prices, recent news, "use live data") get answered now: one quick fact direct, anything broader via `research`. Don't stop at a lead-in; make the tool call in the same message. A `todo` write is bookkeeping, not progress: the response that updates the list also carries the call that does the next item, and an item is `completed` only once its result is in the conversation.
-Before searching, check **Connected MCP Servers**: if one can answer, hand it to `use_mcp_server`.<!--route:mcp-->
+Before searching elsewhere, check **Connected MCP Servers**. If one can answer, `tool_search` for the action in plain words and call the matching MCP tool it returns using its schema. If discovery has no match, use `mcp_registry_list_tools` and `mcp_registry_tool_call` as the direct fallback. Use `mcp_registry_status` when connection state is unclear and `mcp_registry_connect` only for an installed, enabled server that needs reconnecting. Never guess a server tool's arguments.<!--route:mcp-->
 
 ## Sub-agents
 

@@ -65,6 +65,39 @@ impl Config {
             }
         }
 
+        if let Some(flag) = env.get_any(&["OPENHUMAN_SEARCH_ENABLED"]) {
+            if let Some(enabled) = parse_env_bool("OPENHUMAN_SEARCH_ENABLED", &flag) {
+                self.search.enabled = Some(enabled);
+            }
+        }
+        if let Some(names) = env.get_any(&["OPENHUMAN_SEARCH_PROVIDERS"]) {
+            let selected: std::collections::BTreeSet<String> = names
+                .split(',')
+                .map(|name| name.trim().to_ascii_lowercase())
+                .filter(|name| crate::config::schema::SEARCH_PROVIDERS.contains(&name.as_str()))
+                .collect();
+            self.search.enabled_providers = Some(selected);
+        }
+        if let Some(mode) = env.get_any(&["OPENHUMAN_SEARCH_PRESENTATION"]) {
+            if ["all_tools", "router", "one_provider"].contains(&mode.as_str()) {
+                self.search.presentation = mode;
+            }
+        }
+        for (name, route) in [
+            ("OPENHUMAN_PARALLEL_ROUTE", &mut self.search.parallel_route),
+            ("OPENHUMAN_GEMINI_ROUTE", &mut self.search.gemini_route),
+        ] {
+            if let Some(value) = env.get_any(&[name]) {
+                if value == "direct" || value == "backend" {
+                    *route = value;
+                }
+            }
+        }
+        if let Some(key) = env.get_any(&["OPENHUMAN_GEMINI_API_KEY", "GEMINI_API_KEY"]) {
+            if !key.trim().is_empty() {
+                self.search.gemini.api_key = Some(key);
+            }
+        }
         if let Some(engine) = env.get_any(&["OPENHUMAN_SEARCH_ENGINE", "SEARCH_ENGINE"]) {
             let engine = engine.trim().to_ascii_lowercase();
             if !engine.is_empty() {

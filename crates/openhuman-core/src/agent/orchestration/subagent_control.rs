@@ -16,7 +16,7 @@
 
 use serde_json::{json, Map, Value};
 
-use crate::agent::orchestration::running_subagents::SteerError;
+use crate::agent::orchestration::running_subagents::{CancelledSubagent, SteerError};
 use crate::agent::orchestration::{background_completions, running_subagents, subagent_sessions};
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
@@ -63,7 +63,9 @@ fn schema_for(function: &str) -> ControllerSchema {
             ],
             outputs: vec![json_output(
                 "result",
-                "{ cancelled: bool, taskId: string } — cancelled=false if nothing was running.",
+                "{ cancelled: bool, taskId: string, outcome?: \"completed\" | \"failed\" | \"unknown\" } \
+                 — cancelled=false if nothing was running; outcome then says how the run had \
+                 ended, or \"unknown\" if the core no longer knows the task.",
             )],
         },
         "subagent_steer" => ControllerSchema {
@@ -108,7 +110,26 @@ fn handle_subagent_cancel(params: Map<String, Value>) -> ControllerFuture {
             "[subagent_control_rpc][{cid}] cancel.entry task_id={task_id}"
         );
 
-        let cancelled = match running_subagents::cancel_by_task(&task_id) {
+        // `outcome` is set only when nothing was cancelled: how the run ended
+        // if the registry still knew it, else "unknown" (never registered, or
+        // already swept). The card settles on it instead of assuming success.
+        let (cancelled, outcome) = match running_subagents::cancel_by_task(&task_id) {
+            // Finished before the click landed (it stays registered until the
+            // terminal sweep). Its outcome is already recorded and delivered;
+            // announcing a cancellation would overwrite a completed session
+            // with "cancelled by user" and post a false notice into the chat.
+            Some(CancelledSubagent {
+                already_finished: Some(finished),
+                agent_id,
+                ..
+            }) => {
+                log::debug!(
+                    target: "subagent_control_rpc",
+                    "[subagent_control_rpc][{cid}] cancel.already_finished task_id={task_id} agent_id={agent_id} outcome={}",
+                    finished.as_str()
+                );
+                (false, Some(finished.as_str()))
+            }
             Some(meta) => {
                 let summary = match reason.as_deref().map(str::trim).filter(|r| !r.is_empty()) {
                     Some(r) => format!(
@@ -142,16 +163,20 @@ fn handle_subagent_cancel(params: Map<String, Value>) -> ControllerFuture {
                         );
                     }
                 }
-                true
+                (true, None)
             }
-            None => false,
+            None => (false, Some("unknown")),
         };
 
         log::debug!(
             target: "subagent_control_rpc",
-            "[subagent_control_rpc][{cid}] cancel.done task_id={task_id} cancelled={cancelled}"
+            "[subagent_control_rpc][{cid}] cancel.done task_id={task_id} cancelled={cancelled} outcome={outcome:?}"
         );
-        to_json(json!({ "cancelled": cancelled, "taskId": task_id }))
+        let mut reply = json!({ "cancelled": cancelled, "taskId": task_id });
+        if let Some(outcome) = outcome {
+            reply["outcome"] = json!(outcome);
+        }
+        to_json(reply)
     })
 }
 

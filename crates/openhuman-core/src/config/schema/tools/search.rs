@@ -1,7 +1,8 @@
-//! Search engine config: Seltz, SearXNG, web search, and unified search selector.
+//! Search settings, legacy engine migration, and separate Seltz/SearXNG options.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
@@ -179,11 +180,9 @@ impl SearchEngineCredentials {
     }
 }
 
-/// Unified search-engine configuration. Exactly one engine drives tool
-/// registration at a time. `disabled` suppresses all search tools; `managed` is
-/// the backend-proxied default and requires no key; `parallel`, `brave`,
-/// `querit`, `exa`, and `tavily` are BYO and require their own API key in the
-/// matching sub-block.
+/// Search configuration. New settings select a provider set; an omitted set
+/// derives available providers from saved keys, the backend credential, and
+/// the separate TinyFish toggle. The legacy engine remains for migration.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct SearchConfig {
@@ -194,6 +193,30 @@ pub struct SearchConfig {
     /// back to managed at registration time.
     #[serde(default = "default_search_engine")]
     pub engine: String,
+
+    /// Explicit global switch. Missing in older config files, where `engine`
+    /// still decides whether search was disabled.
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    /// Explicit provider selection. Missing migrates from saved credentials
+    /// and the legacy TinyFish integration toggle. When present, this set is
+    /// authoritative, including for TinyFish.
+    /// Managed and direct Parallel share one module route; explicit Parallel
+    /// selection takes precedence when both are selected.
+    #[serde(default)]
+    pub enabled_providers: Option<BTreeSet<String>>,
+    /// `all_tools`, `router`, or `one_provider`.
+    #[serde(default = "default_search_presentation")]
+    pub presentation: String,
+    /// Provider used by `one_provider`, or router default.
+    #[serde(default)]
+    pub presentation_provider: Option<String>,
+    /// `direct` or `backend` for Parallel.
+    #[serde(default = "default_direct_route")]
+    pub parallel_route: String,
+    /// `direct` or `backend` for Gemini.
+    #[serde(default = "default_direct_route")]
+    pub gemini_route: String,
 
     /// Max results per query (1–20, default 5).
     #[serde(default = "default_search_max_results")]
@@ -225,12 +248,34 @@ pub struct SearchConfig {
     /// the managed backend.
     #[serde(default)]
     pub tavily: SearchEngineCredentials,
+
+    /// Gemini direct API credential.
+    #[serde(default)]
+    pub gemini: SearchEngineCredentials,
 }
+
+fn default_search_presentation() -> String {
+    "all_tools".into()
+}
+fn default_direct_route() -> String {
+    "direct".into()
+}
+
+pub const SEARCH_PROVIDERS: &[&str] = &[
+    "managed", "parallel", "brave", "querit", "exa", "tavily", "gemini", "tinyfish", "seltz",
+    "searxng",
+];
 
 impl Default for SearchConfig {
     fn default() -> Self {
         Self {
             engine: default_search_engine(),
+            enabled: None,
+            enabled_providers: None,
+            presentation: default_search_presentation(),
+            presentation_provider: None,
+            parallel_route: default_direct_route(),
+            gemini_route: default_direct_route(),
             max_results: default_search_max_results(),
             timeout_secs: default_search_timeout_secs(),
             parallel: SearchEngineCredentials::default(),
@@ -238,6 +283,7 @@ impl Default for SearchConfig {
             querit: SearchEngineCredentials::default(),
             exa: SearchEngineCredentials::default(),
             tavily: SearchEngineCredentials::default(),
+            gemini: SearchEngineCredentials::default(),
         }
     }
 }
@@ -257,6 +303,53 @@ pub enum SearchEngine {
 }
 
 impl SearchConfig {
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+            .unwrap_or(self.engine.trim() != SEARCH_ENGINE_DISABLED)
+    }
+
+    /// Resolve provider selections. `None` is the old single-engine format.
+    pub fn providers(
+        &self,
+        managed_available: bool,
+        tinyfish_enabled: bool,
+        seltz_enabled: bool,
+        searxng_enabled: bool,
+    ) -> BTreeSet<String> {
+        if !self.is_enabled() {
+            return BTreeSet::new();
+        }
+        if let Some(selected) = &self.enabled_providers {
+            return selected.clone();
+        }
+        let mut providers = BTreeSet::new();
+        if managed_available {
+            providers.insert("managed".into());
+        }
+        for (name, credentials) in [
+            ("parallel", &self.parallel),
+            ("brave", &self.brave),
+            ("querit", &self.querit),
+            ("exa", &self.exa),
+            ("tavily", &self.tavily),
+            ("gemini", &self.gemini),
+        ] {
+            if credentials.has_key() {
+                providers.insert(name.into());
+            }
+        }
+        if tinyfish_enabled {
+            providers.insert("tinyfish".into());
+        }
+        if seltz_enabled {
+            providers.insert("seltz".into());
+        }
+        if searxng_enabled {
+            providers.insert("searxng".into());
+        }
+        providers
+    }
+
     /// Resolve the *effective* engine after gating on API-key
     /// availability. A BYO engine without a key silently falls back to
     /// managed so the agent never ends up with zero search tools — the

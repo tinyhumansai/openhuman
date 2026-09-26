@@ -331,6 +331,27 @@ fn snapshot_config_json_emits_config_and_workspace_and_config_path() {
     assert!(ws.contains(tmp.path().to_str().unwrap_or("")));
 }
 
+#[test]
+fn snapshot_config_json_redacts_every_search_key_but_keeps_settings() {
+    let mut cfg = Config::default();
+    cfg.search.max_results = 13;
+    cfg.search.parallel.api_key = Some("parallel-sentinel".into());
+    cfg.search.brave.api_key = Some("brave-sentinel".into());
+    cfg.search.querit.api_key = Some("querit-sentinel".into());
+    cfg.search.exa.api_key = Some("exa-sentinel".into());
+    cfg.search.tavily.api_key = Some("tavily-sentinel".into());
+    cfg.search.gemini.api_key = Some("gemini-sentinel".into());
+    cfg.seltz.api_key = Some("seltz-sentinel".into());
+    let snapshot = snapshot_config_json(&cfg).unwrap();
+    let serialized = snapshot.to_string();
+    assert!(!serialized.contains("-sentinel"));
+    assert_eq!(snapshot["config"]["search"]["max_results"], 13);
+    for provider in ["parallel", "brave", "querit", "exa", "tavily", "gemini"] {
+        assert!(snapshot["config"]["search"][provider]["api_key"].is_null());
+    }
+    assert!(snapshot["config"]["seltz"]["api_key"].is_null());
+}
+
 // ── agent_server_status ────────────────────────────────────────
 
 #[test]
@@ -613,7 +634,7 @@ async fn apply_search_settings_stores_and_clears_tavily_key() {
     let tmp = tempdir().unwrap();
     let mut cfg = tmp_config(&tmp);
 
-    apply_search_settings(
+    let result = apply_search_settings(
         &mut cfg,
         SearchSettingsPatch {
             engine: Some("tavily".to_string()),
@@ -623,6 +644,8 @@ async fn apply_search_settings_stores_and_clears_tavily_key() {
     )
     .await
     .expect("save Tavily settings");
+    assert_eq!(result.value["tavily_configured"], true);
+    assert!(!result.value.to_string().contains("tvly-test-key"));
 
     assert_eq!(cfg.search.engine, "tavily");
     assert_eq!(cfg.search.tavily.api_key.as_deref(), Some("tvly-test-key"));

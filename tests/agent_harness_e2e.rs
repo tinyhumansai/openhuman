@@ -3367,17 +3367,16 @@ async fn model_call_ceiling_bounds_a_wedged_call_below_the_turn_deadline_inner()
 // "installed" or "connected". These go one step further: the skill comes from a
 // loopback registry through the real install path, the MCP server is found in a
 // loopback registry and then declared in `mcp.json` the way a user would, and a
-// scripted turn reaches each through the same delegation tools the
-// orchestrator uses in production (`setup_skills`, `run_skill`,
-// `use_mcp_server`).
+// scripted turn reaches the skill through `setup_skills` / `run_skill` and
+// calls the MCP server directly through the registry tools.
 //
 // The proof is the tool result the model receives, never the scripted reply:
 // every scripted completion below is canary-free, so a canary inside a tool
 // message can only have come from the installed skill or the running server.
 
 /// A call to a tool inside a tool pack, made through `use_skill`. Used to prove
-/// what the orchestrator can NOT reach that way (#6302): the MCP and skill
-/// hand-offs are direct tools now, and their packs are closed to it. Ids the call
+/// what the orchestrator can NOT reach that way (#6302): skill
+/// hand-offs are direct tools, and their pack is closed to it. Ids the call
 /// `call_<tool>` so [`tool_result_text`] finds the result by the inner tool.
 fn packed_tool_call_completion(pack: &str, tool: &str, args: Value) -> Value {
     json!({ "content": "", "toolCalls": [{
@@ -3644,12 +3643,11 @@ async fn agent_installs_a_registry_skill_then_runs_it_inner() {
     stack.shutdown();
 }
 
-// ─── #6302: the orchestrator hands MCP and skill work to its specialists ─────
+// ─── #6302: the orchestrator calls MCP tools and hands off skill work ───────
 //
-// The three hand-offs (`setup_skills`, `run_skill`, `use_mcp_server`) are
-// direct tools on the orchestrator's belt, and the packs
-// holding the raw `skill_registry_*` / `mcp_registry_*` tools are closed to it.
-// These tests pin both halves against a real session.
+// The skill hand-offs (`setup_skills`, `run_skill`) and the MCP registry tools
+// are direct tools on the orchestrator's belt. The raw `skill_registry_*`
+// tools remain closed to it. These tests pin both paths against a real session.
 
 /// Tool names a captured model request advertised to the provider.
 ///
@@ -3694,7 +3692,7 @@ fn advertised_tool_names(request: &Value) -> Vec<String> {
 ///
 /// Three things must hold, all read from the captured model requests:
 /// * the orchestrator's own request advertises `hand_off` (it is not packed) and
-///   no raw `mcp_registry_*` / `skill_registry_*` tool;
+///   no raw `skill_registry_*` tool;
 /// * the hand-off call returned a result (`tool_result_text` panics on
 ///   `unknown tool`);
 /// * a later request came from the specialist, recognised by a tool only its
@@ -3744,7 +3742,7 @@ async fn assert_hand_off_reaches_specialist(
     );
     let raw: Vec<&String> = belt
         .iter()
-        .filter(|name| name.starts_with("mcp_registry_") || name.starts_with("skill_registry_"))
+        .filter(|name| name.starts_with("skill_registry_"))
         .collect();
     assert!(
         raw.is_empty(),
@@ -3764,33 +3762,6 @@ async fn assert_hand_off_reaches_specialist(
          {specialist_only_tools:?}); requests: {}",
         dump()
     );
-}
-
-/// Wait for the turn to end, failing if it asks for approval first: an approval
-/// request means the refused tool was about to run.
-async fn wait_for_terminal_without_approval(
-    events: &mut tokio::sync::mpsc::UnboundedReceiver<Value>,
-    tool: &str,
-) -> Value {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
-    loop {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        let event = match tokio::time::timeout(remaining, events.recv()).await {
-            Ok(Some(event)) => event,
-            Ok(None) | Err(_) => panic!(
-                "the turn never finished; requests: {}",
-                serde_json::to_string_pretty(&with_captured(|c| c.clone())).unwrap_or_default()
-            ),
-        };
-        match event.get("event").and_then(Value::as_str) {
-            Some("approval_request") => panic!(
-                "the orchestrator reached `{tool}` through use_skill: it asked for approval to \
-                 run it: {event}"
-            ),
-            Some("chat_done") | Some("chat_error") => return event,
-            _ => {}
-        }
-    }
 }
 
 /// Skill requests reach `skill_setup` and `skill_executor` through their
@@ -4006,10 +3977,9 @@ fn peel_logs_envelope(v: &Value) -> &Value {
 
 /// A server found in the MCP registry is declared in `mcp.json` and connected
 /// through the same RPCs the settings UI uses, then the agent calls its tool
-/// through `use_mcp_server` and the server's answer reaches the model.
+/// through the orchestrator's direct registry tools; its answer reaches the model.
 #[cfg(feature = "mcp")]
 #[test]
-#[ignore = "TODO(#6370): delegated registry specialists are unavailable in the TinyAgents hosted runtime"]
 fn agent_calls_a_tool_on_an_mcp_server_installed_from_the_registry() {
     run_on_agent_stack(
         "agent_calls_a_tool_on_an_mcp_server_installed_from_the_registry",
@@ -4048,12 +4018,11 @@ async fn agent_calls_a_tool_on_an_mcp_server_installed_from_the_registry_inner()
     // Declared in mcp.json (the registry is browse-only) and connected.
     let server_id = declare_and_connect_registry_echo_server(&stack.rpc_base, 801).await;
 
-    // Used: orchestrator → use_mcp_server (a direct hand-off, #6302) → mcp_agent,
-    // which owns the pack and calls mcp_registry_tool_call directly.
+    // Used: the orchestrator discovers the schema, then calls the tool itself.
     reset_script(vec![
         tool_call_completion(
-            "use_mcp_server",
-            json!({ "prompt": "Call the echo tool on the harness echo server", "blocking": true }),
+            "mcp_registry_list_tools",
+            json!({ "server_id": server_id.clone() }),
         ),
         tool_call_completion(
             "mcp_registry_tool_call",
@@ -4063,7 +4032,6 @@ async fn agent_calls_a_tool_on_an_mcp_server_installed_from_the_registry_inner()
                 "arguments": { "message": MCP_ECHO_CANARY }
             }),
         ),
-        text_completion("Called the tool."),
         text_completion("The MCP tool answered."),
     ]);
     let mut events = spawn_sse_collector(format!(
@@ -4180,18 +4148,18 @@ async fn declare_and_connect_registry_echo_server(rpc_base: &str, first_rpc_id: 
     server_id
 }
 
-/// MCP requests reach `mcp_agent` through its hand-off, called directly.
+/// The orchestrator advertises MCP discovery and invocation without a hand-off.
 #[cfg(feature = "mcp")]
 #[test]
-fn orchestrator_hands_mcp_requests_to_the_mcp_specialists_directly() {
+fn orchestrator_advertises_direct_mcp_tools() {
     run_on_agent_stack(
-        "orchestrator_hands_mcp_requests_to_the_mcp_specialists_directly",
-        orchestrator_hands_mcp_requests_to_the_mcp_specialists_directly_inner,
+        "orchestrator_advertises_direct_mcp_tools",
+        orchestrator_advertises_direct_mcp_tools_inner,
     );
 }
 
 #[cfg(feature = "mcp")]
-async fn orchestrator_hands_mcp_requests_to_the_mcp_specialists_directly_inner() {
+async fn orchestrator_advertises_direct_mcp_tools_inner() {
     let _lock = env_lock();
     reset_script(Vec::new());
     let stack = boot_stack().await;
@@ -4200,32 +4168,48 @@ async fn orchestrator_hands_mcp_requests_to_the_mcp_specialists_directly_inner()
         stack.rpc_base
     ))
     .await;
-    assert_hand_off_reaches_specialist(
-        &stack,
-        &mut events,
+    reset_script(vec![text_completion(
+        "Ready to use the connected MCP server.",
+    )]);
+    send_web_chat(
+        &stack.rpc_base,
         931,
         "harness-mcp-handoff",
-        "use_mcp_server",
-        &["mcp_registry_tool_call", "mcp_registry_list_tools"],
+        "thread-mcp-direct",
+        "Can you use my connected MCP server?",
     )
     .await;
+    let done = wait_for_terminal(&mut events, Duration::from_secs(120)).await;
+    assert_eq!(done.get("event").and_then(Value::as_str), Some("chat_done"));
+    let requests = with_captured(|c| c.clone());
+    let belt = advertised_tool_names(requests.first().expect("model request"));
+    for required in [
+        "mcp_registry_status",
+        "mcp_registry_list_tools",
+        "mcp_registry_tool_call",
+    ] {
+        assert!(
+            belt.iter().any(|name| name == required),
+            "missing {required}: {belt:?}"
+        );
+    }
+    assert!(!belt.iter().any(|name| name == "use_mcp_server"));
     stack.shutdown();
 }
 
-/// With `use_mcp_server` on its belt, the orchestrator cannot call a connected
-/// server's tool itself through `use_skill`: the gate refuses the raw tool and
-/// names the hand-off, and the call never runs.
+/// Search discovers a connected MCP action with its schema, then `tool_call`
+/// invokes that action on the same orchestrator turn.
 #[cfg(feature = "mcp")]
 #[test]
-fn orchestrator_cannot_call_a_connected_mcp_tool_through_the_raw_registry_tool() {
+fn orchestrator_calls_a_connected_mcp_tool_directly() {
     run_on_agent_stack(
-        "orchestrator_cannot_call_a_connected_mcp_tool_through_the_raw_registry_tool",
-        orchestrator_cannot_call_a_connected_mcp_tool_through_the_raw_registry_tool_inner,
+        "orchestrator_calls_a_connected_mcp_tool_directly",
+        orchestrator_calls_a_connected_mcp_tool_directly_inner,
     );
 }
 
 #[cfg(feature = "mcp")]
-async fn orchestrator_cannot_call_a_connected_mcp_tool_through_the_raw_registry_tool_inner() {
+async fn orchestrator_calls_a_connected_mcp_tool_directly_inner() {
     let _lock = env_lock();
     let _ttl = EnvVarGuard::set("OPENHUMAN_APPROVAL_TTL_SECS", "120");
     ensure_approval_gate().await;
@@ -4238,18 +4222,21 @@ async fn orchestrator_cannot_call_a_connected_mcp_tool_through_the_raw_registry_
     reset_script(Vec::new());
     let stack = boot_stack().await;
     let server_id = declare_and_connect_registry_echo_server(&stack.rpc_base, 940).await;
+    let action = openhuman_core::mcp::registry::action_tool::searchable_name(&server_id, "echo");
 
     reset_script(vec![
-        packed_tool_call_completion(
-            "integrations",
-            "mcp_registry_tool_call",
+        tool_call_completion(
+            "tool_search",
+            json!({ "query": "echo message on my connected MCP server" }),
+        ),
+        tool_call_completion(
+            "tool_call",
             json!({
-                "server_id": server_id,
-                "tool_name": "echo",
-                "arguments": { "message": MCP_ECHO_CANARY }
+                "name": action.clone(),
+                "arguments": json!({ "message": MCP_ECHO_CANARY }).to_string()
             }),
         ),
-        text_completion("I could not call it myself."),
+        text_completion("The MCP tool answered."),
     ]);
     let mut events = spawn_sse_collector(format!(
         "{}/events?client_id=harness-raw-mcp-call",
@@ -4265,28 +4252,64 @@ async fn orchestrator_cannot_call_a_connected_mcp_tool_through_the_raw_registry_
     )
     .await;
 
-    let done = wait_for_terminal_without_approval(&mut events, "mcp_registry_tool_call").await;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+    let done = loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let event = tokio::time::timeout(remaining, events.recv())
+            .await
+            .expect("MCP turn timed out")
+            .expect("MCP event stream closed");
+        match event.get("event").and_then(Value::as_str) {
+            Some("approval_request") => {
+                let request_id = event
+                    .pointer("/data/request_id")
+                    .or_else(|| event.get("request_id"))
+                    .and_then(Value::as_str)
+                    .expect("MCP approval request id");
+                let decision = post_json_rpc(
+                    &stack.rpc_base,
+                    944,
+                    "openhuman.approval_decide",
+                    json!({ "request_id": request_id, "decision": "approve_once" }),
+                )
+                .await;
+                assert_no_jsonrpc_error(&decision, "MCP approval decision");
+            }
+            Some("chat_done") | Some("chat_error") => break event,
+            _ => {}
+        }
+    };
     let requests = with_captured(|c| c.clone());
     assert_eq!(
         done.get("event").and_then(Value::as_str),
         Some("chat_done"),
-        "the refused MCP turn must finish: {done}"
+        "the direct MCP turn must finish: {done}"
     );
-    let result = tool_result_text(&requests, "mcp_registry_tool_call").unwrap_or_else(|| {
+    let search = tool_result_text(&requests, "tool_search").expect("search result");
+    assert!(
+        search.contains(&action),
+        "MCP action absent from search: {search}"
+    );
+    assert!(
+        search.contains("message"),
+        "MCP schema absent from search: {search}"
+    );
+    let belt = advertised_tool_names(requests.first().expect("first model request"));
+    assert!(belt.iter().any(|name| name == "tool_search"));
+    assert!(!belt.iter().any(|name| name == &action));
+    let result = tool_result_text(&requests, "tool_call").unwrap_or_else(|| {
         panic!(
-            "no tool result for mcp_registry_tool_call; requests: {}",
+            "no tool result for MCP tool_call; requests: {}",
             serde_json::to_string_pretty(&requests).unwrap_or_default()
         )
     });
     assert!(
-        result.contains("not allowed in the current session")
-            && result.contains("`use_mcp_server`"),
-        "the orchestrator reached `mcp_registry_tool_call` through use_skill instead of being \
-         sent to `use_mcp_server`: {result}"
+        result.contains(MCP_ECHO_CANARY),
+        "the direct MCP tool result did not reach the model: {result}"
     );
     assert!(
-        !result.contains("\"is_error\":false"),
-        "the refused MCP call ran: {result}"
+        !result.contains("\"is_error\":true"),
+        "the direct MCP call failed: {result}"
     );
 
     registry_join.abort();
@@ -5081,6 +5104,192 @@ async fn thread_goal_is_set_read_back_and_completed_across_turns_inner() {
     let none = tool_result_payload(&results, "goal_get");
     assert!(none["goal"].is_null(), "{none}");
     assert_eq!(none["text"], "no goal set for this thread", "{none}");
+
+    stack.shutdown();
+}
+
+/// Cancelling a running background sub-agent settles its card, end to end.
+///
+/// Cancel aborts the detached task, and an aborted future never reaches its own
+/// `Cancelled` branch — so before `AbortReport` the client got no terminal event
+/// and the delegation card spun forever. This drives the production path: a
+/// real `spawn_async_subagent` child held mid-model-call by the canary barrier,
+/// cancelled over the `openhuman.subagent_cancel` JSON-RPC, and observed on the
+/// same SSE stream the app renders from (`subagent_failed` is what settles the
+/// card's row). A second cancel then gets the RPC's "nothing running" answer
+/// with `outcome: "unknown"`, which the card settles on without claiming
+/// success.
+#[test]
+fn cancelling_a_running_background_subagent_settles_it() {
+    run_on_agent_stack(
+        "cancelling_a_running_background_subagent_settles_it",
+        cancelling_a_running_background_subagent_settles_it_inner,
+    );
+}
+
+async fn cancelling_a_running_background_subagent_settles_it_inner() {
+    let _lock = env_lock();
+    // The second canary never arrives, so the worker's model call is held for
+    // `CANARY_BARRIER_WAIT`: long enough to cancel it while it is running.
+    arm_canary_barrier(&["CANCEL_E2E_CANARY", "CANCEL_E2E_NEVER"]);
+    reset_script(vec![
+        tool_calls_completion(&[(
+            "spawn_async_subagent",
+            json!({ "agent_id": "researcher", "prompt": "Find CANCEL_E2E_CANARY" }),
+        )]),
+        text_completion("Spawned a worker; its result will arrive later."),
+        text_completion("worker would have finished here"),
+    ]);
+    let stack = boot_stack().await;
+    let mut events = spawn_sse_collector(format!(
+        "{}/events?client_id=harness-cancel",
+        stack.rpc_base
+    ))
+    .await;
+    send_web_chat(
+        &stack.rpc_base,
+        900,
+        "harness-cancel",
+        "thread-cancel",
+        "delegate, then cancel it",
+    )
+    .await;
+
+    let spawned = wait_for_event(&mut events, "subagent_spawned", Duration::from_secs(120)).await;
+    let task_id = spawned
+        .get("skill_id")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("subagent_spawned carries the task id: {spawned}"))
+        .to_string();
+
+    // Cancel only once the worker is really in flight (its own model request
+    // is parked on the barrier), so this is a live run, not a queued one.
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    while with_captured(|c| {
+        !c.iter()
+            .filter_map(|r| canary_worker_request(r.get("body")?))
+            .any(|canary| canary == "CANCEL_E2E_CANARY")
+    }) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the worker never issued its request"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    let reply = post_json_rpc(
+        &stack.rpc_base,
+        901,
+        "openhuman.subagent_cancel",
+        json!({ "taskId": task_id }),
+    )
+    .await;
+    let result = assert_no_jsonrpc_error(&reply, "subagent_cancel");
+    let payload = result.get("data").unwrap_or(result);
+    assert_eq!(
+        payload.get("cancelled").and_then(Value::as_bool),
+        Some(true),
+        "a running child is really cancelled: {reply}"
+    );
+    assert!(
+        payload.get("outcome").is_none(),
+        "a real cancel carries no outcome: {reply}"
+    );
+
+    // The aborted child still reports: this is the event that settles the card.
+    let failed = wait_for_event(&mut events, "subagent_failed", Duration::from_secs(30)).await;
+    assert_eq!(
+        failed.get("skill_id").and_then(Value::as_str),
+        Some(task_id.as_str()),
+        "subagent_failed must name the cancelled task: {failed}"
+    );
+
+    // Nothing runs under that id any more: the card settles on this answer.
+    let again = post_json_rpc(
+        &stack.rpc_base,
+        902,
+        "openhuman.subagent_cancel",
+        json!({ "taskId": task_id }),
+    )
+    .await;
+    let result = assert_no_jsonrpc_error(&again, "second subagent_cancel");
+    let payload = result.get("data").unwrap_or(result);
+    assert_eq!(
+        payload.get("cancelled").and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        payload.get("outcome").and_then(Value::as_str),
+        Some("unknown"),
+        "a cancel that finds nothing reports the outcome, never success: {again}"
+    );
+
+    disarm_canary_barrier();
+    stack.shutdown();
+}
+
+/// A wrong tool guess is corrected, never mistaken for a credential blocker.
+///
+/// The unknown-tool answer echoes the guessed name, and the failure classifier
+/// used to keyword-sniff it: a guess named `forbidden_tool` read as an HTTP 403,
+/// was classed `authentication` (zero retries), and ended the turn with
+/// "failure class `authentication` still blocks operation …" before the model
+/// could pick a real tool. Through the real orchestrator turn, the guess must
+/// get its retry and the turn must finish with the model's own answer.
+#[test]
+fn a_wrong_tool_guess_is_retried_not_treated_as_an_auth_blocker() {
+    run_on_agent_stack(
+        "a_wrong_tool_guess_is_retried_not_treated_as_an_auth_blocker",
+        a_wrong_tool_guess_is_retried_not_treated_as_an_auth_blocker_inner,
+    );
+}
+
+async fn a_wrong_tool_guess_is_retried_not_treated_as_an_auth_blocker_inner() {
+    let _lock = env_lock();
+    reset_script(vec![
+        tool_calls_completion(&[("forbidden_tool", json!({}))]),
+        text_completion("CANARY_RECOVERED_AFTER_WRONG_TOOL"),
+    ]);
+    let stack = boot_stack().await;
+    let mut events = spawn_sse_collector(format!(
+        "{}/events?client_id=harness-wrong-tool",
+        stack.rpc_base
+    ))
+    .await;
+    send_web_chat(
+        &stack.rpc_base,
+        910,
+        "harness-wrong-tool",
+        "thread-wrong-tool",
+        "do the thing",
+    )
+    .await;
+
+    let done = wait_for_terminal(&mut events, Duration::from_secs(120)).await;
+    assert_eq!(
+        done.get("event").and_then(Value::as_str),
+        Some("chat_done"),
+        "a wrong tool guess must not end the turn: {done}"
+    );
+    let full_response = done
+        .get("full_response")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(
+        full_response.contains("CANARY_RECOVERED_AFTER_WRONG_TOOL"),
+        "the model's recovery must be the reply, not a blocker halt: {done}"
+    );
+    assert!(
+        !full_response.contains("still blocks operation"),
+        "the wrong guess was classified as a blocker: {done}"
+    );
+    // The recovery ran as a second model call that saw the unknown-tool answer.
+    let requests = with_captured(|c| c.clone());
+    assert!(
+        captured_requests_reject_tool_as_unknown(&requests, "forbidden_tool"),
+        "the model should have been told `forbidden_tool` is unknown; requests: {}",
+        serde_json::to_string_pretty(&requests).unwrap_or_default()
+    );
 
     stack.shutdown();
 }

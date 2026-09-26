@@ -4231,7 +4231,7 @@ dependencies = [
 
 [[package]]
 name = "openhuman"
-version = "0.64.1"
+version = "0.64.4"
 dependencies = [
  "aes-gcm",
  "aho-corasick",
@@ -4351,7 +4351,7 @@ dependencies = [
 
 [[package]]
 name = "openhuman-app"
-version = "0.64.1"
+version = "0.64.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4400,7 +4400,7 @@ dependencies = [
 
 [[package]]
 name = "openhuman-embed"
-version = "0.64.1"
+version = "0.64.4"
 dependencies = [
  "anyhow",
  "log",
@@ -4416,7 +4416,7 @@ dependencies = [
 
 [[package]]
 name = "openhuman-rpc"
-version = "0.64.1"
+version = "0.64.4"
 dependencies = [
  "log",
  "reqwest 0.12.28",
@@ -4427,7 +4427,7 @@ dependencies = [
 
 [[package]]
 name = "openhuman-tinyhumans"
-version = "0.64.1"
+version = "0.64.4"
 dependencies = [
  "anyhow",
  "async-trait",

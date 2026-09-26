@@ -8,6 +8,7 @@ import { DISCORD_INVITE_URL } from '../../../utils/links';
 import { openUrl } from '../../../utils/openUrl';
 import { Button, SidebarHeader as SidebarHeaderShell, Tooltip } from '../../ui';
 import { useRootSidebar } from './RootShellLayout';
+import { isWindowsDesktop } from './WindowsWindowControls';
 
 /** The community destination opened by the Discord button. */
 export const DISCORD_URL = DISCORD_INVITE_URL;
@@ -35,11 +36,10 @@ export default function SidebarHeader() {
   return (
     // The primitive supplies the horizontal and bottom inset; this overrides
     // its top inset to align the row to the title-bar centreline, then turns it
-    // into a right-aligned row. Right-aligned so the macOS traffic
-    // lights (top-left, overlay title bar) sit in the empty left space — the
-    // icons stay clear of the window controls and inline with them.
+    // into a right-aligned row on macOS. The traffic lights sit in the empty
+    // left space. Windows has no controls in this corner, so center the row.
     //
-    // The icons deliberately do NOT move to meet the lights: this row's
+    // On macOS the icons deliberately do NOT move to meet the lights: this row's
     // vertical rhythm is the sidebar's, shared with `SidebarNav` below it, and
     // pulling it up to the window's edge to chase a platform control would bend
     // the app's own spacing around one OS's chrome. The lights are moved to
@@ -87,7 +87,7 @@ export default function SidebarHeader() {
     // correct on a band with no children — see `WindowDragBar`.
     <SidebarHeaderShell
       data-tauri-drag-region="deep"
-      className="flex-row items-center justify-end gap-1 pt-[7px]">
+      className={`flex-row items-center gap-1 pt-[7px] ${isWindowsDesktop() ? 'justify-center' : 'justify-end'}`}>
       <div className="flex items-center gap-0.5">
         {/* Community Discord — opens the invite in the system browser. This slot
             held the keyboard-shortcuts help; that directory is still one

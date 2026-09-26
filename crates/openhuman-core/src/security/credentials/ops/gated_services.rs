@@ -80,7 +80,8 @@ pub async fn start_credential_gated_services(config: &Config) {
     // its first agent build warms the correctly scoped cache instead.
     if !is_embedder_host() {
         let skills_workspace = config.workspace_dir.clone();
-        let _ = tokio::task::spawn_blocking(move || {
+        // Detached on purpose: the warm-up must not delay startup.
+        tokio::task::spawn_blocking(move || {
             let count = crate::skills::load_workflow_metadata(&skills_workspace).len();
             log::debug!("[services] skill metadata cache warmed entries={count}");
         });

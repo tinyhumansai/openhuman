@@ -268,6 +268,7 @@ impl HarnessStatusStore for FileStatusStore {
 pub(crate) struct TurnJournal {
     run_id: RunId,
     status_store: Arc<FileStatusStore>,
+    event_sink: Arc<JournalSink>,
     /// The in-flight status snapshot, mutated in place to `completed`/`failed`.
     status: Mutex<HarnessRunStatus>,
 }
@@ -283,6 +284,7 @@ impl TurnJournal {
 
     /// Best-effort terminal write: mark the run completed and persist. Non-fatal.
     pub(crate) async fn finish_completed(&self) {
+        self.event_sink.flush();
         let snapshot = {
             let mut guard = self.status.lock().unwrap();
             guard.mark_completed();
@@ -300,6 +302,7 @@ impl TurnJournal {
     /// Best-effort terminal write: mark the run failed (recording `error`) and
     /// persist. Non-fatal.
     pub(crate) async fn finish_failed(&self, error: &str) {
+        self.event_sink.flush();
         let snapshot = {
             let mut guard = self.status.lock().unwrap();
             guard.mark_failed(error);
@@ -357,8 +360,8 @@ pub(crate) async fn attach_turn_journal(
     // `events` was seeded with `with_stream_id(run_id)`, every persisted
     // observation's `event_id` is the stable `{run_id}-evt-{offset}`.
     let journal: Arc<dyn HarnessEventJournal> = Arc::new(StoreEventJournal::new(stores.journal));
-    let journal_sink = JournalSink::new(journal, run_id.clone());
-    let redacting = RedactingSink::new(Arc::new(journal_sink), openhuman_redaction_secrets());
+    let journal_sink = Arc::new(JournalSink::new(journal, run_id.clone()));
+    let redacting = RedactingSink::new(journal_sink.clone(), openhuman_redaction_secrets());
 
     // FanOutSink is the durable-observer composition seam (05.2 adds graph sinks
     // here). Subscribing it as its own listener leaves the bridge subscription
@@ -389,6 +392,7 @@ pub(crate) async fn attach_turn_journal(
     Some(TurnJournal {
         run_id,
         status_store,
+        event_sink: journal_sink,
         status: Mutex::new(status),
     })
 }

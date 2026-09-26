@@ -88,6 +88,19 @@ fn render(def: &AgentDefinition, definitions: &[AgentDefinition]) -> String {
 /// register (a disabled browser, say) therefore go unexamined — the invariant
 /// can miss, but it cannot misfire.
 fn tool_universe() -> BTreeSet<String> {
+    registered_tools()
+        .iter()
+        .map(|t| t.name().to_string())
+        .chain(
+            crate::tools::toolpacks::all_packed_tool_names()
+                .into_iter()
+                .map(str::to_string),
+        )
+        .collect()
+}
+
+/// Every tool this build registers, in a throwaway workspace.
+fn registered_tools() -> Vec<Box<dyn tinytools::Tool>> {
     let tmp = tempfile::TempDir::new().expect("temp dir");
     let config = crate::config::Config {
         workspace_dir: tmp.path().join("workspace"),
@@ -106,14 +119,6 @@ fn tool_universe() -> BTreeSet<String> {
         &config,
     );
     tools
-        .iter()
-        .map(|t| t.name().to_string())
-        .chain(
-            crate::tools::toolpacks::all_packed_tool_names()
-                .into_iter()
-                .map(str::to_string),
-        )
-        .collect()
 }
 
 /// Is `tool` on `def`'s belt at all (every tool, for a wildcard)?
@@ -203,6 +208,39 @@ pub(super) fn names_presented_as_callable<'a>(
         .collect()
 }
 
+/// A **Deferred** row is only honest while its tool really is deferred and the
+/// prompt really gives the route. Pin both, so a tool promoted onto the belt,
+/// or a prompt that drops the `tool_search` hint, fails here instead of
+/// leaving a stale excuse in [`KNOWN_UNCALLABLE`].
+#[test]
+fn deferred_rows_name_deferred_tools_the_prompt_routes_through_tool_search() {
+    let tools = registered_tools();
+    let defs = load_builtins().expect("built-ins load");
+    let deferred = KNOWN_UNCALLABLE
+        .iter()
+        .filter(|(_, _, why)| why.starts_with("`ToolExposure::Deferred`"));
+    for (agent, tool, _) in deferred {
+        // Feature-gated out of this build: the row cannot fire either.
+        let Some(registered) = tools.iter().find(|t| t.name() == *tool) else {
+            continue;
+        };
+        assert_eq!(
+            registered.exposure(),
+            tinytools::ToolExposure::Deferred,
+            "`{tool}` is listed as Deferred for `{agent}` but is not deferred"
+        );
+        let def = defs
+            .iter()
+            .find(|d| d.id == *agent)
+            .unwrap_or_else(|| panic!("Deferred row names unknown agent `{agent}`"));
+        let prompt = render(def, &defs);
+        assert!(
+            prompt.contains("`tool_search`") && prompt.contains(&format!("`{tool}`")),
+            "`{agent}`'s prompt must name `{tool}` with its route, `tool_search`"
+        );
+    }
+}
+
 /// Hits [`every_prompt_names_only_tools_its_agent_can_call`] tolerates, as
 /// `(agent, tool, why)`; agent `*` matches any agent.
 ///
@@ -213,6 +251,9 @@ pub(super) fn names_presented_as_callable<'a>(
 ///   defect waiting on a prompt or belt fix; none may be added.
 /// * **Collision** — the backticked word is also a tool name but is used as
 ///   something else (a node kind, an argument, an example). No fix is owed.
+/// * **Deferred** — a `ToolExposure::Deferred` tool the prompt names together
+///   with its route, `tool_search`, which makes it callable by name afterwards.
+///   It is off the belt by design, so no fix is owed.
 const KNOWN_UNCALLABLE: &[(&str, &str, &str)] = &[
     // Real.
     (
@@ -272,6 +313,12 @@ const KNOWN_UNCALLABLE: &[(&str, &str, &str)] = &[
     ),
     ("flow_discovery", "http_request", "a flow node kind"),
     ("flow_discovery", "schedule", "a flow trigger field"),
+    // Deferred.
+    (
+        "orchestrator",
+        "desktop_goal",
+        "`ToolExposure::Deferred`; the prompt routes it through `tool_search`",
+    ),
 ];
 
 /// A prompt must never teach a call the agent cannot make.

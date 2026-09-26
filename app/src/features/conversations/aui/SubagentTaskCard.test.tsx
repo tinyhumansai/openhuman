@@ -1,7 +1,7 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { SubagentActivity } from '../../../store/chatRuntimeSlice';
+import { type SubagentActivity, subagentCancelResolved } from '../../../store/chatRuntimeSlice';
 import { SubagentTaskCard } from './SubagentTaskCard';
 
 // The nested transcript's MessagePrimitive needs a ThreadPrimitive.Viewport.
@@ -15,6 +15,12 @@ vi.mock('@assistant-ui/react', async importActual => ({
   ...(await importActual<typeof import('@assistant-ui/react')>()),
   useAui: () => ({ thread: { append } }),
 }));
+
+const dispatch = vi.hoisted(() => vi.fn());
+vi.mock('../../../store/hooks', () => ({ useAppDispatch: () => dispatch }));
+
+const cancel = vi.hoisted(() => vi.fn());
+vi.mock('../../../services/api/subagentApi', () => ({ subagentApi: { cancel } }));
 
 const activity: SubagentActivity = {
   taskId: 'sub-1',
@@ -111,4 +117,40 @@ describe('SubagentTaskCard', () => {
     });
     expect(screen.getByTestId('subagent-answer-sent')).toBeInTheDocument();
   });
+
+  // The card has no other signal for a run the core aborted (the aborted task
+  // never reports) or one that already ended: the cancel answer must settle it,
+  // or the spinner and a dead Cancel button stay forever.
+  it.each([
+    { cancelled: true, outcome: undefined },
+    { cancelled: false, outcome: 'failed' as const },
+  ])(
+    'settles the card from the core cancel answer (cancelled=$cancelled)',
+    async ({ cancelled, outcome }) => {
+      dispatch.mockClear();
+      cancel.mockResolvedValueOnce({ cancelled, taskId: 'sub-1', outcome });
+      render(
+        <SubagentTaskCard
+          type="tool-call"
+          toolName="task"
+          toolCallId="sub-1"
+          args={{ progress: activity } as never}
+          argsText="{}"
+          result={undefined}
+          status={{ type: 'running' }}
+          addResult={() => {}}
+          resume={() => {}}
+          respondToApproval={async () => {}}
+        />
+      );
+
+      fireEvent.click(screen.getByTestId('subagent-cancel-task'));
+      await waitFor(() =>
+        expect(dispatch).toHaveBeenCalledWith(
+          subagentCancelResolved({ taskId: 'sub-1', cancelled, outcome })
+        )
+      );
+      expect(cancel).toHaveBeenCalledWith('sub-1');
+    }
+  );
 });

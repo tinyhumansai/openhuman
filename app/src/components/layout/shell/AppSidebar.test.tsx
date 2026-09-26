@@ -5,6 +5,9 @@ import { renderWithProviders } from '../../../test/test-utils';
 import { SidebarProvider } from '../../ui';
 import AppSidebar from './AppSidebar';
 
+const mockIsWindowsDesktop = vi.fn(() => false);
+vi.mock('./WindowsWindowControls', () => ({ isWindowsDesktop: () => mockIsWindowsDesktop() }));
+
 /** `AppSidebar` reads `useSidebar()` — it must render inside a `<SidebarProvider>`. */
 function renderAppSidebar(
   options?: Parameters<typeof renderWithProviders>[1],
@@ -74,7 +77,10 @@ vi.mock('./SidebarAppRail', () => ({ default: () => null }));
 // bypassing the mocked SidebarHeader/SidebarNav above so the real collapsed
 // branch (drag strip, reopen trigger, CollapsedNavRail) is under test.
 describe('AppSidebar — collapsed rail', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIsWindowsDesktop.mockReturnValue(false);
+  });
 
   it('renders the reopen trigger and collapsed nav rail instead of the header/nav', () => {
     renderAppSidebar({ initialEntries: ['/chat'] }, { open: false });
@@ -90,6 +96,14 @@ describe('AppSidebar — collapsed rail', () => {
     const spacer = container.querySelector('.h-7.w-full.flex-none');
     expect(spacer).toBeInTheDocument();
     expect(spacer).toHaveClass('mb-2');
+  });
+
+  it('uses a smaller top gap for collapsed controls on Windows', () => {
+    mockIsWindowsDesktop.mockReturnValue(true);
+    const { container } = renderAppSidebar({ initialEntries: ['/chat'] }, { open: false });
+    const spacer = container.querySelector('.w-full.flex-none');
+    expect(spacer).toHaveClass('h-2', 'mb-1');
+    expect(screen.getByTestId('root-shell-reopen')).toBeInTheDocument();
   });
 
   // The drag region is the whole column, not just that strip. `drag.js` drags a

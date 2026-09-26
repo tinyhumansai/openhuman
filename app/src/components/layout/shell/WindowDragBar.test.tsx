@@ -6,13 +6,19 @@ import WindowDragBar, { WINDOW_DRAG_BAR_HEIGHT } from './WindowDragBar';
 // Both gates are mocked so we can drive every platform combination.
 const isMac = vi.fn();
 const isTauri = vi.fn();
+const isWindowsDesktop = vi.fn();
 vi.mock('../../../lib/commands/shortcut', () => ({ isMac: () => isMac() }));
 vi.mock('../../../utils/tauriCommands/common', () => ({ isTauri: () => isTauri() }));
+vi.mock('./WindowsWindowControls', () => ({
+  isWindowsDesktop: () => isWindowsDesktop(),
+  WINDOWS_WINDOW_CONTROLS_WIDTH: 138,
+}));
 
 describe('WindowDragBar', () => {
   beforeEach(() => {
     isMac.mockReset();
     isTauri.mockReset();
+    isWindowsDesktop.mockReset();
   });
   afterEach(cleanup);
 
@@ -23,6 +29,7 @@ describe('WindowDragBar', () => {
     const bar = container.querySelector('[data-tauri-drag-region]');
     expect(bar).not.toBeNull();
     expect((bar as HTMLElement).style.height).toBe(`${WINDOW_DRAG_BAR_HEIGHT}px`);
+    expect((bar as HTMLElement).style.left).toBe('428px');
     expect((bar as HTMLElement).className).toContain('absolute');
     expect((bar as HTMLElement).className).toContain('bg-transparent');
   });
@@ -54,5 +61,15 @@ describe('WindowDragBar', () => {
     isTauri.mockReturnValue(true);
     const { container } = render(<WindowDragBar />);
     expect(container.querySelector('[data-tauri-drag-region]')).toBeNull();
+  });
+
+  it('leaves room for the custom window controls on Windows', () => {
+    isMac.mockReturnValue(false);
+    isTauri.mockReturnValue(true);
+    isWindowsDesktop.mockReturnValue(true);
+    const { container } = render(<WindowDragBar />);
+    const bar = container.querySelector('[data-tauri-drag-region]') as HTMLElement;
+    expect(bar).not.toBeNull();
+    expect(bar.style.right).toBe('138px');
   });
 });

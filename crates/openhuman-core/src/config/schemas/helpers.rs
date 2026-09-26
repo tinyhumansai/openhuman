@@ -113,6 +113,13 @@ pub(super) struct AnalyticsSettingsUpdate {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct SearchSettingsUpdate {
+    pub(super) enabled: Option<bool>,
+    pub(super) enabled_providers: Option<Vec<String>>,
+    pub(super) presentation: Option<String>,
+    pub(super) presentation_provider: Option<String>,
+    pub(super) parallel_route: Option<String>,
+    pub(super) gemini_route: Option<String>,
+    pub(super) gemini_api_key: Option<String>,
     pub(super) engine: Option<String>,
     pub(super) max_results: Option<usize>,
     pub(super) timeout_secs: Option<u64>,

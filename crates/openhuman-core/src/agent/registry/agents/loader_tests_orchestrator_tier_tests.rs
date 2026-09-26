@@ -159,32 +159,22 @@ fn orchestrator_subagents_include_crypto_agent() {
     );
 }
 
-/// Routing: the orchestrator must list `mcp_agent` in its `subagents`
-/// so a `delegate_use_mcp_server` tool is synthesised at agent-build
-/// time. Without this entry the orchestrator has no route to actually *use*
-/// an already-connected server's tools from chat (issue #3495).
+/// The orchestrator uses MCP registry tools directly, without spawning a worker.
 #[test]
-fn orchestrator_subagents_include_mcp_agent() {
+fn orchestrator_does_not_delegate_mcp_calls() {
     use crate::agent::harness::definition::SubagentEntry;
     let def = find("orchestrator");
     let listed = def.subagents.iter().any(|e| match e {
         SubagentEntry::AgentId(id) => id == "mcp_agent",
         _ => false,
     });
-    assert!(
-        listed,
-        "orchestrator.subagents must list `mcp_agent` so the routing \
-         layer can synthesise `delegate_use_mcp_server`"
-    );
+    assert!(!listed, "orchestrator should call MCP tools directly");
 }
 
 /// The `mcp` gate's load-bearing safety contract (#4799).
 ///
-/// `agent.toml` is DATA — it cannot be `#[cfg]`'d, so the orchestrator goes
-/// on listing `mcp_agent` in `subagents` even in builds where the `mcp`
-/// feature dropped `mcp_agent` from [`BUILTINS`]. That leaves a subagent id
-/// that resolves to nothing, and the whole gate rests on the loader
-/// TOLERATING it rather than failing the boot.
+/// `agent.toml` is data and can refer to a missing optional agent. The loader
+/// tolerates unknown ids rather than failing the boot.
 ///
 /// Two independent sites provide that tolerance today:
 /// * `orchestrator_tools::collect_orchestrator_tools` warns + skips
@@ -204,25 +194,15 @@ fn orchestrator_tolerates_unresolvable_subagent_id() {
         "definitely_not_a_compiled_in_agent".into(),
     ));
 
-    validate_tier_hierarchy(&[def]).expect(
-        "validate_tier_hierarchy must tolerate an unresolvable subagent id — the `mcp` \
-         feature gate relies on it (orchestrator's agent.toml lists `mcp_agent` even in \
-         builds that compile `mcp_agent` out)",
-    );
+    validate_tier_hierarchy(&[def])
+        .expect("validate_tier_hierarchy must tolerate an unresolvable subagent id");
 }
 
-/// Companion to the above, asserting the real gated shape rather than a
-/// synthetic id: with `mcp` compiled out, `mcp_agent` is genuinely absent
-/// from the loaded set while the orchestrator still lists it — and
-/// `load_builtins` (which runs `validate_tier_hierarchy` internally) must
-/// still succeed, i.e. the core boots.
+/// With `mcp` compiled out, the optional worker is absent and the core boots.
 #[test]
 #[cfg(not(feature = "mcp"))]
 fn orchestrator_tolerates_absent_mcp_agent() {
-    let defs = load_builtins().expect(
-        "load_builtins must succeed with `mcp` compiled out — the orchestrator's dangling \
-         `mcp_agent` subagent reference must not fail the boot",
-    );
+    let defs = load_builtins().expect("load_builtins must succeed with `mcp` compiled out");
 
     assert!(
         !defs.iter().any(|d| d.id == "mcp_agent"),
@@ -233,40 +213,35 @@ fn orchestrator_tolerates_absent_mcp_agent() {
         .iter()
         .find(|d| d.id == "orchestrator")
         .expect("orchestrator must still load");
-    assert!(
-        orchestrator.subagents.iter().any(|e| matches!(
-            e,
-            SubagentEntry::AgentId(id) if id == "mcp_agent"
-        )),
-        "orchestrator.agent.toml is data and still lists `mcp_agent` — this dangling \
-         reference is exactly what the loader must tolerate"
-    );
+    assert!(!orchestrator.subagents.iter().any(|e| matches!(
+        e,
+        SubagentEntry::AgentId(id) if id == "mcp_agent"
+    )));
 }
 
-/// The orchestrator reaches MCP servers and skills only through the specialists
-/// that own those families (#6302): no raw `mcp_registry_*` or
-/// `skill_registry_*` tool on its belt, and all four hand-off specialists in its
-/// sub-agent allowlist, so their hand-offs are synthesised. Enumerating and
-/// calling a connected server's tools stays `mcp_agent`'s job, which also keeps
-/// the chat agent's schema from ballooning with every server's toolset (#3495).
+/// MCP discovery and invocation are direct; skill setup and execution retain
+/// their specialist routes.
 #[test]
-fn orchestrator_reaches_mcp_and_skills_through_hand_offs_not_registry_tools() {
+fn orchestrator_reaches_mcp_directly_and_skills_through_hand_offs() {
     let def = find("orchestrator");
     match &def.tools {
         ToolScope::Named(tools) => {
-            let raw: Vec<&String> = tools
-                .iter()
-                .filter(|t| t.starts_with("mcp_registry_") || t.starts_with("skill_registry_"))
-                .collect();
-            assert!(
-                raw.is_empty(),
-                "orchestrator must not carry raw registry tools {raw:?}: it hands the task to \
-                 the specialist that owns the family"
-            );
+            for required in [
+                "mcp_registry_status",
+                "mcp_registry_list_tools",
+                "mcp_registry_connect",
+                "mcp_registry_tool_call",
+            ] {
+                assert!(
+                    tools.iter().any(|t| t == required),
+                    "missing direct MCP tool {required}"
+                );
+            }
+            assert!(!tools.iter().any(|t| t.starts_with("skill_registry_")));
         }
         ToolScope::Wildcard => panic!("orchestrator must have a Named tool scope"),
     }
-    for specialist in ["mcp_agent", "skill_setup", "skill_executor"] {
+    for specialist in ["skill_setup", "skill_executor"] {
         assert!(
             def.subagents
                 .iter()

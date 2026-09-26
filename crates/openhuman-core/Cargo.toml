@@ -332,6 +332,7 @@ tinychannels = { version = "0.1", features = ["relay-websocket"], optional = tru
 # --features flows` would carry `ureq` and the archive stack for a host that
 # never loads a module. The kernel-floor ratchet catches exactly that, and did.
 tinybus = { path = "../../vendor/tinybus/crates/tinybus", default-features = false, features = ["macros", "uds"] }
+tinysearch-bus = { path = "../../vendor/tinysearch/crates/tinysearch-bus", optional = true }
 tinydesktop-bus = { path = "../../vendor/tinydesktop/crates/tinydesktop-bus", optional = true }
 tinybrowser-bus = { path = "../../vendor/tinybrowser/crates/tinybrowser-bus" }
 tinybrowser-control = { path = "../../vendor/tinybrowser/crates/tinybrowser-control", default-features = false }
@@ -864,7 +865,7 @@ hosting = ["dep:tinyhosts"]
 # A loaded module is trusted in-process code with this process's privileges, and
 # tinybus never unloads one. See `crates/openhuman-core/src/modules/` before adding an entry
 # to the registry.
-modules = ["tinybus/modules", "dep:tinydesktop-bus"]
+modules = ["tinybus/modules", "dep:tinydesktop-bus", "dep:tinysearch-bus"]
 # Voice + audio_toolkit domains: STT/TTS providers, the standalone dictation
 # server, always-on listening, and podcast audio generation/email delivery.
 # Default-ON — the desktop app always ships with voice. Slim / headless builds

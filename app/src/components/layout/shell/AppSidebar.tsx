@@ -15,6 +15,7 @@ import CollapsedNavRail from './CollapsedNavRail';
 import SidebarHeader from './SidebarHeader';
 import SidebarNav from './SidebarNav';
 import { SidebarSlotOutlet } from './SidebarSlot';
+import { isWindowsDesktop } from './WindowsWindowControls';
 
 const log = debugFactory('sidebar');
 
@@ -107,8 +108,9 @@ export default function AppSidebar() {
             right-aligning, but this narrow rail can't — so reserve a strip the
             height of the window controls and start the rail below it, clear of
             the lights. It carries no drag region of its own: the column above
-            already drags, and this only has to hold that height open. */}
-        <div className="mb-2 h-7 w-full flex-none" />
+            already drags, and this only has to hold that height open. Windows
+            keeps a smaller gap so the first icon does not hug the edge. */}
+        <div className={`w-full flex-none ${isWindowsDesktop() ? 'mb-1 h-2' : 'mb-2 h-7'}`} />
         <Tooltip label={t('layout.showSidebar')}>
           {/* The primitive's own trigger, so reopening goes through the same
               controlled `onOpenChange` `RootShellLayout` drives every other

@@ -37,6 +37,8 @@
 //! call site that nothing checks.
 
 #[cfg(feature = "mcp")]
+pub mod action_tool;
+#[cfg(feature = "mcp")]
 pub mod bus;
 #[cfg(feature = "mcp")]
 pub mod config_doc;

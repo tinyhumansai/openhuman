@@ -649,6 +649,32 @@ fn a_packs_owner_keeps_its_belt_advertised() {
 }
 
 #[test]
+fn orchestrator_keeps_its_named_mcp_tools_advertised() {
+    let mut visible: HashSet<String> = [
+        "mcp_registry_status".to_string(),
+        "mcp_registry_list_tools".to_string(),
+        "mcp_registry_tool_call".to_string(),
+    ]
+    .into_iter()
+    .collect();
+    strip_packed_from_visible(&mut visible, "orchestrator");
+    assert!(visible.contains("mcp_registry_status"));
+    assert!(visible.contains("mcp_registry_list_tools"));
+    assert!(visible.contains("mcp_registry_tool_call"));
+}
+
+#[test]
+fn thread_renamed_orchestrator_keeps_its_mcp_tools_advertised() {
+    let pack = registry::pack("integrations").expect("MCP pack");
+    assert!(pack.is_owner("orchestrator_thread-mcp"));
+    assert!(!pack.is_owner("orchestratorish_thread-mcp"));
+
+    let mut visible: HashSet<String> = ["mcp_registry_tool_call".to_string()].into_iter().collect();
+    strip_packed_from_visible(&mut visible, "orchestrator_thread-mcp");
+    assert!(visible.contains("mcp_registry_tool_call"));
+}
+
+#[test]
 fn a_packs_owner_still_loses_every_other_pack() {
     // Ownership is per pack, not a blanket exemption: `settings_agent` owns
     // `system` and `app_update`, and must still lose `crypto`.

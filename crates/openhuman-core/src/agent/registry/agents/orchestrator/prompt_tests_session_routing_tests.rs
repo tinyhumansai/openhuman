@@ -157,24 +157,18 @@ fn prompt_routes_workflow_authoring_to_the_builder_not_use_skill() {
     }
 }
 
-/// #6302: the hand-off the skills and MCP sections name is the call this
+/// #6302: the hand-off the skills sections name is the call this
 /// session can make right now: direct when it is on the belt, the `use_skill`
 /// form when a pack holds it, and nothing when the agent has no route.
 #[cfg(all(feature = "mcp", feature = "skills"))]
 #[test]
-fn skill_and_mcp_sections_name_the_hand_off_this_session_can_call() {
+fn skill_sections_name_the_hand_off_this_session_can_call() {
     crate::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins()
         .expect("builtin agent definitions must load");
-    let belt: HashSet<String> = [
-        "setup_skills",
-        "run_skill",
-        "use_mcp_server",
-        "research",
-        "use_skill",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect();
+    let belt: HashSet<String> = ["setup_skills", "run_skill", "research", "use_skill"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     let mut ctx = ctx_with(&[]);
     ctx.agent_id = "orchestrator";
     ctx.visible_tool_names = &belt;
@@ -187,10 +181,7 @@ fn skill_and_mcp_sections_name_the_hand_off_this_session_can_call() {
         hand_off_route(&ctx, "skill_executor").as_deref(),
         Some("`run_skill`")
     );
-    assert_eq!(
-        hand_off_route(&ctx, "mcp_agent").as_deref(),
-        Some("`use_mcp_server`")
-    );
+    assert_eq!(hand_off_route(&ctx, "mcp_agent"), None);
     // Listed but held by a pack: name the call that actually reaches it.
     assert_eq!(
         hand_off_route(&ctx, "crypto_agent").as_deref(),
@@ -201,7 +192,7 @@ fn skill_and_mcp_sections_name_the_hand_off_this_session_can_call() {
 
     // The generated withheld block no longer lists the unpacked hand-offs.
     let block = render_withheld_specialists(&ctx);
-    for handoff in ["setup_skills", "run_skill", "use_mcp_server"] {
+    for handoff in ["setup_skills", "run_skill"] {
         assert!(
             !block.contains(handoff),
             "`{handoff}` is a direct tool and must not be listed as withheld:\n{block}"

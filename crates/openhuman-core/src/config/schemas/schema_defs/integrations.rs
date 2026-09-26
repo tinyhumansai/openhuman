@@ -9,11 +9,18 @@ pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
 "update_search_settings" => Some( ControllerSchema {
             namespace: "config",
             function: "update_search_settings",
-            description: "Update search engine selection and BYO API credentials.",
+            description: "Update search providers, presentation, routes, and private API credentials.",
             inputs: vec![
+                optional_bool("enabled", "Whether TinySearch is enabled globally."),
+                FieldSchema { name: "enabled_providers", ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(TypeSchema::String)))), comment: "Selected search providers; empty list disables all providers. Managed and direct Parallel share one route; explicit Parallel takes precedence.", required: false },
+                optional_string("presentation", "all_tools | router | one_provider."),
+                optional_string("presentation_provider", "Provider selected for one_provider or router default."),
+                optional_string("parallel_route", "direct | backend."),
+                optional_string("gemini_route", "direct | backend."),
+                optional_string("gemini_api_key", "Gemini direct API key (empty string clears)."),
                 optional_string(
                     "engine",
-                    "Active engine: disabled | managed | parallel | brave | querit | exa | tavily.",
+                    "Legacy engine selector; disabled still disables search.",
                 ),
                 FieldSchema {
                     name: "max_results",

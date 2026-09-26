@@ -29,15 +29,16 @@ fn subagent_content_is_withheld_when_capture_off() {
 }
 
 #[test]
-fn oversized_model_content_degrades_to_truncated_string() {
+fn oversized_model_content_remains_structured() {
     let big = "x".repeat(MAX_MODEL_CONTENT_CHARS + 100);
-    let captured = capture_model_content(&serde_json::json!({ "content": big }));
-    let rendered = match &captured {
-        serde_json::Value::String(s) => s.clone(),
-        other => other.to_string(),
-    };
-    assert!(rendered.chars().count() <= MAX_MODEL_CONTENT_CHARS + 64);
-    assert!(rendered.contains("truncated"));
+    let captured = capture_model_content(&serde_json::json!([
+        { "role": "system", "content": big },
+        { "role": "user", "content": "the latest question" },
+    ]));
+    let messages = captured.as_array().expect("messages stay structured");
+    assert_eq!(messages.last().unwrap()["role"], "user");
+    assert_eq!(messages.last().unwrap()["content"], "the latest question");
+    assert!(captured.to_string().chars().count() <= MAX_MODEL_CONTENT_CHARS + 128);
 }
 
 #[test]

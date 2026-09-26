@@ -23,7 +23,7 @@ fn, which returns `RpcOutcome<T>`.
 Each submodule follows the same shape: a `*SettingsPatch` struct with
 `Option<T>` fields (`None` = unchanged); an `apply_*(&mut Config, patch)` fn
 that mutates the given config, calls `Config::save()`, and returns the
-snapshot; a `load_and_apply_*(patch)` wrapper that calls
+settings or snapshot; a `load_and_apply_*(patch)` wrapper that calls
 `load_config_with_timeout` first; and a `get_*` fn that reads the relevant
 section back out, usually as `RpcOutcome<serde_json::Value>`. `ui.rs`'s
 dictation and voice-server mutators exist only in `load_and_apply_*` form.
@@ -55,6 +55,18 @@ dictation and voice-server mutators exist only in `load_and_apply_*` form.
   `set_onboarding_completed` / `get_onboarding_completed`,
   `workspace_onboarding_flag_exists` / `workspace_onboarding_flag_set` /
   `workspace_onboarding_flag_resolve`.
+
+## Search settings
+
+`apply_search_settings` accepts a global `enabled` switch, an explicit
+`enabled_providers` set, a presentation mode (`all_tools`, `router`, or
+`one_provider`), and direct/backend routes for Parallel and Gemini. Omitting
+`enabled_providers` migrates from saved keys, a current backend credential,
+and the separate TinyFish, Seltz, and SearXNG toggles. An explicit empty list
+selects no providers. The old `engine = "disabled"` setting still disables
+search. Both `get_search_settings` and the update response report only key
+presence booleans, never raw credentials. After saving, an already loaded
+TinySearch module is refreshed with a private configuration payload.
 
 ## Security-relevant behavior
 

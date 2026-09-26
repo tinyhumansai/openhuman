@@ -2342,6 +2342,24 @@ fn install_silent_x_error_handler() {
 fn install_silent_x_error_handler() {}
 
 pub fn run() {
+    #[cfg(windows)]
+    let context = {
+        let mut context = tauri::generate_context!();
+        if let Some(main) = context
+            .config_mut()
+            .app
+            .windows
+            .iter_mut()
+            .find(|window| window.label == "main")
+        {
+            main.decorations = false;
+            main.width = 800.0;
+            main.height = 720.0;
+        }
+        context
+    };
+    #[cfg(not(windows))]
+    let context = tauri::generate_context!();
     // Neutralise a broken inherited stderr *pipe* BEFORE any `eprintln!` can
     // fire. On Windows, when the GUI process inherits an stderr pipe whose
     // parent end later closes, the next stdlib stderr write fails with a
@@ -3045,6 +3063,23 @@ pub fn run() {
         .setup(move |app| {
             #[cfg(windows)]
             {
+                if let Ok(resource_dir) = app.path().resource_dir() {
+                    let bundled = resource_dir.join("bundled-modules");
+                    if bundled.is_dir() {
+                        if openhuman_core::modules::ops::set_bundled_releases_dir(bundled)
+                            .is_err()
+                        {
+                            log::warn!("[modules] bundled release directory was already set");
+                        }
+                    } else {
+                        log::warn!("[modules] installer has no bundled release directory");
+                    }
+                } else {
+                    log::warn!("[modules] installer resource directory is unavailable");
+                }
+            }
+            #[cfg(windows)]
+            {
                 // `register_all` writes HKCU\Software\Classes\openhuman so the
                 // browser can hand `openhuman://auth?...` callbacks back to
                 // the running instance. The plugin only returns an Err — and
@@ -3248,15 +3283,14 @@ pub fn run() {
                 // `setup()` returns, which is why clamping here alone is
                 // not enough.
                 window_state::install_dpi_guard(&window);
-                // No saved geometry (first launch, or the save is stale /
-                // belongs to a detached monitor) → open filling the work area
-                // rather than the modest default size from `tauri.conf.json`.
-                // `center_main` stays as the fallback for the case where no
-                // monitor resolves at all.
-                if !window_state::restore_main(&window)
-                    && !window_state::maximize_to_work_area(&window)
-                {
-                    window_state::center_main(&window);
+                // Windows starts at a compact near-square size. Other desktop
+                // targets keep their existing work-area first-launch layout.
+                if !window_state::restore_main(&window) {
+                    if cfg!(windows) {
+                        window_state::center_main(&window);
+                    } else if !window_state::maximize_to_work_area(&window) {
+                        window_state::center_main(&window);
+                    }
                 }
                 if !daemon_mode {
                     if let Err(err) = window.show() {
@@ -3487,7 +3521,7 @@ pub fn run() {
             loopback_oauth::stop_loopback_oauth_listener,
             claude_code::claude_code_login_launch
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application")
         .run(move |app_handle, event| match event {
             RunEvent::Ready => {
@@ -3538,51 +3572,20 @@ pub fn run() {
                     );
                 }
             }
-            // Windows: full hide-to-tray.
-            //
-            // PR #1548 routed Windows X click into the same prevent_close +
-            // `window.hide()` branch as macOS, but on Windows the vendored
-            // CEF runtime's WindowMessage::Hide / Minimize / Restore
-            // (`tauri-runtime-cef/src/cef_impl.rs`) only operate on a
-            // `cef::Window` internal handle that does not correspond to the
-            // visible `Chrome_WidgetWin_1` top-level frame — `ShowWindow`
-            // calls against it are silent no-ops. We bypass the runtime
-            // entirely and walk the OS window list to issue SW_HIDE / SW_SHOW
-            // directly on the matching top-level frame (issue #1607).
+            // Closing the Windows main window exits the desktop host and its
+            // in-process core.
             #[cfg(target_os = "windows")]
             RunEvent::WindowEvent {
                 label,
                 event: WindowEvent::CloseRequested { api, .. },
                 ..
             } if label == "main" => {
-                log::info!(
-                    "[window] close requested on main window — hiding to tray"
-                );
+                log::info!("[window] close requested on main window — exiting app");
                 api.prevent_close();
-                // Persist geometry now, while the window handle is still
-                // reachable. On Windows the hide below is a raw SW_HIDE on the
-                // OS frame, after which `get_webview_window("main")` returns
-                // `None` until the window is shown again (#1607). If the user
-                // then picks tray "Quit" while hidden, the ExitRequested save
-                // finds no window and nothing is persisted, so the next launch
-                // falls back to the default geometry (#4810). Saving here
-                // captures the last on-screen size/position before it becomes
-                // unreachable; ExitRequested still saves for the shown-window
-                // quit paths (`save_main` is best-effort and idempotent).
                 if let Some(window) = app_handle.get_webview_window("main") {
                     window_state::save_main(&window);
                 }
-                // Hide the OS top-level Chrome_WidgetWin_1 frame via
-                // EnumWindows + SW_HIDE — full hide-to-tray as PR #1548
-                // intended. `window.hide()` and `window.minimize()` through
-                // the vendored CEF runtime are no-ops on Windows because
-                // `WebviewWindow::hwnd()` returns a cef::Window proxy handle
-                // rather than the visible top-level frame; we walk the OS
-                // window list directly instead (#1607). SW_HIDE on the host
-                // frame cascades to all child HWNDs (including the CEF
-                // browser surface), so no separate `webview.hide()` is
-                // needed and `show_main_window` only has to issue SW_SHOW.
-                set_main_window_hidden(true);
+                app_handle.exit(0);
             }
             #[cfg(target_os = "macos")]
             RunEvent::Reopen { .. } => {

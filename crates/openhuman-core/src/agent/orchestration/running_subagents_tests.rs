@@ -1,3 +1,4 @@
+use super::cancel::FinishedOutcome;
 use super::*;
 use crate::agent::orchestration::fleet_tools::FleetToolSet;
 use crate::agent::orchestration::running_subagents::registry::DETACHED_LEDGER_TIMEOUT_MS;
@@ -541,6 +542,10 @@ async fn cancel_by_task_returns_metadata_and_removes_entry() {
     shared_steering_registry().register(task_id.clone(), SteeringHandle::allow_all());
 
     let meta = cancel_by_task("task-cbt").expect("known task should cancel");
+    assert_eq!(
+        meta.already_finished, None,
+        "a running task is a real cancel"
+    );
     assert_eq!(meta.agent_id, "researcher");
     assert_eq!(meta.parent_session, "session-Z");
     assert_eq!(meta.parent_thread_id.as_deref(), Some("thread-cbt"));
@@ -557,6 +562,45 @@ async fn cancel_by_task_returns_metadata_and_removes_entry() {
     assert!(cancel_by_task("task-cbt").is_none());
     // Unknown ids are simply None.
     assert!(cancel_by_task("never-existed").is_none());
+}
+
+/// A finished run stays registered until the terminal sweep, so a late
+/// "Cancel" still finds it. It must come back flagged, so the RPC does not
+/// rewrite a completed session as "cancelled by user" — while a run paused on
+/// the user is still a real cancel.
+#[tokio::test]
+async fn cancel_by_task_flags_a_run_that_already_finished() {
+    let _guard = test_guard();
+    let cases = [
+        (
+            "task-cbt-done",
+            SubagentStatus::Completed {
+                output: "ok".into(),
+                iterations: 6,
+            },
+            Some(FinishedOutcome::Completed),
+        ),
+        (
+            "task-cbt-failed",
+            SubagentStatus::Failed {
+                error: "boom".into(),
+            },
+            Some(FinishedOutcome::Failed),
+        ),
+        (
+            "task-cbt-paused",
+            SubagentStatus::AwaitingUser {
+                question: "which?".into(),
+            },
+            None,
+        ),
+    ];
+    for (task_id, status, finished) in cases {
+        let tx = register_test(task_id, "session-F", run_queue());
+        tx.send(status).expect("status channel open");
+        let meta = cancel_by_task(task_id).expect("registered task is found");
+        assert_eq!(meta.already_finished, finished, "{task_id}");
+    }
 }
 
 #[tokio::test]

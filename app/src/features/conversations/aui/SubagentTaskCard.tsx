@@ -32,7 +32,8 @@ import WorktreeActions from '../../../components/worktree/WorktreeActions';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { subagentMessages } from '../../../providers/assistantUiMessages';
 import { subagentApi } from '../../../services/api/subagentApi';
-import type { SubagentActivity } from '../../../store/chatRuntimeSlice';
+import { type SubagentActivity, subagentCancelResolved } from '../../../store/chatRuntimeSlice';
+import { useAppDispatch } from '../../../store/hooks';
 import { basename } from '../../../utils/pathUtils';
 
 function asSubagentActivity(value: unknown): SubagentActivity | undefined {
@@ -151,6 +152,7 @@ function AwaitingUserActions({ activity }: { activity: SubagentActivity }) {
  */
 function CancelTaskAction({ taskId }: { taskId: string }) {
   const { t } = useT();
+  const dispatch = useAppDispatch();
   const [cancelling, setCancelling] = useState(false);
   const [failed, setFailed] = useState(false);
 
@@ -159,13 +161,19 @@ function CancelTaskAction({ taskId }: { taskId: string }) {
     setCancelling(true);
     void subagentApi
       .cancel(taskId)
+      // The core's answer is the only signal this card gets for a run it just
+      // aborted or that already ended, so settle on it rather than waiting for
+      // a `subagent_failed` that may never come.
+      .then(({ cancelled, outcome }) => {
+        dispatch(subagentCancelResolved({ taskId, cancelled, outcome }));
+      })
       .catch(() => {
         setFailed(true);
       })
       .finally(() => {
         setCancelling(false);
       });
-  }, [taskId]);
+  }, [dispatch, taskId]);
 
   return (
     <div className="flex flex-col gap-1">

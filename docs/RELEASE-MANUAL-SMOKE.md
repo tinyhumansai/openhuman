@@ -35,7 +35,7 @@ Applies to every release, all platforms.
 
 ### Browser module
 
-- [ ] **Browser readiness and setup** — Open Connections → Integrations → Browser Control on each desktop platform and verify the Early Alpha notice. Expected: the checksum-pinned TinyBrowser module downloads and passes TinyBus admission, module and Chrome readiness are reported separately, Test works, and saved viewport, profile, download folder, task limits, and allowed websites survive relaunch.
+- [ ] **Browser readiness and setup** — Open Connections → Integrations → Browser Control on each desktop platform and verify the Early Alpha notice. Expected: the checksum-pinned TinyBrowser module loads from the installer on Windows or the release cache on other platforms and passes TinyBus admission, module and Chrome readiness are reported separately, Test works, and saved viewport, profile, download folder, task limits, and allowed websites survive relaunch.
 - [ ] **Browser task and policy** — With an allowed Selenium test site, use a conversation to submit its web form and download File 1. Expected: `tool_search` discovers `browser`, consequential actions wait for the exact host approval, the submitted page shows “Received!”, and a completed download is verified on disk. Then restrict allowed websites and confirm a disallowed navigation is blocked.
 
 ### Wallet balances
@@ -68,6 +68,8 @@ Applies to every release, all platforms.
 
 ### Windows
 
+- [ ] **Bundled native modules work offline** — Install from the signed MSI or NSIS package on a fresh Windows account, disconnect the network, then open Desktop Control and Browser Control and load their modules. Expected: both modules reach Ready without a GitHub request, and the log records `[modules] loaded '<id>' from the installer bundle`. Reconnect before testing hosted features. Check both installer formats when both are shipped.
+- [ ] **Custom window frame and exit** — Launch with no saved window geometry. Expected: the window opens near 800 × 720 with compact rounded corners; the top-right controls minimize, maximize/restore, and close. Drag the window from the top strip on both the loading screen and main app. Closing exits the host and its embedded core (no lingering `OpenHuman.exe` or core listener).
 - [ ] **SmartScreen does not block install** — Run the installer from a fresh download. Expected: SmartScreen passes (signed binary). If `Windows protected your PC` appears, the EV signature is missing or the reputation has not built up — escalate before shipping.
 - [ ] **Installer creates Start Menu + Desktop shortcuts** — Defaults preserved. Expected: both shortcuts launch the app.
 - [ ] **Chat links preserve the desktop UI** — Click an HTTPS PR link in an assistant reply. Expected: the default browser opens the PR and OpenHuman stays on the same conversation. If the OS opener fails, the app must remain visible instead of navigating to the remote page. Check internal chat/settings navigation still works.

@@ -24,6 +24,10 @@ import KeyringConsentOverlay from './components/keyring/KeyringConsentOverlay';
 import AppSidebar from './components/layout/shell/AppSidebar';
 import RootShellLayout from './components/layout/shell/RootShellLayout';
 import { SidebarSlotProvider } from './components/layout/shell/SidebarSlot';
+import WindowDragBar from './components/layout/shell/WindowDragBar';
+import WindowsWindowControls, {
+  isWindowsDesktop,
+} from './components/layout/shell/WindowsWindowControls';
 import LocalAIDownloadSnackbar from './components/LocalAIDownloadSnackbar';
 import NoticeCenter from './components/notices/NoticeCenter';
 import OpenhumanLinkModal from './components/OpenhumanLinkModal';
@@ -116,48 +120,52 @@ function App() {
    * @end-source:provider-chain
    */
   return (
-    <Sentry.ErrorBoundary
-      fallback={({ error, componentStack, resetError, eventId }) => (
-        <ErrorFallbackScreen
-          error={error}
-          componentStack={componentStack}
-          eventId={eventId}
-          onReset={resetError}
-        />
-      )}>
-      <Provider store={store}>
-        <PersistGate loading={<PersistRehydrationScreen />} persistor={persistor}>
-          <ThemeProvider>
-            <I18nProvider>
-              <BootCheckGate>
-                <CoreStateProvider>
-                  {socketWrapped(
-                    <ChatRuntimeProvider>
-                      <Router>
-                        <CommandProvider>
-                          <ServiceBlockingGate>
-                            <AnalyticsPageTracker />
-                            <AppShell />
-                            <SecurityBanner />
-                            {!onMobile && <DictationHotkeyManager />}
-                            {!onMobile && <PttHotkeyManager />}
-                            {!onMobile && <LocalAIDownloadSnackbar />}
-                            {!onMobile && <AppUpdatePrompt />}
-                            <KeyringConsentOverlay />
-                            <HarnessInitOverlay />
-                            <AnnouncementGate />
-                          </ServiceBlockingGate>
-                        </CommandProvider>
-                      </Router>
-                    </ChatRuntimeProvider>
-                  )}
-                </CoreStateProvider>
-              </BootCheckGate>
-            </I18nProvider>
-          </ThemeProvider>
-        </PersistGate>
-      </Provider>
-    </Sentry.ErrorBoundary>
+    <div className={`relative h-screen overflow-hidden ${isWindowsDesktop() ? 'rounded-xs' : ''}`}>
+      {!onMobile && <WindowDragBar />}
+      <Sentry.ErrorBoundary
+        fallback={({ error, componentStack, resetError, eventId }) => (
+          <ErrorFallbackScreen
+            error={error}
+            componentStack={componentStack}
+            eventId={eventId}
+            onReset={resetError}
+          />
+        )}>
+        <Provider store={store}>
+          <PersistGate loading={<PersistRehydrationScreen />} persistor={persistor}>
+            <ThemeProvider>
+              <I18nProvider>
+                {!onMobile && <WindowsWindowControls />}
+                <BootCheckGate>
+                  <CoreStateProvider>
+                    {socketWrapped(
+                      <ChatRuntimeProvider>
+                        <Router>
+                          <CommandProvider>
+                            <ServiceBlockingGate>
+                              <AnalyticsPageTracker />
+                              <AppShell />
+                              <SecurityBanner />
+                              {!onMobile && <DictationHotkeyManager />}
+                              {!onMobile && <PttHotkeyManager />}
+                              {!onMobile && <LocalAIDownloadSnackbar />}
+                              {!onMobile && <AppUpdatePrompt />}
+                              <KeyringConsentOverlay />
+                              <HarnessInitOverlay />
+                              <AnnouncementGate />
+                            </ServiceBlockingGate>
+                          </CommandProvider>
+                        </Router>
+                      </ChatRuntimeProvider>
+                    )}
+                  </CoreStateProvider>
+                </BootCheckGate>
+              </I18nProvider>
+            </ThemeProvider>
+          </PersistGate>
+        </Provider>
+      </Sentry.ErrorBoundary>
+    </div>
   );
 }
 

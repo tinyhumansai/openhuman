@@ -126,7 +126,7 @@ pub fn tool_results(request: &wiremock::Request) -> String {
                         // The harness may prepend continuation guidance and
                         // the active user request before the tool-result block.
                         Some("user") if content.contains(PROMPT_TOOL_RESULTS_PREFIX) => {
-                            Some(content)
+                            Some(content.split_once(PROMPT_TOOL_RESULTS_PREFIX)?.1.to_string())
                         }
                         _ => None,
                     }

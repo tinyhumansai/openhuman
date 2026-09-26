@@ -56,7 +56,13 @@ fn all_tools_includes_browser_when_enabled() {
         &cfg,
     );
     let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
-    assert!(names.contains(&"browser_open"));
+    // The browser tools are the `modules` gate's (tools/ops.rs): present when
+    // it is compiled in, absent in a gates-off build.
+    assert_eq!(
+        names.contains(&"browser_open"),
+        cfg!(feature = "modules"),
+        "browser_open follows the `modules` gate"
+    );
     assert!(names.contains(&"pushover"));
     assert!(names.contains(&"proxy_config"));
 }

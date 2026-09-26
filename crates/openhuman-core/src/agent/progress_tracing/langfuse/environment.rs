@@ -133,7 +133,7 @@ static SKIP_LOGGED: std::sync::Once = std::sync::Once::new();
 /// caller receives `Ok(())`: skipping is a successful no-op, and returning
 /// `Err` would make the caller log the same line on every turn, which is the
 /// thing being avoided.
-pub(super) fn skip_push(environment: &str) -> bool {
+pub(crate) fn skip_push(environment: &str) -> bool {
     if push_allowed(environment) {
         return false;
     }

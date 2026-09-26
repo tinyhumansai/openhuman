@@ -244,6 +244,14 @@ pub(super) fn recovery_policy(
     if body_level_failure {
         return Some(("validation", 1));
     }
+    // An unknown-tool answer is a wrong call the model can correct, and it
+    // echoes the attempted name and every valid tool name. Keyword sniffing
+    // below would read those names as the failure — `forbidden_tool` or a
+    // name carrying `unauthorized` became `authentication`, a zero-retry
+    // class, and halted the run on its first wrong guess.
+    if error.trim_start().starts_with("unknown tool `") {
+        return Some(("validation", 1));
+    }
     // A tool-owned JSON error contract is less ambiguous than rendered prose.
     // Read only explicit status/code fields; arbitrary response data is not a
     // failure signal (this function is called only for `is_error` results).

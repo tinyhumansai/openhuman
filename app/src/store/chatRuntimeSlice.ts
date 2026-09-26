@@ -1965,6 +1965,54 @@ const chatRuntimeSlice = createSlice({
         if (isDirty !== undefined) s.isDirty = isDirty;
       }
     },
+    /**
+     * Settle a delegation card from the core's answer to "Cancel task".
+     *
+     * `cancelled: true` — the run was aborted. `cancelled: false` — nothing is
+     * running under that id any more, and `outcome` says how it had ended:
+     * `completed` / `failed` as the core recorded it, or `unknown` when the
+     * core no longer knows the task. Unknown settles as `cancelled` — the user
+     * asked to stop it and nothing is running — never as a success it cannot
+     * vouch for. Without this a card whose terminal event was missed kept a
+     * live spinner and a Cancel button that answered "not running" forever.
+     * Matched by task id across every thread — live, settled, and restored
+     * past-turn timelines — because the card knows no row id.
+     */
+    subagentCancelResolved: (
+      state,
+      action: PayloadAction<{
+        taskId: string;
+        cancelled: boolean;
+        outcome?: 'completed' | 'failed' | 'unknown';
+      }>
+    ) => {
+      const { taskId, cancelled, outcome } = action.payload;
+      const status: ToolTimelineEntryStatus = cancelled
+        ? 'cancelled'
+        : outcome === 'completed'
+          ? 'success'
+          : outcome === 'failed'
+            ? 'error'
+            : 'cancelled';
+      // The nested activity drives the card's own transcript status, so it
+      // settles with the row (its vocabulary: completed / failed / cancelled).
+      const activityStatus =
+        status === 'success' ? 'completed' : status === 'error' ? 'failed' : 'cancelled';
+      const matches = (e: ToolTimelineEntry) =>
+        e.subagent?.taskId === taskId && isActiveTimelineStatus(e.status);
+      const settle = (entry: ToolTimelineEntry) => {
+        entry.status = status;
+        if (entry.subagent) entry.subagent.status = activityStatus;
+      };
+      for (const threadId of Object.keys(state.toolTimelineByThread).concat(
+        Object.keys(state.settledTurnsByThread)
+      )) {
+        subagentRows(state, threadId, matches).forEach(settle);
+      }
+      for (const timelines of Object.values(state.turnTimelinesByThread)) {
+        Object.values(timelines).flat().filter(matches).forEach(settle);
+      }
+    },
     subagentIterationStarted: (
       state,
       action: PayloadAction<{
@@ -2850,6 +2898,7 @@ export const {
   streamDeltaReceived,
   subagentAwaitingUser,
   subagentDone,
+  subagentCancelResolved,
   subagentIterationStarted,
   subagentSpawned,
   subagentToolCallReceived,

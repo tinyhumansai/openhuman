@@ -30,6 +30,7 @@ keep working. The Rust module path is `crate::mcp::registry`.
 | `supervisor_events.rs` / `supervisor_events_tests.rs` | Maps a supervisor tick's `TickReport` into `DomainEvent`s. |
 | `bus.rs` / `bus_tests.rs` | `McpClientEventSubscriber` — logs lifecycle events for observability. |
 | `tools.rs` / `tools_tests.rs` | Agent-facing `mcp_registry_*` tools, thin shims over `ops.rs`. |
+| `action_tool.rs` / `action_tool_tests.rs` | One deferred agent tool per action on a connected server. Stable names and sanitized schemas enter `tool_search`; execution checks the current connection and routes through `ops.rs`. |
 | `helpers.rs` | Shared identifier validation, workspace-service resolution, and env-key injection used by the handlers. |
 | `stub.rs` | The `mcp`-less mirror of the always-on surface: `all_mcp_registry_registered_controllers` (empty), `boot`, `bus`, `supervisor`, `oauth`, and the three `connections` lookups always-on callers name. |
 

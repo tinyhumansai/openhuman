@@ -58,6 +58,28 @@ fn build_includes_connected_integrations_in_executor_voice() {
 }
 
 #[test]
+fn build_omits_permission_toggle_appendix() {
+    let integrations = vec![ConnectedIntegration {
+        toolkit: "gmail".into(),
+        description: "Email access.".into(),
+        tools: Vec::new(),
+        gated_tools: vec![crate::agent::prompts::GatedIntegrationTool {
+            name: "GMAIL_DELETE_MESSAGE".into(),
+            description: "Delete a message".into(),
+            required_scope: "delete".into(),
+            unlock_paths: vec!["Connections → Gmail → Delete".into()],
+        }],
+        connected: true,
+        connections: Vec::new(),
+        non_active_status: None,
+    }];
+    let body = build(&ctx_with(&integrations)).unwrap();
+    assert!(body.contains("## Connected Integrations"));
+    assert!(!body.contains("Additional capabilities behind a permission toggle"));
+    assert!(!body.contains("GMAIL_DELETE_MESSAGE"));
+}
+
+#[test]
 fn build_distinguishes_scope_errors_from_disconnected_auth() {
     let body = build(&ctx_with(&[])).unwrap();
     assert!(body.contains("[composio:error:insufficient_scope]"));
