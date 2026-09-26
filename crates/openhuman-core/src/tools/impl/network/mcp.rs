@@ -372,7 +372,14 @@ impl SecretScrubber {
                 let entries = std::mem::take(map);
                 for (key, mut item) in entries {
                     self.scrub_value(&mut item);
-                    map.insert(self.scrub(&key), item);
+                    let base_key = self.scrub(&key);
+                    let mut unique_key = base_key.clone();
+                    let mut suffix = 2;
+                    while map.contains_key(&unique_key) {
+                        unique_key = format!("{base_key} ({suffix})");
+                        suffix += 1;
+                    }
+                    map.insert(unique_key, item);
                 }
             }
             _ => {}
