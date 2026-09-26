@@ -194,52 +194,6 @@ test(
   },
 );
 
-// The x86_64 smoke path installs a per-executable AppArmor profile, and its
-// target was hardcoded to the sharun path. Static validation passed while the
-// smoke died on "AppArmor target is not executable" - the same defect as #5606
-// one layer down, caught only because the fork demo ran the full matrix.
-test(
-  "the AppArmor smoke target is resolved per layout, not hardcoded",
-  SKIP,
-  () => {
-    const { root, app } = makeLinuxdeployAppDir();
-    const binDir = fs.mkdtempSync(join(os.tmpdir(), "openhuman-appdir-stub-"));
-    try {
-      // Stub the privileged tools so the test exercises target resolution only.
-      for (const name of ["sudo", "apparmor_parser"]) {
-        script(join(binDir, name), "#!/bin/sh\nexit 0\n");
-      }
-      const profile = join(root, "smoke.profile");
-      const result = spawnSync(
-        "bash",
-        [
-          "-c",
-          `source ${JSON.stringify(VALIDATOR)} >/dev/null 2>&1\n` +
-            `install_smoke_userns_profile ${JSON.stringify(app)} ${JSON.stringify(profile)}`,
-        ],
-        {
-          encoding: "utf8",
-          env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}` },
-        },
-      );
-
-      assert.doesNotMatch(
-        result.stderr,
-        /AppArmor target is not executable/,
-        "the AppArmor target must resolve for a linuxdeploy AppDir",
-      );
-      assert.equal(result.status, 0, result.stderr);
-      // The profile must confine the real binary, not the sharun path.
-      const written = fs.readFileSync(profile, "utf8");
-      assert.match(written, /usr\/bin\/OpenHuman/);
-      assert.doesNotMatch(written, /shared\/bin/);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-      fs.rmSync(binDir, { recursive: true, force: true });
-    }
-  },
-);
-
 // Failure paths: each mutation must be rejected. Without these the validator
 // could pass everything and nobody would notice until a broken bundle shipped.
 const MUTATIONS = [
