@@ -293,7 +293,54 @@ async fn successful_results_redact_echoed_secrets() {
         assert!(!result.is_error, "{kind}: {rendered}");
         assert!(rendered.contains("whoami"), "{kind}: {rendered}");
         assert!(!rendered.contains(SECRET), "{kind} leaked: {rendered}");
+        assert!(!rendered.contains(&echo), "{kind} leaked: {rendered}");
     }
+}
+
+#[tokio::test]
+async fn basic_auth_username_is_redacted_from_output() {
+    let username = "svc-user";
+    let auth = crate::config::McpAuthConfig::Basic {
+        username: username.into(),
+        password: SECRET.into(),
+    };
+
+    let server = echoing_server(username, None).await;
+    let registry = registry_with(&format!("{}/mcp", server.uri()), auth.clone());
+
+    let result = call_tool(registry.clone())
+        .execute(call_args())
+        .await
+        .expect("execute");
+    let rendered = full_output(&result);
+    assert!(!result.is_error, "{rendered}");
+    assert!(
+        !rendered.contains(username),
+        "call leaked username: {rendered}"
+    );
+
+    let result = McpListToolsTool::new(registry)
+        .execute(json!({ "server": "docs" }))
+        .await
+        .expect("execute");
+    let rendered = full_output(&result);
+    assert!(
+        !rendered.contains(username),
+        "list leaked username: {rendered}"
+    );
+
+    let server = echoing_server(username, Some("tools/call")).await;
+    let registry = registry_with(&format!("{}/mcp", server.uri()), auth);
+    let result = call_tool(registry)
+        .execute(call_args())
+        .await
+        .expect("execute");
+    let rendered = full_output(&result);
+    assert!(result.is_error, "{rendered}");
+    assert!(
+        !rendered.contains(username),
+        "error leaked username: {rendered}"
+    );
 }
 
 #[tokio::test]
@@ -331,4 +378,48 @@ fn scrubber_redacts_url_encoded_secrets_and_ignores_empty_values() {
     );
     assert!(empty.secrets.is_empty());
     assert_eq!(empty.scrub("unchanged"), "unchanged");
+}
+
+#[test]
+fn scrubber_does_not_globally_redact_ordinary_short_query_values() {
+    let scrubber = SecretScrubber::new(
+        &McpDefinitionAuth::None,
+        "https://example.com/mcp?v=2&format=json&api_token=abcdef1234",
+    );
+    assert_eq!(
+        scrubber.scrub("v=2 and format=json are unrelated"),
+        "v=2 and format=json are unrelated"
+    );
+    assert_eq!(
+        scrubber.scrub("leaked abcdef1234 here"),
+        "leaked [redacted] here"
+    );
+}
+
+#[test]
+fn scrub_value_keeps_both_entries_when_keys_collide_after_redaction() {
+    let scrubber = SecretScrubber::new(
+        &McpDefinitionAuth::Headers {
+            headers: vec![
+                tinymcp_bus::HttpHeader {
+                    name: "one".into(),
+                    value: "first-secret".into(),
+                },
+                tinymcp_bus::HttpHeader {
+                    name: "two".into(),
+                    value: "second-secret".into(),
+                },
+            ],
+        },
+        "https://example.com/mcp",
+    );
+    let mut value = json!({
+        "first-secret": "a",
+        "second-secret": "b",
+    });
+    scrubber.scrub_value(&mut value);
+    let map = value.as_object().expect("object");
+    assert_eq!(map.len(), 2, "{value}");
+    assert_eq!(map.get("[redacted]"), Some(&json!("a")));
+    assert_eq!(map.get("[redacted] (2)"), Some(&json!("b")));
 }
