@@ -78,6 +78,14 @@ pub(crate) fn create_direct_composio_tool_for_api_key(
     config: &crate::config::Config,
     api_key: &str,
 ) -> anyhow::Result<Arc<crate::tools::ComposioTool>> {
+    direct_tool(api_key, config.composio.entity_id.as_str(), None)
+}
+
+fn direct_tool(
+    api_key: &str,
+    entity_id: &str,
+    base_urls: Option<&crate::config::ComposioDirectBaseUrls>,
+) -> anyhow::Result<Arc<crate::tools::ComposioTool>> {
     let api_key = api_key.trim();
     if api_key.is_empty() {
         anyhow::bail!("composio direct api key must not be empty");
@@ -90,6 +98,16 @@ pub(crate) fn create_direct_composio_tool_for_api_key(
     // the `Tool` surface re-acquire the live policy from their own
     // context.
     let security = Arc::new(crate::security::SecurityPolicy::default());
+    if let Some(urls) = base_urls {
+        let tool = crate::tools::ComposioTool::new_with_base_urls(
+            api_key,
+            Some(entity_id),
+            security,
+            urls.v2.clone(),
+            urls.v3.clone(),
+        )?;
+        return Ok(Arc::new(tool));
+    }
     #[cfg(debug_assertions)]
     let tool = match (
         std::env::var("OPENHUMAN_COMPOSIO_DIRECT_BASE_V2").ok(),
@@ -98,7 +116,7 @@ pub(crate) fn create_direct_composio_tool_for_api_key(
         (Some(base_v2), Some(base_v3)) => {
             crate::tools::ComposioTool::new_with_base_urls_for_loopback(
                 api_key,
-                Some(config.composio.entity_id.as_str()),
+                Some(entity_id),
                 security,
                 base_v2,
                 base_v3,
@@ -107,18 +125,10 @@ pub(crate) fn create_direct_composio_tool_for_api_key(
                 anyhow::anyhow!("invalid debug composio direct loopback base override: {e}")
             })?
         }
-        _ => crate::tools::ComposioTool::new(
-            api_key,
-            Some(config.composio.entity_id.as_str()),
-            security,
-        ),
+        _ => crate::tools::ComposioTool::new(api_key, Some(entity_id), security),
     };
     #[cfg(not(debug_assertions))]
-    let tool = crate::tools::ComposioTool::new(
-        api_key,
-        Some(config.composio.entity_id.as_str()),
-        security,
-    );
+    let tool = crate::tools::ComposioTool::new(api_key, Some(entity_id), security);
     Ok(Arc::new(tool))
 }
 
@@ -146,11 +156,20 @@ impl ComposioClientKind {
 ///   stored key takes precedence so the encrypted keychain remains the
 ///   source of truth — `config.toml` is a fallback for power users.
 ///
+/// A host-pinned credential (`config.composio.host_credential`) takes
+/// precedence over both the mode and the credential store.
+///
 /// Any other mode string is rejected with an explicit error so a typo
 /// in `config.toml` fails loud instead of silently downgrading.
 pub fn create_composio_client(
     config: &crate::config::Config,
 ) -> anyhow::Result<ComposioClientKind> {
+    if let Some(pinned) = config.composio.host_credential.as_ref() {
+        let tool = direct_tool(pinned.api_key(), pinned.entity(), pinned.direct_base_urls())?;
+        tracing::debug!("[composio-factory] resolved host-pinned direct variant (key redacted)");
+        return Ok(ComposioClientKind::Direct(tool));
+    }
+
     let mode = config.composio.mode.trim();
     tracing::debug!(mode = %mode, "[composio-factory] resolving client");
 

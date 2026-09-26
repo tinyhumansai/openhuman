@@ -431,6 +431,8 @@ const ALWAYS_PRESENT_MEMORY_TOOLS: &[&str] = &["update_memory_md", "memory_store
 mod capability_gating_tests;
 #[path = "ops_tests_catalog_fixture_tests.rs"]
 mod catalog_fixture_tests;
+#[path = "ops_tests_composio_registration_tests.rs"]
+mod composio_registration_tests;
 #[path = "ops_tests_default_registry_tests.rs"]
 mod default_registry_tests;
 #[path = "ops_tests_domain_family_tests.rs"]

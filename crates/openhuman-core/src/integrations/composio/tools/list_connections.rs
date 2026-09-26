@@ -5,7 +5,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use crate::config::rpc as config_rpc;
+use super::live_config::live_composio_config;
+use super::redact::redact_composio_outcome;
 use crate::config::Config;
 use tinytools::{PermissionLevel, Tool, ToolCategory, ToolResult};
 
@@ -45,7 +46,18 @@ impl Tool for ComposioListConnectionsTool {
     fn category(&self) -> ToolCategory {
         ToolCategory::Workflow
     }
-    async fn execute(&self, _args: Value) -> anyhow::Result<ToolResult> {
+    async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        let (config, outcome) = Box::pin(self.execute_unredacted(args)).await;
+        redact_composio_outcome(&config, outcome)
+    }
+}
+
+impl ComposioListConnectionsTool {
+    /// Returns the config actually used for dispatch alongside the outcome,
+    /// so [`Tool::execute`] redacts against the same credential that ran —
+    /// not the possibly-stale snapshot captured when this tool was
+    /// registered.
+    async fn execute_unredacted(&self, _args: Value) -> (Box<Config>, anyhow::Result<ToolResult>) {
         tracing::debug!("[composio] tool list_connections.execute");
         // Mirror `ops::composio_list_connections`: route through the mode-aware
         // factory so the agent sees the correct tenant's connections in both
@@ -53,56 +65,65 @@ impl Tool for ComposioListConnectionsTool {
         // empty list regardless of the user's actual Composio connections,
         // which caused the agent to incorrectly conclude that no integrations
         // were linked and prompt unnecessary re-authorization (#1710).
-        // [#1710 Wave 4] Reload config fresh per execute so a mid-session
-        // `composio.mode` toggle takes effect at the very next tool call.
-        // Anchor the reload to this tool's original config path rather
-        // than re-resolving process-global `OPENHUMAN_WORKSPACE`; the
-        // tool is scoped to the user/workspace it was created for.
-        let live_config = match config_rpc::reload_config_snapshot_with_timeout(
-            self.config.as_ref(),
-        )
-        .await
-        {
-            Ok(c) => c,
+        //
+        // Boxed from the moment it exists (not just at the return): held
+        // across every await point below, and `Config` is large enough that
+        // inlining it by value in the generated async state machine blows a
+        // 2 MiB worker-thread stack (the default for `cargo test` and tokio).
+        let live_config = match live_composio_config(self.config.as_ref()).await {
+            Ok(c) => Box::new(c),
             Err(e) => {
                 tracing::warn!(error = %e, "[composio] list_connections.execute: load_config failed");
-                return Ok(ToolResult::error(format!(
-                    "composio_list_connections: failed to load live config: {e}"
-                )));
+                return (
+                    Box::new(self.config.as_ref().clone()),
+                    Ok(ToolResult::error(format!(
+                        "composio_list_connections: failed to load live config: {e}"
+                    ))),
+                );
             }
         };
-        let mut resp = match create_composio_client(&live_config) {
-            Ok(ComposioClientKind::Backend(client)) => {
-                tracing::debug!("[composio] list_connections.execute: backend variant");
-                client.list_connections().await.map_err(|e| {
-                    anyhow::anyhow!("composio_list_connections (backend) failed: {e}")
-                })?
-            }
-            Ok(ComposioClientKind::Direct(direct)) => {
-                tracing::debug!("[composio-direct] list_connections.execute: direct variant");
-                direct_list_connections(&direct).await.map_err(|e| {
-                    // [#1166 / Sentry TAURI-RUST-X9] Symmetric error
-                    // routing with `ops.rs::composio_list_connections`.
-                    // The agent-tool path can also fire 401s when a
-                    // direct-mode user has a bad API key — without this
-                    // hook the failure escapes the classifier and lands
-                    // as an unclassified Sentry event. Render WITH the
-                    // `[composio-direct]` anchor BEFORE reporting so the
-                    // classifier arm in `is_provider_user_state_message`
-                    // (gated on that prefix) actually fires.
-                    let rendered = format!(
-                        "[composio-direct] composio_list_connections (direct) failed: {e:#}"
+        let mut resp =
+            match create_composio_client(&live_config) {
+                Ok(ComposioClientKind::Backend(client)) => {
+                    tracing::debug!("[composio] list_connections.execute: backend variant");
+                    match client.list_connections().await.map_err(|e| {
+                        anyhow::anyhow!("composio_list_connections (backend) failed: {e}")
+                    }) {
+                        Ok(resp) => resp,
+                        Err(e) => return (live_config, Err(e)),
+                    }
+                }
+                Ok(ComposioClientKind::Direct(direct)) => {
+                    tracing::debug!("[composio-direct] list_connections.execute: direct variant");
+                    match direct_list_connections(&direct).await.map_err(|e| {
+                        // [#1166 / Sentry TAURI-RUST-X9] Symmetric error
+                        // routing with `ops.rs::composio_list_connections`.
+                        // The agent-tool path can also fire 401s when a
+                        // direct-mode user has a bad API key — without this
+                        // hook the failure escapes the classifier and lands
+                        // as an unclassified Sentry event. Render WITH the
+                        // `[composio-direct]` anchor BEFORE reporting so the
+                        // classifier arm in `is_provider_user_state_message`
+                        // (gated on that prefix) actually fires.
+                        let rendered = format!(
+                            "[composio-direct] composio_list_connections (direct) failed: {e:#}"
+                        );
+                        super::super::ops::report_composio_op_error("list_connections", &rendered);
+                        anyhow::anyhow!("{rendered}")
+                    }) {
+                        Ok(resp) => resp,
+                        Err(e) => return (live_config, Err(e)),
+                    }
+                }
+                Err(e) => {
+                    return (
+                        live_config,
+                        Ok(ToolResult::error(format!(
+                            "composio_list_connections failed: {e}"
+                        ))),
                     );
-                    super::super::ops::report_composio_op_error("list_connections", &rendered);
-                    anyhow::anyhow!("{rendered}")
-                })?
-            }
-            Err(e) => {
-                return Ok(ToolResult::error(format!(
-                    "composio_list_connections failed: {e}"
-                )));
-            }
-        };
+                }
+            };
         // Filter server-side-indistinguishable states — callers should only
         // see integrations the user can actually act on. Matches the same
         // ACTIVE/CONNECTED allowlist used by `fetch_connected_integrations_uncached`
@@ -113,9 +134,10 @@ impl Tool for ComposioListConnectionsTool {
             count = resp.connections.len(),
             "[composio] list_connections.execute: returning active connections"
         );
-        Ok(ToolResult::success(
+        let result = Ok(ToolResult::success(
             serde_json::to_string(&resp).unwrap_or_else(|_| "{}".into()),
-        ))
+        ));
+        (live_config, result)
     }
 }
 

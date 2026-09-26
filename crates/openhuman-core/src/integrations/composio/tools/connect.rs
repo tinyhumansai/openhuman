@@ -8,7 +8,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use crate::config::rpc as config_rpc;
+use super::live_config::live_composio_config;
+use super::redact::redact_composio_outcome;
 use crate::config::Config;
 use tinytools::{PermissionLevel, Tool, ToolCategory, ToolResult};
 
@@ -163,6 +164,13 @@ impl Tool for ComposioConnectTool {
     // the toolkit slug into the card for the inline Connect button. The
     // engine's auto-gate is unconditional and would double-prompt.
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        let outcome = Box::pin(self.execute_unredacted(args)).await;
+        redact_composio_outcome(&self.config, outcome)
+    }
+}
+
+impl ComposioConnectTool {
+    async fn execute_unredacted(&self, args: Value) -> anyhow::Result<ToolResult> {
         let raw_toolkit = args
             .get("toolkit")
             .and_then(|v| v.as_str())
@@ -191,18 +199,14 @@ impl Tool for ComposioConnectTool {
             )));
         }
 
-        // Reload config per call so a mid-session `composio.mode` toggle is
-        // honoured (#1710), then skip the card entirely if the toolkit is
-        // already connected — avoids a flash of a Connect card that would
-        // immediately resolve.
-        let live_config =
-            match config_rpc::reload_config_snapshot_with_timeout(self.config.as_ref()).await {
-                Ok(c) => c,
-                Err(e) => {
-                    tracing::warn!(error = %e, "[composio] connect.execute: load_config failed");
-                    self.config.as_ref().clone()
-                }
-            };
+        // Skip the card when the toolkit is already connected.
+        let live_config = match live_composio_config(self.config.as_ref()).await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(error = %e, "[composio] connect.execute: load_config failed");
+                self.config.as_ref().clone()
+            }
+        };
         let already_connected = super::super::fetch_connected_integrations(&live_config)
             .await
             .into_iter()

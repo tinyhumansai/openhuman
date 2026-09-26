@@ -980,25 +980,21 @@ pub fn all_tools_with_runtime(
         } else {
             tracing::debug!("[integrations] twilio disabled — skipping");
         }
-
-        // Composio — backend-proxied 1000+ OAuth integrations. Registers
-        // five agent tools (list_toolkits, list_connections, authorize,
-        // list_tools, execute) when the composio toggle is on. See
-        // `crates/openhuman-core/src/integrations/composio/tools.rs` for per-tool details.
-        let composio_tools = crate::integrations::composio::all_composio_agent_tools(root_config);
-        if !composio_tools.is_empty() {
-            tracing::debug!(
-                count = composio_tools.len(),
-                "[integrations] registered composio tools"
-            );
-            tools.extend(composio_tools);
-        } else {
-            tracing::debug!("[integrations] composio disabled — skipping");
-        }
     } else {
         tracing::debug!(
             "[integrations] build_client returned None — integration tools not registered"
         );
+    }
+
+    let composio_tools = crate::integrations::composio::all_composio_agent_tools(root_config);
+    if composio_tools.is_empty() {
+        tracing::debug!("[integrations] composio unavailable — skipping");
+    } else {
+        tracing::debug!(
+            count = composio_tools.len(),
+            "[integrations] registered composio tools"
+        );
+        tools.extend(composio_tools);
     }
 
     // Coding-harness `lsp` tool (issue #1205) — capability-gated by the

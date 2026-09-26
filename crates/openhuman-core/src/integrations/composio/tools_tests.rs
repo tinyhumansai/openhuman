@@ -134,5 +134,7 @@ fn direct_mode_config() -> crate::config::Config {
 
 #[path = "tools_direct_mode_routing_tests.rs"]
 mod direct_mode_routing_tests;
+#[path = "tools_host_credential_tests.rs"]
+mod host_credential_tests;
 #[path = "tools_metadata_and_sandbox_tests.rs"]
 mod metadata_and_sandbox_tests;

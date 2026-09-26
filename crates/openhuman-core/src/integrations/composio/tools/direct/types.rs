@@ -40,7 +40,6 @@ pub(super) fn is_loopback_http_url(url: &str) -> bool {
     }
 }
 
-#[cfg(debug_assertions)]
 pub(super) fn is_loopback_http_base(url: &str) -> bool {
     is_loopback_http_url(&format!("{}/", url.trim_end_matches('/')))
 }
