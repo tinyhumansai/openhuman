@@ -49,13 +49,17 @@ impl Tool for ComposioListToolkitsTool {
         ToolCategory::Workflow
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
-        let outcome = Box::pin(self.execute_unredacted(args)).await;
-        redact_composio_outcome(&self.config, outcome)
+        let (config, outcome) = Box::pin(self.execute_unredacted(args)).await;
+        redact_composio_outcome(&config, outcome)
     }
 }
 
 impl ComposioListToolkitsTool {
-    async fn execute_unredacted(&self, _args: Value) -> anyhow::Result<ToolResult> {
+    /// Returns the config actually used for dispatch alongside the outcome,
+    /// so [`Tool::execute`] redacts against the same credential that ran —
+    /// not the possibly-stale snapshot captured when this tool was
+    /// registered.
+    async fn execute_unredacted(&self, _args: Value) -> (Config, anyhow::Result<ToolResult>) {
         tracing::debug!("[composio] tool list_toolkits.execute");
         // Mirror the mode-aware pattern in
         // `ops::composio_list_toolkits`. In direct mode there is no
@@ -67,9 +71,12 @@ impl ComposioListToolkitsTool {
             Ok(c) => c,
             Err(e) => {
                 tracing::warn!(error = %e, "[composio] tool: load_config failed");
-                return Ok(ToolResult::error(format!(
-                    "composio: failed to load live config: {e}"
-                )));
+                return (
+                    self.config.as_ref().clone(),
+                    Ok(ToolResult::error(format!(
+                        "composio: failed to load live config: {e}"
+                    ))),
+                );
             }
         };
         let client = match create_composio_client(&live_config) {
@@ -84,24 +91,31 @@ impl ComposioListToolkitsTool {
                      via app.composio.dev."
                 );
                 let resp = super::super::types::ComposioToolkitsResponse::default();
-                return Ok(ToolResult::success(
-                    serde_json::to_string(&resp).unwrap_or_else(|_| "{}".into()),
-                ));
+                return (
+                    live_config,
+                    Ok(ToolResult::success(
+                        serde_json::to_string(&resp).unwrap_or_else(|_| "{}".into()),
+                    )),
+                );
             }
             Err(e) => {
-                return Ok(ToolResult::error(format!(
-                    "composio_list_toolkits failed: {e}"
-                )));
+                return (
+                    live_config,
+                    Ok(ToolResult::error(format!(
+                        "composio_list_toolkits failed: {e}"
+                    ))),
+                );
             }
         };
-        match client.list_toolkits().await {
+        let outcome = match client.list_toolkits().await {
             Ok(resp) => Ok(ToolResult::success(
                 serde_json::to_string(&resp).unwrap_or_else(|_| "{}".into()),
             )),
             Err(e) => Ok(ToolResult::error(format!(
                 "composio_list_toolkits failed: {e}"
             ))),
-        }
+        };
+        (live_config, outcome)
     }
 }
 

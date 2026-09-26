@@ -92,8 +92,8 @@ impl Tool for ComposioListToolsTool {
         args: Value,
         options: ToolCallOptions,
     ) -> anyhow::Result<ToolResult> {
-        let outcome = Box::pin(self.execute_unredacted(args, options)).await;
-        redact_composio_outcome(&self.config, outcome)
+        let (config, outcome) = Box::pin(self.execute_unredacted(args, options)).await;
+        redact_composio_outcome(&config, outcome)
     }
 
     fn supports_markdown(&self) -> bool {
@@ -102,11 +102,15 @@ impl Tool for ComposioListToolsTool {
 }
 
 impl ComposioListToolsTool {
+    /// Returns the config actually used for dispatch alongside the outcome,
+    /// so [`Tool::execute_with_options`] redacts against the same
+    /// credential that ran — not the possibly-stale snapshot captured when
+    /// this tool was registered.
     async fn execute_unredacted(
         &self,
         args: Value,
         options: ToolCallOptions,
-    ) -> anyhow::Result<ToolResult> {
+    ) -> (Config, anyhow::Result<ToolResult>) {
         let toolkits = args.get("toolkits").and_then(|v| v.as_array()).map(|arr| {
             arr.iter()
                 .filter_map(|v| v.as_str().map(str::to_string))
@@ -150,9 +154,12 @@ impl ComposioListToolsTool {
             Ok(c) => c,
             Err(e) => {
                 tracing::warn!(error = %e, "[composio] tool: load_config failed");
-                return Ok(ToolResult::error(format!(
-                    "composio: failed to load live config: {e}"
-                )));
+                return (
+                    self.config.as_ref().clone(),
+                    Ok(ToolResult::error(format!(
+                        "composio: failed to load live config: {e}"
+                    ))),
+                );
             }
         };
         let client = match create_composio_client(&live_config) {
@@ -174,16 +181,19 @@ impl ComposioListToolsTool {
                 if options.prefer_markdown {
                     result.markdown_formatted = Some(render_tools_markdown(&resp));
                 }
-                return Ok(result);
+                return (live_config, Ok(result));
             }
             Err(e) => {
-                return Ok(ToolResult::error(format!(
-                    "composio_list_tools failed: {e}"
-                )));
+                return (
+                    live_config,
+                    Ok(ToolResult::error(format!(
+                        "composio_list_tools failed: {e}"
+                    ))),
+                );
             }
         };
 
-        match client
+        let outcome = match client
             .list_tools(toolkits.as_deref(), tags.as_deref())
             .await
         {
@@ -218,11 +228,14 @@ impl ComposioListToolsTool {
                             // Soft-fail: surface the issue to the agent
                             // so it can retry with include_unconnected
                             // rather than silently returning [].
-                            return Ok(ToolResult::error(format!(
-                                "composio_list_tools failed to fetch connections \
-                                 (needed to filter to connected toolkits — pass \
-                                 include_unconnected=true to skip this check): {e}"
-                            )));
+                            return (
+                                live_config,
+                                Ok(ToolResult::error(format!(
+                                    "composio_list_tools failed to fetch connections \
+                                     (needed to filter to connected toolkits — pass \
+                                     include_unconnected=true to skip this check): {e}"
+                                ))),
+                            );
                         }
                     }
                 }
@@ -235,7 +248,7 @@ impl ComposioListToolsTool {
                             toolkits = ?scoped_toolkits,
                             "[composio] list_tools empty for uncurated toolkit scope"
                         );
-                        return Ok(ToolResult::error(message));
+                        return (live_config, Ok(ToolResult::error(message)));
                     }
                 }
 
@@ -250,6 +263,7 @@ impl ComposioListToolsTool {
             Err(e) => Ok(ToolResult::error(format!(
                 "composio_list_tools failed: {e}"
             ))),
-        }
+        };
+        (live_config, outcome)
     }
 }
