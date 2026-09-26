@@ -46,8 +46,18 @@ pub(crate) fn composio_cache_test_lock() -> std::sync::MutexGuard<'static, ()> {
 }
 
 /// The Composio credential identity a [`Config`] resolves to: its credential
-/// store (`config_path`), mode, entity, and any inline or host-pinned key.
-/// Hashed so the key material never appears in the cache key or its logs.
+/// store (`config_path`), mode, entity, any inline or host-pinned key, and —
+/// in unpinned direct mode — the stored key [`create_composio_client`] would
+/// actually dispatch with. Hashed so the key material never appears in the
+/// cache key or its logs.
+///
+/// The stored key must be included even though `config_path` already is:
+/// the generic credential RPCs can rotate it in place without publishing
+/// `ComposioConfigChanged`, and two agents that share a `config_path` (the
+/// normal multi-agent-per-runtime shape) would otherwise collide on the same
+/// key and read each other's cached connections across that rotation.
+///
+/// [`create_composio_client`]: super::super::client::create_composio_client
 pub(crate) fn cache_key(config: &Config) -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
@@ -74,6 +84,13 @@ pub(crate) fn cache_key(config: &Config) -> String {
             )
         })
         .hash(&mut hasher);
+    if composio.host_credential.is_none()
+        && composio.mode.trim() == crate::config::schema::COMPOSIO_MODE_DIRECT
+    {
+        if let Ok(Some(stored)) = crate::security::credentials::get_composio_api_key(config) {
+            stored.hash(&mut hasher);
+        }
+    }
     format!("composio:{:016x}", hasher.finish())
 }
 
