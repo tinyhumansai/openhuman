@@ -482,6 +482,17 @@ The desktop build requires the full Rust toolchain and vendored Tauri setup. For
 
 ---
 
+Tip for Mobile Contributors
+
+You can contribute fully from your phone using GitHub mobile:
+
+1. Fork the repo via browser
+2. Use "Go to file" to find file to edit
+3. Tap pencil icon to edit
+4. Commit to new branch and create PR
+
+No laptop needed - GitHub app handles everything.
+
 ## Still stuck?
 
 - Join the [Discord](https://guild.tinyhumans.ai/) and ask in the contributors channel
