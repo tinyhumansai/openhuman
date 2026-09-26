@@ -287,6 +287,9 @@ impl Tool for McpCallTool {
 }
 
 const REDACTED: &str = "[redacted]";
+const MIN_QUERY_SECRET_LEN: usize = 8;
+const CREDENTIAL_QUERY_PARAM_NEEDLES: [&str; 6] =
+    ["token", "key", "secret", "password", "auth", "sig"];
 
 struct SecretScrubber {
     secrets: Vec<String>,
@@ -307,6 +310,7 @@ impl SecretScrubber {
         match auth {
             McpDefinitionAuth::BearerToken { token } => raw.push(token.clone()),
             McpDefinitionAuth::Basic { username, password } => {
+                raw.push(username.clone());
                 raw.push(password.clone());
                 raw.push(
                     base64::engine::general_purpose::STANDARD
@@ -320,10 +324,16 @@ impl SecretScrubber {
             McpDefinitionAuth::QueryParam { value, .. } => raw.push(value.clone()),
             _ => {}
         }
-        if let Some(query) = endpoint_query(endpoint) {
-            raw.push(query.to_string());
+        if endpoint_query(endpoint).is_some() {
             if let Ok(url) = url::Url::parse(endpoint) {
-                raw.extend(url.query_pairs().map(|(_, value)| value.into_owned()));
+                raw.extend(url.query_pairs().filter_map(|(name, value)| {
+                    let name = name.to_ascii_lowercase();
+                    let credential_like = CREDENTIAL_QUERY_PARAM_NEEDLES
+                        .iter()
+                        .any(|needle| name.contains(needle));
+                    let value = value.into_owned();
+                    (credential_like && value.len() >= MIN_QUERY_SECRET_LEN).then_some(value)
+                }));
             }
         }
 
