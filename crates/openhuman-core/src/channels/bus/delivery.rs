@@ -183,6 +183,28 @@ pub(super) async fn finalize_channel_reply(
     }
 }
 
+/// The session JWT the backend channel relay authenticates with, or `None`
+/// (logged at debug) when there is none to use: no TinyHumans connection, the
+/// user signed out while a relay message was in flight, the offline local
+/// session, or an API-key-only runtime (the relay binds a user session). All
+/// are user or build state, not faults, so nothing reaches Sentry.
+fn relay_session_token(config: &crate::config::Config, op: &str) -> Option<String> {
+    use crate::security::credentials::session_support::{
+        direct_backend_credential, BackendCredential,
+    };
+    match direct_backend_credential(config, "channel relay") {
+        Some(BackendCredential::Session(token)) => Some(token),
+        Some(BackendCredential::ApiKey(_)) => {
+            tracing::debug!("[channel-inbound] api-key runtime has no relay session — cannot {op}");
+            None
+        }
+        None => {
+            tracing::debug!("[channel-inbound] no hosted session — cannot {op}");
+            None
+        }
+    }
+}
+
 /// Construct the REST client + session JWT shared by every outbound
 /// channel call on this turn. Returns `None` and logs if either is
 /// unavailable so the caller can bail quietly.
@@ -196,17 +218,7 @@ pub(super) async fn build_channel_client() -> Option<(crate::api::rest::BackendO
         }
     };
     let api_url = crate::api::config::effective_backend_api_url(&config.api_url);
-    let jwt = match crate::api::jwt::get_session_token(&config) {
-        Ok(Some(t)) => t,
-        Ok(None) => {
-            tracing::error!("[channel-inbound] no session JWT — cannot send");
-            return None;
-        }
-        Err(e) => {
-            tracing::error!("[channel-inbound] failed to get session token: {}", e);
-            return None;
-        }
-    };
+    let jwt = relay_session_token(&config, "send")?;
     match crate::api::rest::BackendOAuthClient::new(&api_url) {
         Ok(c) => Some((c, jwt)),
         Err(e) => {
@@ -227,16 +239,8 @@ pub(super) async fn send_channel_reply(channel: &str, text: &str) {
     };
 
     let api_url = crate::api::config::effective_backend_api_url(&config.api_url);
-    let jwt = match crate::api::jwt::get_session_token(&config) {
-        Ok(Some(t)) => t,
-        Ok(None) => {
-            tracing::error!("[channel-inbound] no session JWT — cannot reply");
-            return;
-        }
-        Err(e) => {
-            tracing::error!("[channel-inbound] failed to get session token: {}", e);
-            return;
-        }
+    let Some(jwt) = relay_session_token(&config, "reply") else {
+        return;
     };
 
     let client = match crate::api::rest::BackendOAuthClient::new(&api_url) {

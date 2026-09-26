@@ -259,6 +259,17 @@ async fn install_registers_hosted_controllers_that_dispatch_through_the_transpor
         ("team", "get_usage"),
         ("referral", "get_stats"),
         ("announcements", "get_latest"),
+        // Account-bound methods that share a namespace with core controllers.
+        ("webhooks", "list_tunnels"),
+        ("webhooks", "get_bandwidth"),
+        ("auth", "create_channel_link_token"),
+        ("auth", "oauth_connect"),
+        ("channels", "telegram_login_start"),
+        ("channels", "discord_link_check"),
+        // ...alongside the core's own controllers in those namespaces.
+        ("webhooks", "list_registrations"),
+        ("auth", "get_state"),
+        ("channels", "list"),
     ] {
         assert!(
             rpc_method_from_parts(ns, f).is_some(),
@@ -268,6 +279,7 @@ async fn install_registers_hosted_controllers_that_dispatch_through_the_transpor
     assert!(schema_for_rpc_method("openhuman.billing_get_balance").is_some());
     assert!(namespace_description("billing").is_some());
     assert!(namespace_description("team").is_some());
+    assert!(namespace_description("webhooks").is_some());
 
     // A second install is a no-op for the registry, not a collision.
     crate::install(crate::InstallOptions::default()).unwrap();

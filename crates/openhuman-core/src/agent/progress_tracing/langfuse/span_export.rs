@@ -6,7 +6,7 @@ use serde_json::{json, Map, Value};
 
 use crate::api::jwt::bearer_authorization_value;
 use crate::config::Config;
-use crate::security::credentials::session_support::require_live_session_token;
+use crate::security::credentials::session_support::direct_backend_credential;
 
 use super::ingestion_batch::{iso_millis, new_event_id};
 use super::{environment_for_base, ingestion_url, skip_push, LOG_TARGET, PUSH_TIMEOUT};
@@ -259,7 +259,13 @@ pub(crate) async fn push_spans(config: &Config, spans: &[TraceSpan]) -> Result<(
             "could not resolve Langfuse ingestion URL from backend host (got {url:?})"
         ));
     }
-    let token = require_live_session_token(config)?;
+    // No TinyHumans connection, or no usable credential (signed out, offline
+    // local session): a configured state, so skip quietly rather than failing
+    // every turn's push.
+    let Some(credential) = direct_backend_credential(config, "langfuse span push") else {
+        return Ok(());
+    };
+    let token = credential.into_secret();
     let include_content = config.observability.agent_tracing.capture_content;
     let batch = spans_to_langfuse_batch(spans, include_content, environment);
     let span_count = spans.len();

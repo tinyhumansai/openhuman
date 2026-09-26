@@ -217,7 +217,8 @@ fn unbind_schedule_trigger(config: &Config, flow_id: &str) {
 
 /// Webhook trigger binding is a documented B2 stub (best-effort deviation):
 /// registering a real inbound route requires provisioning a backend tunnel
-/// (`webhooks::ops::create_tunnel`, a network call to the signed-in backend
+/// (`openhuman.webhooks_create_tunnel`, served by `openhuman-tinyhumans`, a
+/// network call to the signed-in backend
 /// account) plus a UI surface to show the resulting URL to the user — both
 /// are B3 territory. Rather than silently doing nothing, this logs a clear,
 /// actionable warning every time a `webhook`-trigger flow is enabled/disabled

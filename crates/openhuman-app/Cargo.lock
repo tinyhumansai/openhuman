@@ -4325,6 +4325,7 @@ dependencies = [
  "tinymemory-bus",
  "tinymemory-sources",
  "tinyruntime-bus",
+ "tinysearch-bus",
  "tinyskills",
  "tinytools 0.4.1",
  "tinytools-agent 0.4.1",
@@ -4439,6 +4440,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "tinychannels-bus",
  "tinyhumans-sdk",
  "tinyjevclient 0.2.1 (git+https://github.com/tinyhumansai/tinyjevclient?rev=84b3983c7e1e14f7515658ceafabb6c4e7967c94)",
  "tinytools 0.4.1",
@@ -7686,6 +7688,14 @@ dependencies = [
 [[package]]
 name = "tinyruntime-bus"
 version = "0.2.5"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "tinysearch-bus"
+version = "0.2.1"
 dependencies = [
  "serde",
  "serde_json",

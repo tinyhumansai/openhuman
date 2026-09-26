@@ -6,6 +6,7 @@ use axum::{
 use openhuman_core::security::credentials::{
     AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
 };
+use serde_json::json;
 use tempfile::TempDir;
 
 fn test_config(tmp: &TempDir) -> Config {
@@ -59,32 +60,36 @@ fn config_with_backend(tmp: &TempDir, base: String) -> Config {
     c
 }
 
-// ── require_token (private helper) ────────────────────────────
+// ── credential resolution ────────────────────────────────
 
 #[test]
-fn require_token_errors_without_stored_session() {
+fn hosted_client_errors_without_stored_session() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
-    let err = require_token(&config).unwrap_err();
+    let err = HostedClient::from_config(&config).err().unwrap();
     assert!(err.contains("no backend session token"));
 }
 
-#[test]
-fn require_token_trims_stored_value() {
+#[tokio::test]
+async fn get_stats_sends_trimmed_bearer() {
+    let app = Router::new().route(
+        "/referral/stats",
+        get(|headers: axum::http::HeaderMap| async move {
+            Json(json!({
+                "auth": headers
+                    .get("authorization")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or_default()
+            }))
+        }),
+    );
+    let base = spawn_mock(app).await;
     let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
+    let mut config = test_config(&tmp);
+    config.api_url = Some(base);
     store_session_token(&config, "  tok  ");
-    assert_eq!(require_token(&config).unwrap(), "tok");
-}
-
-#[test]
-fn require_token_rejects_whitespace_only_stored_token() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    store_session_token(&config, "   ");
-    assert!(require_token(&config)
-        .unwrap_err()
-        .contains("no backend session token"));
+    let out = get_stats(&config).await.unwrap();
+    assert_eq!(out.value["auth"], json!("Bearer tok"));
 }
 
 // ── get_stats ────────────────────────────────────────────────

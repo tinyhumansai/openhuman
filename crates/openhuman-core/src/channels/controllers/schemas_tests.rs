@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::TypeSchema;
 use serde_json::json;
 
 #[test]
@@ -113,4 +114,24 @@ fn schema_adapter_preserves_optional_field_type() {
         &active.ty,
         TypeSchema::Option(inner) if matches!(inner.as_ref(), TypeSchema::Bool)
     ));
+}
+
+#[test]
+fn hosted_link_functions_are_not_served_by_the_core() {
+    // `channels.telegram_login_*` / `channels.discord_link_*` need a TinyHumans
+    // account and are registered by `openhuman-tinyhumans`; the core must not
+    // register them too (the extension would collide) nor advertise them.
+    let names: Vec<&str> = all_controller_schemas()
+        .iter()
+        .map(|s| s.function)
+        .collect();
+    let registered: Vec<&str> = all_registered_controllers()
+        .iter()
+        .map(|c| c.schema.function)
+        .collect();
+    for f in HOSTED_CHANNEL_FUNCTIONS {
+        assert!(!names.contains(f), "core schema still lists `{f}`");
+        assert!(!registered.contains(f), "core still registers `{f}`");
+    }
+    assert!(names.contains(&"send_message"));
 }

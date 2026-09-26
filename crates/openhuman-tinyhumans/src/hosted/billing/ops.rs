@@ -1,8 +1,9 @@
-//! Billing and payment RPC ops — thin adapters that call the hosted API.
+//! Billing and payment RPC ops — thin adapters over the SDK's typed
+//! `payments()` and `coupons()` clients ([`HostedClient`]).
 //!
 //! # Security
-//! All methods require a valid app-session JWT stored via `auth_store_session`.
-//! The JWT is sent as `Authorization: Bearer …` to the backend.
+//! Every call authenticates with the core's resolved backend credential — a
+//! session JWT as `Authorization: Bearer`, an API key as `x-api-key`.
 //! **No server-side authorization is replicated here**: the backend enforces plan
 //! ownership, tenant isolation, and payment policy on every request.
 //! Callers that lack a valid session or sufficient permissions receive a
@@ -10,45 +11,35 @@
 //! API keys / JWTs are never written to logs (only redacted status codes + paths).
 
 use reqwest::Method;
-use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::{Map, Value};
+use tinyhumans_sdk::api::payments::{
+    CoinbaseInterval, CoinbasePlan, CreateCoinbaseChargeRequest, CreditTopUpRequest,
+    PaymentGateway, PurchaseStripePlanRequest, UpdateAutoRechargeCardRequest,
+};
+use tinyhumans_sdk::api::types::{BillingPlan, CodeRequest};
 
-use openhuman_core::api::config::effective_backend_api_url;
-use openhuman_core::api::BackendOAuthClient;
 use openhuman_core::config::Config;
 use openhuman_core::rpc::RpcOutcome;
 
-/// Canonical authed-session guard. Delegates to `require_live_session_token`,
-/// which rejects an expired token locally (publishing `SessionExpired`) instead
-/// of firing a doomed backend 401 — see #3297 / `session_support`.
-fn require_token(
-    config: &Config,
-) -> Result<openhuman_core::security::credentials::session_support::BackendCredential, String> {
-    openhuman_core::security::credentials::session_support::resolve_backend_credential(config)
-}
+use crate::hosted::client::HostedClient;
 
-async fn get_authed_value(
-    config: &Config,
-    method: Method,
-    path: &str,
-    body: Option<Value>,
-) -> Result<Value, String> {
-    let token = require_token(config)?;
-    let api_url = effective_backend_api_url(&config.api_url);
-    let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
-    // `flatten_authed_error` maps the typed `BackendApiError::Unauthorized`
-    // (expected session-lapse 401) onto the `SESSION_EXPIRED` sentinel so the
-    // JSON-RPC layer classifies it as session expiry and skips Sentry (#3297,
-    // TAURI-RUST-8WZ on `/payments/stripe/currentPlan`); every other error keeps
-    // its full `{e:#}` anyhow chain.
-    client
-        .authed_json(&token, method, path, body)
-        .await
-        .map_err(openhuman_core::api::flatten_authed_error)
+/// Parse a wire string into one of the SDK's closed request enums, naming the
+/// field and the offending value on failure. The plan enums are
+/// `SCREAMING_SNAKE_CASE` on the wire, so a lower-case plan (`"pro"`) is
+/// accepted as its upper-case form; the lower-case `interval`/`gateway` enums
+/// are matched as given.
+fn parse_enum<T: serde::de::DeserializeOwned>(field: &str, raw: &str) -> Result<T, String> {
+    serde_json::from_value(Value::String(raw.to_string()))
+        .or_else(|_| serde_json::from_value(Value::String(raw.to_ascii_uppercase())))
+        .map_err(|_| format!("unsupported {field}: {raw}"))
 }
 
 pub async fn get_current_plan(config: &Config) -> Result<RpcOutcome<Value>, String> {
-    let data = get_authed_value(config, Method::GET, "/payments/stripe/currentPlan", None).await?;
+    let client = HostedClient::from_config(config)?;
+    let data = client.finish_value(
+        "GET /payments/stripe/currentPlan",
+        client.sdk().payments().get_current_plan().await,
+    )?;
     Ok(RpcOutcome::single_log(
         data,
         "current plan fetched from backend",
@@ -56,18 +47,20 @@ pub async fn get_current_plan(config: &Config) -> Result<RpcOutcome<Value>, Stri
 }
 
 pub async fn get_summary(config: &Config) -> Result<RpcOutcome<Value>, String> {
-    let token = require_token(config)?;
-    let api_url = effective_backend_api_url(&config.api_url);
-    let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
-    let data = client
-        .fetch_billing_summary(&token)
-        .await
-        .map_err(openhuman_core::api::flatten_authed_error)?;
+    let client = HostedClient::from_config(config)?;
+    let data = client.finish_value(
+        "GET /payments/summary",
+        client.sdk().payments().get_summary().await,
+    )?;
     Ok(RpcOutcome::single_log(data, "billing summary fetched"))
 }
 
 pub async fn get_balance(config: &Config) -> Result<RpcOutcome<Value>, String> {
-    let data = get_authed_value(config, Method::GET, "/payments/credits/balance", None).await?;
+    let client = HostedClient::from_config(config)?;
+    let data = client.finish_value(
+        "GET /payments/credits/balance",
+        client.sdk().payments().get_credit_balance().await,
+    )?;
     Ok(RpcOutcome::single_log(data, "credit balance fetched"))
 }
 
@@ -78,31 +71,59 @@ pub async fn get_transactions(
 ) -> Result<RpcOutcome<Value>, String> {
     let limit = limit.unwrap_or(20);
     let offset = offset.unwrap_or(0);
-    let path = format!("/payments/credits/transactions?limit={limit}&offset={offset}");
-    let data = get_authed_value(config, Method::GET, &path, None).await?;
+    let client = HostedClient::from_config(config)?;
+    let query = [
+        ("limit", Some(limit.to_string())),
+        ("offset", Some(offset.to_string())),
+    ];
+    let data = client.finish_value(
+        "GET /payments/credits/transactions",
+        client
+            .sdk()
+            .payments()
+            .list_credit_transactions(&query)
+            .await,
+    )?;
     Ok(RpcOutcome::single_log(data, "credit transactions fetched"))
 }
 
 pub async fn get_auto_recharge(config: &Config) -> Result<RpcOutcome<Value>, String> {
-    let data =
-        get_authed_value(config, Method::GET, "/payments/credits/auto-recharge", None).await?;
+    let client = HostedClient::from_config(config)?;
+    let data = client.finish_value(
+        "GET /payments/credits/auto-recharge",
+        client.sdk().payments().get_auto_recharge().await,
+    )?;
     Ok(RpcOutcome::single_log(
         data,
         "auto recharge settings fetched",
     ))
 }
 
+/// `PATCH /payments/credits/auto-recharge`.
+///
+/// Forwarded verbatim on the SDK's raw primitive (route policy still applies)
+/// rather than through the typed `update_auto_recharge`: the SDK's
+/// `AutoRechargeRequest` has no `weeklyLimitUsd`, which the settings UI sends,
+/// so decoding into it would silently drop the weekly cap.
 pub async fn update_auto_recharge(
     config: &Config,
     payload: Value,
 ) -> Result<RpcOutcome<Value>, String> {
-    let data = get_authed_value(
-        config,
-        Method::PATCH,
-        "/payments/credits/auto-recharge",
-        Some(payload),
-    )
-    .await?;
+    let client = HostedClient::from_config(config)?;
+    let data = client.finish(
+        "PATCH /payments/credits/auto-recharge",
+        client
+            .sdk()
+            .raw()
+            .send(
+                Method::PATCH,
+                "/payments/credits/auto-recharge",
+                &[],
+                Some(&payload),
+                true,
+            )
+            .await,
+    )?;
     Ok(RpcOutcome::single_log(
         data,
         "auto recharge settings updated",
@@ -110,24 +131,24 @@ pub async fn update_auto_recharge(
 }
 
 pub async fn get_cards(config: &Config) -> Result<RpcOutcome<Value>, String> {
-    let data = get_authed_value(
-        config,
-        Method::GET,
-        "/payments/credits/auto-recharge/cards",
-        None,
-    )
-    .await?;
+    let client = HostedClient::from_config(config)?;
+    let data = client.finish_value(
+        "GET /payments/credits/auto-recharge/cards",
+        client.sdk().payments().list_auto_recharge_cards().await,
+    )?;
     Ok(RpcOutcome::single_log(data, "saved cards fetched"))
 }
 
 pub async fn create_setup_intent(config: &Config) -> Result<RpcOutcome<Value>, String> {
-    let data = get_authed_value(
-        config,
-        Method::POST,
-        "/payments/credits/auto-recharge/cards/setup-intent",
-        None,
-    )
-    .await?;
+    let client = HostedClient::from_config(config)?;
+    let data = client.finish_value(
+        "POST /payments/credits/auto-recharge/cards/setup-intent",
+        client
+            .sdk()
+            .payments()
+            .create_auto_recharge_card_setup_intent()
+            .await,
+    )?;
     Ok(RpcOutcome::single_log(data, "setup intent created"))
 }
 
@@ -140,11 +161,20 @@ pub async fn update_card(
     if payment_method_id.is_empty() {
         return Err("paymentMethodId is required".to_string());
     }
-    let path = format!(
-        "/payments/credits/auto-recharge/cards/{}",
-        urlencoding::encode(payment_method_id)
-    );
-    let data = get_authed_value(config, Method::PATCH, &path, Some(payload)).await?;
+    let fields = match payload {
+        Value::Object(map) => map,
+        Value::Null => Map::new(),
+        _ => return Err("card update payload must be an object".to_string()),
+    };
+    let client = HostedClient::from_config(config)?;
+    let data = client.finish_value(
+        "PATCH /payments/credits/auto-recharge/cards/{paymentMethodId}",
+        client
+            .sdk()
+            .payments()
+            .update_auto_recharge_card(payment_method_id, &UpdateAutoRechargeCardRequest { fields })
+            .await,
+    )?;
     Ok(RpcOutcome::single_log(data, "saved card updated"))
 }
 
@@ -156,35 +186,35 @@ pub async fn delete_card(
     if payment_method_id.is_empty() {
         return Err("paymentMethodId is required".to_string());
     }
-    let path = format!(
-        "/payments/credits/auto-recharge/cards/{}",
-        urlencoding::encode(payment_method_id)
-    );
-    let data = get_authed_value(config, Method::DELETE, &path, None).await?;
+    let client = HostedClient::from_config(config)?;
+    let data = client.finish_value(
+        "DELETE /payments/credits/auto-recharge/cards/{paymentMethodId}",
+        client
+            .sdk()
+            .payments()
+            .delete_auto_recharge_card(payment_method_id)
+            .await,
+    )?;
     Ok(RpcOutcome::single_log(data, "saved card deleted"))
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PurchasePlanBody<'a> {
-    plan: &'a str,
-}
-
+/// `POST /payments/stripe/purchasePlan`. `plan` is one of the SDK's
+/// [`BillingPlan`] values (`BASIC_MONTHLY`, `BASIC_YEARLY`, `PRO_MONTHLY`,
+/// `PRO_YEARLY` — the frontend's `PlanIdentifier`).
 pub async fn purchase_plan(config: &Config, plan: &str) -> Result<RpcOutcome<Value>, String> {
     let plan = plan.trim();
     if plan.is_empty() {
         return Err("plan is required".to_string());
     }
-
-    let body = json!(PurchasePlanBody { plan });
-    let data = get_authed_value(
-        config,
-        Method::POST,
-        "/payments/stripe/purchasePlan",
-        Some(body),
-    )
-    .await?;
-
+    let request = PurchaseStripePlanRequest {
+        plan: parse_enum::<BillingPlan>("plan", plan)?,
+        coupon_code: None,
+    };
+    let client = HostedClient::from_config(config)?;
+    let data = client.finish_value(
+        "POST /payments/stripe/purchasePlan",
+        client.sdk().payments().purchase_stripe_plan(&request).await,
+    )?;
     Ok(RpcOutcome::single_log(
         data,
         "plan purchase session created",
@@ -192,19 +222,15 @@ pub async fn purchase_plan(config: &Config, plan: &str) -> Result<RpcOutcome<Val
 }
 
 pub async fn create_portal_session(config: &Config) -> Result<RpcOutcome<Value>, String> {
-    let data = get_authed_value(config, Method::POST, "/payments/stripe/portal", None).await?;
+    let client = HostedClient::from_config(config)?;
+    let data = client.finish_value(
+        "POST /payments/stripe/portal",
+        client.sdk().payments().create_stripe_portal_session().await,
+    )?;
     Ok(RpcOutcome::single_log(
         data,
         "customer portal session created",
     ))
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct TopUpBody {
-    amount_usd: f64,
-    #[serde(default = "default_gateway")]
-    gateway: String,
 }
 
 fn default_gateway() -> String {
@@ -236,27 +262,16 @@ pub async fn top_up_credits(
     }
 
     let gateway = normalize_gateway(gateway)?;
-    let body = TopUpBody {
+    let request = CreditTopUpRequest {
         amount_usd,
-        gateway,
+        gateway: Some(parse_enum::<PaymentGateway>("gateway", &gateway)?),
     };
-
-    let data = get_authed_value(
-        config,
-        Method::POST,
-        "/payments/credits/top-up",
-        Some(json!(body)),
-    )
-    .await?;
-
+    let client = HostedClient::from_config(config)?;
+    let data = client.finish_value(
+        "POST /payments/credits/top-up",
+        client.sdk().payments().create_credit_top_up(&request).await,
+    )?;
     Ok(RpcOutcome::single_log(data, "credit top-up initiated"))
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CoinbaseChargeBody<'a> {
-    plan: &'a str,
-    interval: &'a str,
 }
 
 /// Create a Coinbase Commerce charge (the "payment link" for crypto / annual billing).
@@ -277,19 +292,20 @@ pub async fn create_coinbase_charge(
         .filter(|s| !s.is_empty())
         .unwrap_or("annual");
 
-    let body = json!(CoinbaseChargeBody {
-        plan,
-        interval: interval_str,
-    });
-
-    let data = get_authed_value(
-        config,
-        Method::POST,
-        "/payments/coinbase/charge",
-        Some(body),
-    )
-    .await?;
-
+    let request = CreateCoinbaseChargeRequest {
+        plan: parse_enum::<CoinbasePlan>("plan", plan)?,
+        interval: Some(parse_enum::<CoinbaseInterval>("interval", interval_str)?),
+        metadata: Map::new(),
+    };
+    let client = HostedClient::from_config(config)?;
+    let data = client.finish_value(
+        "POST /payments/coinbase/charge",
+        client
+            .sdk()
+            .payments()
+            .create_coinbase_charge(&request)
+            .await,
+    )?;
     Ok(RpcOutcome::single_log(
         data,
         "Coinbase payment link created",
@@ -298,11 +314,6 @@ pub async fn create_coinbase_charge(
 
 // ── Coupon operations ──────────────────────────────────────────────────────
 
-#[derive(Debug, Serialize)]
-struct RedeemCouponBody<'a> {
-    code: &'a str,
-}
-
 /// Redeem a coupon code to add credits to the user's account.
 /// Maps to `POST /coupons/redeem`.
 pub async fn redeem_coupon(config: &Config, code: &str) -> Result<RpcOutcome<Value>, String> {
@@ -310,17 +321,25 @@ pub async fn redeem_coupon(config: &Config, code: &str) -> Result<RpcOutcome<Val
     if code.is_empty() {
         return Err("code is required".to_string());
     }
-
-    let body = json!(RedeemCouponBody { code });
-    let data = get_authed_value(config, Method::POST, "/coupons/redeem", Some(body)).await?;
-
+    let request = CodeRequest {
+        code: code.to_string(),
+    };
+    let client = HostedClient::from_config(config)?;
+    let data = client.finish_value(
+        "POST /coupons/redeem",
+        client.sdk().coupons().redeem_coupon(&request).await,
+    )?;
     Ok(RpcOutcome::single_log(data, "coupon redeemed"))
 }
 
 /// List coupons redeemed by the current user.
 /// Maps to `GET /coupons/me`.
 pub async fn get_user_coupons(config: &Config) -> Result<RpcOutcome<Value>, String> {
-    let data = get_authed_value(config, Method::GET, "/coupons/me", None).await?;
+    let client = HostedClient::from_config(config)?;
+    let data = client.finish_value(
+        "GET /coupons/me",
+        client.sdk().coupons().list_my_coupons().await,
+    )?;
     Ok(RpcOutcome::single_log(data, "user coupons fetched"))
 }
 

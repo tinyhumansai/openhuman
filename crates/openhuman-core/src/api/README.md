@@ -137,23 +137,18 @@ origin) and sends every request through the process `BackendTransport`
 `x-sdk-name` default headers; platform TLS via `util::tls`; 120 s timeout —
 all specified by `headers.rs`). Key surface:
 
-- `authed_json` / `fetch_billing_summary` — send an authenticated request and
-  route the result through `finish_authed_json`.
-- Typed route helpers (`fetch_profile`, `create_channel_link_token`,
-  `list_integrations`, `fetch_integration_tokens_handoff`, `fetch_client_key`,
-  `send_channel_*`, `*_channel_thread`, `revoke_integration`) all go through
-  `authed_json`. Every one of them is bearer-only: the core never obtains,
-  exchanges or validates a session — login-token exchange and `/auth/me`
-  validation live in the host's session owner (`openhuman_tinyhumans::session`),
-  and `fetch_profile` exists only for channel link-checks that read a
-  connected channel id off the profile.
-- `connect`, `url_for`, `raw_client` — OAuth connect flow and URL helpers for
-  callers that need to drive a non-JSON request (e.g. multipart uploads)
-  without re-implementing TLS/proxy setup. `raw_client` returns the
-  transport's `Api`-profile client and fails with `BackendUnavailable` when
-  no transport is installed.
-- `ConnectResponse`, `IntegrationSummary`, `IntegrationTokensHandoff` — typed
-  backend response shapes.
+- `authed_json` — send an authenticated request and route the result through
+  `finish_authed_json`.
+- Typed route helpers (`fetch_client_key`, `send_channel_*`,
+  `*_channel_thread`) all go through `authed_json` and are bearer-only: the
+  core never obtains, exchanges or validates a session. The account-bound
+  routes (link tokens, `/auth/me` link checks, OAuth connect / integrations,
+  billing, team, webhook tunnels, announcements) are called by
+  `openhuman-tinyhumans` (`hosted/`) on the TinyHumans SDK's typed clients.
+- `url_for`, `raw_client` — URL helpers for callers that need to drive a
+  non-JSON request (e.g. multipart uploads) without re-implementing TLS/proxy
+  setup. `raw_client` returns the transport's `Api`-profile client and fails
+  with `BackendUnavailable` when no transport is installed.
 - `user_id_from_profile_payload` — pull the user id out of the `/auth/me`
   envelope variants.
 - `decrypt_handoff_blob` — AES-256-GCM decrypt for integration token handoff,
@@ -164,8 +159,7 @@ match on for expected backend states rather than treating as failures:
 `Unauthorized` (401 — session lapsed, not a bug), `MessageNotFound` (404 on a
 channel message the provider or backend already deleted),
 `ChannelEditUnsupported` (404 because the backend never implemented the
-`PATCH` edit route), `AnnouncementNotFound` (404 on the best-effort
-announcements fetch), `BackendUnavailable` (no transport installed).
+`PATCH` edit route), `BackendUnavailable` (no transport installed).
 `flatten_authed_error` maps `Unauthorized` onto the `SESSION_EXPIRED`
 JSON-RPC sentinel so the dispatcher classifies it as session expiry instead of
 reporting it to Sentry, and `BackendUnavailable` onto `BACKEND_UNAVAILABLE:`

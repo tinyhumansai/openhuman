@@ -378,8 +378,6 @@ async fn channels_remaining_controller_paths_validate_without_live_services() {
 
     for (id, method) in [
         (40, "openhuman.channels_test"),
-        (41, "openhuman.channels_telegram_login_check"),
-        (42, "openhuman.channels_discord_link_check"),
         (43, "openhuman.channels_discord_list_channels"),
         (44, "openhuman.channels_discord_check_permissions"),
         (45, "openhuman.channels_send_message"),
@@ -395,13 +393,30 @@ async fn channels_remaining_controller_paths_validate_without_live_services() {
         );
     }
 
+    for (id, method) in [(52, "openhuman.channels_discord_list_guilds")] {
+        let response = rpc(&harness.rpc_base, id, method, json!({})).await;
+        assert_rpc_completed(&response, method);
+    }
+
+    // The managed-bot link flows need a TinyHumans account, so they are served
+    // by `openhuman-tinyhumans` (`hosted::channel_link`) and registered only
+    // when `openhuman_tinyhumans::install` runs. This harness boots the core
+    // alone, so they must be absent — same wire names, no core fallback.
     for (id, method) in [
         (50, "openhuman.channels_telegram_login_start"),
         (51, "openhuman.channels_discord_link_start"),
-        (52, "openhuman.channels_discord_list_guilds"),
+        (41, "openhuman.channels_telegram_login_check"),
+        (42, "openhuman.channels_discord_link_check"),
     ] {
         let response = rpc(&harness.rpc_base, id, method, json!({})).await;
-        assert_rpc_completed(&response, method);
+        let message = response
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(
+            message.contains("unknown method"),
+            "{method} must be absent from a core without the hosted layer: {response}"
+        );
     }
 }
 

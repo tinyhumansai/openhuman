@@ -13,7 +13,7 @@ use tinyjevclient::{Client, ClientConfig};
 use crate::api::config::effective_backend_api_url;
 use crate::config::Config;
 use crate::inference::provider::factory::{lookup_key_for_slug, provider_for_role};
-use crate::security::credentials::session_support::resolve_backend_credential;
+use crate::security::credentials::session_support::direct_backend_credential;
 
 #[cfg(test)]
 #[path = "browser_task_tests.rs"]
@@ -50,8 +50,11 @@ fn jev_client(config: &Config) -> Result<Client, String> {
             ClientConfig::openrouter(key)
         }
         BillingRoute::Hosted => {
-            let credential = resolve_backend_credential(config)
-                .map_err(|_| "TinyHumans credential is unavailable".to_owned())?;
+            // The hosted route reaches the backend host directly (not through
+            // the transport port): without a TinyHumans connection or a usable
+            // credential there is nothing to call, so refuse before any request.
+            let credential = direct_backend_credential(config, "browser task (hosted jev)")
+                .ok_or_else(|| "TinyHumans credential is unavailable".to_owned())?;
             let mut client_config = ClientConfig::tinyhumans_openrouter(credential.into_secret());
             client_config.base_url = effective_backend_api_url(&config.api_url);
             client_config

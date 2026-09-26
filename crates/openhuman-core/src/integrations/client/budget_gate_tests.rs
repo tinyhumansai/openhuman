@@ -297,3 +297,30 @@ fn usage_budget_exhausted_honors_remaining_and_bypass() {
         "bypassCycleLimit": true,
     })));
 }
+
+// ── Sentry 36649: no credential → no request, no streak ─────────────────
+
+#[tokio::test]
+async fn probe_without_a_credential_fails_before_the_backoff_and_any_request() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let config = Config {
+        workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
+        config_path: tmp.path().join("config.toml"),
+        api_url: Some("http://127.0.0.1:9".into()),
+        ..Config::default()
+    };
+    let err = probe_usage(&config).await.unwrap_err();
+    assert!(
+        err.contains("no backend session token"),
+        "the credential error is returned as-is, not a network failure: {err}"
+    );
+    assert!(
+        !USAGE_FAILURE_CACHE.is_fresh(
+            &effective_backend_api_url(&config.api_url),
+            Instant::now(),
+            USAGE_FAILURE_BACKOFF
+        ),
+        "a missing credential must not open a failure-backoff streak"
+    );
+}

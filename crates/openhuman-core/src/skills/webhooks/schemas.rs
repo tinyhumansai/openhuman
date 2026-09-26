@@ -43,26 +43,6 @@ struct WebhookTriggerAgentParams {
     payload: Option<Value>,
 }
 
-#[derive(Debug, Deserialize)]
-struct WebhookCreateTunnelParams {
-    name: String,
-    description: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct WebhookTunnelIdParams {
-    id: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct WebhookUpdateTunnelParams {
-    id: String,
-    name: Option<String>,
-    description: Option<String>,
-    is_active: Option<bool>,
-}
-
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("list_registrations"),
@@ -72,12 +52,6 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("unregister_echo"),
         schemas("register_agent"),
         schemas("trigger_agent"),
-        schemas("list_tunnels"),
-        schemas("create_tunnel"),
-        schemas("get_tunnel"),
-        schemas("update_tunnel"),
-        schemas("delete_tunnel"),
-        schemas("get_bandwidth"),
     ]
 }
 
@@ -110,30 +84,6 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("trigger_agent"),
             handler: handle_trigger_agent,
-        },
-        RegisteredController {
-            schema: schemas("list_tunnels"),
-            handler: handle_list_tunnels,
-        },
-        RegisteredController {
-            schema: schemas("create_tunnel"),
-            handler: handle_create_tunnel,
-        },
-        RegisteredController {
-            schema: schemas("get_tunnel"),
-            handler: handle_get_tunnel,
-        },
-        RegisteredController {
-            schema: schemas("update_tunnel"),
-            handler: handle_update_tunnel,
-        },
-        RegisteredController {
-            schema: schemas("delete_tunnel"),
-            handler: handle_delete_tunnel,
-        },
-        RegisteredController {
-            schema: schemas("get_bandwidth"),
-            handler: handle_get_bandwidth,
         },
     ]
 }
@@ -272,96 +222,6 @@ pub fn schemas(function: &str) -> ControllerSchema {
             ],
             outputs: vec![json_output("result", "Triage decision result.")],
         },
-        "list_tunnels" => ControllerSchema {
-            namespace: "webhooks",
-            function: "list_tunnels",
-            description: "List backend-managed webhook tunnels for the current user.",
-            inputs: vec![],
-            outputs: vec![json_output("result", "Webhook tunnel list.")],
-        },
-        "create_tunnel" => ControllerSchema {
-            namespace: "webhooks",
-            function: "create_tunnel",
-            description: "Create a backend-managed webhook tunnel.",
-            inputs: vec![
-                FieldSchema {
-                    name: "name",
-                    ty: TypeSchema::String,
-                    comment: "Tunnel name.",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "description",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-                    comment: "Optional tunnel description.",
-                    required: false,
-                },
-            ],
-            outputs: vec![json_output("result", "Created webhook tunnel.")],
-        },
-        "delete_tunnel" => ControllerSchema {
-            namespace: "webhooks",
-            function: "delete_tunnel",
-            description: "Delete a backend-managed webhook tunnel.",
-            inputs: vec![FieldSchema {
-                name: "id",
-                ty: TypeSchema::String,
-                comment: "Backend tunnel id.",
-                required: true,
-            }],
-            outputs: vec![json_output("result", "Delete webhook tunnel result.")],
-        },
-        "get_tunnel" => ControllerSchema {
-            namespace: "webhooks",
-            function: "get_tunnel",
-            description: "Fetch a backend-managed webhook tunnel by id.",
-            inputs: vec![FieldSchema {
-                name: "id",
-                ty: TypeSchema::String,
-                comment: "Backend tunnel id.",
-                required: true,
-            }],
-            outputs: vec![json_output("result", "Webhook tunnel payload.")],
-        },
-        "update_tunnel" => ControllerSchema {
-            namespace: "webhooks",
-            function: "update_tunnel",
-            description: "Update a backend-managed webhook tunnel.",
-            inputs: vec![
-                FieldSchema {
-                    name: "id",
-                    ty: TypeSchema::String,
-                    comment: "Backend tunnel id.",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "name",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-                    comment: "Optional tunnel name.",
-                    required: false,
-                },
-                FieldSchema {
-                    name: "description",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-                    comment: "Optional tunnel description.",
-                    required: false,
-                },
-                FieldSchema {
-                    name: "isActive",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::Bool)),
-                    comment: "Optional active flag.",
-                    required: false,
-                },
-            ],
-            outputs: vec![json_output("result", "Updated webhook tunnel payload.")],
-        },
-        "get_bandwidth" => ControllerSchema {
-            namespace: "webhooks",
-            function: "get_bandwidth",
-            description: "Fetch the remaining webhook bandwidth budget.",
-            inputs: vec![],
-            outputs: vec![json_output("result", "Webhook bandwidth payload.")],
-        },
         _ => ControllerSchema {
             namespace: "webhooks",
             function: "unknown",
@@ -443,72 +303,6 @@ fn handle_trigger_agent(params: Map<String, Value>) -> ControllerFuture {
             )
             .await?,
         )
-    })
-}
-
-fn handle_list_tunnels(_params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let config = crate::config::rpc::load_config_with_timeout().await?;
-        to_json(crate::skills::webhooks::ops::list_tunnels(&config).await?)
-    })
-}
-
-fn handle_create_tunnel(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let config = crate::config::rpc::load_config_with_timeout().await?;
-        let payload = deserialize_params::<WebhookCreateTunnelParams>(params)?;
-        to_json(
-            crate::skills::webhooks::ops::create_tunnel(
-                &config,
-                payload.name.trim(),
-                payload.description,
-            )
-            .await?,
-        )
-    })
-}
-
-fn handle_delete_tunnel(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let config = crate::config::rpc::load_config_with_timeout().await?;
-        let payload = deserialize_params::<WebhookTunnelIdParams>(params)?;
-        to_json(crate::skills::webhooks::ops::delete_tunnel(&config, payload.id.trim()).await?)
-    })
-}
-
-fn handle_get_tunnel(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let config = crate::config::rpc::load_config_with_timeout().await?;
-        let payload = deserialize_params::<WebhookTunnelIdParams>(params)?;
-        to_json(crate::skills::webhooks::ops::get_tunnel(&config, payload.id.trim()).await?)
-    })
-}
-
-fn handle_update_tunnel(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let config = crate::config::rpc::load_config_with_timeout().await?;
-        let payload = deserialize_params::<WebhookUpdateTunnelParams>(params)?;
-        let mut body = serde_json::Map::new();
-        if let Some(name) = payload.name {
-            body.insert("name".to_string(), Value::String(name));
-        }
-        if let Some(desc) = payload.description {
-            body.insert("description".to_string(), Value::String(desc));
-        }
-        if let Some(active) = payload.is_active {
-            body.insert("isActive".to_string(), Value::Bool(active));
-        }
-        let body = Value::Object(body);
-        to_json(
-            crate::skills::webhooks::ops::update_tunnel(&config, payload.id.trim(), body).await?,
-        )
-    })
-}
-
-fn handle_get_bandwidth(_params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let config = crate::config::rpc::load_config_with_timeout().await?;
-        to_json(crate::skills::webhooks::ops::get_bandwidth(&config).await?)
     })
 }
 

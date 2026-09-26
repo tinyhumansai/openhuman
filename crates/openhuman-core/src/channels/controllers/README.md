@@ -13,7 +13,7 @@ Owns the `channels.*` RPC namespace: provider metadata, connect/disconnect lifec
 
 ## RPC surface
 
-`channels.{list, describe, connect, disconnect, status, set_default, get_default, test, telegram_login_start, telegram_login_check, discord_link_start, discord_link_check, discord_list_guilds, discord_list_channels, discord_check_permissions, send_message, send_reaction, create_thread, update_thread, list_threads}` — declared in `schemas.rs::all_registered_controllers`. `list` and `describe` use a backend-less `ChannelManager::new(ChannelsConfig::default(), ())`; every other handler goes through `OpenHumanChannelBackend`.
+`channels.{list, describe, connect, disconnect, status, set_default, get_default, test, discord_list_guilds, discord_list_channels, discord_check_permissions, send_message, send_reaction, create_thread, update_thread, list_threads}` — declared in `schemas.rs::all_registered_controllers`. `list` and `describe` use a backend-less `ChannelManager::new(ChannelsConfig::default(), ())`; every other handler goes through `OpenHumanChannelBackend`. The managed-bot link methods of the contract (`telegram_login_start`, `telegram_login_check`, `discord_link_start`, `discord_link_check`, listed in `HOSTED_CHANNEL_FUNCTIONS`) need a TinyHumans account and are served by `openhuman-tinyhumans` (`hosted::channel_link`); `OpenHumanChannelBackend` implements them only to answer `BACKEND_UNAVAILABLE:`.
 
 ## `ops/`
 
@@ -22,7 +22,6 @@ Owns the `channels.*` RPC namespace: provider metadata, connect/disconnect lifec
 | `connect.rs` (+ `connect/` — `catalog.rs`, `connect_channel.rs`, `disconnect.rs`, `email.rs`, `memory.rs`, `shared.rs`, `status.rs`, `test_channel.rs`) | `list_channels`, `describe_channel`, `connect_channel`, `disconnect_channel`, `channel_status`, `test_channel`, `get_default_channel`/`set_default_channel`, `connected_channel_slugs`, `merge_listener_health` (`pub(crate)`, re-exported from `ops/mod.rs` under `#[cfg(test)]`) |
 | `discord.rs` | Discord OAuth link flow and guild/channel/permission listing |
 | `messaging.rs` | `channel_send_message`, `channel_send_reaction`, `channel_create_thread`, `channel_update_thread`, `channel_list_threads` — all call the TinyHumans backend REST API (`crate::api::rest::BackendOAuthClient`); the only path that reaches `relay_runtime` is `OpenHumanChannelBackend::send_outbound_intent` in `backend.rs` |
-| `telegram.rs` | `telegram_login_start`/`telegram_login_check` |
 | `yuanbao.rs` | `pub(super)` Yuanbao connect helpers: required-field checks, effective config assembly, credential verification |
 | `types.rs` | Re-exports of `tinychannels::controllers` result/snapshot types used by the ops layer |
 

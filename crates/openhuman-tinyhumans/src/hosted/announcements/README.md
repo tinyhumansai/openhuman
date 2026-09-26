@@ -11,7 +11,7 @@ through verbatim.
   `GET /announcements/latest`.
 - Resolve and require a live backend session token before calling out; fail
   closed with a clear error when none is stored.
-- Fold the backend's 404 (`BackendApiError::AnnouncementNotFound`, no
+- Fold the backend's 404 (`tinyhumans_sdk::Error::Status { status: 404 }`, no
   qualifying announcement) into the same `null` "no announcement" success
   outcome instead of surfacing it as an error — the feature is cosmetic and
   the 404 is a normal outcome, not a failure worth reporting.
@@ -21,7 +21,7 @@ through verbatim.
 | File | Role |
 | --- | --- |
 | `mod.rs` | Re-exports `ops::*` and the schema/controller pair. |
-| `ops.rs` | `require_token`, `get_latest_announcement`. Builds a `BackendOAuthClient` against the effective backend URL and issues the authed GET. |
+| `ops.rs` | `get_latest_announcement`, through `HostedClient` and the SDK's typed `announcements()` client (the payload is decoded into the SDK's `Announcement` and re-encoded, so it keeps the frontend's camelCase shape). |
 | `schemas.rs` | Controller schema + handler that loads `Config` and delegates to `ops`. |
 | `ops_tests.rs`, `schemas_tests.rs` | 404-detection and schema/registration tests. |
 
@@ -46,12 +46,9 @@ anything. Dismissal is tracked client-side by announcement id
 - `crate::security::credentials::session_support::require_live_session_token`
   — rejects an expired token locally instead of firing a doomed backend 401
   (same guard as `billing/ops.rs`).
-- `crate::api::config::effective_backend_api_url`, `crate::api::BackendOAuthClient`
-  — resolve the backend base URL and issue the authed JSON request, carrying
-  the sanitized `x-sdk-name` product identity (`crate::api::product`) on every
-  call.
-- `crate::api::flatten_authed_error` — flattens any non-404 backend/session
-  error for the RPC caller.
+- `crate::hosted::client::HostedClient` — resolves the core's credential first
+  (no request without one), builds the SDK client with the product identity,
+  and maps SDK errors onto the core's RPC sentinels.
 - `crate::rpc::RpcOutcome` (re-export of `openhuman_rpc`) — return wrapper
   carrying value + log line.
 

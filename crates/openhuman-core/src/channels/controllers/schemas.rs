@@ -7,14 +7,14 @@ use serde_json::{Map, Value};
 use crate::config::rpc as config_rpc;
 use crate::config::Config;
 use crate::core::all::{ControllerFuture, RegisteredController};
-use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
+use crate::core::ControllerSchema;
 use crate::rpc::RpcOutcome;
 
 use super::backend::OpenHumanChannelBackend;
 use super::definitions::ChannelAuthMode;
+use crate::channels::contract_schema::from_channel_controller_schema;
 use tinychannels::controllers::{
     all_channel_controller_schemas, channel_controller_schema, channel_credential_provider,
-    ChannelControllerField, ChannelControllerFieldType, ChannelControllerSchema,
 };
 use tinychannels::{ChannelManager, ChannelsConfig};
 
@@ -65,18 +65,6 @@ struct TestParams {
     channel: String,
     auth_mode: String,
     credentials: serde_json::Value,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TelegramLoginCheckParams {
-    link_token: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DiscordLinkCheckParams {
-    link_token: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -133,9 +121,21 @@ struct ListThreadsParams {
 // Public registry exports
 // ---------------------------------------------------------------------------
 
+/// Contract functions the core does NOT serve: linking the managed TinyHumans
+/// bots needs a TinyHumans account, so `openhuman-tinyhumans`
+/// (`hosted::channel_link`) registers them through the controller extension.
+/// Same wire names; the namespace is shared.
+pub const HOSTED_CHANNEL_FUNCTIONS: &[&str] = &[
+    "telegram_login_start",
+    "telegram_login_check",
+    "discord_link_start",
+    "discord_link_check",
+];
+
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     all_channel_controller_schemas()
         .into_iter()
+        .filter(|s| !HOSTED_CHANNEL_FUNCTIONS.contains(&s.function))
         .map(from_channel_controller_schema)
         .collect()
 }
@@ -173,22 +173,6 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("test"),
             handler: handle_test,
-        },
-        RegisteredController {
-            schema: schemas("telegram_login_start"),
-            handler: handle_telegram_login_start,
-        },
-        RegisteredController {
-            schema: schemas("telegram_login_check"),
-            handler: handle_telegram_login_check,
-        },
-        RegisteredController {
-            schema: schemas("discord_link_start"),
-            handler: handle_discord_link_start,
-        },
-        RegisteredController {
-            schema: schemas("discord_link_check"),
-            handler: handle_discord_link_check,
         },
         RegisteredController {
             schema: schemas("discord_list_guilds"),
@@ -370,56 +354,6 @@ fn handle_test(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_telegram_login_start(_params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
-        let manager = openhuman_channel_manager(config);
-        let result = manager
-            .telegram_login_start()
-            .await
-            .map_err(|e| e.to_string())?;
-        to_json(RpcOutcome::new(result, vec![]))
-    })
-}
-
-fn handle_telegram_login_check(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
-        let p = deserialize_params::<TelegramLoginCheckParams>(params)?;
-        let manager = openhuman_channel_manager(config);
-        let result = manager
-            .telegram_login_check(p.link_token.trim())
-            .await
-            .map_err(|e| e.to_string())?;
-        to_json(RpcOutcome::new(result, vec![]))
-    })
-}
-
-fn handle_discord_link_start(_params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
-        let manager = openhuman_channel_manager(config);
-        let result = manager
-            .discord_link_start()
-            .await
-            .map_err(|e| e.to_string())?;
-        to_json(RpcOutcome::new(result, vec![]))
-    })
-}
-
-fn handle_discord_link_check(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
-        let p = deserialize_params::<DiscordLinkCheckParams>(params)?;
-        let manager = openhuman_channel_manager(config);
-        let result = manager
-            .discord_link_check(p.link_token.trim())
-            .await
-            .map_err(|e| e.to_string())?;
-        to_json(RpcOutcome::new(result, vec![]))
-    })
-}
-
 fn handle_discord_list_guilds(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
@@ -582,47 +516,6 @@ fn raw_or_typed<T: serde::Serialize>(raw: Option<Value>, typed: &T) -> Result<Va
 
 fn to_json<T: serde::Serialize>(outcome: RpcOutcome<T>) -> Result<Value, String> {
     outcome.into_cli_compatible_json()
-}
-
-fn from_channel_controller_schema(schema: ChannelControllerSchema) -> ControllerSchema {
-    ControllerSchema {
-        namespace: schema.namespace,
-        function: schema.function,
-        description: schema.description,
-        inputs: schema
-            .inputs
-            .into_iter()
-            .map(from_channel_controller_field)
-            .collect(),
-        outputs: schema
-            .outputs
-            .into_iter()
-            .map(from_channel_controller_field)
-            .collect(),
-    }
-}
-
-fn from_channel_controller_field(field: ChannelControllerField) -> FieldSchema {
-    FieldSchema {
-        name: field.name,
-        ty: from_channel_controller_field_type(field.ty),
-        comment: field.comment,
-        required: field.required,
-    }
-}
-
-fn from_channel_controller_field_type(ty: ChannelControllerFieldType) -> TypeSchema {
-    match ty {
-        ChannelControllerFieldType::Bool => TypeSchema::Bool,
-        ChannelControllerFieldType::I64 => TypeSchema::I64,
-        ChannelControllerFieldType::U64 => TypeSchema::U64,
-        ChannelControllerFieldType::F64 => TypeSchema::F64,
-        ChannelControllerFieldType::String => TypeSchema::String,
-        ChannelControllerFieldType::Json => TypeSchema::Json,
-        ChannelControllerFieldType::Option(inner) => {
-            TypeSchema::Option(Box::new(from_channel_controller_field_type(*inner)))
-        }
-    }
 }
 
 #[cfg(test)]

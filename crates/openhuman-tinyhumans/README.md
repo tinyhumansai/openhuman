@@ -50,13 +50,16 @@ openhuman_tinyhumans::install(openhuman_tinyhumans::InstallOptions::default())?;
 | `transport` | `SdkBackendTransport`: one `reqwest::Client` per `TransportProfile`, built from the core's `api::headers` so TLS, timeouts and `x-core-version` / `x-tauri-version` / `x-sdk-name` are exactly what the core specifies; SDK route policy; `tinyhumans_sdk::Error` → `BackendTransportError` |
 | `install` | process-global installation, idempotent |
 | `RuntimeBuilder` | embed builder + transport |
-| `hosted` | the hosted-backend RPC proxies (`billing`, `team`, `referral`, `announcements`), moved here from the core; `hosted::extension()` packages them as a `ControllerExtension` that `install()` registers with the core's registry under `DomainGroup::Hosted`. Wire names (`openhuman.billing_*`, …) are unchanged |
+| `hosted` | the hosted-backend RPC proxies, moved here from the core and built on the SDK's typed clients: `billing`, `team` (including `team_get_usage`), `referral`, `announcements`, `webhooks` (tunnel CRUD + bandwidth), `channel_link` (`auth.create_channel_link_token`, `channels.telegram_login_*`, `channels.discord_link_*`) and `oauth` (`auth.oauth_*`). `hosted::client::HostedClient` resolves the core's credential first (no request for a user without a TinyHumans account — the core's `BACKEND_UNAVAILABLE:` / session sentinel comes back as-is), builds the `TinyHumansClient` with Bearer or `x-api-key` and the product identity, and maps `tinyhumans_sdk::Error` onto the core's RPC sentinels in one place (401 → `SESSION_EXPIRED:` or `API_KEY_REJECTED:`). `hosted::extension()` packages them as a `ControllerExtension` that `install()` registers under `DomainGroup::Hosted`; `webhooks`, `channel_link` and `oauth` share the `webhooks` / `channels` / `auth` namespaces with core controllers. Wire names (`openhuman.billing_*`, …) are unchanged |
 | `session` | the host-side login/session owner (formerly the `openhuman-session` crate): `SessionClient` (login-token exchange, `GET /auth/me`), `CurrentUserCache`, `CoreLink` (credential handoff into whichever core the host owns), `SessionManager`, process-global `identity` for sync Sentry hooks. May use core utilities (`util::tls`, `api::product`) but never `openhuman_core::security::*` — the core only *takes* a credential |
 | `jwt` | the SDK's JWT readers, for hosts that already depend on this crate |
 
-Routes and error classification stay in the core (`api/rest.rs`,
-`integrations/client/`); this crate never adds a route the core does not
-already name.
+The transport never adds a route the core does not already name; route
+classification for core-side calls stays in the core (`api/rest.rs`,
+`integrations/client/`). The hosted domains name SDK routes directly. The few
+calls whose route the SDK does not carry (`POST /teams`, `DELETE /teams/{id}`)
+stay on the core's `BackendOAuthClient::authed_json` until the route lands in
+the SDK upstream.
 
 ## Tests
 

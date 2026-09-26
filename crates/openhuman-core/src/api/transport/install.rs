@@ -86,3 +86,13 @@ pub fn resolve_backend_transport() -> Result<Arc<dyn BackendTransport>, BackendT
         Err(BackendTransportError::Unavailable)
     }
 }
+
+/// Whether a backend call made right now would find a transport (see
+/// [`resolve_backend_transport`]). Paths that talk to the backend host
+/// directly instead of through the port (the Langfuse proxy push, the socket,
+/// channel reply delivery, browser-task module config) check this first, so a
+/// core running without a TinyHumans connection skips them quietly instead of
+/// reaching a backend it was never connected to.
+pub fn is_installed() -> bool {
+    resolve_backend_transport().is_ok()
+}

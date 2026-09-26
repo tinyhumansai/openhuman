@@ -31,7 +31,7 @@ use tinyflows::engine::GraphObservation as FlowObservation;
 use crate::api::config::effective_backend_api_url;
 use crate::config::Config;
 use crate::flows::FlowRunTrigger;
-use crate::security::credentials::session_support::require_live_session_token;
+use crate::security::credentials::session_support::direct_backend_credential;
 
 const LOG_TARGET: &str = "flows::langfuse";
 /// Backend proxy route for Langfuse ingestion (relative to the backend
@@ -179,18 +179,18 @@ pub async fn export_flow_run_trace(
         );
         return;
     }
-    let token = match require_live_session_token(config) {
-        Ok(token) => token,
-        Err(err) => {
-            tracing::warn!(
-                target: LOG_TARGET,
-                flow_id = %flow_id,
-                error = %err,
-                "[flows] langfuse export skipped: no live session token"
-            );
-            return;
-        }
+    // No TinyHumans connection, or no usable credential (signed out, offline
+    // local session): a configured state — `direct_backend_credential` logs
+    // the reason at debug, and the export is skipped without a request.
+    let Some(credential) = direct_backend_credential(config, "flows langfuse export") else {
+        tracing::debug!(
+            target: LOG_TARGET,
+            flow_id = %flow_id,
+            "[flows] langfuse export skipped: hosted backend not available"
+        );
+        return;
     };
+    let token = credential.into_secret();
     let client = match LangfuseClient::new(url.clone(), LangfuseAuth::Bearer { token }) {
         Ok(client) => client,
         Err(err) => {

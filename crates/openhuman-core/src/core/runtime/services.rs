@@ -437,8 +437,26 @@ pub fn spawn_socket_auto_connect(
                     return;
                 }
             };
+            // No TinyHumans connection (no backend transport installed): there
+            // is no backend to hold a socket to, so skip quietly.
+            if !crate::api::transport::is_installed() {
+                log::debug!("[socket] No backend transport installed — skipping auto-connect");
+                return;
+            }
             let api_url = crate::api::config::effective_backend_api_url(&config.api_url);
             let initial_token = match crate::api::jwt::get_session_token(&config) {
+                Ok(Some(t))
+                    if crate::security::credentials::session_support::is_local_session_token(
+                        &t,
+                    ) =>
+                {
+                    // The offline local credential has no TinyHumans account,
+                    // so the backend would only reject the handshake.
+                    log::info!(
+                        "[socket] Offline local session — skipping auto-connect (no hosted account)"
+                    );
+                    return;
+                }
                 Ok(Some(t)) => t,
                 Ok(None) => {
                     log::info!(
@@ -477,7 +495,16 @@ pub fn spawn_socket_auto_connect(
             let provider =
                 crate::platform::socket::token_provider::token_provider_from_config(config);
             if let Err(e) = socket_mgr.connect_with_provider(&api_url, provider).await {
-                log::error!("[socket] Auto-connect failed: {e}");
+                // Signing out between the token check above and the provider's
+                // read leaves no token (Sentry 35911). That is a user-state
+                // race, not a fault: warn so it stays a breadcrumb.
+                if e.contains("no session token stored") {
+                    log::warn!(
+                        "[socket] Auto-connect skipped — session cleared before connect: {e}"
+                    );
+                } else {
+                    log::error!("[socket] Auto-connect failed: {e}");
+                }
             } else {
                 log::info!("[socket] Auto-connect initiated successfully");
             }

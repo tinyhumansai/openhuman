@@ -686,3 +686,33 @@ fn skills_install_fetch_filter_keeps_server_and_wrong_shape_failures() {
         );
     }
 }
+
+#[test]
+fn classifies_api_key_rejected_as_expected_credential_lapse() {
+    // A 401 on a TinyHumans API-key credential flattens to the
+    // `API_KEY_REJECTED:` sentinel (`api::rest::flatten_authed_error`). The
+    // remedy is a new key, so it must not reach Sentry as an RPC error.
+    let msg = format!("{API_KEY_REJECTED_PREFIX} backend rejected api key on GET /teams/me/usage");
+    assert!(is_api_key_rejected_message(&msg));
+    assert!(matches!(
+        expected_error_kind(&msg),
+        Some(ExpectedErrorKind::SessionExpired)
+    ));
+    // …but it is not a session expiry: the JSON-RPC publish boundary keys
+    // off `is_session_expired_message`, which must stay false so a bad key
+    // never clears a signed-in session.
+    assert!(!is_session_expired_message(&msg));
+}
+
+#[test]
+fn classifies_offline_local_session_refusal_as_backend_unavailable() {
+    // Sentry 36649 — 5.5k events: hosted RPCs (`team_get_usage`,
+    // `announcements_get_latest`, `billing_*`) invoked under the offline
+    // local credential. The refusal must classify as expected.
+    let msg = crate::security::credentials::session_support::LOCAL_SESSION_BACKEND_UNAVAILABLE;
+    assert!(matches!(
+        expected_error_kind(msg),
+        Some(ExpectedErrorKind::BackendUnavailable)
+    ));
+    assert!(!is_session_expired_message(msg));
+}

@@ -1,63 +1,53 @@
-//! Announcements RPC ops — a thin adapter that calls the hosted API.
+//! Announcements RPC ops — a thin adapter over the SDK's typed
+//! `announcements()` client.
 //!
 //! # Security
-//! Requires a valid app-session JWT stored via `auth_store_session` (same guard
-//! as `billing/ops.rs`). The JWT is sent as `Authorization: Bearer …`; the
-//! backend decides what the user may see. No authorization is replicated here.
-//! A lapsed session surfaces the backend 401 verbatim via `flatten_authed_error`.
+//! Authenticates with the core's resolved backend credential
+//! ([`HostedClient`]); the backend decides what the user may see. No
+//! authorization is replicated here.
 
-use reqwest::Method;
 use serde_json::Value;
+use tinyhumans_sdk::Error as SdkError;
 
-use openhuman_core::api::config::effective_backend_api_url;
-use openhuman_core::api::{BackendApiError, BackendOAuthClient};
 use openhuman_core::config::Config;
 use openhuman_core::rpc::RpcOutcome;
 
-/// Canonical authed-session guard — rejects an expired token locally instead of
-/// firing a doomed backend 401 (see `billing/ops.rs` / #3297).
-fn require_token(
-    config: &Config,
-) -> Result<openhuman_core::security::credentials::session_support::BackendCredential, String> {
-    openhuman_core::security::credentials::session_support::resolve_backend_credential(config)
-}
+use crate::hosted::client::HostedClient;
 
-/// `true` when `err` is the typed `BackendApiError::AnnouncementNotFound` 404
-/// (see `crates/openhuman-core/src/api/rest.rs`) — the backend has no announcement for this user,
-/// which is a normal outcome for this best-effort feature, not a failure.
-fn is_announcement_not_found(err: &anyhow::Error) -> bool {
-    matches!(
-        err.downcast_ref::<BackendApiError>(),
-        Some(BackendApiError::AnnouncementNotFound)
-    )
+/// `true` when `result` is the backend's 404 for "no announcement" — a normal
+/// outcome for this best-effort feature, not a failure.
+fn is_not_found<T>(result: &Result<T, SdkError>) -> bool {
+    matches!(result, Err(SdkError::Status { status: 404, .. }))
 }
 
 /// Fetch the latest active announcement for the signed-in user.
 /// Maps to `GET /announcements/latest`. The backend returns the announcement
-/// object or `null` when nothing qualifies; both pass through verbatim.
+/// object or `null` when nothing qualifies; both pass through.
 ///
-/// A 404 (`BackendApiError::AnnouncementNotFound`) is folded into that same
-/// "no announcement" contract instead of propagating as an error — this
-/// feature is best-effort/cosmetic, and surfacing the 404 as a hard failure
-/// flooded Sentry with no actionable signal (TAURI-RUST-HW0, TAURI-RUST-KHX).
-/// Any other error (5xx, malformed response, session expiry, …) still
-/// propagates via `flatten_authed_error` and still reaches Sentry.
+/// A 404 is folded into that same "no announcement" contract instead of
+/// propagating as an error — this feature is best-effort/cosmetic, and
+/// surfacing the 404 as a hard failure flooded Sentry with no actionable
+/// signal (TAURI-RUST-HW0, TAURI-RUST-KHX). Any other error (5xx, a response
+/// that no longer matches the announcement schema, session expiry, …) still
+/// propagates.
 pub async fn get_latest_announcement(config: &Config) -> Result<RpcOutcome<Value>, String> {
-    let token = require_token(config)?;
-    let api_url = effective_backend_api_url(&config.api_url);
-    let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
-
-    match client
-        .authed_json(&token, Method::GET, "/announcements/latest", None)
-        .await
-    {
-        Ok(data) => Ok(RpcOutcome::single_log(data, "latest announcement fetched")),
-        Err(err) if is_announcement_not_found(&err) => Ok(RpcOutcome::single_log(
+    let client = HostedClient::from_config(config)?;
+    let result = client
+        .sdk()
+        .announcements()
+        .get_latest_announcements()
+        .await;
+    if is_not_found(&result) {
+        log::debug!("[hosted][announcements] 404 on GET /announcements/latest — no announcement");
+        return Ok(RpcOutcome::single_log(
             Value::Null,
             "no announcement available (404)",
-        )),
-        Err(err) => Err(openhuman_core::api::flatten_authed_error(err)),
+        ));
     }
+    let announcement = client.finish("GET /announcements/latest", result)?;
+    let data = serde_json::to_value(announcement)
+        .map_err(|e| format!("failed to encode announcement: {e}"))?;
+    Ok(RpcOutcome::single_log(data, "latest announcement fetched"))
 }
 
 #[cfg(test)]

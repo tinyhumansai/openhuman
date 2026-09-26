@@ -35,7 +35,7 @@ pub use product::{
 };
 pub use rest::{
     decrypt_handoff_blob, flatten_authed_error, user_id_from_profile_payload, BackendApiError,
-    BackendOAuthClient, ConnectResponse, IntegrationSummary, IntegrationTokensHandoff,
+    BackendOAuthClient,
 };
 pub use socket::websocket_url;
 pub use transport::{

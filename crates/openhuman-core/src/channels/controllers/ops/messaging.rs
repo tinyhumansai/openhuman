@@ -28,7 +28,12 @@ pub async fn channel_send_message(
     let result = client
         .send_channel_message(channel, &jwt, message)
         .await
-        .map_err(|e| format!("failed to send channel message: {e}"))?;
+        .map_err(|e| {
+            format!(
+                "failed to send channel message: {}",
+                crate::api::flatten_authed_error(e)
+            )
+        })?;
 
     log::debug!("[channels] send_message response: {:?}", result);
 
@@ -55,7 +60,12 @@ pub async fn channel_send_reaction(
     let result = client
         .send_channel_reaction(channel, &jwt, reaction)
         .await
-        .map_err(|e| format!("failed to send channel reaction: {e}"))?;
+        .map_err(|e| {
+            format!(
+                "failed to send channel reaction: {}",
+                crate::api::flatten_authed_error(e)
+            )
+        })?;
 
     log::debug!("[channels] send_reaction response: {:?}", result);
 
@@ -83,7 +93,12 @@ pub async fn channel_create_thread(
     let result = client
         .create_channel_thread(channel, &jwt, title)
         .await
-        .map_err(|e| format!("failed to create channel thread: {e}"))?;
+        .map_err(|e| {
+            format!(
+                "failed to create channel thread: {}",
+                crate::api::flatten_authed_error(e)
+            )
+        })?;
 
     log::debug!("[channels] create_thread response: {:?}", result);
 
@@ -113,7 +128,12 @@ pub async fn channel_update_thread(
     let result = client
         .update_channel_thread(channel, &jwt, thread_id, action)
         .await
-        .map_err(|e| format!("failed to update channel thread: {e}"))?;
+        .map_err(|e| {
+            format!(
+                "failed to update channel thread: {}",
+                crate::api::flatten_authed_error(e)
+            )
+        })?;
 
     log::debug!("[channels] update_thread response: {:?}", result);
 
@@ -141,7 +161,12 @@ pub async fn channel_list_threads(
     let result = client
         .list_channel_threads(channel, &jwt, active)
         .await
-        .map_err(|e| format!("failed to list channel threads: {e}"))?;
+        .map_err(|e| {
+            format!(
+                "failed to list channel threads: {}",
+                crate::api::flatten_authed_error(e)
+            )
+        })?;
 
     log::debug!("[channels] list_threads response: {:?}", result);
 

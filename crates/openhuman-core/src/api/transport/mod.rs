@@ -28,7 +28,7 @@ pub mod plain;
 
 pub use error::BackendTransportError;
 pub use install::{
-    clear_backend_transport, install_backend_transport, installed_backend_transport,
+    clear_backend_transport, install_backend_transport, installed_backend_transport, is_installed,
     resolve_backend_transport,
 };
 

@@ -7,34 +7,6 @@ fn cfg() -> Config {
 }
 
 #[test]
-fn build_api_path_encodes_reserved_characters_in_segments() {
-    let path = build_api_path(&["teams", "team/with?reserved", "members", "user#frag"])
-        .expect("path should build");
-
-    assert_eq!(path, "/teams/team%2Fwith%3Freserved/members/user%23frag");
-}
-
-#[test]
-fn build_api_path_empty_segments_list_is_root() {
-    let path = build_api_path(&[]).expect("path should build");
-    assert_eq!(path, "/");
-}
-
-#[test]
-fn build_api_path_preserves_segment_order() {
-    let path = build_api_path(&["a", "b", "c"]).expect("path should build");
-    assert_eq!(path, "/a/b/c");
-}
-
-#[test]
-fn build_api_path_percent_encodes_spaces_and_unicode() {
-    let path = build_api_path(&["teams", "with space", "👥"]).expect("path should build");
-    assert!(path.contains("with%20space"));
-    // Unicode must be percent-encoded (UTF-8 bytes).
-    assert!(!path.contains('👥'));
-}
-
-#[test]
 fn normalize_id_rejects_empty_with_field_name() {
     let err = normalize_id("", "teamId").unwrap_err();
     assert_eq!(err, "teamId is required");
@@ -185,4 +157,117 @@ async fn revoke_invite_rejects_empty_team_id() {
 async fn revoke_invite_rejects_empty_invite_id() {
     let err = revoke_invite(&cfg(), "t1", "").await.unwrap_err();
     assert_eq!(err, "inviteId is required");
+}
+
+// --- SDK-backed calls against a mock backend -----------------------------
+
+use crate::hosted::test_support;
+use openhuman_core::core::observability::expected_error_kind;
+use serde_json::json;
+use tempfile::TempDir;
+use wiremock::matchers::{body_json, method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+#[test]
+fn clamp_u32_rejects_out_of_range() {
+    assert_eq!(clamp_u32(None, "maxUses").unwrap(), None);
+    assert_eq!(clamp_u32(Some(5), "maxUses").unwrap(), Some(5));
+    assert_eq!(
+        clamp_u32(Some(u64::MAX), "maxUses").unwrap_err(),
+        "maxUses is out of range"
+    );
+}
+
+#[tokio::test]
+async fn get_usage_for_local_session_is_backend_unavailable_without_a_request() {
+    // Sentry 36649: the offline local user must get the demoted sentinel.
+    let tmp = TempDir::new().unwrap();
+    let config = test_support::local_session(&tmp);
+    let err = get_usage(&config).await.unwrap_err();
+    assert!(err.starts_with("BACKEND_UNAVAILABLE:"), "{err}");
+    assert!(expected_error_kind(&err).is_some());
+}
+
+#[tokio::test]
+async fn get_usage_unwraps_the_usage_document() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/teams/me/usage"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "success": true,
+            "data": {"remainingUsd": 3.0}
+        })))
+        .mount(&server)
+        .await;
+    let tmp = TempDir::new().unwrap();
+    let config = test_support::signed_in(&tmp, &server.uri());
+    let out = get_usage(&config).await.unwrap();
+    assert_eq!(out.value, json!({"remainingUsd": 3.0}));
+}
+
+#[tokio::test]
+async fn team_calls_encode_ids_and_send_typed_bodies() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/teams/t%2F1/members"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"success": true, "data": []})),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/teams/t1/invites"))
+        .and(body_json(json!({"maxUses": 3})))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"success": true, "data": {"code": "c"}})),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path("/teams/t1/members/u1/role"))
+        .and(body_json(json!({"role": "admin"})))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"success": true, "data": {}})),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/teams/join"))
+        .and(body_json(json!({"code": "JOIN"})))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"success": true, "data": {}})),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/teams"))
+        .respond_with(ResponseTemplate::new(401).set_body_json(json!({"error": "Invalid token"})))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let tmp = TempDir::new().unwrap();
+    let config = test_support::signed_in(&tmp, &server.uri());
+    assert_eq!(
+        list_members(&config, " t/1 ").await.unwrap().value,
+        json!([])
+    );
+    assert_eq!(
+        create_invite(&config, "t1", Some(3), None)
+            .await
+            .unwrap()
+            .value,
+        json!({"code": "c"})
+    );
+    change_member_role(&config, "t1", "u1", "admin")
+        .await
+        .unwrap();
+    join_team(&config, " JOIN ").await.unwrap();
+    let err = list_teams(&config).await.unwrap_err();
+    assert!(err.starts_with("SESSION_EXPIRED:"), "{err}");
 }

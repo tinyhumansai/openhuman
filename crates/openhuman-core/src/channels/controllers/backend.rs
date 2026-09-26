@@ -39,6 +39,18 @@ impl OpenHumanChannelBackend {
     }
 }
 
+/// The managed-bot link flows need a TinyHumans account, so the core does not
+/// serve them: `openhuman-tinyhumans` registers `channels.telegram_login_*` /
+/// `channels.discord_link_*` itself (`hosted::channel_link`). The contract
+/// still requires these methods; nothing in the core dispatches them.
+fn hosted_link_unavailable<T>(method: &str) -> anyhow::Result<T> {
+    log::debug!("[channels][backend] {method} is served by openhuman-tinyhumans, not the core");
+    anyhow::bail!(
+        "{}channels.{method} is provided by the hosted TinyHumans layer",
+        crate::core::observability::BACKEND_UNAVAILABLE_PREFIX
+    )
+}
+
 fn into_anyhow<T>(result: Result<RpcOutcome<T>, String>) -> anyhow::Result<T> {
     result
         .map(|outcome| outcome.value)
@@ -311,36 +323,32 @@ impl ChannelBackend for OpenHumanChannelBackend {
 
     async fn telegram_login_start(
         &self,
-        channels_config: &ChannelsConfig,
+        _channels_config: &ChannelsConfig,
     ) -> anyhow::Result<TelegramLoginStartResult> {
-        let config = self.config_with_channels(channels_config);
-        into_anyhow(ops::telegram_login_start(&config).await)
+        hosted_link_unavailable("telegram_login_start")
     }
 
     async fn telegram_login_check(
         &self,
-        channels_config: &ChannelsConfig,
-        link_token: &str,
+        _channels_config: &ChannelsConfig,
+        _link_token: &str,
     ) -> anyhow::Result<TelegramLoginCheckResult> {
-        let config = self.config_with_channels(channels_config);
-        into_anyhow(ops::telegram_login_check(&config, link_token).await)
+        hosted_link_unavailable("telegram_login_check")
     }
 
     async fn discord_link_start(
         &self,
-        channels_config: &ChannelsConfig,
+        _channels_config: &ChannelsConfig,
     ) -> anyhow::Result<DiscordLinkStartResult> {
-        let config = self.config_with_channels(channels_config);
-        into_anyhow(ops::discord_link_start(&config).await)
+        hosted_link_unavailable("discord_link_start")
     }
 
     async fn discord_link_check(
         &self,
-        channels_config: &ChannelsConfig,
-        link_token: &str,
+        _channels_config: &ChannelsConfig,
+        _link_token: &str,
     ) -> anyhow::Result<DiscordLinkCheckResult> {
-        let config = self.config_with_channels(channels_config);
-        into_anyhow(ops::discord_link_check(&config, link_token).await)
+        hosted_link_unavailable("discord_link_check")
     }
 
     async fn discord_list_guilds(

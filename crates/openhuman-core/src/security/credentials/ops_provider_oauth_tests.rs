@@ -39,28 +39,6 @@ async fn auth_get_session_token_json_returns_null_when_empty() {
     assert!(out.value["token"].is_null());
 }
 
-// ── auth_create_channel_link_token (validation) ───────────────
-
-#[tokio::test]
-async fn auth_create_channel_link_token_rejects_empty_channel() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let err = auth_create_channel_link_token(&config, "   ")
-        .await
-        .unwrap_err();
-    assert!(err.contains("channel is required"));
-}
-
-#[tokio::test]
-async fn auth_create_channel_link_token_rejects_unsupported_channel() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let err = auth_create_channel_link_token(&config, "Slack")
-        .await
-        .unwrap_err();
-    assert!(err.contains("unsupported channel"));
-}
-
 // ── store_provider_credentials (validation + store path) ──────
 
 #[tokio::test]
@@ -292,48 +270,10 @@ async fn list_provider_credentials_sorts_by_provider_then_profile_name() {
 // ── oauth_* (validation paths that don't require network) ─────
 
 #[tokio::test]
-async fn oauth_connect_errors_without_session_token() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let err = oauth_connect(&config, "notion", None, None, None)
-        .await
-        .unwrap_err();
-    assert!(err.contains("session JWT required"));
-}
-
-#[tokio::test]
-async fn oauth_list_integrations_errors_without_session() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let err = oauth_list_integrations(&config).await.unwrap_err();
-    assert!(err.contains("session JWT required"));
-}
-
-#[tokio::test]
-async fn oauth_fetch_integration_tokens_errors_without_session() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let err = oauth_fetch_integration_tokens(&config, "int-1", "enc-key")
-        .await
-        .unwrap_err();
-    assert!(err.contains("session JWT required"));
-}
-
-#[tokio::test]
 async fn oauth_fetch_client_key_errors_without_session() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
     let err = oauth_fetch_client_key(&config, "int-1").await.unwrap_err();
-    assert!(err.contains("session JWT required"));
-}
-
-#[tokio::test]
-async fn oauth_revoke_integration_errors_without_session() {
-    let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
-    let err = oauth_revoke_integration(&config, "int-1")
-        .await
-        .unwrap_err();
     assert!(err.contains("session JWT required"));
 }
 

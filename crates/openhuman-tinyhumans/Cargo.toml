@@ -58,6 +58,10 @@ tinytools-jev = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinyto
 # transport-free and this crate owns the wire, the credential and the deadline.
 # Consumed by pinned revision, as that crate's README asks.
 tinyjevclient = { git = "https://github.com/tinyhumansai/tinyjevclient", rev = "84b3983c7e1e14f7515658ceafabb6c4e7967c94", optional = true }
+# The channel controller contract (result types, credential-provider keys)
+# for the managed Telegram/Discord link flows in `hosted::channel_link`. Same
+# vendored path as the core's, so the types unify. Sync and I/O-free.
+tinychannels-bus = { path = "../../vendor/tinychannels/crates/tinychannels-bus" }
 anyhow = "1"
 async-trait = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }

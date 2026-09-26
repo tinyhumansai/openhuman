@@ -17,7 +17,7 @@ Thin RPC adapter domain over the hosted backend's payment API. It exposes plan l
 | File | Role |
 | --- | --- |
 | `crates/openhuman-tinyhumans/src/hosted/billing/mod.rs` | Export-focused module root; re-exports `ops::*` and the schemas/controllers pair. |
-| `crates/openhuman-tinyhumans/src/hosted/billing/ops.rs` | Business logic: one async fn per backend endpoint; auth helper (`require_token`, `get_authed_value`); input validation + gateway normalization. Returns `RpcOutcome<Value>`. |
+| `crates/openhuman-tinyhumans/src/hosted/billing/ops.rs` | Business logic: one async fn per backend endpoint; each through `HostedClient` and the SDK's typed `payments()` / `coupons()` clients (`update_auto_recharge` forwards its payload on the SDK's raw primitive because the SDK's `AutoRechargeRequest` lacks `weeklyLimitUsd`); input validation + gateway/plan normalization into the SDK's request enums. Returns `RpcOutcome<Value>`. |
 | `crates/openhuman-tinyhumans/src/hosted/billing/schemas.rs` | Controller schemas, `all_billing_controller_schemas` / `all_billing_registered_controllers`, param structs, and `handle_billing_*` handlers delegating to `ops`. |
 | `crates/openhuman-tinyhumans/src/hosted/billing/schemas_tests.rs` | Sibling test suite for `schemas.rs` (wired via `#[path]` mod). |
 
@@ -63,17 +63,16 @@ None. No `bus.rs`; the domain neither publishes nor subscribes to `DomainEvent`s
 
 ## Persistence
 
-None of its own; stateless adapter. The only state it reads is the backend session JWT, which lives in the `api` layer (see `auth_store_session` / `get_session_token`), not in this module.
+None of its own; stateless adapter. The only state it reads is the backend credential, resolved through `HostedClient`.
 
 ## Dependencies
 
 - `crate::api::config::effective_backend_api_url` — resolves the backend base URL from `config.api_url`.
-- `crate::api::jwt::get_session_token` — reads the stored app-session JWT.
-- `crate::api::BackendOAuthClient` — performs the authenticated JSON HTTP request (`authed_json`).
+- `crate::hosted::client::HostedClient` — resolves the core's backend credential first (no request without one), builds the SDK's `TinyHumansClient`, and maps SDK errors onto the core's RPC sentinels.
 - `crate::config::Config` — config struct (`api_url`); `config::rpc::load_config_with_timeout` in handlers.
 - `crate::rpc::RpcOutcome` — standard RPC return/logging wrapper.
 - `crate::core::all::{ControllerFuture, RegisteredController}` and `crate::core::{ControllerSchema, FieldSchema, TypeSchema}` — controller registry types.
-- External crates: `reqwest` (`Method`), `serde`/`serde_json`, `urlencoding` (path-segment encoding for `paymentMethodId`).
+- External crates: `tinyhumans-sdk` (typed payments/coupons clients), `serde_json`.
 
 ## Used by
 

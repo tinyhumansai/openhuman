@@ -1380,6 +1380,55 @@ async fn credentials_session_expired_subscriber_ignores_unrelated_events() {
         .await;
 }
 
+/// Sentry 36649: an offline local session ("Continue locally") has no
+/// TinyHumans account, so every hosted RPC — the ones that moved into
+/// `openhuman-tinyhumans` included — must answer the `BACKEND_UNAVAILABLE:`
+/// sentinel the JSON-RPC layer demotes, without a backend request.
+#[tokio::test]
+async fn hosted_rpcs_answer_backend_unavailable_for_a_local_session() {
+    let _lock = env_lock();
+    let harness = setup().await;
+
+    let local_session = rpc(
+        &harness.rpc_base,
+        18_201,
+        "openhuman.auth_store_session",
+        json!({
+            "token": "header.payload.local",
+            "user": { "id": "local-hosted-36649", "name": "Local Hosted Worker" }
+        }),
+    )
+    .await;
+    assert_eq!(
+        payload(&local_session, "auth_store_session local")
+            .get("credential")
+            .and_then(Value::as_str),
+        Some("local")
+    );
+
+    for (id, method, params) in [
+        (18_202, "openhuman.team_get_usage", json!({})),
+        (18_203, "openhuman.announcements_get_latest", json!({})),
+        (18_204, "openhuman.billing_get_current_plan", json!({})),
+        (18_205, "openhuman.webhooks_list_tunnels", json!({})),
+        (18_206, "openhuman.channels_telegram_login_start", json!({})),
+        (18_207, "openhuman.auth_oauth_list_integrations", json!({})),
+        (
+            18_208,
+            "openhuman.auth_create_channel_link_token",
+            json!({ "channel": "telegram" }),
+        ),
+    ] {
+        assert_error_contains(
+            &rpc(&harness.rpc_base, id, method, params).await,
+            method,
+            "BACKEND_UNAVAILABLE:",
+        );
+    }
+
+    harness.join.abort();
+}
+
 #[tokio::test]
 async fn credentials_session_expired_subscriber_clears_remote_session_but_keeps_local_session() {
     let _lock = env_lock();
@@ -2419,25 +2468,27 @@ async fn credentials_public_ops_cover_service_and_missing_session_error_paths() 
     openhuman_core::security::credentials::start_login_gated_services(&config).await;
     openhuman_core::security::credentials::stop_login_gated_services(&config).await;
 
+    // The account-bound link-token and OAuth ops live in `openhuman-tinyhumans`
+    // (`hosted::{channel_link, oauth}`); validation still runs first, and a
+    // missing credential fails before any request.
+    use openhuman_tinyhumans::hosted::{channel_link, oauth};
+    assert!(channel_link::auth_create_channel_link_token(&config, "   ")
+        .await
+        .expect_err("blank channel should fail")
+        .contains("channel is required"));
     assert!(
-        openhuman_core::security::credentials::auth_create_channel_link_token(&config, "   ")
-            .await
-            .expect_err("blank channel should fail")
-            .contains("channel is required")
-    );
-    assert!(
-        openhuman_core::security::credentials::auth_create_channel_link_token(&config, "matrix")
+        channel_link::auth_create_channel_link_token(&config, "matrix")
             .await
             .expect_err("unsupported channel should fail")
             .contains("unsupported channel")
     );
     assert!(
-        openhuman_core::security::credentials::auth_create_channel_link_token(&config, "telegram")
+        channel_link::auth_create_channel_link_token(&config, "telegram")
             .await
             .expect_err("missing session should fail")
-            .contains("session JWT required")
+            .contains("no backend session token")
     );
-    assert!(openhuman_core::security::credentials::oauth_connect(
+    assert!(oauth::oauth_connect(
         &config,
         "github",
         Some("skill"),
@@ -2446,23 +2497,19 @@ async fn credentials_public_ops_cover_service_and_missing_session_error_paths() 
     )
     .await
     .expect_err("oauth connect without session should fail")
-    .contains("session JWT required"));
-    assert!(
-        openhuman_core::security::credentials::oauth_list_integrations(&config)
-            .await
-            .expect_err("oauth list without session should fail")
-            .contains("session JWT required")
-    );
-    assert!(
-        openhuman_core::security::credentials::oauth_fetch_integration_tokens(
-            &config,
-            "0123456789abcdef01234567",
-            "0123456789abcdef0123456789abcdef",
-        )
+    .contains("no backend session token"));
+    assert!(oauth::oauth_list_integrations(&config)
         .await
-        .expect_err("oauth token fetch without session should fail")
-        .contains("session JWT required")
-    );
+        .expect_err("oauth list without session should fail")
+        .contains("no backend session token"));
+    assert!(oauth::oauth_fetch_integration_tokens(
+        &config,
+        "0123456789abcdef01234567",
+        "0123456789abcdef0123456789abcdef",
+    )
+    .await
+    .expect_err("oauth token fetch without session should fail")
+    .contains("no backend session token"));
     assert!(
         openhuman_core::security::credentials::oauth_fetch_client_key(
             &config,
@@ -2473,13 +2520,10 @@ async fn credentials_public_ops_cover_service_and_missing_session_error_paths() 
         .contains("session JWT required")
     );
     assert!(
-        openhuman_core::security::credentials::oauth_revoke_integration(
-            &config,
-            "0123456789abcdef01234567",
-        )
-        .await
-        .expect_err("oauth revoke without session should fail")
-        .contains("session JWT required")
+        oauth::oauth_revoke_integration(&config, "0123456789abcdef01234567")
+            .await
+            .expect_err("oauth revoke without session should fail")
+            .contains("no backend session token")
     );
 }
 
@@ -3485,24 +3529,27 @@ async fn auth_credentials_controller_paths_round_trip_and_validate_errors() {
         "unsupported channel",
     );
 
+    // `auth_oauth_*` (all but `fetch_client_key`) are served by
+    // `openhuman-tinyhumans` now: validation first, then the core's
+    // credential resolution, whose missing-session wording they report.
     for (id, method, params, needle) in [
         (
             20_006,
             "openhuman.auth_oauth_connect",
             json!({ "provider": "github" }),
-            "session JWT required",
+            "no backend session token",
         ),
         (
             20_007,
             "openhuman.auth_oauth_list_integrations",
             json!({}),
-            "session JWT required",
+            "no backend session token",
         ),
         (
             20_008,
             "openhuman.auth_oauth_fetch_integration_tokens",
             json!({ "integrationId": "abc", "key": "secret" }),
-            "session JWT required",
+            "integrationId must be a 24-char hex id",
         ),
         (
             20_009,
@@ -3514,7 +3561,7 @@ async fn auth_credentials_controller_paths_round_trip_and_validate_errors() {
             20_010,
             "openhuman.auth_oauth_revoke_integration",
             json!({ "integrationId": "abc" }),
-            "session JWT required",
+            "no backend session token",
         ),
     ] {
         let response = rpc(&harness.rpc_base, id, method, params).await;

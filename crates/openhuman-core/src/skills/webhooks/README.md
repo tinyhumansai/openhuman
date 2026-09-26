@@ -1,6 +1,6 @@
 # webhooks
 
-Client-side webhook **tunnel routing** for OpenHuman. The backend provisions and hosts the actual tunnels (ngrok / cloudflare / etc.) and forwards incoming HTTP requests to the app over Socket.IO; this module maps each backend tunnel UUID to its owning target (a skill, the built-in echo responder, or the agent triage pipeline), dispatches incoming requests, builds responses, captures debug logs, and exposes both local routing RPCs and thin proxies to the backend's tunnel-management API.
+Client-side webhook **tunnel routing** for OpenHuman. The backend provisions and hosts the actual tunnels (ngrok / cloudflare / etc.) and forwards incoming HTTP requests to the app over Socket.IO; this module maps each backend tunnel UUID to its owning target (a skill, the built-in echo responder, or the agent triage pipeline), dispatches incoming requests, builds responses, captures debug logs, and exposes the local routing RPCs. The backend tunnel-management RPCs (`webhooks.{list,create,get,update,delete}_tunnel`, `webhooks.get_bandwidth`) share this namespace but live in `crates/openhuman-tinyhumans/src/hosted/webhooks/` on the TinyHumans SDK; they are registered only when `openhuman_tinyhumans::install` runs.
 
 `webhooks` is nested under `skills/` for historical reasons but is **not** gated by the `skills` Cargo feature — it has always-compiled callers in `crates/openhuman-core/src/core/` and stays outside the `skills` feature gate (see `crates/openhuman-core/src/skills/mod.rs`).
 
@@ -11,7 +11,7 @@ Client-side webhook **tunnel routing** for OpenHuman. The backend provisions and
 - Route incoming `WebhookIncomingRequest` events to the correct target by `target_kind` (`echo`, `agent`, or `skill`) and emit the response back over the socket (`webhook:response`).
 - Build echo responses; route `agent` tunnels into the agent triage pipeline (spawned, non-blocking, returns `202 Accepted`).
 - Capture per-request debug logs (request + response + lifecycle stage) in a bounded ring buffer for developer tooling, and broadcast debug events.
-- Expose local routing RPCs (registrations, logs, echo/agent registration, manual triage trigger) and proxy RPCs to the backend tunnel CRUD + bandwidth API.
+- Expose local routing RPCs (registrations, logs, echo/agent registration, manual triage trigger).
 
 ## Key files
 
@@ -20,7 +20,7 @@ Client-side webhook **tunnel routing** for OpenHuman. The backend provisions and
 | `crates/openhuman-core/src/skills/webhooks/mod.rs` | Export-only: module docstring, `pub mod` decls, re-exports of `WebhookRouter`, types, and the `all_webhooks_*` controller pair. |
 | `crates/openhuman-core/src/skills/webhooks/types.rs` | Serde domain types: `WebhookRequest`, `WebhookResponseData`, `TunnelRegistration`, `WebhookActivityEntry`, `WebhookDebugLogEntry`, debug result wrappers, `WebhookDebugEvent`. |
 | `crates/openhuman-core/src/skills/webhooks/router.rs` | `WebhookRouter` — route map + ownership rules, disk persistence (generation-counter, spawn_blocking offload), bounded debug log ring (`MAX_DEBUG_LOG_ENTRIES = 250`), debug-event broadcast channel. |
-| `crates/openhuman-core/src/skills/webhooks/ops.rs` | RPC handler logic returning `RpcOutcome<T>`: local routing ops (`list_registrations`, `list_logs`, `clear_logs`, `register_echo`, `unregister_echo`, `register_agent`, `trigger_agent`), `build_echo_response`, and backend-proxied tunnel CRUD (`list/create/get/update/delete_tunnel`, `get_bandwidth`). |
+| `crates/openhuman-core/src/skills/webhooks/ops.rs` | RPC handler logic returning `RpcOutcome<T>`: local routing ops (`list_registrations`, `list_logs`, `clear_logs`, `register_echo`, `unregister_echo`, `register_agent`, `trigger_agent`), and `build_echo_response`. |
 | `crates/openhuman-core/src/skills/webhooks/schemas.rs` | Controller schemas + `handle_*` fns + `all_controller_schemas` / `all_registered_controllers`; deserializes params, delegates to `ops.rs`. |
 | `crates/openhuman-core/src/skills/webhooks/bus.rs` | `WebhookRequestSubscriber` (`EventHandler`) — the incoming-request routing flow; helpers `decode_webhook_body`, `run_agent_trigger`, `build_agent_response`. |
 | `crates/openhuman-core/src/skills/webhooks/{webhooks_tests,bus_tests,ops_tests,router_tests,schemas_tests,types_tests}.rs` | Test suites, each pulled into its sibling source file via `#[cfg(test)] #[path = "..."] mod tests;` (no inline test modules). |
@@ -48,14 +48,8 @@ Registered via `all_webhooks_registered_controllers()` (wired in `crates/openhum
 | `webhooks.unregister_echo` | local router | Remove echo target. |
 | `webhooks.register_agent` | local router | Register an agent-backed tunnel (routes to triage). |
 | `webhooks.trigger_agent` | triage | Fire triage/agent pipeline directly (source `webhook`/`cron`/`external`); 60s timeouts on triage + apply. |
-| `webhooks.list_tunnels` | backend proxy | `GET /webhooks/core`. |
-| `webhooks.create_tunnel` | backend proxy | `POST /webhooks/core`. |
-| `webhooks.get_tunnel` | backend proxy | `GET /webhooks/core/{id}`. |
-| `webhooks.update_tunnel` | backend proxy | `PATCH /webhooks/core/{id}`. |
-| `webhooks.delete_tunnel` | backend proxy | `DELETE /webhooks/core/{id}`. |
-| `webhooks.get_bandwidth` | backend proxy | `GET /webhooks/core/bandwidth`. |
 
-Backend-proxy methods require a stored session token (`get_session_token`) and call the backend via `BackendOAuthClient`. `list_registrations`, `list_logs` and `clear_logs` return empty results when the router/socket manager isn't initialized; the `register_*`/`unregister_*` ops return an error in that case.
+`list_registrations`, `list_logs` and `clear_logs` return empty results when the router/socket manager isn't initialized; the `register_*`/`unregister_*` ops return an error in that case.
 
 ## Agent tools
 
@@ -87,7 +81,6 @@ Note that nothing in the production startup path currently constructs a `Webhook
 - `crate::platform::socket::global_socket_manager` — obtain the `WebhookRouter` (stored on the socket manager) and `emit` responses over the socket.
 - `crate::agent::triage` — `TriggerEnvelope`, `run_triage`, `apply_decision`, `TriageOutcome` for agent-tunnel routing and `trigger_agent`.
 - `crate::config::{Config, rpc::load_config_with_timeout}` — config for backend-proxy RPCs.
-- `crate::api::{BackendOAuthClient, config::effective_backend_api_url, jwt::get_session_token}` — authenticated backend tunnel CRUD/bandwidth calls.
 - `crate::rpc::RpcOutcome` — handler return contract.
 
 ## Used by

@@ -3,13 +3,17 @@
 //! round-trip that the backend would reject anyway.
 //!
 //! Lives with the integrations client because that is its one consumer
-//! (`requests.rs::ensure_budget_available`); the `team_get_usage` RPC in the
-//! hosted `team` domain reads the same cached probe through [`get_usage`].
+//! (`requests.rs::ensure_budget_available`). The `team_get_usage` RPC lives in
+//! `openhuman-tinyhumans` (`hosted::team::get_usage`, on the TinyHumans SDK)
+//! and shares this module's failure backoff through
+//! [`usage_with_failure_backoff`], so a persistent backend fault collapses to
+//! about one probe a minute across both surfaces.
 //!
-//! The usage document comes from `GET /teams/me/usage` through
-//! [`BackendOAuthClient`], so it already rides the backend transport port and
-//! degrades to "not exhausted" (defer to the backend) on a core with no
-//! transport installed.
+//! The pre-call probe reads `GET /teams/me/usage` through
+//! [`BackendOAuthClient`], so it rides the backend transport port. It resolves
+//! the credential first and defers to the backend (allows the call) without
+//! any request when there is no usable TinyHumans credential — the offline
+//! local session, an API-less core, or a signed-out user.
 
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
@@ -20,19 +24,12 @@ use crate::api::config::effective_backend_api_url;
 use crate::api::BackendOAuthClient;
 use crate::config::Config;
 use crate::rpc::RpcOutcome;
+use crate::security::credentials::session_support::BackendCredential;
 
-/// Fetch `GET /teams/me/usage` with the live backend credential.
-///
-/// `flatten_authed_error` maps the typed `BackendApiError::Unauthorized`
-/// (expected session-lapse 401) onto the `SESSION_EXPIRED` sentinel so the
-/// JSON-RPC layer classifies it as session expiry and skips Sentry (#3297,
-/// TAURI-RUST-8WY on `/teams/me/usage`); every other error keeps its full
-/// `{e:#}` anyhow chain so the underlying cause (connect timeout, DNS, TLS,
-/// non-2xx) is what reaches Sentry rather than the truncated label
-/// (OPENHUMAN-TAURI-AD).
-async fn fetch_usage(config: &Config) -> Result<Value, String> {
-    let credential =
-        crate::security::credentials::session_support::resolve_backend_credential(config)?;
+/// Fetch `GET /teams/me/usage` for the pre-call probe with an
+/// already-resolved credential. `flatten_authed_error` keeps the typed 401 on
+/// the `SESSION_EXPIRED` sentinel so a lapse never anchors the backoff.
+async fn fetch_usage(config: &Config, credential: BackendCredential) -> Result<Value, String> {
     let api_url = effective_backend_api_url(&config.api_url);
     let client = BackendOAuthClient::new(&api_url).map_err(|e| format!("{e:#}"))?;
     client
@@ -101,18 +98,41 @@ impl UsageFailureCache {
 
 static USAGE_FAILURE_CACHE: UsageFailureCache = UsageFailureCache::new();
 
-pub async fn get_usage(config: &Config) -> Result<RpcOutcome<Value>, String> {
-    // Key the failure backoff by the effective backend URL so a failure on one
-    // backend never suppresses probes after the backend is re-pointed (#4153).
-    let backend_key = effective_backend_api_url(&config.api_url);
+/// Run a `/teams/me/usage` fetch behind the process-wide failure backoff.
+///
+/// `backend_key` identifies the backend (the effective API URL) so a failure
+/// on one backend never suppresses a probe after the backend is re-pointed
+/// (#4153). Shared by the pre-call probe here and the hosted `team_get_usage`
+/// RPC, which supplies an SDK-backed `fetch`. Callers resolve the credential
+/// *before* calling this, so a missing credential never opens a streak.
+pub async fn usage_with_failure_backoff<F, Fut>(
+    backend_key: &str,
+    fetch: F,
+) -> Result<RpcOutcome<Value>, String>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<Value, String>>,
+{
     get_usage_with_cache(
         &USAGE_FAILURE_CACHE,
-        &backend_key,
+        backend_key,
         USAGE_FAILURE_BACKOFF,
         Instant::now(),
-        || async { fetch_usage(config).await },
+        fetch,
     )
     .await
+}
+
+/// The pre-call usage probe: `None` (allow, defer to the backend) when there is
+/// no usable credential — no request, no backoff streak — else the usage
+/// document behind the shared failure backoff.
+async fn probe_usage(config: &Config) -> Result<Value, String> {
+    let credential =
+        crate::security::credentials::session_support::resolve_backend_credential(config)?;
+    let backend_key = effective_backend_api_url(&config.api_url);
+    usage_with_failure_backoff(&backend_key, || fetch_usage(config, credential))
+        .await
+        .map(|outcome| outcome.value)
 }
 
 /// Cache-aware usage fetch. Mirrors the backoff/backpressure shape of
@@ -239,8 +259,8 @@ static BUDGET_PROBE_CACHE: BudgetProbeCache = BudgetProbeCache::new();
 
 pub async fn managed_tool_budget_exhausted(config: &Config) -> bool {
     budget_exhausted_with_cache(&BUDGET_PROBE_CACHE, BUDGET_PROBE_TTL, || async {
-        match get_usage(config).await {
-            Ok(outcome) => Some(usage_budget_exhausted(&outcome.value)),
+        match probe_usage(config).await {
+            Ok(usage) => Some(usage_budget_exhausted(&usage)),
             Err(err) => {
                 tracing::debug!(
                     error = %err,

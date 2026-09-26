@@ -1,6 +1,6 @@
 # referral
 
-Thin RPC adapter domain for the referral program. It does **not** own any business logic, state, or schema of its own — it makes authenticated `reqwest` calls to the hosted backend's `/referral/*` endpoints and surfaces the raw `data` payloads to the CLI / JSON-RPC clients. It exists primarily because the desktop WebView `fetch` to the backend can fail with a generic "Load failed" (CORS / TLS / WebKit), so these ops reuse the same server-side `reqwest` path as the billing domain.
+Thin RPC adapter domain for the referral program. It does **not** own any business logic, state, or schema of its own — it calls the hosted backend's `/referral/*` endpoints through the TinyHumans SDK's typed `referral()` client and surfaces the raw `data` payloads to the CLI / JSON-RPC clients. It exists primarily because the desktop WebView `fetch` to the backend can fail with a generic "Load failed" (CORS / TLS / WebKit), so these ops run in-process like the billing domain.
 
 ## Responsibilities
 
@@ -15,7 +15,7 @@ Thin RPC adapter domain for the referral program. It does **not** own any busine
 | File | Role |
 | --- | --- |
 | `crates/openhuman-tinyhumans/src/hosted/referral/mod.rs` | Export-only. Re-exports `ops::*` and the schema/controller pair (`all_referral_controller_schemas`, `all_referral_registered_controllers`, `referral_schemas`). |
-| `crates/openhuman-tinyhumans/src/hosted/referral/ops.rs` | Business logic: `require_token`, `get_stats`, `claim_referral`. Builds a `BackendOAuthClient` against the effective backend URL and issues authed JSON requests. Includes inline tests against an Axum mock backend. |
+| `crates/openhuman-tinyhumans/src/hosted/referral/ops.rs` | Business logic: `get_stats`, `claim_referral`, each through `HostedClient` (see `../client.rs`). Tests in `ops_tests.rs` run against an Axum mock backend. |
 | `crates/openhuman-tinyhumans/src/hosted/referral/schemas.rs` | Controller schemas + `handle_*` fns that load config and delegate to `ops`. Defines `ReferralClaimParams` (camelCase deserialization) and helpers (`to_json`, `deserialize_params`, `json_output`). |
 
 ## Public surface
@@ -28,7 +28,6 @@ From `mod.rs` re-exports:
 - `all_referral_registered_controllers() -> Vec<RegisteredController>`.
 - `referral_schemas(function: &str) -> ControllerSchema`.
 
-(`require_token` is a private helper.)
 
 ## RPC / controllers
 
@@ -43,13 +42,12 @@ An unrecognized `function` name returns an `unknown` placeholder schema with an 
 
 ## Persistence
 
-None of its own. The domain is stateless — it reads the backend session token from the credentials store via `get_session_token` but does not persist anything.
+None of its own. The domain is stateless — it reads the backend credential through `HostedClient` but does not persist anything.
 
 ## Dependencies
 
 - `crate::api::config::effective_backend_api_url` — resolves the effective backend API base URL from `config.api_url`.
-- `crate::api::jwt::get_session_token` — reads the stored backend session token.
-- `crate::api::BackendOAuthClient` — issues authenticated JSON requests (`authed_json`) to the backend.
+- `crate::hosted::client::HostedClient` — resolves the core's backend credential first (no request without one), builds the SDK's `TinyHumansClient`, and maps SDK errors onto the core's RPC sentinels.
 - `crate::config::Config` — config struct passed into ops; `config::rpc::load_config_with_timeout` is used by the schema handlers.
 - `crate::core::all::{ControllerFuture, RegisteredController}` and `crate::core::{ControllerSchema, FieldSchema, TypeSchema}` — controller registry types.
 - `crate::rpc::RpcOutcome` — return wrapper carrying value + logs.
@@ -65,4 +63,4 @@ None of its own. The domain is stateless — it reads the backend session token 
 - Both ops fail closed when no session token is stored, with the error `"no backend session token; run auth_store_session first"`.
 - Eligibility for `claim` ("only users who have not yet subscribed") is enforced **by the backend**, not in this module — it merely forwards the request.
 - Trimming/whitespace-dropping of `deviceFingerprint` happens in both `ops::claim_referral` and the schema handler `handle_referral_claim` (defensive, redundant filtering).
-- The module deliberately mirrors the billing domain's server-side `reqwest` path to avoid WebView `fetch` "Load failed" failures.
+- The module deliberately runs server-side like the billing domain to avoid WebView `fetch` "Load failed" failures.
