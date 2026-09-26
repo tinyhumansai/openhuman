@@ -110,7 +110,7 @@ impl ComposioListToolsTool {
         &self,
         args: Value,
         options: ToolCallOptions,
-    ) -> (Config, anyhow::Result<ToolResult>) {
+    ) -> (Box<Config>, anyhow::Result<ToolResult>) {
         let toolkits = args.get("toolkits").and_then(|v| v.as_array()).map(|arr| {
             arr.iter()
                 .filter_map(|v| v.as_str().map(str::to_string))
@@ -150,12 +150,16 @@ impl ComposioListToolsTool {
         // pattern. Surfacing the empty list explicitly is correct
         // fail-mode: the alternative — falling through to the backend
         // path — is exactly the bug we're closing (#1710).
+        // Boxed from the moment it exists (not just at the return): held
+        // across every await point below, and `Config` is large enough that
+        // inlining it by value in the generated async state machine blows a
+        // 2 MiB worker-thread stack (the default for `cargo test` and tokio).
         let live_config = match live_composio_config(self.config.as_ref()).await {
-            Ok(c) => c,
+            Ok(c) => Box::new(c),
             Err(e) => {
                 tracing::warn!(error = %e, "[composio] tool: load_config failed");
                 return (
-                    self.config.as_ref().clone(),
+                    Box::new(self.config.as_ref().clone()),
                     Ok(ToolResult::error(format!(
                         "composio: failed to load live config: {e}"
                     ))),

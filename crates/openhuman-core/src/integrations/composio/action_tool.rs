@@ -254,8 +254,13 @@ impl ComposioActionTool {
     /// outcome, so [`Tool::execute`] always redacts against the same
     /// credential that dispatched — for both a spawn-time config and a
     /// deferred instance with none.
-    async fn execute_unredacted(&self, args: Value) -> (Config, anyhow::Result<ToolResult>) {
-        let fallback_config = || self.config.as_deref().cloned().unwrap_or_default();
+    async fn execute_unredacted(&self, args: Value) -> (Box<Config>, anyhow::Result<ToolResult>) {
+        // Boxed from the moment it exists, not just at the return: this
+        // local is held across every await point below, and `Config` is a
+        // large top-level struct — inlining it by value in the generated
+        // async state machine was enough to blow a 2 MiB worker-thread
+        // stack (the default for both `cargo test` and tokio).
+        let fallback_config = || Box::new(self.config.as_deref().cloned().unwrap_or_default());
         // Agent-level sandbox gate (issue #685, CodeRabbit follow-up on
         // PR #904) — mirrors the check in
         // [`super::tools::ComposioExecuteTool::execute`] so a read-only
@@ -299,7 +304,7 @@ impl ComposioActionTool {
         // re-resolving process-global `OPENHUMAN_WORKSPACE` (the tool is scoped to
         // the user/workspace it was created for).
         let live_config = match self.live_config().await {
-            Ok(c) => c,
+            Ok(c) => Box::new(c),
             Err(e) => {
                 tracing::warn!(
                     tool = %self.action_name,

@@ -59,7 +59,7 @@ impl ComposioListToolkitsTool {
     /// so [`Tool::execute`] redacts against the same credential that ran —
     /// not the possibly-stale snapshot captured when this tool was
     /// registered.
-    async fn execute_unredacted(&self, _args: Value) -> (Config, anyhow::Result<ToolResult>) {
+    async fn execute_unredacted(&self, _args: Value) -> (Box<Config>, anyhow::Result<ToolResult>) {
         tracing::debug!("[composio] tool list_toolkits.execute");
         // Mirror the mode-aware pattern in
         // `ops::composio_list_toolkits`. In direct mode there is no
@@ -67,12 +67,17 @@ impl ComposioListToolkitsTool {
         // governs availability, so we return an empty toolkits list
         // with an explanatory log instead of silently routing through
         // the backend tinyhumans tenant (#1710).
+        //
+        // Boxed from the moment it exists (not just at the return): held
+        // across every await point below, and `Config` is large enough that
+        // inlining it by value in the generated async state machine blows a
+        // 2 MiB worker-thread stack (the default for `cargo test` and tokio).
         let live_config = match live_composio_config(self.config.as_ref()).await {
-            Ok(c) => c,
+            Ok(c) => Box::new(c),
             Err(e) => {
                 tracing::warn!(error = %e, "[composio] tool: load_config failed");
                 return (
-                    self.config.as_ref().clone(),
+                    Box::new(self.config.as_ref().clone()),
                     Ok(ToolResult::error(format!(
                         "composio: failed to load live config: {e}"
                     ))),

@@ -111,7 +111,7 @@ impl ComposioExecuteTool {
     /// so [`Tool::execute`] redacts against the same credential that ran —
     /// not the possibly-stale snapshot captured when this tool was
     /// registered.
-    async fn execute_unredacted(&self, args: Value) -> (Config, anyhow::Result<ToolResult>) {
+    async fn execute_unredacted(&self, args: Value) -> (Box<Config>, anyhow::Result<ToolResult>) {
         let tool = args
             .get("tool")
             .and_then(|v| v.as_str())
@@ -120,7 +120,7 @@ impl ComposioExecuteTool {
             .to_string();
         if tool.is_empty() {
             return (
-                self.config.as_ref().clone(),
+                Box::new(self.config.as_ref().clone()),
                 Ok(ToolResult::error(
                     "composio_execute: 'tool' is required (e.g. GMAIL_SEND_EMAIL)",
                 )),
@@ -175,7 +175,7 @@ impl ComposioExecuteTool {
                     scope.as_str()
                 );
                 return (
-                    self.config.as_ref().clone(),
+                    Box::new(self.config.as_ref().clone()),
                     Ok(ToolResult::error(format!(
                         "composio_execute: action `{tool}` is classified `{}` and is refused \
                          because the calling agent is in strict read-only mode. Only `read`-scoped \
@@ -204,7 +204,10 @@ impl ComposioExecuteTool {
                     scope = scope.as_str(),
                     "[composio][scopes] execute blocked by user scope pref"
                 );
-                return (self.config.as_ref().clone(), Ok(ToolResult::error(msg)));
+                return (
+                    Box::new(self.config.as_ref().clone()),
+                    Ok(ToolResult::error(msg)),
+                );
             }
             ToolDecision::NotCurated => {
                 let toolkit = toolkit_from_slug(&tool).unwrap_or_default();
@@ -214,7 +217,7 @@ impl ComposioExecuteTool {
                     "[composio][scopes] execute blocked: action not in curated whitelist"
                 );
                 return (
-                    self.config.as_ref().clone(),
+                    Box::new(self.config.as_ref().clone()),
                     Ok(ToolResult::error(format!(
                         "composio_execute: action `{tool}` is not in the curated whitelist for \
                          toolkit `{toolkit}`. Use composio_list_tools to see available actions."
@@ -258,11 +261,11 @@ impl ComposioExecuteTool {
         // executions through the backend tinyhumans tenant regardless
         // of mode — silently breaking direct mode for tool execution.
         let live_config = match live_composio_config(self.config.as_ref()).await {
-            Ok(c) => c,
+            Ok(c) => Box::new(c),
             Err(e) => {
                 tracing::warn!(error = %e, "[composio] tool execute.execute: load_config failed");
                 return (
-                    self.config.as_ref().clone(),
+                    Box::new(self.config.as_ref().clone()),
                     Ok(ToolResult::error(format!(
                         "composio_execute: failed to load live config: {e}"
                     ))),
