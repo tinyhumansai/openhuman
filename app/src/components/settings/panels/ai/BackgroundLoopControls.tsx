@@ -13,11 +13,13 @@ import { useCallback, useEffect, useState } from 'react';
 import { listConnections as listComposioConnections } from '../../../../lib/composio/composioApi';
 import type { ComposioConnection } from '../../../../lib/composio/types';
 import { useT } from '../../../../lib/i18n/I18nContext';
+import { useCoreState } from '../../../../providers/CoreStateProvider';
 import {
   creditsApi,
   type CreditTransaction,
   type TeamUsage,
 } from '../../../../services/api/creditsApi';
+import { hasHostedAccount } from '../../../../utils/localSession';
 import Button from '../../../ui/Button';
 import StatusLine from '../../../ui/StatusLine';
 import type { RoutingMap } from './aiPanelTypes';
@@ -54,6 +56,9 @@ export const BackgroundLoopControls = ({
   hideHeader?: boolean;
 }) => {
   const { t } = useT();
+  // Usage and the credit ledger live on the TinyHumans account; the offline
+  // local profile has none, so don't ask (the core would refuse anyway).
+  const hostedAccount = hasHostedAccount(useCoreState().snapshot);
   const [usage, setUsage] = useState<TeamUsage | null>(null);
   const [transactions, setTransactions] = useState<CreditTransaction[]>([]);
   const [connections, setConnections] = useState<ComposioConnection[]>([]);
@@ -64,14 +69,16 @@ export const BackgroundLoopControls = ({
     log('[settings:background-loops] refresh:start');
     setLoading(true);
     setError('');
+    const skipped = () => Promise.reject(new Error('no hosted account'));
     const [usageResult, transactionsResult, connectionsResult] = await Promise.allSettled([
-      creditsApi.getTeamUsage(),
-      creditsApi.getTransactions(200, 0),
+      hostedAccount ? creditsApi.getTeamUsage() : skipped(),
+      hostedAccount ? creditsApi.getTransactions(200, 0) : skipped(),
       listComposioConnections(),
     ]);
 
     log(
-      '[settings:background-loops] refresh:settled usage=%s transactions=%s connections=%s',
+      '[settings:background-loops] refresh:settled hosted=%s usage=%s transactions=%s connections=%s',
+      hostedAccount,
       usageResult.status,
       transactionsResult.status,
       connectionsResult.status
@@ -94,7 +101,7 @@ export const BackgroundLoopControls = ({
     }
     setLoading(false);
     log('[settings:background-loops] refresh:done');
-  }, []);
+  }, [hostedAccount]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect

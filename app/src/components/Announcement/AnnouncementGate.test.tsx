@@ -6,9 +6,10 @@ import { markAnnouncementShown } from '../../store/announcementSlice';
 import AnnouncementGate from './AnnouncementGate';
 
 // Controllable mock state shared across the mocked modules.
-const authState: { isAuthenticated: boolean; userId: string | null } = {
+const authState: { isAuthenticated: boolean; userId: string | null; credential: string } = {
   isAuthenticated: true,
   userId: 'u1',
+  credential: 'session',
 };
 let shownIds: string[] = [];
 const dispatch = vi.fn();
@@ -55,6 +56,7 @@ describe('AnnouncementGate', () => {
   beforeEach(() => {
     authState.isAuthenticated = true;
     authState.userId = 'u1';
+    authState.credential = 'session';
     shownIds = [];
     dispatch.mockClear();
     fetchLatestAnnouncement.mockReset();
@@ -71,6 +73,14 @@ describe('AnnouncementGate', () => {
 
   it('does not fetch or render when unauthenticated', async () => {
     authState.isAuthenticated = false;
+    render(<AnnouncementGate />);
+    await waitFor(() => expect(fetchLatestAnnouncement).not.toHaveBeenCalled());
+    expect(screen.queryByTestId('modal')).not.toBeInTheDocument();
+  });
+
+  it('does not fetch or render for the offline local profile (Sentry 36649)', async () => {
+    authState.credential = 'local';
+    fetchLatestAnnouncement.mockResolvedValue(sample);
     render(<AnnouncementGate />);
     await waitFor(() => expect(fetchLatestAnnouncement).not.toHaveBeenCalled());
     expect(screen.queryByTestId('modal')).not.toBeInTheDocument();

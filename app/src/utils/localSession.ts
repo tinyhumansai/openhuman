@@ -34,3 +34,26 @@ export function isLocalSessionToken(token: string | null | undefined): boolean {
   const parts = token.split('.');
   return parts.length === 3 && parts[2] === 'local';
 }
+
+/** The credential kinds the core reports in `auth.credential`. */
+export type CoreCredentialKind = 'session' | 'api-key' | 'local';
+
+interface HostedAccountSnapshot {
+  auth: { isAuthenticated: boolean; credential?: CoreCredentialKind | string | null };
+  sessionToken: string | null;
+}
+
+/**
+ * Whether the signed-in credential is backed by a TinyHumans account, so the
+ * hosted account surfaces (usage, billing, team, announcements, invites) can
+ * answer. False for the offline local profile and when signed out. The core
+ * refuses those calls anyway (`BACKEND_UNAVAILABLE:`); this only spares the
+ * round trip. Falls back to the session token shape for older cores that do
+ * not report `auth.credential`.
+ */
+export function hasHostedAccount(snapshot: HostedAccountSnapshot): boolean {
+  if (!snapshot.auth.isAuthenticated) return false;
+  const credential = snapshot.auth.credential;
+  if (credential) return credential !== 'local';
+  return !isLocalSessionToken(snapshot.sessionToken);
+}

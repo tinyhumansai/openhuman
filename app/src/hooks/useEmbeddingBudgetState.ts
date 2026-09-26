@@ -28,6 +28,7 @@ import { useCoreState } from '../providers/CoreStateProvider';
 import { creditsApi, type TeamUsage } from '../services/api/creditsApi';
 import { loadEmbeddingsSettings } from '../services/api/embeddingsApi';
 import { CoreRpcError } from '../services/coreRpcClient';
+import { hasHostedAccount } from '../utils/localSession';
 import { subscribeUsageRefresh } from './usageRefresh';
 import { useUsageState } from './useUsageState';
 
@@ -124,6 +125,8 @@ const PROVIDER_RECHECK_MS = 60_000;
 export function useEmbeddingBudgetState(): EmbeddingBudgetState {
   const { snapshot } = useCoreState();
   const isAuthenticated = snapshot.auth.isAuthenticated;
+  // The offline local profile has no TinyHumans budget to read.
+  const hostedAccount = hasHostedAccount(snapshot);
   const { usagePct, isBudgetExhausted, isLoading: usageLoading, teamUsage } = useUsageState();
   const [provider, setProvider] = useState<string | null>(null);
   const [providerLoading, setProviderLoading] = useState(true);
@@ -189,7 +192,7 @@ export function useEmbeddingBudgetState(): EmbeddingBudgetState {
         // `!usageLoading` too — otherwise a normal managed user whose provider
         // read resolves first fires a redundant `getTeamUsage()` that
         // `useUsageState` is about to make anyway.
-        if (managed && !hasUsage && !usageLoading) {
+        if (managed && hostedAccount && !hasUsage && !usageLoading) {
           console.debug(`${LOG} fallback budget read start (managed + usage settled empty)`);
           try {
             const usage = await creditsApi.getTeamUsage();
@@ -211,7 +214,8 @@ export function useEmbeddingBudgetState(): EmbeddingBudgetState {
           // Not needed (BYO/local, or `useUsageState` already has the figure).
           console.debug(
             `${LOG} fallback budget read not needed ` +
-              `(managed=${managed} hasUsage=${hasUsage} usageLoading=${usageLoading})`
+              `(managed=${managed} hostedAccount=${hostedAccount} hasUsage=${hasUsage} ` +
+              `usageLoading=${usageLoading})`
           );
           setFallbackUsage(null);
         }
@@ -231,7 +235,7 @@ export function useEmbeddingBudgetState(): EmbeddingBudgetState {
     return () => {
       cancelled = true;
     };
-  }, [reloadCount, isAuthenticated, hasUsage, usageLoading]);
+  }, [reloadCount, isAuthenticated, hostedAccount, hasUsage, usageLoading]);
 
   const isManagedEmbeddings = isManagedEmbeddingProvider(provider);
 

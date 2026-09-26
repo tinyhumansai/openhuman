@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   createLocalSessionToken,
+  hasHostedAccount,
   isLocalSessionToken,
   LOCAL_SESSION_USER,
   LOCAL_SESSION_USER_ID,
@@ -47,5 +48,41 @@ describe('localSession', () => {
       name: 'Local User',
       email: 'local@openhuman.local',
     });
+  });
+});
+
+describe('hasHostedAccount', () => {
+  const local = createLocalSessionToken(1_700_000_000_000);
+
+  it('is false when signed out', () => {
+    expect(
+      hasHostedAccount({ auth: { isAuthenticated: false, credential: null }, sessionToken: null })
+    ).toBe(false);
+  });
+
+  it('follows the credential kind the core reports', () => {
+    expect(
+      hasHostedAccount({
+        auth: { isAuthenticated: true, credential: 'session' },
+        sessionToken: 'a.b.c',
+      })
+    ).toBe(true);
+    expect(
+      hasHostedAccount({
+        auth: { isAuthenticated: true, credential: 'api-key' },
+        sessionToken: null,
+      })
+    ).toBe(true);
+    expect(
+      hasHostedAccount({
+        auth: { isAuthenticated: true, credential: 'local' },
+        sessionToken: local,
+      })
+    ).toBe(false);
+  });
+
+  it('falls back to the token shape when an older core omits the credential', () => {
+    expect(hasHostedAccount({ auth: { isAuthenticated: true }, sessionToken: local })).toBe(false);
+    expect(hasHostedAccount({ auth: { isAuthenticated: true }, sessionToken: 'a.b.c' })).toBe(true);
   });
 });

@@ -27,10 +27,10 @@ mod journal_export;
 mod span_export;
 
 pub(crate) use environment::{environment_for_base, ingestion_url, skip_push};
+pub(crate) use journal_export::journal_push_ready;
 #[cfg(test)]
 pub(crate) use journal_export::push_observations;
 pub(crate) use journal_export::root_subagent_observations;
-pub(crate) use journal_export::journal_push_ready;
 #[cfg(test)]
 pub(crate) use span_export::push_spans;
 

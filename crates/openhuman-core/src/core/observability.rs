@@ -615,6 +615,15 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if is_session_expired_message(message) {
         return Some(ExpectedErrorKind::SessionExpired);
     }
+    // The backend rejected the stored TinyHumans API key (401 on an api-key
+    // credential, `BackendApiError::ApiKeyRejected`). User-state — the key was
+    // revoked or mistyped and only a new key recovers it — so it shares the
+    // credential-lapse bucket. Kept out of `is_session_expired_message` on
+    // purpose: that predicate feeds the `SessionExpired` publish, which must
+    // not clear a session because an API key failed.
+    if is_api_key_rejected_message(message) {
+        return Some(ExpectedErrorKind::SessionExpired);
+    }
     if is_embedding_backend_auth_failure(&lower) {
         return Some(ExpectedErrorKind::SessionExpired);
     }
@@ -3176,6 +3185,17 @@ pub const USAGE_PROBE_BACKOFF_PREFIX: &str = "USAGE_PROBE_BACKOFF:";
 /// build their message from this constant; [`is_backend_unavailable_message`]
 /// classifies it as [`ExpectedErrorKind::BackendUnavailable`].
 pub const BACKEND_UNAVAILABLE_PREFIX: &str = "BACKEND_UNAVAILABLE:";
+
+/// Sentinel prefix on the error string a backend call returns when the backend
+/// rejects the stored TinyHumans API key (`api::rest::flatten_authed_error`).
+/// [`expected_error_kind`] demotes it: the fix is a new key, not a code change.
+pub const API_KEY_REJECTED_PREFIX: &str = "API_KEY_REJECTED:";
+
+/// Whether `msg` carries the [`API_KEY_REJECTED_PREFIX`] sentinel anywhere in
+/// its chain.
+pub fn is_api_key_rejected_message(msg: &str) -> bool {
+    msg.contains(API_KEY_REJECTED_PREFIX)
+}
 
 /// Whether `msg` is the backend-unavailable sentinel (see
 /// [`BACKEND_UNAVAILABLE_PREFIX`]). Matched anywhere in the chain because

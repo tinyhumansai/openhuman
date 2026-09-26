@@ -199,7 +199,9 @@ pub(super) async fn build_channel_client() -> Option<(crate::api::rest::BackendO
     let jwt = match crate::api::jwt::get_session_token(&config) {
         Ok(Some(t)) => t,
         Ok(None) => {
-            tracing::error!("[channel-inbound] no session JWT — cannot send");
+            // Signed out while an inbound relay message was in flight: user
+            // state, not a fault — keep it out of Sentry.
+            tracing::warn!("[channel-inbound] no session JWT — cannot send");
             return None;
         }
         Err(e) => {
@@ -230,7 +232,7 @@ pub(super) async fn send_channel_reply(channel: &str, text: &str) {
     let jwt = match crate::api::jwt::get_session_token(&config) {
         Ok(Some(t)) => t,
         Ok(None) => {
-            tracing::error!("[channel-inbound] no session JWT — cannot reply");
+            tracing::warn!("[channel-inbound] no session JWT — cannot reply");
             return;
         }
         Err(e) => {

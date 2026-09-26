@@ -12,6 +12,7 @@ import { billingApi } from '../services/api/billingApi';
 import { creditsApi, type TeamUsage } from '../services/api/creditsApi';
 import { CoreRpcError } from '../services/coreRpcClient';
 import type { CurrentPlanData, PlanTier } from '../types/api';
+import { hasHostedAccount } from '../utils/localSession';
 import { subscribeUsageRefresh } from './usageRefresh';
 
 interface UsageState {
@@ -54,7 +55,9 @@ function workloadsRoutedAway(aiSettings: AISettings, workloads: readonly string[
   });
 }
 
-async function fetchUsageData(): Promise<{
+async function fetchUsageData(
+  hostedAccount: boolean
+): Promise<{
   teamUsage: TeamUsage | null;
   currentPlan: CurrentPlanData | null;
   aiSettings: AISettings | null;
@@ -69,9 +72,13 @@ async function fetchUsageData(): Promise<{
     }
     return USAGE_UNAVAILABLE;
   });
+  // Without a TinyHumans account (offline local profile) there is no hosted
+  // usage or plan to read — the core refuses both, so skip the round trip
+  // (Sentry 36649 was this poll).
   if (
-    aiSettings !== USAGE_UNAVAILABLE &&
-    workloadsRoutedAway(aiSettings as AISettings, ALL_WORKLOADS)
+    !hostedAccount ||
+    (aiSettings !== USAGE_UNAVAILABLE &&
+      workloadsRoutedAway(aiSettings as AISettings, ALL_WORKLOADS))
   ) {
     return { teamUsage: null, currentPlan: null, aiSettings: aiSettings as AISettings };
   }
@@ -125,6 +132,7 @@ async function fetchUsageData(): Promise<{
 export function useUsageState(activeChatRole: 'chat' | 'reasoning' = 'chat'): UsageState {
   const { snapshot } = useCoreState();
   const isAuthenticated = snapshot.auth.isAuthenticated;
+  const hostedAccount = hasHostedAccount(snapshot);
   const [teamUsage, setTeamUsage] = useState<TeamUsage | null>(null);
   const [currentPlan, setCurrentPlan] = useState<CurrentPlanData | null>(null);
   const [aiSettings, setAiSettings] = useState<AISettings | null>(null);
@@ -158,7 +166,7 @@ export function useUsageState(activeChatRole: 'chat' | 'reasoning' = 'chat'): Us
     }
     let cancelled = false;
     setIsLoading(true);
-    fetchUsageData()
+    fetchUsageData(hostedAccount)
       .then(data => {
         if (cancelled || !data) return;
         setTeamUsage(data.teamUsage);
@@ -179,7 +187,7 @@ export function useUsageState(activeChatRole: 'chat' | 'reasoning' = 'chat'): Us
     return () => {
       cancelled = true;
     };
-  }, [fetchCount, isAuthenticated]);
+  }, [fetchCount, isAuthenticated, hostedAccount]);
 
   const currentTier: PlanTier = currentPlan?.plan ?? 'FREE';
   const isFreeTier = currentTier === 'FREE';

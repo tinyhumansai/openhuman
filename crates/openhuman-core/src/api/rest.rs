@@ -145,7 +145,10 @@ pub fn flatten_authed_error(err: anyhow::Error) -> String {
         // (clear the session, prompt re-sign-in) would be the wrong
         // recovery. See `BackendApiError::ApiKeyRejected`.
         Some(BackendApiError::ApiKeyRejected { method, path }) => {
-            format!("API_KEY_REJECTED: backend rejected api key on {method} {path}")
+            format!(
+                "{} backend rejected api key on {method} {path}",
+                crate::core::observability::API_KEY_REJECTED_PREFIX
+            )
         }
         Some(BackendApiError::BackendUnavailable { method, path }) => {
             format!(

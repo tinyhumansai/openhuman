@@ -33,7 +33,7 @@ import { store } from '../store';
 import { resetUserScopedState } from '../store/resetActions';
 import { loadThreads, resetThreadCachesPreservingSelection } from '../store/threadSlice';
 import { getActiveUserId, setActiveUserId } from '../store/userScopedStorage';
-import { isLocalSessionToken } from '../utils/localSession';
+import { hasHostedAccount, isLocalSessionToken } from '../utils/localSession';
 import {
   getSessionToken,
   openhumanUpdateAnalyticsSettings,
@@ -556,10 +556,7 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
       await doRefresh();
       if (!cancelled) {
         const next = getCoreStateSnapshot();
-        if (
-          next.snapshot.auth.isAuthenticated &&
-          !isLocalSessionToken(next.snapshot.sessionToken)
-        ) {
+        if (hasHostedAccount(next.snapshot)) {
           await refreshTeams().catch(err => {
             log('refreshTeams failed during bootstrap: %O', sanitizeError(err));
           });

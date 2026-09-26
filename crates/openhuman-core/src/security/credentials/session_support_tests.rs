@@ -270,7 +270,16 @@ fn offline_local_token_is_never_a_backend_bearer() {
         )
         .unwrap();
     let error = resolve_backend_credential(&config).unwrap_err();
-    assert_eq!(error, "backend unavailable for offline local session");
+    assert_eq!(error, LOCAL_SESSION_BACKEND_UNAVAILABLE);
+    assert!(crate::core::observability::is_backend_unavailable_message(
+        &error
+    ));
+    // Regression (Sentry 36649): the local-session refusal must classify as
+    // expected, not reach Sentry as an `rpc.invoke_method` error.
+    assert!(matches!(
+        crate::core::observability::expected_error_kind(&error),
+        Some(crate::core::observability::ExpectedErrorKind::BackendUnavailable)
+    ));
 }
 
 /// Regression: when both an app-session profile and a stored API key are

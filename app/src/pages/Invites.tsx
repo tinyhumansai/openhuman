@@ -7,8 +7,10 @@ import Button from '../components/ui/Button';
 import { useClipboardFeedback } from '../hooks/useClipboardFeedback';
 import { useUser } from '../hooks/useUser';
 import { useT } from '../lib/i18n/I18nContext';
+import { useCoreState } from '../providers/CoreStateProvider';
 import { inviteApi } from '../services/api/inviteApi';
 import type { InviteCode } from '../types/invite';
+import { hasHostedAccount } from '../utils/localSession';
 
 const log = debugFactory('invites');
 
@@ -83,6 +85,10 @@ const CodeRow = ({ invite }: { invite: InviteCode }) => {
 const Invites = () => {
   const { t } = useT();
   const { user, refetch: refetchUser } = useUser();
+  const { snapshot } = useCoreState();
+  // Invite codes belong to a TinyHumans account; the offline local profile
+  // has none, so explain that instead of firing a request the backend rejects.
+  const hostedAccount = hasHostedAccount(snapshot);
   const [codes, setCodes] = useState<InviteCode[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [redeemStatus, setRedeemStatus] = useState<RedeemStatus>('idle');
@@ -94,8 +100,13 @@ const Invites = () => {
   const hasBeenInvited = !!user?.referral?.invitedBy;
 
   const [loadError, setLoadError] = useState<string | null>(null);
+  const displayError = hostedAccount ? loadError : t('rewards.localUnavailable');
 
   const loadInviteCodes = async () => {
+    if (!hostedAccount) {
+      log('loadInviteCodes skipped: no hosted account');
+      return;
+    }
     const requestId = ++loadRequestIdRef.current;
     setIsLoading(true);
     setLoadError(null);
@@ -128,7 +139,7 @@ const Invites = () => {
 
   const handleRedeem = async () => {
     const trimmed = redeemInput.trim();
-    if (!trimmed) return;
+    if (!trimmed || !hostedAccount) return;
 
     setRedeemStatus('loading');
     setRedeemError(null);
@@ -207,7 +218,7 @@ const Invites = () => {
           <p className="text-xs opacity-70">{t('rewards.share')}</p>
         </div>
 
-        {loadError && <p className="text-coral-500 text-xs text-center py-2">{loadError}</p>}
+        {displayError && <p className="text-coral-500 text-xs text-center py-2">{displayError}</p>}
 
         {isLoading ? (
           <CenteredLoadingState label={t('common.loading')} />

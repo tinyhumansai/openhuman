@@ -2,6 +2,7 @@ import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { listConnections as listComposioConnections } from '../../../../lib/composio/composioApi';
+import { getCoreStateSnapshot, setCoreStateSnapshot } from '../../../../lib/coreState/store';
 import { I18nProvider } from '../../../../lib/i18n/I18nContext';
 import {
   clearCloudProviderKey,
@@ -254,8 +255,23 @@ const baseConnections = [
   { id: 'pending-cal', toolkit: 'googlecalendar', status: 'PENDING' },
 ];
 
+const initialCoreState = getCoreStateSnapshot();
+
+/** Put a signed-in snapshot with `credential` into the core-state store. */
+function signInHostedAccount(credential: 'session' | 'local') {
+  const current = getCoreStateSnapshot();
+  setCoreStateSnapshot({
+    ...current,
+    snapshot: {
+      ...current.snapshot,
+      auth: { ...current.snapshot.auth, isAuthenticated: true, userId: 'u1', credential },
+    },
+  });
+}
+
 describe('AIPanel', () => {
   beforeEach(() => {
+    setCoreStateSnapshot(initialCoreState);
     vi.clearAllMocks();
     vi.mocked(isTauri).mockReturnValue(false);
     vi.mocked(loadAISettings).mockResolvedValue(baseSettings);
@@ -2185,6 +2201,8 @@ describe('AIPanel', () => {
 
   it('renders background loop diagnostics with newest spend row and budget math', async () => {
     // BackgroundLoopControls was moved out of AIPanel into standalone panels.
+    // Usage + ledger reads need a TinyHumans account.
+    signInHostedAccount('session');
     renderWithProviders(
       <BackgroundLoopControls
         view="all"
@@ -2237,6 +2255,21 @@ describe('buildRoutingDiffSummary', () => {
     subconscious: { kind: 'default' },
   });
 
+  it('skips usage and ledger reads in background loops for the offline local profile', async () => {
+    signInHostedAccount('local');
+    renderWithProviders(
+      <BackgroundLoopControls
+        view="all"
+        routing={baseSettings.routing}
+        cloudProviders={baseSettings.cloudProviders}
+      />
+    );
+
+    await waitFor(() => expect(screen.getByText('Background loops')).toBeInTheDocument());
+    await waitFor(() => expect(listComposioConnections).toHaveBeenCalled());
+    expect(creditsApi.getTeamUsage).not.toHaveBeenCalled();
+    expect(creditsApi.getTransactions).not.toHaveBeenCalled();
+  });
   it('emits one "<label> → <target>" entry per changed workload and skips unchanged ones', () => {
     // Identity `t` so we can assert the workload's i18n label key is used.
     const t = (key: string) => key;

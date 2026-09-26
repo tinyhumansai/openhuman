@@ -353,6 +353,12 @@ impl BackendCredential {
     }
 }
 
+/// Error [`resolve_backend_credential`] returns for the offline local session.
+/// Carries [`BACKEND_UNAVAILABLE_PREFIX`](crate::core::observability::BACKEND_UNAVAILABLE_PREFIX)
+/// so it classifies as an expected backend-unavailable error.
+pub const LOCAL_SESSION_BACKEND_UNAVAILABLE: &str =
+    "BACKEND_UNAVAILABLE: hosted account data is unavailable for the offline local session";
+
 /// Resolve the backend credential for `config`: the API key when one is
 /// stored, else the live app-session token with exactly the classification
 /// [`require_live_session_token`] has always applied.
@@ -366,8 +372,12 @@ pub fn resolve_backend_credential(config: &Config) -> Result<BackendCredential, 
     }
     let profile = load_app_session_profile(config)?;
     match classify_session_token(profile.as_ref(), chrono::Utc::now()) {
+        // The offline local session has no TinyHumans account behind it, so a
+        // hosted call is unavailable by construction — the typed sentinel lets
+        // `report_error_or_expected` demote it instead of paging Sentry on
+        // every background usage/announcement probe (Sentry 36649).
         SessionTokenCheck::Live(token) if is_local_session_token(&token) => {
-            Err("backend unavailable for offline local session".to_owned())
+            Err(LOCAL_SESSION_BACKEND_UNAVAILABLE.to_owned())
         }
         SessionTokenCheck::Live(token) => Ok(BackendCredential::Session(token)),
         SessionTokenCheck::Absent => {

@@ -6,7 +6,17 @@ import { inviteApi } from '../services/api/inviteApi';
 import type { InviteCode } from '../types/invite';
 import Invites from './Invites';
 
+const { mockAuth } = vi.hoisted(() => ({ mockAuth: { credential: 'session' as string } }));
+
 vi.mock('../hooks/useUser', () => ({ useUser: vi.fn() }));
+vi.mock('../providers/CoreStateProvider', () => ({
+  useCoreState: () => ({
+    snapshot: {
+      auth: { isAuthenticated: true, credential: mockAuth.credential },
+      sessionToken: null,
+    },
+  }),
+}));
 vi.mock('../services/api/inviteApi', () => ({
   inviteApi: { getMyInviteCodes: vi.fn(), redeemInviteCode: vi.fn() },
 }));
@@ -29,6 +39,7 @@ const INVITE: InviteCode = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockAuth.credential = 'session';
   writeText.mockResolvedValue(undefined);
   Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
   mockUseUser.mockReturnValue({
@@ -81,5 +92,14 @@ describe('Invites clipboard feedback', () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(INVITE.code));
     expect(copyButton).toHaveAccessibleName('Copy');
     expect(copyButton.querySelector('svg.text-sage-500')).not.toBeInTheDocument();
+  });
+});
+
+describe('Invites without a hosted account', () => {
+  test('explains the offline local profile instead of fetching invite codes', async () => {
+    mockAuth.credential = 'local';
+    render(<Invites />);
+    expect(await screen.findByText(/Local login does not earn rewards/)).toBeInTheDocument();
+    expect(getMyInviteCodes).not.toHaveBeenCalled();
   });
 });

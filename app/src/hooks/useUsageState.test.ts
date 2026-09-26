@@ -23,9 +23,19 @@ vi.mock('../services/api/aiSettingsApi', async () => {
 // useUsageState gates polling on auth (#3297). Default authenticated so every
 // existing budget-gating assertion keeps exercising the fetch path; the gating
 // test below flips it false.
-const { mockAuthState } = vi.hoisted(() => ({ mockAuthState: { isAuthenticated: true } }));
+const { mockAuthState } = vi.hoisted(() => ({
+  mockAuthState: { isAuthenticated: true, credential: 'session' as string | null },
+}));
 vi.mock('../providers/CoreStateProvider', () => ({
-  useCoreState: () => ({ snapshot: { auth: { isAuthenticated: mockAuthState.isAuthenticated } } }),
+  useCoreState: () => ({
+    snapshot: {
+      auth: {
+        isAuthenticated: mockAuthState.isAuthenticated,
+        credential: mockAuthState.credential,
+      },
+      sessionToken: null,
+    },
+  }),
 }));
 
 // All chat workloads routed to OpenHuman — the default for every existing
@@ -133,6 +143,7 @@ describe('useUsageState', () => {
     mockLoadAISettings.mockReset();
     // Default authenticated; the auth-gating test opts out explicitly.
     mockAuthState.isAuthenticated = true;
+    mockAuthState.credential = 'session';
     // Default: keep the OpenHuman-routed world so every legacy assertion
     // about budget gating stays identical until a test opts into the
     // routed-away scenarios below.
@@ -766,5 +777,25 @@ describe('useUsageState', () => {
     expect(result.current.teamUsage).toBeNull();
     expect(result.current.currentPlan).toBeNull();
     expect(result.current.isLoading).toBe(false);
+  });
+
+  it('does not dispatch usage/plan RPCs for the offline local profile (Sentry 36649)', async () => {
+    // The local profile is authenticated but has no TinyHumans account, so
+    // the core refuses both RPCs. Routing settings still load.
+    mockAuthState.isAuthenticated = true;
+    mockAuthState.credential = 'local';
+    const { useUsageState } = await import('./useUsageState');
+    mockLoadAISettings.mockResolvedValue(ALL_OPENHUMAN_AI_SETTINGS);
+    mockGetCurrentPlan.mockRejectedValue(new Error('plan must not be fetched for local'));
+    mockGetTeamUsage.mockRejectedValue(new Error('usage must not be fetched for local'));
+
+    const { result } = renderHook(() => useUsageState());
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(mockLoadAISettings).toHaveBeenCalled();
+    expect(mockGetTeamUsage).not.toHaveBeenCalled();
+    expect(mockGetCurrentPlan).not.toHaveBeenCalled();
+    expect(result.current.teamUsage).toBeNull();
+    expect(result.current.currentPlan).toBeNull();
   });
 });

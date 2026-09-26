@@ -5,6 +5,7 @@ import { useCoreState } from '../../providers/CoreStateProvider';
 import { type Announcement, fetchLatestAnnouncement } from '../../services/announcementService';
 import { markAnnouncementShown } from '../../store/announcementSlice';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
+import { hasHostedAccount } from '../../utils/localSession';
 import AnnouncementModal from './AnnouncementModal';
 
 const log = debugFactory('announcement');
@@ -19,7 +20,9 @@ const log = debugFactory('announcement');
 export default function AnnouncementGate() {
   const dispatch = useAppDispatch();
   const { snapshot } = useCoreState();
-  const isAuthenticated = snapshot.auth.isAuthenticated;
+  // Announcements are served to TinyHumans accounts; the offline local profile
+  // has none, so it never fetches (or shows) one.
+  const isAuthenticated = hasHostedAccount(snapshot);
   const userId = snapshot.auth.userId ?? null;
   const shownIds = useAppSelector(state => state.announcement.shownIds);
 

@@ -38,7 +38,10 @@ pub(super) fn capture_model_content(value: &serde_json::Value) -> serde_json::Va
                     *content = serde_json::Value::String(format!(
                         "{}…[message content truncated]",
                         truncate_chars(
-                            &content.as_str().map(str::to_owned).unwrap_or_else(|| content.to_string()),
+                            &content
+                                .as_str()
+                                .map(str::to_owned)
+                                .unwrap_or_else(|| content.to_string()),
                             MAX_MODEL_CONTENT_CHARS / 2
                         )
                     ));
@@ -68,7 +71,10 @@ pub(super) fn capture_model_content(value: &serde_json::Value) -> serde_json::Va
         let mut kept = fields.clone();
         if let Some(content) = kept.get_mut("content") {
             *content = serde_json::Value::String(truncate_chars(
-                &content.as_str().map(str::to_owned).unwrap_or_else(|| content.to_string()),
+                &content
+                    .as_str()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| content.to_string()),
                 MAX_MODEL_CONTENT_CHARS / 2,
             ));
             if serde_json::Value::Object(kept.clone())
