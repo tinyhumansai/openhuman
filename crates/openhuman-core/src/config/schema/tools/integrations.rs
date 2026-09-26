@@ -86,7 +86,6 @@ impl ComposioConfig {
     /// its key and entity, and no fallback to the shared credential store.
     pub fn pin_host_credential(&mut self, credential: ComposioHostCredential) {
         self.mode = COMPOSIO_MODE_DIRECT.into();
-        self.api_key = Some(credential.api_key.clone());
         self.entity_id = credential.entity_id.clone();
         self.host_credential = Some(credential);
     }
@@ -322,3 +321,7 @@ pub struct IntegrationsConfig {
 #[cfg(test)]
 #[path = "integrations_integration_toggle_tests_tests.rs"]
 mod integration_toggle_tests;
+
+#[cfg(test)]
+#[path = "integrations_host_credential_tests.rs"]
+mod host_credential_tests;
