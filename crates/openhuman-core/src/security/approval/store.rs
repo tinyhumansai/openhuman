@@ -130,8 +130,16 @@ fn migrate_columns(conn: &Connection) -> Result<()> {
         ),
     ] {
         if !have.contains(col) {
-            conn.execute(ddl, params![])
-                .with_context(|| format!("[approval::store] add column {col}"))?;
+            // Two cores can open the same workspace during startup (for
+            // example, a reconnecting desktop shell and its replacement).
+            // Both may observe the old schema before either ALTER commits;
+            // SQLite then reports a harmless duplicate-column race here.
+            if let Err(error) = conn.execute(ddl, params![]) {
+                if !error.to_string().contains("duplicate column name") {
+                    return Err(error)
+                        .with_context(|| format!("[approval::store] add column {col}"));
+                }
+            }
             tracing::info!(column = col, "[approval::store] migrated v1 schema");
         }
     }

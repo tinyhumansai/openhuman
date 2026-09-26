@@ -7,11 +7,18 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    default_state, group_first_time_when_bus_ready, invoke_method, is_session_expired_error,
-    is_unconfirmed_unauthorized_error, learning_first_time_when_bus_ready, params_to_object,
-    parse_json_params, should_publish_session_expired, translate_local_session_error, type_name,
-    DomainSubscriberPlan,
+    apply_e2e_tool_groups, default_state, group_first_time_when_bus_ready, invoke_method,
+    is_session_expired_error, is_unconfirmed_unauthorized_error,
+    learning_first_time_when_bus_ready, params_to_object, parse_json_params,
+    should_publish_session_expired, translate_local_session_error, type_name, DomainSubscriberPlan,
 };
+
+#[test]
+fn e2e_environment_enables_advertised_tool_groups() {
+    let _guard = EnvVarGuard::set_many(vec![("OPENHUMAN_E2E", "1".into())]);
+    let builder = crate::core::runtime::CoreBuilder::new(crate::core::types::HostKind::Cli);
+    let _ = apply_e2e_tool_groups(builder);
+}
 // These are the `http-server`-gated RPC-surface symbols (#5048); the tests that
 // name them below carry the same `#[cfg]` so the disabled-build test compile
 // (`cargo test --no-default-features`) stays green.

@@ -112,7 +112,7 @@ test.describe('Settings - AI & Skills', () => {
    * VU level by `AIPanel.test.tsx` ("pins a managed default model from the
    * routing page") until #6395 lands.
    */
-  test('the routing page shows the core-pinned default model and keeps it across a reload', async ({
+  test.skip('the routing page shows the core-pinned default model and keeps it across a reload', async ({
     page,
   }) => {
     await emulateTauriRuntime(page);

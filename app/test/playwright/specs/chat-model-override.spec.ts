@@ -57,14 +57,13 @@ async function openChat(page: Page): Promise<void> {
 }
 
 /**
- * The model chip, by its analytics id rather than its accessible name.
+ * The model chip, by its stable test id rather than its accessible name.
  * `getByRole('button', { name: 'Model' })` is ambiguous once a thread exists:
  * sidebar thread rows are also `role="button"`, and a thread titled from a
  * prompt about models matches the same name — a strict-mode violation that only
  * appears after the first turn is sent.
  */
-const modelChip = (page: Page): Locator =>
-  page.locator('[data-analytics-id="chat-model-selector"]');
+const modelChip = (page: Page): Locator => page.getByTestId('composer-chat-settings');
 const pickerTitle = (page: Page): Locator => page.getByText('Choose provider and model');
 
 /**

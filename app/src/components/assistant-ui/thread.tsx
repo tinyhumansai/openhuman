@@ -967,10 +967,15 @@ const Composer: FC<{
       debug('[assistant-composer] paste: refused, ingest not accepting');
       return;
     }
-    const files = Array.from(event.clipboardData?.items ?? [])
+    const itemFiles = Array.from(event.clipboardData?.items ?? [])
       .filter(item => item.kind === 'file' && /^(image|video)\//.test(item.type))
       .map(item => item.getAsFile())
       .filter((file): file is File => file !== null);
+    // Real clipboard events expose media through `items`; synthetic browser
+    // events (including the Playwright path) may populate only `files`.
+    // Accept both representations so paste follows the same ingest path as
+    // the picker and dropzone.
+    const files = itemFiles.length > 0 ? itemFiles : Array.from(event.clipboardData?.files ?? []);
     if (files.length === 0) {
       // The overwhelmingly common case: an ordinary text paste. Left for Lexical.
       return;
@@ -1006,6 +1011,7 @@ const Composer: FC<{
           <div
             data-slot="aui_composer-shell"
             data-dragging={onComposerFiles && isDraggingFiles ? 'true' : undefined}
+            onPasteCapture={handlePasteCapture}
             // Keyed to `content-faint` rather than `line`/`line-strong`, which
             // sat too close to the composer's own surface to read as an edge at
             // all; `content-faint` is a real step along the grey ramp in both
@@ -1083,7 +1089,6 @@ const Composer: FC<{
             <LexicalComposerInput
               ref={inputWrapperRef}
               placeholder="Send a message..."
-              onPasteCapture={handlePasteCapture}
               onCompositionStartCapture={() => {
                 isComposingTextRef.current = true;
               }}

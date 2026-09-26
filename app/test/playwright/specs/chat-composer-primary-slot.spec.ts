@@ -196,14 +196,18 @@ test.describe('Chat composer primary slot', () => {
     await expect(sendButton(page)).toHaveCount(0);
   });
 
-  test('Stop ends the turn and the slot returns to the idle action', async ({ page }) => {
+  test('Stop ends the turn and restores the send action for the retained draft', async ({
+    page,
+  }) => {
     await openChat(page);
     await beginStreamingTurn(page, 'Count slowly for me');
 
     await stopButton(page).click();
 
     await expect(stopButton(page)).toHaveCount(0, { timeout: 20_000 });
-    await expect(idleAction(page)).toBeVisible({ timeout: 20_000 });
+    // Stop preserves the prompt so the user can edit and resend it. The
+    // primary slot therefore returns to Send rather than the idle mascot.
+    await expect(sendButton(page)).toBeVisible({ timeout: 20_000 });
     await expect(composer(page)).toBeVisible();
   });
 });

@@ -108,6 +108,8 @@ async function upstreamSaw(needle: string): Promise<boolean> {
 test.describe.configure({ timeout: 120_000 });
 
 test.describe('Plan-mode review', () => {
+  test.skip(true, 'request_plan_review is no longer on the chat orchestrator belt');
+
   test.beforeEach(async () => {
     await resetMock();
     await setKeywordRules(RULES);

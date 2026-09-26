@@ -296,7 +296,15 @@ export const Sidebar = forwardRef<HTMLDivElement, SidebarProps>(
           'flex h-full min-h-0 min-w-0 flex-none flex-col overflow-hidden text-content',
           className
         )}
-        style={{ width: collapsed ? SIDEBAR_ICON_WIDTH : width, ...(style ?? {}) }}
+        // Keep the rendered column inside half of a narrow viewport even when
+        // a persisted width arrives before the provider has observed resize.
+        // The provider still clamps its value for drag/ARIA consistency; this
+        // CSS guard closes the first-paint gap during a viewport transition.
+        style={{
+          width: collapsed ? SIDEBAR_ICON_WIDTH : width,
+          maxWidth: '50vw',
+          ...(style ?? {}),
+        }}
         {...rest}>
         {children}
       </div>

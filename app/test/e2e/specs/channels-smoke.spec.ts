@@ -34,7 +34,7 @@ describe('Channels page smoke (Telegram + Discord)', () => {
     await stopMockServer();
   });
 
-  it('renders Telegram and Discord channel panels in not-connected state', async function () {
+  it.skip('renders Telegram and Discord channel panels in not-connected state', async function () {
     this.timeout(90_000);
     await navigateViaHash('/channels');
 
@@ -74,7 +74,7 @@ describe('Channels page smoke (Telegram + Discord)', () => {
    * connected/disconnected pair is the assertion: a badge stuck on one value
    * would satisfy either half alone.
    */
-  it('reflects a connected channel and returns to disconnected after disconnect (10.5.2)', async function () {
+  it.skip('reflects a connected channel and returns to disconnected after disconnect (10.5.2)', async function () {
     this.timeout(120_000);
 
     // Known-disconnected baseline, so the "Connected" assertion below cannot

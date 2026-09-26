@@ -126,6 +126,10 @@ async function scrollTo(page: Page, top: number): Promise<void> {
   await page.evaluate(`(() => {
     const el = ${FIND_VIEWPORT};
     if (!el) throw new Error('transcript viewport [data-slot=aui_thread-viewport] not found');
+    // The follower deliberately distinguishes a reader gesture from a
+    // programmatic alignment. Mark this synthetic scroll as the wheel input a
+    // real reader would generate before the viewport moves.
+    el.dispatchEvent(new WheelEvent('wheel', { deltaY: ${top} }));
     el.scrollTo({ top: ${top}, behavior: 'instant' });
     el.dispatchEvent(new Event('scroll', { bubbles: true }));
   })()`);

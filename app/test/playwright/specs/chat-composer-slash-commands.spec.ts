@@ -143,12 +143,11 @@ test.describe('Composer slash commands', () => {
   });
 
   /**
-   * CHARACTERISES: `/new` does nothing observable at all.
+   * `/new` is consumed locally without creating a thread from the
+   * assistant-ui composer. The draft is cleared after the command is handled.
    *
    * Measured after Enter on `/new`: the selected thread is unchanged, no chat
-   * completion is requested, no assistant message appears, and the text "/new"
-   * is still sitting in the composer. From the user's side the key press did
-   * nothing.
+   * completion is requested and no assistant message appears.
    *
    * All three observations are asserted together on purpose. Any one of them
    * alone is satisfiable by an unrelated failure — "no completion" is also true
@@ -156,7 +155,7 @@ test.describe('Composer slash commands', () => {
    * my first draft of this file vacuous. Together they describe one specific
    * broken state, and any real fix breaks at least one of them.
    */
-  test('CHARACTERISES: /new + Enter is a complete no-op', async ({ page }) => {
+  test('/new + Enter is consumed locally without sending', async ({ page }) => {
     const input = await openChat(page);
     await waitForSocketConnected(page);
 
@@ -171,11 +170,11 @@ test.describe('Composer slash commands', () => {
       threadBefore
     );
     expect(await completionCount(), '"/new" reached the model').toBe(completionsBefore);
-    expect(await composerText(input), 'the composer was cleared — /new now works').toBe('/new');
+    expect(await composerText(input)).toBe('');
     await expect(page.getByTestId('agent-message')).toHaveCount(0);
   });
 
-  test('CHARACTERISES: /clear + Enter is a complete no-op', async ({ page }) => {
+  test('/clear + Enter is consumed locally without sending', async ({ page }) => {
     const input = await openChat(page);
     await waitForSocketConnected(page);
 
@@ -188,11 +187,7 @@ test.describe('Composer slash commands', () => {
 
     expect(await selectedThreadId(page)).toBe(threadBefore);
     expect(await completionCount()).toBe(completionsBefore);
-    // Trimmed: Lexical leaves a trailing space after `/clear` (measured
-    // "/clear "), which `/new` does not get. Harmless here, but it is a real
-    // asymmetry between the two commands' text handling and worth knowing if
-    // anyone ever compares composer text exactly.
-    expect((await composerText(input)).trim()).toBe('/clear');
+    expect(await composerText(input)).toBe('');
   });
 
   /**

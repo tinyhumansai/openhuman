@@ -52,14 +52,12 @@ use records_extra::{TINYBOX, TINYCHANNELS, TINYHOSTS};
 use records_mcp_connectors::{TINYCONNECTORS, TINYMCP};
 use records_memory_juice::{TINYJUICE, TINYMEMORY};
 use records_runtime::{TINYRUNTIME, TINYRUNTIME_NODEJS, TINYRUNTIME_PYTHON};
-use records_search::TINYSEARCH;
 use records_voice::TINYVOICE;
 
 /// Every module this build can load.
 pub const ALL: &[ModuleRecord] = &[
     TINYDESKTOP,
     TINYBROWSER,
-    TINYSEARCH,
     TINYDOCS,
     TINYWALLET,
     TINYMEMORY,

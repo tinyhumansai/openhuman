@@ -3285,12 +3285,10 @@ pub fn run() {
                 window_state::install_dpi_guard(&window);
                 // Windows starts at a compact near-square size. Other desktop
                 // targets keep their existing work-area first-launch layout.
-                if !window_state::restore_main(&window) {
-                    if cfg!(windows) {
-                        window_state::center_main(&window);
-                    } else if !window_state::maximize_to_work_area(&window) {
-                        window_state::center_main(&window);
-                    }
+                if !window_state::restore_main(&window)
+                    && (cfg!(windows) || !window_state::maximize_to_work_area(&window))
+                {
+                    window_state::center_main(&window);
                 }
                 if !daemon_mode {
                     if let Err(err) = window.show() {

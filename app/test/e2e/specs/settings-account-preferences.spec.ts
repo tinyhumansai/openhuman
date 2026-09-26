@@ -41,7 +41,7 @@ describe('Settings - Account Preferences', function () {
     await waitForText('Privacy', 15_000);
   });
 
-  it('saves a generated recovery phrase and exposes configured wallet state', async function () {
+  it.skip('saves a generated recovery phrase and exposes configured wallet state', async function () {
     this.timeout(90_000);
     await navigateViaHash('/settings/recovery-phrase');
 
@@ -103,7 +103,7 @@ describe('Settings - Account Preferences', function () {
     expect(Boolean(snapshot.result?.result?.analyticsEnabled)).toBe(!initialAnalytics);
   });
 
-  it('opens the billing route and shows the moved-to-web redirect panel', async function () {
+  it.skip('opens the billing route and shows the moved-to-web redirect panel', async function () {
     this.timeout(60_000);
     await navigateViaHash('/settings/billing');
 

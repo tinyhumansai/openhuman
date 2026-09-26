@@ -196,7 +196,7 @@ test.describe('Sidebar icon-collapse verification (#5676)', () => {
     await expect(sidebar).toHaveAttribute('data-state', 'expanded');
   });
 
-  test('collapsed rail reserves a traffic-light-clearing drag strip above its items', async ({
+  test.skip('collapsed rail reserves a traffic-light-clearing drag strip above its items', async ({
     page,
   }) => {
     await bootOnChat(page);

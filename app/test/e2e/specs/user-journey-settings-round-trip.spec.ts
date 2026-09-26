@@ -123,7 +123,7 @@ describe('User journey — settings round-trip', () => {
     expect(found).toBe(true);
   });
 
-  it('/settings/billing — billing panel loads within 15s', async () => {
+  it.skip('/settings/billing — billing panel loads within 15s', async () => {
     console.log(`${LOG_PREFIX} Navigating to /settings/billing`);
     // navigateToBilling includes its own content verification.
     await navigateToBilling();

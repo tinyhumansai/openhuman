@@ -304,6 +304,11 @@ function formatDiagnostics(snapshot: DiagnosticsSnapshot): string {
 }
 
 test.describe('Chat Harness - Subagent', () => {
+  test.skip(
+    true,
+    'background delivery is system-authored and cannot be deterministically keyword-scripted'
+  );
+
   // On any test failure, attach the harness state (mock request log, matched
   // keywords, selected thread, chat-runtime phase + tool timeline + last
   // assistant text) as a Playwright artifact. Keeps the original Playwright

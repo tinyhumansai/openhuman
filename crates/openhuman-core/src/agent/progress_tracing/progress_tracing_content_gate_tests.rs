@@ -42,6 +42,16 @@ fn oversized_model_content_remains_structured() {
 }
 
 #[test]
+fn object_model_content_is_truncated_without_panicking() {
+    let captured = capture_model_content(&serde_json::json!({
+        "role": "user",
+        "content": "x".repeat(MAX_MODEL_CONTENT_CHARS),
+    }));
+    assert_eq!(captured["role"], "user");
+    assert!(captured["content"].as_str().unwrap().contains("…"));
+}
+
+#[test]
 fn turn_content_respects_the_trace_context_capture_gate() {
     // Regression (PR #4506 review): the collector briefly carried TWO capture
     // gates — a collector-level flag (checked by the TurnContent arm) and the

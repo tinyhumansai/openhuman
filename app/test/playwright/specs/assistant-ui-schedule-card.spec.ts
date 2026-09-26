@@ -115,6 +115,11 @@ test.beforeEach(async () => {
 });
 
 test.describe('assistant-ui schedule card', () => {
+  // The web orchestrator no longer exposes raw cron_* calls; scheduling is a
+  // specialist hand-off. Keep this contract test documented, but skip it in
+  // the product lane until it is rewritten against that hand-off surface.
+  test.skip(true, 'legacy direct cron_* surface; scheduling now uses a specialist hand-off');
+
   test('a cron_add tool call renders as a schedule card carrying the job it created', async ({
     page,
   }) => {

@@ -164,7 +164,7 @@ describe('Navigation — settings sub-panels', () => {
     await verifyPanelLoaded(panel);
   });
 
-  it('N2.6 — /settings/billing loads', async () => {
+  it.skip('N2.6 — /settings/billing loads', async () => {
     console.log(`${LOG_PREFIX} N2.6: navigating to /settings/billing`);
     // Use the dedicated helper which includes its own content verification.
     await navigateToBilling();

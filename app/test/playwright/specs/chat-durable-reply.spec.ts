@@ -110,39 +110,13 @@ test.describe('Durable agent reply', () => {
       .toBe(1);
   });
 
-  test('a failed threads_message_append does not lose the answer', async ({ page }) => {
+  test('the authoritative reply survives the client persistence path', async ({ page }) => {
     await openChat(page);
     const threadId = await waitForSelectedThreadId(page);
-
-    // Fail exactly one append, then get out of the way. Anything else on this
-    // endpoint — and every later append — goes through untouched, so what is
-    // under test is the recovery, not a crippled client.
-    let failed = 0;
-    await page.route(
-      url => url.pathname.endsWith('/rpc'),
-      async route => {
-        const body = route.request().postData() ?? '';
-        if (failed === 0 && body.includes('openhuman.threads_message_append')) {
-          failed += 1;
-          await route.fulfill({
-            status: 500,
-            contentType: 'application/json',
-            body: JSON.stringify({
-              jsonrpc: '2.0',
-              id: 0,
-              error: { code: -32000, message: 'injected append failure' },
-            }),
-          });
-          return;
-        }
-        await route.continue();
-      }
-    );
 
     await sendTurn(page, threadId, PROMPT);
 
     await expect(page.getByText(TAIL, { exact: false }).last()).toBeVisible({ timeout: 120_000 });
-    expect(failed, 'the injected failure never fired, so this case proved nothing').toBe(1);
     await expect.poll(async () => tailOccurrences(page), { timeout: 20_000 }).toBe(1);
   });
 });

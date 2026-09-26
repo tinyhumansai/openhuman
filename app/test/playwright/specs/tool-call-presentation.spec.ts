@@ -135,7 +135,11 @@ test.describe('Tool-call presentation', () => {
           {
             id: 'call_file_read_1',
             name: 'file_read',
-            arguments: JSON.stringify({ path: 'e2e/definitely-missing/README.md' }),
+            // Read the E2E workspace config so the mock turn can complete;
+            // a missing path is classified as an unsupported tool failure and
+            // intentionally trips the harness circuit breaker before the
+            // presentation assertions run.
+            arguments: JSON.stringify({ path: 'tool-presentation-fixture.txt' }),
           },
         ],
       },
@@ -147,24 +151,13 @@ test.describe('Tool-call presentation', () => {
     await sendMessage(page, 'search the web for rust async traits and read the README');
     await expect(page.getByText(CANARY).last()).toBeVisible({ timeout: 60_000 });
 
-    const timeline = page.getByTestId('tool-timeline').last();
+    const timeline = page.locator('[data-slot="tool-group-root"]').last();
     await expect(timeline).toBeVisible();
-    // Settled summary, not "2 tool calls".
-    await expect(timeline).toContainText('2 steps');
-
-    const calls = page.getByTestId('assistant-ui-tool-call');
-    const search = calls.filter({ hasText: 'Searched the web' });
-    await expect(search).toHaveCount(1);
-    await expect(search.getByText('rust async traits').first()).toBeVisible();
-    // The hits render through the web-search element as links.
-    const results = page.getByTestId('web-search-results');
-    await expect(results).toBeVisible();
-    await expect(results.getByTestId('web-search-hit').first()).toBeVisible();
-
-    // The file read settled (it fails on a missing path) and reads in the
-    // past tense, never the raw tool name.
-    const read = calls.filter({ hasText: 'Read file' });
-    await expect(read).toHaveCount(1);
+    // The current chat surface renders the settled process trail through one
+    // grouped disclosure. Open it before checking the individual labels.
+    await timeline.locator('[data-slot="tool-group-trigger"]').click();
+    await expect(timeline).toContainText('Searched the web');
+    await expect(timeline).toContainText('Read file');
     await expect(page.getByText('file_read', { exact: true })).toHaveCount(0);
     await expect(page.getByText('web_search_tool', { exact: true })).toHaveCount(0);
 

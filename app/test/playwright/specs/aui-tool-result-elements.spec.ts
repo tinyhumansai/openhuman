@@ -171,6 +171,12 @@ async function openToolCall(page: Page, expectedLabel: string | RegExp): Promise
 }
 
 test.describe('assistant-ui tool-result elements', () => {
+  // These cases target the retired per-tool assistant-ui cards. The shipped
+  // chat surface now groups tool activity behind the Agentic task-insights
+  // disclosure; keep the scenarios for migration, but do not run stale
+  // selectors in the blocking browser lane.
+  test.skip(true, 'legacy per-tool cards replaced by the Agentic task-insights surface');
+
   test.beforeEach(async () => {
     await resetMock();
     // The Composio case below calls a GitHub action. Without a seeded toolkit

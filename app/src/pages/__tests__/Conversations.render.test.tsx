@@ -1180,7 +1180,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     return { store: store!, thread };
   }
 
-  it('requests the cancel on Stop and leaves saving the partial to the confirmed cancel (#4862)', async () => {
+  it('requests cancellation without persisting the partial before core confirmation (#4862)', async () => {
     const { thread } = await renderStreamingConversation({ streamingContent: 'half a thought' });
 
     const stopButton = await screen.findByRole('button', { name: 'Stop generating' });
@@ -1189,11 +1189,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
 
     expect(chatCancel).toHaveBeenCalledWith(thread.id);
-    // The stopped partial is saved when the core confirms the cancel
-    // (`chat_cancelled` → ChatRuntimeProvider's `onCancelled`, covered in
-    // ChatRuntimeProvider.test.tsx: "persists the live partial as a stopped
-    // reply"), not optimistically here. Saving on click raced the core's own
-    // save and left a stopped bubble behind when the cancel did not land.
+    // Persistence belongs to ChatRuntimeProvider.onCancelled after the core
+    // confirms the turn that actually stopped. The click path must not write
+    // early because a rejected cancellation can still produce a final reply.
     await act(async () => {
       await Promise.resolve();
     });
@@ -1259,7 +1257,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     expect(threadApi.appendMessage).not.toHaveBeenCalled();
   });
 
-  it('never saves a partial locally across repeated Stop clicks (#4862)', async () => {
+  it('does not locally persist a partial across repeated Stop clicks (#4862)', async () => {
     const { thread } = await renderStreamingConversation({ streamingContent: 'half a thought' });
 
     const stopButton = await screen.findByRole('button', { name: 'Stop generating' });
@@ -1269,10 +1267,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       fireEvent.click(stopButton);
     });
 
-    expect(chatCancel).toHaveBeenCalledWith(thread.id);
-    // One save happens later, from the confirmed cancel, deduped per request
-    // (ChatRuntimeProvider.test.tsx: "does not double-persist a partial").
-    // Repeated clicks must not add a local save of their own.
+    expect(chatCancel).toHaveBeenCalledTimes(2);
+    expect(chatCancel).toHaveBeenNthCalledWith(1, thread.id);
+    expect(chatCancel).toHaveBeenNthCalledWith(2, thread.id);
     await act(async () => {
       await Promise.resolve();
     });

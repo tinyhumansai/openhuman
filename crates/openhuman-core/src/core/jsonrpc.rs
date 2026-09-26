@@ -1510,6 +1510,10 @@ async fn run_server_with_services(
     let mut builder = crate::core::runtime::CoreBuilder::new(host_kind)
         .token(token)
         .services(services);
+    // The browser E2E harness scripts direct tool calls through its mock model.
+    // Keep production's fail-closed packed default, while making those calls
+    // visible in the deterministic test core without changing library hosts.
+    builder = apply_e2e_tool_groups(builder);
     if let Some(host) = host {
         builder = builder.host(host);
     }
@@ -1519,6 +1523,16 @@ async fn run_server_with_services(
 
     let runtime = builder.build().await?;
     runtime.serve(ready_tx, shutdown_token).await
+}
+
+fn apply_e2e_tool_groups(
+    builder: crate::core::runtime::CoreBuilder,
+) -> crate::core::runtime::CoreBuilder {
+    if std::env::var_os("OPENHUMAN_E2E").is_some() {
+        builder.tool_groups(crate::tools::toolpacks::ToolGroups::advertised())
+    } else {
+        builder
+    }
 }
 
 /// Per-`DomainGroup` gating decision for each event-bus subscriber that

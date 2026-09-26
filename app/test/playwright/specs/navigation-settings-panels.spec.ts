@@ -12,10 +12,7 @@ const panels: PanelCheck[] = [
   { hash: '/settings/memory-data', markers: ['Memory', 'Data', 'Storage'] },
   { hash: '/settings/notifications-hub', markers: ['Notifications'] },
   { hash: '/settings/developer-options', markers: ['Developer', 'Debug', 'Advanced'] },
-  {
-    hash: '/settings/billing',
-    markers: ['Billing moved to the web', 'Open billing dashboard', 'credits'],
-  },
+  { hash: '/settings/account', markers: ['Account', 'Billing'] },
   { hash: '/settings/appearance', markers: ['Appearance', 'Theme', 'Color'] },
   { hash: '/settings/tools', markers: ['Tools', 'Enable', 'Disable'] },
 ];

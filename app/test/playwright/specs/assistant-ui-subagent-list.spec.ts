@@ -157,6 +157,11 @@ test.beforeEach(async () => {
 });
 
 test.describe('assistant-ui subagent list', () => {
+  // `spawn_parallel_agents` was removed from the chat orchestrator's direct
+  // tool belt; the supported path is async delegation. This legacy direct-call
+  // contract remains as documentation until its replacement is landed.
+  test.skip(true, 'legacy spawn_parallel_agents surface; async delegation is the supported path');
+
   test('a parallel fan-out renders both workers and settles when both finish', async ({ page }) => {
     test.setTimeout(120_000);
 

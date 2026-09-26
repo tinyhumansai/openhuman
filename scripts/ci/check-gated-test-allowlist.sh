@@ -19,6 +19,8 @@ EXPECTED=$(cat <<'EOF'
 agent/harness/builtin_definitions_tests.rs
 agent/harness/definition_tests.rs
 agent/session_host/builder/factory.rs
+agent/session_host/runtime_session.rs
+agent/session_host/runtime_session_tests.rs
 agent/session_host/turn/tools.rs
 agent/subagent_host/tool_prep_tests.rs
 agent/registry/agents/loader.rs

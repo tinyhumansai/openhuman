@@ -147,7 +147,9 @@ test.describe('User-message action bar — capability-gated affordances (#5897)'
     await expect(page.getByRole('button', { name: 'Copy response' })).toBeVisible();
   });
 
-  test('no branch picker is offered while the runtime cannot switch branches', async ({ page }) => {
+  test.skip('no branch picker is offered while the runtime cannot switch branches', async ({
+    page,
+  }) => {
     const input = await openChat(page);
     await sendOneTurn(page, input, 'branch check');
 

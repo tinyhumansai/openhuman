@@ -9,18 +9,18 @@ import {
 test.describe('Card Payment Flow', () => {
   test.beforeEach(async ({ page }, testInfo) => {
     const slug = testInfo.title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-    await bootAuthenticatedPage(page, `pw-card-payment-${slug}`, '/settings/billing');
+    await bootAuthenticatedPage(page, `pw-card-payment-${slug}`, '/settings/account');
   });
 
-  test('billing panel shows the moved-to-web redirect page', async ({ page }) => {
+  test('account settings exposes the billing redirect', async ({ page }) => {
     await waitForAppReady(page);
-    await expect(page.getByRole('heading', { name: 'Billing', exact: true })).toBeVisible();
-    await expect(page.getByText(/Billing moved to the web/i)).toBeVisible();
+    await expect(page.getByTestId('account-panel')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Billing' })).toBeVisible();
   });
 
-  test('open billing dashboard button is present', async ({ page }) => {
+  test('billing button is present', async ({ page }) => {
     await waitForAppReady(page);
-    await expect(page.getByRole('button', { name: 'Open billing dashboard' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Billing' })).toBeVisible();
   });
 
   test('back-to-settings navigation works', async ({ page }) => {

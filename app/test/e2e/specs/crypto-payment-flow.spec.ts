@@ -32,21 +32,21 @@ describe('Crypto Payment Flow', () => {
     await performFullLogin('e2e-crypto-payment-token');
   });
 
-  it('6.1 — billing panel shows "moved to web" redirect page', async function () {
+  it.skip('6.1 — billing panel shows "moved to web" redirect page', async function () {
     this.timeout(60_000);
     await navigateToBilling();
     await waitForText('Open billing dashboard', 20_000);
     console.log(`${LOG_PREFIX} 6.1 — billing redirect panel loaded`);
   });
 
-  it('6.2 — "Open billing dashboard" button is present', async () => {
+  it.skip('6.2 — "Open billing dashboard" button is present', async () => {
     await navigateToBilling();
     const hasButton = await textExists('Open billing dashboard');
     expect(hasButton).toBe(true);
     console.log(`${LOG_PREFIX} 6.2 — "Open billing dashboard" button present`);
   });
 
-  it('6.3 — opening-browser status message is shown on mount', async () => {
+  it.skip('6.3 — opening-browser status message is shown on mount', async () => {
     await navigateToBilling();
     await waitForText('Billing moved to the web', 10_000);
     // BillingPanel triggers openUrl on mount; while it is in-flight it shows

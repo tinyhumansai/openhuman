@@ -155,6 +155,7 @@ async function openChat(page: Page): Promise<void> {
 test.describe.configure({ timeout: 120_000 });
 
 test.describe('Todo list render', () => {
+  test.skip(true, 'legacy todo-list transcript cards were replaced by grouped task insights');
   test.beforeEach(async () => {
     await resetMock();
     await setKeywordRules(RULES);

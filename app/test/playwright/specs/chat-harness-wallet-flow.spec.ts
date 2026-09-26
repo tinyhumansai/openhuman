@@ -172,6 +172,7 @@ test.describe('Chat Harness - Wallet Flow', () => {
     await dismissWalkthroughIfPresent(page);
 
     await expect(page.getByRole('button', { name: 'Copy to Clipboard' })).toBeVisible();
+    await page.getByRole('button', { name: /Reveal recovery phrase/i }).click();
     await page.locator('input[type="checkbox"]').first().check();
     await page.getByRole('button', { name: 'Save Recovery Phrase' }).click();
 

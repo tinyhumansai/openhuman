@@ -4325,6 +4325,7 @@ dependencies = [
  "tinymemory-bus",
  "tinymemory-sources",
  "tinyruntime-bus",
+ "tinysearch-bus",
  "tinyskills",
  "tinytools 0.4.1",
  "tinytools-agent 0.4.1",
@@ -7686,6 +7687,14 @@ dependencies = [
 [[package]]
 name = "tinyruntime-bus"
 version = "0.2.5"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "tinysearch-bus"
+version = "0.2.1"
 dependencies = [
  "serde",
  "serde_json",

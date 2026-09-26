@@ -3141,18 +3141,9 @@ async fn config_runtime_flags_settings_readbacks_and_validation_paths_are_exerci
     )
     .await;
     let valid_search_payload = payload(&valid_search, "update_search_settings valid");
-    assert_eq!(
-        valid_search_payload.pointer("/config/search/engine"),
-        Some(&json!("brave"))
-    );
-    assert_eq!(
-        valid_search_payload.pointer("/config/search/max_results"),
-        Some(&json!(12))
-    );
-    assert_eq!(
-        valid_search_payload.pointer("/config/search/timeout_secs"),
-        Some(&json!(42))
-    );
+    assert_eq!(valid_search_payload.get("engine"), Some(&json!("brave")));
+    assert_eq!(valid_search_payload.get("max_results"), Some(&json!(12)));
+    assert_eq!(valid_search_payload.get("timeout_secs"), Some(&json!(42)));
     let search_readback = rpc(
         &harness.rpc_base,
         11_026,
@@ -3217,10 +3208,7 @@ async fn config_runtime_flags_settings_readbacks_and_validation_paths_are_exerci
     )
     .await;
     let select_tavily_payload = payload(&select_tavily, "select Tavily search engine");
-    assert_eq!(
-        select_tavily_payload.pointer("/config/search/engine"),
-        Some(&json!("tavily"))
-    );
+    assert_eq!(select_tavily_payload.get("engine"), Some(&json!("tavily")));
     let tavily_readback = rpc(
         &harness.rpc_base,
         11_127,
@@ -3261,7 +3249,7 @@ async fn config_runtime_flags_settings_readbacks_and_validation_paths_are_exerci
     .await;
     let allow_all_payload = payload(&allow_all_search, "update_search_settings allow_all");
     assert_eq!(
-        allow_all_payload.pointer("/config/http_request/allowed_domains"),
+        allow_all_payload.get("allowed_domains"),
         Some(&json!(["*"]))
     );
     assert_error_contains(

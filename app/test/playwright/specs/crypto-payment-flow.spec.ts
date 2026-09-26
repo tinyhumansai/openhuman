@@ -3,10 +3,14 @@ import { expect, test } from '@playwright/test';
 import { bootAuthenticatedPage, waitForAppReady } from '../helpers/core-rpc';
 
 test.describe('Crypto Payment Flow', () => {
+  test.skip(
+    true,
+    'billing is now an account-settings affordance; crypto payment redirect surface was retired'
+  );
   test.beforeEach(async ({ page }, testInfo) => {
     const slug = testInfo.title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
     await bootAuthenticatedPage(page, `pw-crypto-payment-${slug}`);
-    await page.goto('/#/settings/billing');
+    await page.goto('/#/settings/account');
   });
 
   test('billing panel shows the moved-to-web redirect page', async ({ page }) => {

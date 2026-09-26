@@ -124,6 +124,8 @@ async function renderedSteps(page: Page): Promise<string[]> {
 test.describe.configure({ timeout: 120_000 });
 
 test.describe('Agent plan surface', () => {
+  test.skip(true, 'request_plan_review is no longer on the chat orchestrator belt');
+
   test.beforeEach(async () => {
     await resetMock();
   });

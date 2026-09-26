@@ -106,6 +106,13 @@ mkdir -p "$OPENHUMAN_WORKSPACE"
 # (and retains services for) the runner's global ~/.openhuman state.
 E2E_WEB_CORE_HOME="$OPENHUMAN_WORKSPACE/home"
 mkdir -p "$E2E_WEB_CORE_HOME"
+# Keep the acting-tool sandbox inside the shard as well. Besides isolating
+# browser runs from the host's projects directory, this gives tool-call specs
+# a deterministic, readable fixture without touching the checkout.
+E2E_ACTION_DIR="$OPENHUMAN_WORKSPACE/action"
+mkdir -p "$E2E_ACTION_DIR"
+printf 'E2E tool presentation fixture\n' >"$E2E_ACTION_DIR/tool-presentation-fixture.txt"
+export OPENHUMAN_ACTION_DIR="$E2E_ACTION_DIR"
 cat > "$OPENHUMAN_WORKSPACE/config.toml" <<EOF
 api_url = "http://127.0.0.1:${E2E_MOCK_PORT}"
 primary_cloud = "p_e2e_mock"
@@ -205,6 +212,11 @@ if [ ! -x "$OPENHUMAN_CORE_BIN" ]; then
 fi
 
 export OPENHUMAN_CORE_TOKEN="$PW_CORE_RPC_TOKEN"
+# The deterministic browser lane scripts direct tool calls (cron, edits,
+# parallel agents, and similar) rather than exercising the model's `use_skill`
+# disclosure choreography. Advertise the compiled tool packs for this harness
+# core only; production hosts retain the fail-closed packed default.
+export OPENHUMAN_E2E=1
 # The skills registry defaults to a public HermesHub fetch. The browser E2E
 # lane must remain deterministic and offline, so serve its compact catalog
 # fixture from the local mock backend instead.

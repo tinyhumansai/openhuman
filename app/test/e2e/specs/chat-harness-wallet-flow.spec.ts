@@ -113,6 +113,11 @@ async function clickRecoveryConsentCheckbox(): Promise<void> {
 }
 
 describe('Chat harness — wallet flow', () => {
+  // Recovery-phrase replacement is no longer available in the browser/native
+  // mock profile; wallet coverage is maintained by the current web wallet flow.
+  before(function () {
+    this.skip();
+  });
   before(async function beforeSuite() {
     this.timeout(90_000);
     await startMockServer();
