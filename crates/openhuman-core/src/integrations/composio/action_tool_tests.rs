@@ -416,3 +416,89 @@ async fn mode_toggle_between_calls_is_observed() {
         "direct-mode tool must not surface backend-session artifacts: {direct_msg}"
     );
 }
+
+// ── Redaction uses the config that actually dispatched (PR #6689) ──
+//
+// `execute_unredacted` now returns the config it resolved alongside the
+// outcome, and `execute` redacts against that returned config instead of
+// `self.config` — see CodeRabbit findings 447c07b7 (deferred instances
+// skipped redaction entirely) and the sibling `redact.rs:90` finding
+// (a configured instance redacted against its stale registration-time
+// snapshot instead of the live, reloaded config used for dispatch).
+
+#[tokio::test]
+async fn deferred_instance_returns_live_config_for_redaction() {
+    use crate::config::TEST_ENV_LOCK;
+    let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _serialised = super::super::module_client::module_guard().await;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let _workspace_guard = WorkspaceEnvGuard::set(tmp.path());
+    let mut config = Config::default();
+    config.config_path = tmp.path().join("config.toml");
+    config.workspace_dir = tmp.path().join("workspace");
+    config.composio.mode = crate::config::schema::COMPOSIO_MODE_DIRECT.to_string();
+    config.composio.api_key = Some("test-direct-key-for-deferred-redaction".to_string());
+    config.save().await.expect("save config to disk");
+
+    // Deferred instances (the parent-session catalogue synthesised beside
+    // delegation tools) have no spawn-time config to anchor to — `config`
+    // is `None` — so before this fix `execute()`'s `None => outcome` arm
+    // returned every deferred outcome completely unredacted.
+    let t = ComposioActionTool::deferred(
+        "gmail",
+        "GMAIL_FETCH_EMAILS".to_string(),
+        "fetch".to_string(),
+        None,
+    );
+    assert!(t.config.is_none(), "deferred instances carry no spawn-time config");
+
+    let (live_config, _outcome) = t.execute_unredacted(serde_json::json!({})).await;
+    assert_eq!(
+        live_config.composio.api_key.as_deref(),
+        Some("test-direct-key-for-deferred-redaction"),
+        "a deferred instance must return the live config actually used for dispatch, \
+         not a default placeholder — otherwise execute() has nothing to redact against"
+    );
+}
+
+#[tokio::test]
+async fn configured_instance_returns_live_config_not_the_stale_snapshot() {
+    use crate::config::TEST_ENV_LOCK;
+    let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _serialised = super::super::module_client::module_guard().await;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let _workspace_guard = WorkspaceEnvGuard::set(tmp.path());
+
+    // The on-disk config is the source of truth `live_composio_config`
+    // reloads from; it holds the CURRENT (rotated) key.
+    let mut on_disk = Config::default();
+    on_disk.config_path = tmp.path().join("config.toml");
+    on_disk.workspace_dir = tmp.path().join("workspace");
+    on_disk.composio.mode = crate::config::schema::COMPOSIO_MODE_DIRECT.to_string();
+    on_disk.composio.api_key = Some("rotated-key-after-registration".to_string());
+    on_disk.save().await.expect("save config to disk");
+
+    // The tool's own spawn-time snapshot is stale — it still carries the
+    // key that was active when the sub-agent was created, before a
+    // mid-session credential rotation.
+    let mut stale_snapshot = on_disk.clone();
+    stale_snapshot.composio.api_key = Some("stale-key-from-registration".to_string());
+
+    let t = ComposioActionTool::new(
+        Arc::new(stale_snapshot),
+        "GMAIL_FETCH_EMAILS".to_string(),
+        "fetch".to_string(),
+        None,
+    );
+
+    let (live_config, _outcome) = t.execute_unredacted(serde_json::json!({})).await;
+    assert_eq!(
+        live_config.composio.api_key.as_deref(),
+        Some("rotated-key-after-registration"),
+        "execute_unredacted must return the live (reloaded) config used for dispatch, \
+         not the stale spawn-time snapshot — otherwise redaction misses a key rotated \
+         mid-session"
+    );
+}

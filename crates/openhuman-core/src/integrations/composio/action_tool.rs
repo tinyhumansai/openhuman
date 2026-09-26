@@ -244,16 +244,18 @@ impl Tool for ComposioActionTool {
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
-        let outcome = Box::pin(self.execute_unredacted(args)).await;
-        match self.config.as_deref() {
-            Some(config) => super::tools::redact_composio_outcome(config, outcome),
-            None => outcome,
-        }
+        let (config, outcome) = Box::pin(self.execute_unredacted(args)).await;
+        super::tools::redact_composio_outcome(&config, outcome)
     }
 }
 
 impl ComposioActionTool {
-    async fn execute_unredacted(&self, args: Value) -> anyhow::Result<ToolResult> {
+    /// Returns the config actually used for this call alongside the
+    /// outcome, so [`Tool::execute`] always redacts against the same
+    /// credential that dispatched — for both a spawn-time config and a
+    /// deferred instance with none.
+    async fn execute_unredacted(&self, args: Value) -> (Config, anyhow::Result<ToolResult>) {
+        let fallback_config = || self.config.as_deref().cloned().unwrap_or_default();
         // Agent-level sandbox gate (issue #685, CodeRabbit follow-up on
         // PR #904) — mirrors the check in
         // [`super::tools::ComposioExecuteTool::execute`] so a read-only
@@ -274,13 +276,16 @@ impl ComposioActionTool {
                     "[composio][sandbox] per-action execute blocked: agent is read-only, action is {}",
                     scope.as_str()
                 );
-                return Ok(ToolResult::error(format!(
-                    "{}: action is classified `{}` and is refused because the calling \
-                     agent is in strict read-only mode. Only `read`-scoped actions are \
-                     available to this agent.",
-                    self.action_name,
-                    scope.as_str()
-                )));
+                return (
+                    fallback_config(),
+                    Ok(ToolResult::error(format!(
+                        "{}: action is classified `{}` and is refused because the calling \
+                         agent is in strict read-only mode. Only `read`-scoped actions are \
+                         available to this agent.",
+                        self.action_name,
+                        scope.as_str()
+                    ))),
+                );
             }
         }
 
@@ -301,10 +306,13 @@ impl ComposioActionTool {
                     error = %e,
                     "[composio] per-action execute: load_config failed"
                 );
-                return Ok(ToolResult::error(format!(
-                    "{}: failed to load live config: {e}",
-                    self.action_name
-                )));
+                return (
+                    fallback_config(),
+                    Ok(ToolResult::error(format!(
+                        "{}: failed to load live config: {e}",
+                        self.action_name
+                    ))),
+                );
             }
         };
 
@@ -326,7 +334,7 @@ impl ComposioActionTool {
                     tool = %self.action_name,
                     "[composio][contract-gate] returning full contract before first execute"
                 );
-                return Ok(ToolResult::error(contract));
+                return (live_config, Ok(ToolResult::error(contract)));
             }
             super::contract_gate::GateDecision::Proceed => {}
         }
@@ -378,7 +386,7 @@ impl ComposioActionTool {
         .await;
         let elapsed_ms = started.elapsed().as_millis() as u64;
 
-        match res {
+        let outcome = match res {
             Ok(resp) => {
                 crate::core::bus::BUS.publish(
                     crate::core::events::DomainEvent::ComposioActionExecuted {
@@ -423,7 +431,8 @@ impl ComposioActionTool {
                 );
                 Ok(ToolResult::error(e))
             }
-        }
+        };
+        (live_config, outcome)
     }
 }
 
