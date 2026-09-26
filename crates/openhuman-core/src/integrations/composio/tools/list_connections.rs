@@ -47,13 +47,17 @@ impl Tool for ComposioListConnectionsTool {
         ToolCategory::Workflow
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
-        let outcome = Box::pin(self.execute_unredacted(args)).await;
-        redact_composio_outcome(&self.config, outcome)
+        let (config, outcome) = Box::pin(self.execute_unredacted(args)).await;
+        redact_composio_outcome(&config, outcome)
     }
 }
 
 impl ComposioListConnectionsTool {
-    async fn execute_unredacted(&self, _args: Value) -> anyhow::Result<ToolResult> {
+    /// Returns the config actually used for dispatch alongside the outcome,
+    /// so [`Tool::execute`] redacts against the same credential that ran —
+    /// not the possibly-stale snapshot captured when this tool was
+    /// registered.
+    async fn execute_unredacted(&self, _args: Value) -> (Config, anyhow::Result<ToolResult>) {
         tracing::debug!("[composio] tool list_connections.execute");
         // Mirror `ops::composio_list_connections`: route through the mode-aware
         // factory so the agent sees the correct tenant's connections in both
@@ -65,43 +69,56 @@ impl ComposioListConnectionsTool {
             Ok(c) => c,
             Err(e) => {
                 tracing::warn!(error = %e, "[composio] list_connections.execute: load_config failed");
-                return Ok(ToolResult::error(format!(
-                    "composio_list_connections: failed to load live config: {e}"
-                )));
+                return (
+                    self.config.as_ref().clone(),
+                    Ok(ToolResult::error(format!(
+                        "composio_list_connections: failed to load live config: {e}"
+                    ))),
+                );
             }
         };
-        let mut resp = match create_composio_client(&live_config) {
-            Ok(ComposioClientKind::Backend(client)) => {
-                tracing::debug!("[composio] list_connections.execute: backend variant");
-                client.list_connections().await.map_err(|e| {
-                    anyhow::anyhow!("composio_list_connections (backend) failed: {e}")
-                })?
-            }
-            Ok(ComposioClientKind::Direct(direct)) => {
-                tracing::debug!("[composio-direct] list_connections.execute: direct variant");
-                direct_list_connections(&direct).await.map_err(|e| {
-                    // [#1166 / Sentry TAURI-RUST-X9] Symmetric error
-                    // routing with `ops.rs::composio_list_connections`.
-                    // The agent-tool path can also fire 401s when a
-                    // direct-mode user has a bad API key — without this
-                    // hook the failure escapes the classifier and lands
-                    // as an unclassified Sentry event. Render WITH the
-                    // `[composio-direct]` anchor BEFORE reporting so the
-                    // classifier arm in `is_provider_user_state_message`
-                    // (gated on that prefix) actually fires.
-                    let rendered = format!(
-                        "[composio-direct] composio_list_connections (direct) failed: {e:#}"
+        let mut resp =
+            match create_composio_client(&live_config) {
+                Ok(ComposioClientKind::Backend(client)) => {
+                    tracing::debug!("[composio] list_connections.execute: backend variant");
+                    match client.list_connections().await.map_err(|e| {
+                        anyhow::anyhow!("composio_list_connections (backend) failed: {e}")
+                    }) {
+                        Ok(resp) => resp,
+                        Err(e) => return (live_config, Err(e)),
+                    }
+                }
+                Ok(ComposioClientKind::Direct(direct)) => {
+                    tracing::debug!("[composio-direct] list_connections.execute: direct variant");
+                    match direct_list_connections(&direct).await.map_err(|e| {
+                        // [#1166 / Sentry TAURI-RUST-X9] Symmetric error
+                        // routing with `ops.rs::composio_list_connections`.
+                        // The agent-tool path can also fire 401s when a
+                        // direct-mode user has a bad API key — without this
+                        // hook the failure escapes the classifier and lands
+                        // as an unclassified Sentry event. Render WITH the
+                        // `[composio-direct]` anchor BEFORE reporting so the
+                        // classifier arm in `is_provider_user_state_message`
+                        // (gated on that prefix) actually fires.
+                        let rendered = format!(
+                            "[composio-direct] composio_list_connections (direct) failed: {e:#}"
+                        );
+                        super::super::ops::report_composio_op_error("list_connections", &rendered);
+                        anyhow::anyhow!("{rendered}")
+                    }) {
+                        Ok(resp) => resp,
+                        Err(e) => return (live_config, Err(e)),
+                    }
+                }
+                Err(e) => {
+                    return (
+                        live_config,
+                        Ok(ToolResult::error(format!(
+                            "composio_list_connections failed: {e}"
+                        ))),
                     );
-                    super::super::ops::report_composio_op_error("list_connections", &rendered);
-                    anyhow::anyhow!("{rendered}")
-                })?
-            }
-            Err(e) => {
-                return Ok(ToolResult::error(format!(
-                    "composio_list_connections failed: {e}"
-                )));
-            }
-        };
+                }
+            };
         // Filter server-side-indistinguishable states — callers should only
         // see integrations the user can actually act on. Matches the same
         // ACTIVE/CONNECTED allowlist used by `fetch_connected_integrations_uncached`
@@ -112,9 +129,10 @@ impl ComposioListConnectionsTool {
             count = resp.connections.len(),
             "[composio] list_connections.execute: returning active connections"
         );
-        Ok(ToolResult::success(
+        let result = Ok(ToolResult::success(
             serde_json::to_string(&resp).unwrap_or_else(|_| "{}".into()),
-        ))
+        ));
+        (live_config, result)
     }
 }
 

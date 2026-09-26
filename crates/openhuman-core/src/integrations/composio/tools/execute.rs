@@ -101,13 +101,17 @@ impl Tool for ComposioExecuteTool {
         ToolCategory::Workflow
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
-        let outcome = Box::pin(self.execute_unredacted(args)).await;
-        redact_composio_outcome(&self.config, outcome)
+        let (config, outcome) = Box::pin(self.execute_unredacted(args)).await;
+        redact_composio_outcome(&config, outcome)
     }
 }
 
 impl ComposioExecuteTool {
-    async fn execute_unredacted(&self, args: Value) -> anyhow::Result<ToolResult> {
+    /// Returns the config actually used for dispatch alongside the outcome,
+    /// so [`Tool::execute`] redacts against the same credential that ran —
+    /// not the possibly-stale snapshot captured when this tool was
+    /// registered.
+    async fn execute_unredacted(&self, args: Value) -> (Config, anyhow::Result<ToolResult>) {
         let tool = args
             .get("tool")
             .and_then(|v| v.as_str())
@@ -115,9 +119,12 @@ impl ComposioExecuteTool {
             .trim()
             .to_string();
         if tool.is_empty() {
-            return Ok(ToolResult::error(
-                "composio_execute: 'tool' is required (e.g. GMAIL_SEND_EMAIL)",
-            ));
+            return (
+                self.config.as_ref().clone(),
+                Ok(ToolResult::error(
+                    "composio_execute: 'tool' is required (e.g. GMAIL_SEND_EMAIL)",
+                )),
+            );
         }
         let arguments = args.get("arguments").cloned();
         let connection_id = args
@@ -167,12 +174,15 @@ impl ComposioExecuteTool {
                     "[composio][sandbox] execute blocked: agent is read-only, action is {}",
                     scope.as_str()
                 );
-                return Ok(ToolResult::error(format!(
-                    "composio_execute: action `{tool}` is classified `{}` and is refused \
-                     because the calling agent is in strict read-only mode. Only `read`-scoped \
-                     actions are available to this agent.",
-                    scope.as_str()
-                )));
+                return (
+                    self.config.as_ref().clone(),
+                    Ok(ToolResult::error(format!(
+                        "composio_execute: action `{tool}` is classified `{}` and is refused \
+                         because the calling agent is in strict read-only mode. Only `read`-scoped \
+                         actions are available to this agent.",
+                        scope.as_str()
+                    ))),
+                );
             }
         }
 
@@ -194,7 +204,7 @@ impl ComposioExecuteTool {
                     scope = scope.as_str(),
                     "[composio][scopes] execute blocked by user scope pref"
                 );
-                return Ok(ToolResult::error(msg));
+                return (self.config.as_ref().clone(), Ok(ToolResult::error(msg)));
             }
             ToolDecision::NotCurated => {
                 let toolkit = toolkit_from_slug(&tool).unwrap_or_default();
@@ -203,10 +213,13 @@ impl ComposioExecuteTool {
                     toolkit = %toolkit,
                     "[composio][scopes] execute blocked: action not in curated whitelist"
                 );
-                return Ok(ToolResult::error(format!(
-                    "composio_execute: action `{tool}` is not in the curated whitelist for \
-                     toolkit `{toolkit}`. Use composio_list_tools to see available actions."
-                )));
+                return (
+                    self.config.as_ref().clone(),
+                    Ok(ToolResult::error(format!(
+                        "composio_execute: action `{tool}` is not in the curated whitelist for \
+                         toolkit `{toolkit}`. Use composio_list_tools to see available actions."
+                    ))),
+                );
             }
         }
 
@@ -248,16 +261,22 @@ impl ComposioExecuteTool {
             Ok(c) => c,
             Err(e) => {
                 tracing::warn!(error = %e, "[composio] tool execute.execute: load_config failed");
-                return Ok(ToolResult::error(format!(
-                    "composio_execute: failed to load live config: {e}"
-                )));
+                return (
+                    self.config.as_ref().clone(),
+                    Ok(ToolResult::error(format!(
+                        "composio_execute: failed to load live config: {e}"
+                    ))),
+                );
             }
         };
         let kind = match create_composio_client(&live_config) {
             Ok(kind) => kind,
             Err(e) => {
                 tracing::warn!(error = %e, "[composio] tool execute.execute: factory failed");
-                return Ok(ToolResult::error(format!("composio_execute failed: {e}")));
+                return (
+                    live_config,
+                    Ok(ToolResult::error(format!("composio_execute failed: {e}"))),
+                );
             }
         };
 
@@ -272,7 +291,7 @@ impl ComposioExecuteTool {
         )
         .await;
         let elapsed_ms = started.elapsed().as_millis() as u64;
-        match res {
+        let outcome = match res {
             Ok(resp) => {
                 // Authoritative task-recency enforcement: drop task rows older
                 // than the window. No-op unless a window is installed AND the
@@ -342,7 +361,8 @@ impl ComposioExecuteTool {
                 );
                 Ok(ToolResult::error(e))
             }
-        }
+        };
+        (live_config, outcome)
     }
 }
 
