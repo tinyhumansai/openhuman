@@ -190,6 +190,7 @@ impl Drop for CoreGuard {
 /// every [`Agent`](crate::Agent) built on it tears the core down and, for
 /// [`Workspace::Ephemeral`], removes the workspace — see [`CoreGuard`].
 pub struct Runtime {
+    id: String,
     guard: Arc<CoreGuard>,
     /// The config every agent starts from. Already carries the runtime-wide
     /// defaults (backend URL, access, provider model, supplied overrides).
@@ -204,6 +205,11 @@ pub struct Runtime {
 }
 
 impl Runtime {
+    /// Opaque identity of this instantiated runtime.
+    pub fn runtime_id(&self) -> &str {
+        &self.id
+    }
+
     /// Start configuring a runtime.
     pub fn builder() -> RuntimeBuilder {
         RuntimeBuilder::new()
@@ -343,6 +349,7 @@ impl Runtime {
         access: Access,
     ) -> Self {
         Self {
+            id: uuid::Uuid::new_v4().to_string(),
             guard: Arc::new(CoreGuard {
                 core: Some(core),
                 workspace,

@@ -349,3 +349,12 @@ above. It does not depend on `openhuman-rpc`; `Outcome` and `StructuredRpcError`
 are core types (`openhuman_core::core`). `openhuman-app` and `openhuman-tui`
 depend on `openhuman-rpc` for its client (and the app on its server) and on
 `openhuman-core`; neither uses `openhuman-embed`.
+
+## Permanent tools on supplied agents
+
+Hosts can pass an existing configured `Agent` to another library, which adds
+its tools through `Agent::attach_tools` without constructing a replacement.
+Attachments are shared by clones, always directly advertised, and update only
+their managed system catalogue when a continuing conversation gains tools.
+See [agent attachment semantics and example](src/agent/README.md#attach-tools-to-an-existing-agent)
+for source identity, collision errors, policy composition, and runtime identity.

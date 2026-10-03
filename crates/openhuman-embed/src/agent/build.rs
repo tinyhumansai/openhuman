@@ -160,6 +160,8 @@ pub(crate) fn instantiate(runtime: &Runtime, spec: AgentSpec) -> Result<AgentInn
 
     Ok(AgentInner {
         id,
+        runtime_id: runtime.runtime_id().to_owned(),
+        attachments: Default::default(),
         _runtime_guard: runtime.guard(),
         runtime: runtime.core_runtime().clone(),
         ctx,

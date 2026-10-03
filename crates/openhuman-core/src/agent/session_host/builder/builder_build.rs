@@ -46,10 +46,12 @@ impl SessionHostBuilder {
         }
         // The synthesised set lives beside the durable registry, never inside
         // it (`OpenHumanSessionHost::synthesized_tools`); a durable name wins a collision.
-        let synthesized_tools = super::drop_synthesized_name_collisions(
-            &tools,
-            self.synthesized_tools.unwrap_or_default(),
-        );
+        let synthesized_tools = self.synthesized_tools.unwrap_or_default();
+        super::super::managed_tools::reject_synthesized_collisions(
+            &self.permanent_tool_names,
+            &synthesized_tools,
+        )?;
+        let synthesized_tools = super::drop_synthesized_name_collisions(&tools, synthesized_tools);
         let synthesized_tool_names: std::collections::HashSet<String> = synthesized_tools
             .iter()
             .map(|tool| tool.name().to_string())
@@ -188,6 +190,8 @@ impl SessionHostBuilder {
                     .insert(crate::agent::harness::definition::NO_TOOLS_SENTINEL.to_string());
             }
         }
+        visible_names.extend(self.permanent_tool_names.iter().cloned());
+        deferred_names.retain(|name| !self.permanent_tool_names.contains(name));
         // What the policy classifies and the harness registers: the advertised
         // set plus the deferred set. A deferred tool outside this union would
         // be `HideFromPrompt`, and the direct-call gate refuses those.
@@ -402,6 +406,7 @@ impl SessionHostBuilder {
             visible_tool_specs: Arc::new(visible_tool_specs),
             visible_tool_names: visible_names,
             deferred_tool_names: deferred_names,
+            permanent_tool_names: self.permanent_tool_names,
             discovery_enabled,
             requested_deferred_tools: Arc::from(self.deferred_tools.clone()),
             subagent_tool_ceiling_names,

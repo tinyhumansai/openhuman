@@ -341,3 +341,66 @@ fn a_host_tool_overrides_a_config_tool_of_the_same_name() {
         "the tool that runs must be the host's, matching the spec advertised for it"
     );
 }
+
+/// Attaching a permanent tool before turn one must retain the original wildcard
+/// native surface; the empty visible set is its builder sentinel.
+#[test]
+fn permanent_attachment_preserves_a_fresh_wildcard_belt() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let definition = definition();
+    let baseline =
+        crate::agent::OpenHumanSessionHost::from_config_with_definition(&config, &definition)
+            .unwrap();
+    let original: std::collections::HashSet<_> = baseline
+        .visible_tool_specs_arc()
+        .iter()
+        .map(|spec| spec.name.clone())
+        .collect();
+    assert!(!original.is_empty());
+    let host: crate::agent::HostTools = Arc::new(|_| {
+        let mut tools =
+            crate::agent::HostTurnTools::advertised(vec![Box::new(Marker("attached_marker"))]);
+        tools.permanent.insert("attached_marker".into());
+        tools
+    });
+    let attached = crate::agent::OpenHumanSessionHost::from_config_with_host_tools(
+        &config,
+        &definition,
+        &host,
+        None,
+    )
+    .unwrap();
+    let names: std::collections::HashSet<_> = attached
+        .visible_tool_specs_arc()
+        .iter()
+        .map(|spec| spec.name.clone())
+        .collect();
+    assert!(
+        original.is_subset(&names),
+        "native names lost: {:?}",
+        original.difference(&names).collect::<Vec<_>>()
+    );
+    assert!(names.contains("attached_marker"));
+}
+
+#[test]
+fn permanent_metadata_without_a_source_is_rejected_before_build() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let host: crate::agent::HostTools = Arc::new(|_| crate::agent::HostTurnTools {
+        permanent: std::collections::HashSet::from(["missing_source".into()]),
+        ..Default::default()
+    });
+    let error = crate::agent::OpenHumanSessionHost::from_config_with_host_tools(
+        &config,
+        &definition(),
+        &host,
+        None,
+    )
+    .err()
+    .expect("inconsistent permanent metadata must be rejected");
+    assert!(error
+        .to_string()
+        .contains("permanent tool must have exactly one source: missing_source"));
+}

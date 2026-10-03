@@ -5,6 +5,7 @@
 //! prefix reconciliation, tool snapshots, resume and persistence remain inside
 //! the runtime session.
 
+mod permanent;
 mod prompt;
 
 use std::sync::Arc;
@@ -124,6 +125,7 @@ struct OpenHumanTurnToolSurface {
     /// as the final allowlist, and classified `Allow` by the policy, so a
     /// found tool is callable. See `OpenHumanSessionHost::deferred_tool_names`.
     deferred_tool_names: std::collections::HashSet<String>,
+    permanent_tool_names: std::collections::HashSet<String>,
     /// Whether this belt reaches deferred tools at all; fixed at build.
     discovery_enabled: bool,
     /// The definition's own `deferred_tools`; see `meta::deferred_set`.
@@ -374,19 +376,19 @@ impl OpenHumanTurnPrelude {
     /// semantics, but keeps the mutable authority in hook state rather than a
     /// second turn loop. A revoked delegate is removed from the executable
     /// source, schema, and policy together before this request is prepared.
-    fn refresh_delegation_tool_surface(&self) {
+    fn refresh_delegation_tool_surface(&self) -> Result<()> {
         use crate::agent::harness::definition::AgentDefinitionRegistry;
         use crate::tools::agent_policy::ToolPolicyEngine;
         use crate::tools::orchestrator_tools::collect_orchestrator_tools;
 
         let Some(registry) = AgentDefinitionRegistry::global() else {
-            return;
+            return Ok(());
         };
         let Some(definition) = registry.get(&self.agent_definition_id).cloned() else {
-            return;
+            return Ok(());
         };
         if definition.subagents.is_empty() {
-            return;
+            return Ok(());
         }
         let (integrations, integrations_are_authoritative) = {
             let mutable = self
@@ -415,6 +417,10 @@ impl OpenHumanTurnPrelude {
             integrations_are_authoritative,
         );
         collected.extend(rebuilt);
+        super::managed_tools::reject_synthesized_collisions(
+            &surface.permanent_tool_names,
+            &collected,
+        )?;
         let synthesized =
             super::builder::drop_synthesized_name_collisions(&surface.tools, collected);
         let synthesized_names = synthesized
@@ -426,31 +432,13 @@ impl OpenHumanTurnPrelude {
             synthesized_names.clone(),
         );
         let auto_include_new_synthesized_tools = surface.auto_include_new_synthesized_tools;
-        let agent_definition_name = surface.agent_definition_name.clone();
         reconcile_synthesized_visibility(
             &mut surface.visible_tool_names,
             &previous_synthesized,
             &synthesized_names,
             auto_include_new_synthesized_tools,
         );
-        crate::tools::toolpacks::strip_packed_from_visible(
-            &mut surface.visible_tool_names,
-            &agent_definition_name,
-        );
-        // Same split as the session host's `recompute_deferred_tool_names`:
-        // a `Deferred` synthesised tool leaves the wire and joins the
-        // searchable set, on a belt that opted into discovery.
-        if surface.discovery_enabled {
-            let deferred = crate::tools::implementations::meta::deferred_set(
-                surface.tools.as_slice(),
-                synthesized.as_slice(),
-                &surface.requested_deferred_tools,
-            );
-            surface
-                .visible_tool_names
-                .retain(|name| !deferred.contains(name));
-            surface.deferred_tool_names = deferred;
-        }
+        permanent::refresh_visibility(&mut surface, &synthesized);
 
         let specs = surface
             .durable_tool_specs
@@ -504,6 +492,7 @@ impl OpenHumanTurnPrelude {
         surface.synthesized_tools = synthesized_tools;
         surface.visible_tool_specs = Arc::new(visible);
         surface.tool_policy_session = policy;
+        Ok(())
     }
 
     fn drain_host_events(&self) -> bool {
@@ -1460,6 +1449,7 @@ impl OpenHumanSessionHost {
                     visible_tool_specs: self.visible_tool_specs.clone(),
                     visible_tool_names: self.visible_tool_names.clone(),
                     deferred_tool_names: self.deferred_tool_names.clone(),
+                    permanent_tool_names: self.permanent_tool_names.clone(),
                     discovery_enabled: self.discovery_enabled,
                     requested_deferred_tools: self.requested_deferred_tools.clone(),
                     auto_include_new_synthesized_tools: true,
@@ -1539,7 +1529,10 @@ impl OpenHumanSessionHost {
                         })?;
                         prelude
                             .refresh_turn_boundary(!view.resumed && view.history.is_empty())
-                            .await;
+                            .await
+                            .map_err(|error| {
+                                tinyagents_runtime::RuntimeError::Driver(error.to_string())
+                            })?;
                         let context_window = prelude
                             .turn_model_source
                             .effective_context_window(&prelude.model_name)
@@ -1579,6 +1572,7 @@ impl OpenHumanSessionHost {
                             .map_err(|error| {
                                 tinyagents_runtime::RuntimeError::Driver(error.to_string())
                             })?;
+                        prelude.refresh_permanent_prefix(&mut preparation, view.prefix);
                         if overrides.suppress_tools {
                             // One-off tool-less turn: must not become the
                             // thread's recorded tool list.
@@ -1830,6 +1824,7 @@ impl OpenHumanSessionHost {
             visible_tool_specs: self.visible_tool_specs.clone(),
             visible_tool_names: self.visible_tool_names.clone(),
             deferred_tool_names: self.deferred_tool_names.clone(),
+            permanent_tool_names: self.permanent_tool_names.clone(),
             discovery_enabled: self.discovery_enabled,
             requested_deferred_tools: self.requested_deferred_tools.clone(),
             auto_include_new_synthesized_tools: auto_include_new_synthesized_tools

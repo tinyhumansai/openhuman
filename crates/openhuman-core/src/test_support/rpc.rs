@@ -10,7 +10,6 @@
 //! the webview after this call so the renderer also starts from a blank slate.
 
 use serde::Serialize;
-use serde_json::json;
 
 use crate::config::Config;
 use crate::config::{clear_active_user, default_root_openhuman_dir};

@@ -22,7 +22,9 @@
 //! that composes its prompt**. A resumed session reuses its persisted system
 //! messages, so a belt that moves under one is described by the prompt it had
 //! when the thread opened; a host that varies its belt should run such turns
-//! on a session of their own.
+//! on a session of their own. Permanent attachments are the exception: their
+//! catalogue occupies a managed system section refreshed independently of
+//! the frozen host prompt.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -36,17 +38,20 @@ use anyhow::Result;
 
 /// One turn's worth of host-supplied belt.
 ///
-/// `visible` is the provider-visible allow-list to union into the session's
-/// own; leaving it empty makes the tools reachable but unadvertised, which is
-/// rarely what a host wants. `policy`, when set, becomes the session's gate --
-/// see [`with_policy`](Self::with_policy), which is not what "host tools"
-/// might suggest.
+/// `visible` adds names to a named session allow-list. A wildcard session
+/// retains its native registry and applies each tool's exposure metadata;
+/// `permanent` explicitly forces selected host tools into the prompt and schema.
+/// `policy`, when set, becomes the whole session's gate; see
+/// [`with_policy`](Self::with_policy).
 #[derive(Default)]
 pub struct HostTurnTools {
     /// The tools themselves, placed **ahead of** the config-derived belt so a
     /// host tool wins a collision on its name.
     pub tools: Vec<Box<dyn Tool>>,
-    /// Names to add to the provider-visible allow-list.
+    /// Tool names permanently advertised directly and rendered in a managed prompt section.
+    pub permanent: HashSet<String>,
+    /// Names to add to a named provider-visible allow-list.
+    /// Wildcard sessions already expand the registry subject to tool exposure.
     pub visible: HashSet<String>,
     /// Names to remove from the provider-visible allow-list for this turn.
     ///
@@ -67,6 +72,7 @@ impl HostTurnTools {
         let visible = tools.iter().map(|tool| tool.name().to_string()).collect();
         Self {
             tools,
+            permanent: HashSet::new(),
             visible,
             withheld: HashSet::new(),
             policy: None,
@@ -92,18 +98,18 @@ impl HostTurnTools {
     /// gate: there is nothing to admit.
     ///
     /// [`dedup_visible_tool_specs`]: super::dedup_visible_tool_specs
-    #[must_use]
     pub(super) fn merge_into(
         self,
         agent_id: &str,
         tools: &mut Vec<Box<dyn Tool>>,
         visible: &mut HashSet<String>,
-    ) -> MergedHostTurnTools {
+    ) -> Result<MergedHostTurnTools> {
         if self.is_empty() {
-            return MergedHostTurnTools {
+            return Ok(MergedHostTurnTools {
                 policy: None,
                 withheld: HashSet::new(),
-            };
+                permanent: HashSet::new(),
+            });
         }
         log::debug!(
             "[agent::builder] host supplied {} tool(s) for agent_id={agent_id}: {:?}",
@@ -113,12 +119,38 @@ impl HostTurnTools {
                 .map(|tool| tool.name())
                 .collect::<Vec<_>>(),
         );
-        tools.splice(0..0, self.tools);
-        visible.extend(self.visible);
-        MergedHostTurnTools {
+        for name in &self.permanent {
+            anyhow::ensure!(
+                !tools.iter().any(|tool| tool.name() == name),
+                "permanent tool name collision: {name}"
+            );
+            anyhow::ensure!(
+                self.tools.iter().filter(|tool| tool.name() == name).count() == 1,
+                "permanent tool must have exactly one source: {name}"
+            );
+        }
+        let permanent = &self.permanent;
+        tools.splice(
+            0..0,
+            self.tools.into_iter().map(|tool| {
+                if permanent.contains(tool.name()) {
+                    Box::new(super::permanent_tool::PermanentTool(tool)) as Box<dyn Tool>
+                } else {
+                    tool
+                }
+            }),
+        );
+        // An empty set represents the original wildcard scope until build().
+        // Filling it with an attached source's names would turn it into a
+        // literal allowlist and silently discard the native registry.
+        if !visible.is_empty() {
+            visible.extend(self.visible);
+        }
+        Ok(MergedHostTurnTools {
             policy: self.policy,
             withheld: self.withheld,
-        }
+            permanent: self.permanent,
+        })
     }
 
     /// Sets the gate for the whole session.
@@ -148,6 +180,7 @@ impl HostTurnTools {
             && self.visible.is_empty()
             && self.withheld.is_empty()
             && self.policy.is_none()
+            && self.permanent.is_empty()
     }
 }
 
@@ -156,6 +189,7 @@ impl HostTurnTools {
 pub(super) struct MergedHostTurnTools {
     pub policy: Option<Arc<dyn ToolPolicy>>,
     pub withheld: HashSet<String>,
+    pub permanent: HashSet<String>,
 }
 
 pub(super) fn merge_for_turn(
@@ -164,13 +198,17 @@ pub(super) fn merge_for_turn(
     session_id: Option<&str>,
     tools: &mut Vec<Box<dyn Tool>>,
     visible: &mut HashSet<String>,
-) -> (Option<Arc<dyn ToolPolicy>>, HashSet<String>) {
+) -> Result<MergedHostTurnTools> {
     match host
         .map(|build| build(TurnContext::new(agent_id, session_id)))
         .map(|host_tools| host_tools.merge_into(agent_id, tools, visible))
     {
-        Some(merged) => (merged.policy, merged.withheld),
-        None => (None, HashSet::new()),
+        Some(merged) => merged,
+        None => Ok(MergedHostTurnTools {
+            policy: None,
+            withheld: HashSet::new(),
+            permanent: HashSet::new(),
+        }),
     }
 }
 
@@ -288,4 +326,25 @@ impl OpenHumanSessionHost {
             session_id,
         )
     }
+}
+
+/// Compose the host belt before adding the remaining product configuration.
+pub(super) fn tool_builder(
+    host: Option<&HostTools>,
+    agent_id: &str,
+    session_id: Option<&str>,
+    mut tools: Vec<Box<dyn Tool>>,
+    mut visible: HashSet<String>,
+) -> Result<super::super::SessionHostBuilder> {
+    let merged = merge_for_turn(host, agent_id, session_id, &mut tools, &mut visible)?;
+    let mut builder = OpenHumanSessionHost::builder()
+        .tools(tools)
+        .visible_tool_names(visible)
+        .withheld_tool_names(merged.withheld)
+        .permanent_tool_names(merged.permanent);
+    // A supplied gate retains the existing replacement semantics.
+    if let Some(policy) = merged.policy {
+        builder = builder.tool_policy(policy);
+    }
+    Ok(builder)
 }

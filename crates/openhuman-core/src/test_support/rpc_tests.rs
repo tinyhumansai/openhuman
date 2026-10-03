@@ -11,14 +11,18 @@ fn env_lock() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-#[tokio::test]
-async fn reset_rejects_when_e2e_mode_unset() {
+#[test]
+fn reset_rejects_when_e2e_mode_unset() {
     let _guard = env_lock();
     let prior = std::env::var(E2E_MODE_ENV_VAR).ok();
     std::env::remove_var(E2E_MODE_ENV_VAR);
 
-    let err = reset()
-        .await
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let err = runtime
+        .block_on(reset())
         .expect_err("unset E2E mode must reject test_reset");
 
     match prior {

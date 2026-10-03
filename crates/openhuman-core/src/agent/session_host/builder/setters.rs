@@ -17,6 +17,7 @@ impl SessionHostBuilder {
             synthesized_tools: None,
             visible_tool_names: None,
             withheld_tool_names: std::collections::HashSet::new(),
+            permanent_tool_names: std::collections::HashSet::new(),
             deferred_tools: Vec::new(),
             subagent_tool_ceiling_names: None,
             memory: None,
@@ -97,6 +98,12 @@ impl SessionHostBuilder {
     /// runner. Pass `None` (default) to make all tools visible.
     pub fn visible_tool_names(mut self, names: std::collections::HashSet<String>) -> Self {
         self.visible_tool_names = Some(names);
+        self
+    }
+
+    /// Pin these tools directly in the prompt and provider schema.
+    pub fn permanent_tool_names(mut self, names: std::collections::HashSet<String>) -> Self {
+        self.permanent_tool_names = names;
         self
     }
 

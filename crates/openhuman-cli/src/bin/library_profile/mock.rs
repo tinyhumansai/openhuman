@@ -6,10 +6,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use openhuman_core::inference::provider::types::{ChatResponse, ToolCall};
+use openhuman_core::inference::provider::types::ChatResponse;
 use tinyinference_llm::message::{AssistantMessage, ContentBlock, Message};
 use tinyinference_llm::model::{ChatModel, ModelRequest, ModelResponse};
 use tinyinference_llm::tool::ToolCall as TinyAgentsToolCall;
+use tinytools_agent::dialect::NativeToolCall as ToolCall;
 
 /// A plain `ChatResponse` carrying only text (no tool calls).
 pub fn response(text: &str) -> ChatResponse {

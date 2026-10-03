@@ -72,7 +72,7 @@ pub use openhuman_core::tools::toolpacks::{GroupMode, ToolGroups};
 // would build tools of a different, incompatible type.
 pub use openhuman_core::agent::tinyagents::host::LastTurnUsage;
 pub use openhuman_core::agent::{HostTools, HostTurnTools, TurnContext};
-pub use openhuman_core::tools::Tool;
+pub use openhuman_core::tools::{Tool, ToolExposure};
 pub use openhuman_core::{
     CoreBuilder, CoreRuntime, DaemonConfig, DomainSet, HostKind, ServiceSet, TokenSource,
 };
@@ -95,6 +95,7 @@ mod harness;
 mod runtime;
 mod turn;
 
+pub use agent::ToolAttachmentError;
 pub use agent::{
     Agent, AgentDefinitionSpec, AgentError, AgentLayout, AgentSpec, SandboxModeSpec, ToolScopeSpec,
 };

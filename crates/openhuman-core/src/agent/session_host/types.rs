@@ -198,6 +198,7 @@ pub struct OpenHumanSessionHost {
     /// policy session exactly like a visible tool — a found tool the gate
     /// refused as "prompt-hidden" would be the old unusable find again.
     pub(super) deferred_tool_names: std::collections::HashSet<String>,
+    pub(super) permanent_tool_names: std::collections::HashSet<String>,
     /// Whether this belt reaches deferred tools at all: a wildcard belt
     /// always does, a `[tools] named` belt only by listing `tool_search`.
     /// Fixed at build; the refresh paths use it to recompute
@@ -542,6 +543,7 @@ pub struct OpenHumanSessionHost {
 
 /// A builder for creating `OpenHumanSessionHost` instances with custom configuration.
 pub struct SessionHostBuilder {
+    pub(super) permanent_tool_names: std::collections::HashSet<String>,
     pub(super) turn_model_source: Option<TurnModelSource>,
     pub(super) tools: Option<Vec<Box<dyn Tool>>>,
     /// Delegation tools synthesised for the session's initial connection set.

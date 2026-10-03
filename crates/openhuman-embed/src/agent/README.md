@@ -40,8 +40,8 @@ that turn belongs to, not any other agent sharing the runtime.
 
 ## Tool factories
 
-`AgentSpec::tools` is the only way a host's own in-process tools reach an
-agent without going through MCP. The factory runs once per session build,
+`AgentSpec::tools` supplies a host's own in-process tools when an agent is
+created. `Agent::attach_tools` adds permanent tools to an existing agent. The factory runs once per session build,
 which in practice means once per turn, because a session is rebuilt from the
 spec's data every time; see the doc comment on `AgentSpec::tools` for why
 this is forced (an `Agent` is `Clone`, `Box<dyn Tool>` is not) and useful (a
@@ -53,3 +53,40 @@ belt bound to something shorter-lived than the agent can vary per turn).
   agent and what stays runtime-wide instead of per-agent.
 - [`../harness/README.md`](../harness/README.md): the one-runtime,
   one-agent shorthand.
+
+## Attach tools to an existing agent
+
+`Agent::attach_tools(key, factory)` permanently adds a named `HostTools`
+source without rebuilding the agent. All clones share the attachment. Reusing
+both the source key and the same factory `Arc` is idempotent; another factory
+under the same key or a colliding tool name returns `ToolAttachmentError`.
+The factory is sampled without a session during registration, then runs per
+turn. Keep its tool names stable and support the registration occasion.
+
+Attached tools always have direct provider schemas and a separate system
+catalogue, including tools originally declared deferred. Adding a source to
+an existing conversation updates only that managed section on the next turn:
+the configured prompt, skills, memory, and other frozen system sections stay
+intact. TinyAgents seals the prior transcript generation and writes a successor
+with the conversation preserved. Identical catalogues do not create generations.
+
+Attachments do not replace the original host's tool gate. Each source's policy
+applies to its own tool names; absent a source policy, those callbacks are
+admitted and must perform their own operation authorization. Other tools keep
+the agent's original policy, including its denials.
+
+Use `runtime_id()` to check that supplied agents belong to one runtime and
+`same_agent()` to distinguish an existing handle from a conflicting agent ID.
+Runtime identities are opaque and valid for that runtime's lifetime; they are
+not persistence keys.
+
+```rust,no_run
+use std::sync::Arc;
+use openhuman_embed::{Agent, HostTools, HostTurnTools, Tool};
+# fn connect(agent: &Agent, make_tools: impl Fn() -> Vec<Box<dyn Tool>> + Send + Sync + 'static) -> Result<(), openhuman_embed::ToolAttachmentError> {
+let source: HostTools = Arc::new(move |_| HostTurnTools::advertised(make_tools()));
+agent.attach_tools("tinyhivemind", source.clone())?;
+agent.clone().attach_tools("tinyhivemind", source)?;
+# Ok(())
+# }
+```

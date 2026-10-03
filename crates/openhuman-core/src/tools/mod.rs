@@ -67,5 +67,7 @@ pub use schemas::{
 // `Tool` itself rides here too, so an embedder implementing a tool reaches the *vendored* tinytools rather than adding a second path to it.
 // A second path is not merely duplicate -- it produces incompatible Rust types,
 // and a tool built against it cannot be handed to a session at all.
-pub use tinytools::{PermissionLevel, Tool, ToolCategory, ToolResult, ToolScope, ToolSpec};
+pub use tinytools::{
+    PermissionLevel, Tool, ToolCategory, ToolExposure, ToolResult, ToolScope, ToolSpec,
+};
 pub(crate) use user_filter::filter_tools_by_user_preference;

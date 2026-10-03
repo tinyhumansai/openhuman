@@ -104,7 +104,7 @@ impl OpenHumanTurnPrelude {
         rebuilt
     }
 
-    pub(super) async fn refresh_turn_boundary(&self, cold: bool) {
+    pub(super) async fn refresh_turn_boundary(&self, cold: bool) -> anyhow::Result<()> {
         // Hydrate on the first turn of *this session instance*, not only on a
         // brand-new thread. A resumed thread is never `cold`, and a session
         // rebuilt after a restart is seeded from an empty cache — gating the fetch on
@@ -120,7 +120,8 @@ impl OpenHumanTurnPrelude {
         // Integration changes are authority changes, not only display
         // announcements. Refresh the delegation executable set and rebuild
         // its schema/policy in the same hook pass before the driver sees it.
-        self.refresh_delegation_tool_surface();
+        self.refresh_delegation_tool_surface()?;
+        Ok(())
     }
 
     /// Snapshot the installed servers' tools for this workspace, from the

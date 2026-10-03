@@ -438,15 +438,18 @@ impl OpenHumanSessionHost {
     /// wherever either set changes; a no-op for a belt that never opted into
     /// discovery.
     pub(in crate::agent::session_host) fn recompute_deferred_tool_names(&mut self) {
+        self.visible_tool_names
+            .extend(self.permanent_tool_names.iter().cloned());
         if !self.discovery_enabled {
             self.deferred_tool_names.clear();
             return;
         }
-        let deferred = crate::tools::implementations::meta::deferred_set(
+        let mut deferred = crate::tools::implementations::meta::deferred_set(
             self.tools.as_slice(),
             self.synthesized_tools.as_slice(),
             &self.requested_deferred_tools,
         );
+        deferred.retain(|name| !self.permanent_tool_names.contains(name));
         self.visible_tool_names
             .retain(|name| !deferred.contains(name));
         self.deferred_tool_names = deferred;

@@ -190,3 +190,20 @@ pub(super) fn add_memory_prompt_sections(
     }
     prompt_builder
 }
+
+pub(super) fn derive_turn_workspace_descriptor() -> Option<tinytools::WorkspaceDescriptor> {
+    let root = crate::agent::turn_workspace::current()?;
+    if !root.is_dir() {
+        tracing::warn!(
+            root = %root.display(),
+            "[turn_workspace] scoped root is not an existing directory — \
+             falling back to the shared action_dir cwd for this turn"
+        );
+        return None;
+    }
+    tracing::debug!(
+        root = %root.display(),
+        "[turn_workspace] turn bound to the embedder's per-turn root as default cwd"
+    );
+    Some(tinytools::WorkspaceDescriptor::new(root).with_policy_id("turn-workspace"))
+}

@@ -26,7 +26,7 @@ use tinyjuice::cache::store::{CcrPutResult, CcrStore};
 use tinyjuice::repl::ReplLimits;
 use tinytools::{PermissionLevel, Tool, ToolResult};
 
-/// The tool names TinyJuice declares, and the ones the handle footer names.
+/// The query tools TinyJuice declares. The footer suggests a subset of these.
 pub const REPL_TOOL_NAMES: &[&str] = &["juice_find", "juice_extract", "juice_summarize"];
 
 pub fn is_repl_tool(name: &str) -> bool {

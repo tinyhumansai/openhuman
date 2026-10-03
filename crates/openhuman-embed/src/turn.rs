@@ -595,9 +595,10 @@ async fn dispatch(
                     request.inference_url,
                     request.api_key,
                 );
+                let host = inner.composed_host_tools();
                 let target = AgentChatTarget::Definition {
                     definition: &inner.definition,
-                    host: inner.host_tools.as_ref(),
+                    host: host.as_ref(),
                     seed: seed.as_deref(),
                     usage: Some(usage),
                 };

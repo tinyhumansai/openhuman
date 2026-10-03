@@ -32,6 +32,7 @@ file-logging = ["openhuman-core/file-logging"]
 scheduler-gate = ["openhuman-core/scheduler-gate"]
 
 [dependencies]
+async-trait = "0.1"
 openhuman-core = { path = "../openhuman-core", package = "openhuman", default-features = false }
 anyhow = "1"
 log = "0.4"
@@ -39,6 +40,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
 thiserror = "2"
+# Construct the owned wire config directly; core adds host disclosure policy.
+tinymcp-bus = { path = "../../vendor/tinymcp/crates/tinymcp-bus" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 url = "2"
 uuid = { version = "1", features = ["v4"] }

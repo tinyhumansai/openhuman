@@ -176,7 +176,7 @@ fn connected_mcp_actions_enter_search_and_leave_on_disconnect() {
     }];
 
     let action = searchable_name("server-1", "example/weather", "forecast");
-    prelude.refresh_delegation_tool_surface();
+    prelude.refresh_delegation_tool_surface().unwrap();
     assert!(prelude.synthesized_tool_names_for_test().contains(&action));
     {
         let surface = prelude.tool_surface.lock().expect("tool surface");
@@ -190,7 +190,7 @@ fn connected_mcp_actions_enter_search_and_leave_on_disconnect() {
         .expect("prelude state")
         .connected_mcp_tools
         .clear();
-    prelude.refresh_delegation_tool_surface();
+    prelude.refresh_delegation_tool_surface().unwrap();
     assert!(!prelude.synthesized_tool_names_for_test().contains(&action));
     assert!(!prelude
         .tool_surface
@@ -246,7 +246,7 @@ async fn desktop_browser_setting_keeps_deferred_tools_in_fresh_and_resumed_surfa
         assert!(fresh.specs().iter().any(|spec| spec.name == name), "{name}");
     }
     prelude.adopt_recorded_tools(Some(&fresh));
-    prelude.refresh_delegation_tool_surface();
+    prelude.refresh_delegation_tool_surface().unwrap();
     let resumed = prelude.prepare(false).await.expect("resumed tool surface");
     for name in ["browser", "browser_open"] {
         assert!(
@@ -302,7 +302,7 @@ async fn a_resumed_orchestrator_keeps_the_integration_actions_it_was_sent() {
     let prelude = state.prelude.as_ref().expect("prelude");
 
     // Fresh process: no integrations known, so no actions are synthesised.
-    prelude.refresh_delegation_tool_surface();
+    prelude.refresh_delegation_tool_surface().unwrap();
     assert!(!prelude
         .synthesized_tool_names_for_test()
         .contains("GMAIL_SEND_EMAIL"));
@@ -328,7 +328,7 @@ async fn a_resumed_orchestrator_keeps_the_integration_actions_it_was_sent() {
         }];
         mutable.connected_integrations_authoritative = true;
     }
-    prelude.refresh_delegation_tool_surface();
+    prelude.refresh_delegation_tool_surface().unwrap();
 
     let names = prelude.synthesized_tool_names_for_test();
     assert!(names.contains("GMAIL_SEND_EMAIL"), "{names:?}");
@@ -372,4 +372,75 @@ async fn session_locator_is_memoized_across_calls() {
         "session_locator() must return the same Arc on every call, or tinyagents' \
          same-binding check rejects the second transcript bind"
     );
+}
+
+#[tokio::test]
+async fn newly_connected_action_cannot_shadow_a_permanent_source() {
+    use super::*;
+    struct AttachedAction;
+    #[async_trait::async_trait]
+    impl tinytools::Tool for AttachedAction {
+        fn name(&self) -> &str {
+            "GMAIL_SEND_EMAIL"
+        }
+        fn description(&self) -> &str {
+            "host-owned action"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type":"object"})
+        }
+        async fn execute(&self, _: serde_json::Value) -> anyhow::Result<tinytools::ToolResult> {
+            Ok(tinytools::ToolResult::success("host"))
+        }
+    }
+    let _ = crate::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins();
+    let action_dir = tempfile::tempdir().unwrap();
+    let model: Arc<dyn tinyinference_llm::model::ChatModel<()>> =
+        Arc::new(tinyagents_harness::testkit::ScriptedModel::new(Vec::new()));
+    let mut host = crate::agent::SessionHostBuilder::new()
+        .chat_model(model)
+        .tools(vec![Box::new(AttachedAction)])
+        .permanent_tool_names(std::collections::HashSet::from(["GMAIL_SEND_EMAIL".into()]))
+        .action_dir(action_dir.path().to_path_buf())
+        .memory(crate::memory::test_support::noop_memory())
+        .tool_dispatcher(Box::new(tinytools_agent::dialect::XmlDialect))
+        .agent_definition_name("orchestrator")
+        .build()
+        .unwrap();
+    host.ensure_runtime_session().unwrap();
+    let prelude = host.runtime_state.lock().unwrap().prelude.clone().unwrap();
+    prelude.refresh_delegation_tool_surface().unwrap();
+    let before = prelude
+        .tool_surface
+        .lock()
+        .unwrap()
+        .visible_tool_specs
+        .clone();
+    prelude.adopt_recorded_tools(Some(
+        &ToolSnapshot::new(vec![spec("GMAIL_SEND_EMAIL")]).unwrap(),
+    ));
+    {
+        let mut mutable = prelude.mutable.lock().unwrap();
+        mutable.connected_integrations = vec![crate::agent::prompts::ConnectedIntegration {
+            toolkit: "gmail".into(),
+            description: String::new(),
+            tools: Vec::new(),
+            gated_tools: Vec::new(),
+            connected: true,
+            connections: Vec::new(),
+            non_active_status: None,
+        }];
+        mutable.connected_integrations_authoritative = true;
+    }
+    let error = prelude.refresh_delegation_tool_surface().unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("collision with synthesized tool"));
+    let surface = prelude.tool_surface.lock().unwrap();
+    assert!(Arc::ptr_eq(&surface.visible_tool_specs, &before));
+    assert_eq!(surface.tools[0].description(), "host-owned action");
+    assert!(!surface
+        .synthesized_tools
+        .iter()
+        .any(|tool| tool.name() == "GMAIL_SEND_EMAIL"));
 }

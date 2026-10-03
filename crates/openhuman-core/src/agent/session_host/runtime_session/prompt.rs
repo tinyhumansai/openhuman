@@ -21,7 +21,12 @@ impl OpenHumanTurnPrelude {
             })
             .map(|spec| spec.as_ref().clone())
             .collect::<Vec<_>>();
-        let instructions = self.tool_dispatcher.prompt_instructions(&specs);
+        let prompt_specs = specs
+            .iter()
+            .filter(|spec| !surface.permanent_tool_names.contains(&spec.name))
+            .cloned()
+            .collect::<Vec<_>>();
+        let instructions = self.tool_dispatcher.prompt_instructions(&prompt_specs);
         let tool_refs = surface
             .tools
             .iter()
@@ -35,7 +40,9 @@ impl OpenHumanTurnPrelude {
             .map(|tool| tool.as_ref())
             .collect::<Vec<_>>();
         let mut prompt_tools = PromptTool::from_tool_refs(tool_refs.iter().copied());
+        prompt_tools.retain(|tool| !surface.permanent_tool_names.contains(tool.name.as_ref()));
         let mut visible_tool_names = surface.tool_policy_session.visible_tool_names_for_prompt();
+        visible_tool_names.retain(|name| !surface.permanent_tool_names.contains(name));
         if self.thread_id.is_none() {
             visible_tool_names.retain(|name| {
                 !crate::agent::tinyagents::harness_tool_registration::is_thread_goal_tool(name)

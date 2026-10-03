@@ -38,7 +38,9 @@ async fn a_large_result_becomes_a_handle_the_repl_tools_can_query() {
         "not compacted: {} bytes",
         output.text.len()
     );
-    for name in REPL_TOOL_NAMES {
+    // The footer advertises slice/search, outline, and full recovery. Structured
+    // extraction remains callable, but is not a suggested recovery operation.
+    for name in ["juice_find", "juice_summarize", "juice_retrieve"] {
         assert!(output.text.contains(name), "footer must name {name}");
     }
     let handle = output

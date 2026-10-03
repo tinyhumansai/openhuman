@@ -527,8 +527,12 @@ where
 
 /// How the case reaches its agent.
 enum Entry {
+    /// Run the runtime-only summarizer directly; ingest no longer invokes it.
+    Summarizer,
     /// A web-chat turn (the orchestrator, and specialists it hands off to).
     WebChat,
+    /// Web chat with an explicit assertion that OnDemand ingest stays unary.
+    WebChatNoAutomaticSummary,
     /// `openhuman.flows_build` — the workflow_builder directly.
     FlowsBuild,
     /// `openhuman.agent_triage_evaluate` with `dry_run` — trigger_triage directly.
@@ -634,7 +638,23 @@ async fn run_case_inner(case: Case) {
     let stack = boot_stack(case.extra_config).await;
 
     match case.entry {
-        Entry::WebChat => {
+        Entry::Summarizer => {
+            use openhuman_core::inference::host_runtime::ops::{agent_chat_for, AgentChatTarget};
+            let mut config = openhuman_core::config::Config::load_or_init().await.unwrap();
+            agent_chat_for(
+                &mut config,
+                AgentChatTarget::AgentId("summarizer"),
+                case.user_message,
+                Some("e2e-mock-model".into()),
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("summarizer turn must finish");
+        }
+        Entry::WebChat | Entry::WebChatNoAutomaticSummary => {
             let client_id = format!("prompt-{}", case.agent);
             let (mut events, ready) =
                 spawn_sse_collector(format!("{}/events?client_id={client_id}", stack.rpc_base));
@@ -764,6 +784,12 @@ async fn run_case_inner(case: Case) {
             "[{agent}] {run} consecutive `{tool}` calls (cap {cap}); called {calls:?}"
         );
     }
+    if matches!(case.entry, Entry::WebChatNoAutomaticSummary) {
+        assert!(requests.len() >= 2, "the tool result must reach a subsequent model request");
+        assert!(requests.iter().all(|request| !system_text(request)
+            .contains("You compress a single oversized tool result")));
+    }
+
 }
 
 // ─── Cases ──────────────────────────────────────────────────────────────────
@@ -884,11 +910,32 @@ fn orchestrator_reaches_cron_through_the_scheduling_pack() {
     });
 }
 
-/// An oversized orchestrator tool result goes to TinyJuice's summary stage,
-/// which calls back for the summarizer's model — and the summarizer must run
-/// with no tools at all. TinyJuice decides whether a result is worth a summary,
-/// so the scripted tool returns a large one (~29 KB); a timestamp-sized result
-/// never reaches the summarizer.
+/// The OnDemand policy leaves ingest on the orchestrator; a large result must
+/// not silently add a unary summary model call to the scripted turn.
+#[test]
+fn oversized_tool_result_does_not_automatically_invoke_summarizer() {
+    run_case(Case {
+        agent: "orchestrator",
+        agent_marker: "## Routing\n\nFirst match wins:",
+        entry: Entry::WebChatNoAutomaticSummary,
+        user_message: "What is the state of my workspace?",
+        scripted_completions: vec![
+            call("shell", json!({ "command": "seq 1 6000" })),
+            text_completion("Your workspace has nothing notable."),
+        ],
+        must_call: &["shell"],
+        must_not_call: &[],
+        must_advertise: &["shell"],
+        must_not_advertise: &[],
+        advertises_nothing: false,
+        max_consecutive_calls_of: None,
+        extra_config: "summarizer_payload_threshold_tokens = 1",
+    });
+}
+
+/// The runtime-only summarizer advertises no tools on its actual model wire.
+/// Dispatch it explicitly: TinyJuice's OnDemand mode no longer invokes a
+/// summary model automatically when an oversized tool result is ingested.
 #[test]
 fn summarizer_advertises_no_tools() {
     run_case(Case {
@@ -896,13 +943,9 @@ fn summarizer_advertises_no_tools() {
         // The summarizer's prompt is TinyJuice's summary contract, verbatim
         // (`tinyjuice::summarize::SYSTEM_PROMPT`, vendor/tinyjuice/src/summarize/prompt.md).
         agent_marker: "You compress a single oversized tool result",
-        entry: Entry::WebChat,
+        entry: Entry::Summarizer,
         user_message: "What is the state of my workspace?",
-        scripted_completions: vec![
-            call("shell", json!({ "command": "seq 1 6000" })),
-            text_completion("Workspace summary: nothing notable."),
-            text_completion("Your workspace has nothing notable."),
-        ],
+        scripted_completions: vec![text_completion("Workspace summary: nothing notable.")],
         must_call: &[],
         must_not_call: &[],
         must_advertise: &[],

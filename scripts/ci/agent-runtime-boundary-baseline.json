@@ -421,8 +421,8 @@
   },
   {
     "rule": "openhuman-task-local",
-    "path": "crates/openhuman-core/src/agent/session_host/builder/factory.rs",
-    "line": 1198,
+    "path": "crates/openhuman-core/src/agent/session_host/builder/helpers.rs",
+    "line": 195,
     "text": "let root = crate::agent::turn_workspace::current()?;",
     "occurrence": 1
   },
@@ -1088,7 +1088,7 @@
     "rule": "openhuman-upstream-reexport",
     "path": "crates/openhuman-core/src/tools/mod.rs",
     "line": 70,
-    "text": "pub use tinytools::{PermissionLevel, Tool, ToolCategory, ToolResult, ToolScope, ToolSpec};",
+    "text": "pub use tinytools::{",
     "occurrence": 1
   },
   {

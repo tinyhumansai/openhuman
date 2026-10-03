@@ -102,19 +102,21 @@ impl McpServer {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        let mut config = McpServerConfig::default();
-        config.name = name.into();
-        config.command = command.into();
-        config.args = args.into_iter().map(Into::into).collect();
-        Self(config)
+        Self(McpServerConfig::from(tinymcp_bus::McpServerConfig {
+            name: name.into(),
+            command: command.into(),
+            args: args.into_iter().map(Into::into).collect(),
+            ..tinymcp_bus::McpServerConfig::default()
+        }))
     }
 
     /// A remote server over Streamable HTTP.
     pub fn http(name: impl Into<String>, endpoint: impl Into<String>) -> Self {
-        let mut config = McpServerConfig::default();
-        config.name = name.into();
-        config.endpoint = endpoint.into();
-        Self(config)
+        Self(McpServerConfig::from(tinymcp_bus::McpServerConfig {
+            name: name.into(),
+            endpoint: endpoint.into(),
+            ..tinymcp_bus::McpServerConfig::default()
+        }))
     }
 
     /// Environment variables for a stdio server. MCP stdio auth is normally

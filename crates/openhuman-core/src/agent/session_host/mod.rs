@@ -38,6 +38,7 @@ mod codec;
 mod driver;
 mod factory;
 mod hooks;
+mod managed_tools;
 mod policy;
 mod prefix_snapshot;
 mod recorded_tools;

@@ -29,6 +29,7 @@ impl OpenHumanSessionHost {
         // this renders is what tells the model a `delegate_*` tool exists.
         let all_tools = self.all_tool_refs();
         let mut prompt_tools = PromptTool::from_tool_refs(all_tools.iter().copied());
+        prompt_tools.retain(|tool| !self.permanent_tool_names.contains(tool.name.as_ref()));
         let mut prompt_visible_tool_names =
             self.tool_policy_session.visible_tool_names_for_prompt();
         crate::agent::prompts::swap_deferred_for_discovery_bridge(
