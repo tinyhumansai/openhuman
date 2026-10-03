@@ -338,6 +338,73 @@ async fn embed_takes_its_four_arguments_in_the_order_the_module_sends_them() {
     );
 }
 
+#[tokio::test]
+async fn embed_resolves_a_custom_endpoint_from_the_memory_embedding_provider() {
+    // Settings > Embeddings stores a custom OpenAI-compatible endpoint as
+    // `memory.embedding_provider = "custom:<url>"`, and the module asks the host
+    // for provider `"custom"`. The host used to look the endpoint up only in
+    // `cloud_providers`, where no entry is ever named `custom`, so every embed
+    // failed with "custom embedding provider endpoint must not be empty" and
+    // nothing ingested got a vector (#6984).
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path_regex(r"/embeddings$"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!({
+            "object": "list",
+            "data": [{ "object": "embedding", "index": 0, "embedding": [0.5, -0.25, 1.0, 0.0] }],
+            "model": "some-model",
+            "usage": { "prompt_tokens": 1, "total_tokens": 1 }
+        })))
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let callbacks = EmbeddingCallbacks(config_with_embedding_provider(
+        dir.path(),
+        &format!("custom:{}/v1", server.uri()),
+    ));
+
+    let vectors = callbacks
+        .call(
+            &MemberName::new("Embed").expect("member name"),
+            json!(["custom", "some-model", 4, ["alpha"]]),
+        )
+        .await
+        .expect("a custom endpoint saved in memory.embedding_provider must be used");
+    assert_eq!(vectors, json!([[0.5, -0.25, 1.0, 0.0]]));
+}
+
+#[tokio::test]
+async fn embed_with_a_blank_custom_endpoint_still_fails_in_the_host() {
+    // `custom:` with nothing after it is a broken profile, not a URL to guess
+    // at. It has to keep failing in the host's own validation.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let callbacks = EmbeddingCallbacks(config_with_embedding_provider(dir.path(), "custom:   "));
+
+    let error = callbacks
+        .call(
+            &MemberName::new("Embed").expect("member name"),
+            json!(["custom", "some-model", 4, ["alpha"]]),
+        )
+        .await
+        .expect_err("a blank custom endpoint has nothing to call");
+    assert_eq!(error.wire_name(), HOST_ERROR, "{error}");
+    assert!(
+        format!("{error:?}").contains("must not be empty"),
+        "a blank endpoint must be refused by the endpoint validation: {error:?}"
+    );
+}
+
+/// `scoped_config` with `memory.embedding_provider` set, as Settings >
+/// Embeddings would save it.
+fn config_with_embedding_provider(dir: &Path, provider: &str) -> Arc<Config> {
+    let mut config = Config::default();
+    config.workspace_dir = dir.join("workspace");
+    config.config_path = dir.join("config.toml");
+    config.memory.embedding_provider = provider.to_string();
+    Arc::new(config)
+}
+
 // ── The summarization role resolves through the consent ladder ───────────────
 
 /// A model the role factory can hand back through the test override, so the

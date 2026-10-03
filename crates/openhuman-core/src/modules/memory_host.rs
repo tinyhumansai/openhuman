@@ -70,6 +70,7 @@ impl EmbeddingCallbacks {
             .iter()
             .find(|candidate| candidate.slug == provider)
             .map(|candidate| candidate.endpoint.as_str())
+            .or_else(|| custom_embedding_endpoint(&self.0, &provider))
             .filter(|endpoint| !endpoint.is_empty());
         let embedder = crate::inference::embedding_host::create_embedding_provider_with_config(
             &self.0, &provider, &model, dimensions, &api_key, endpoint,
@@ -89,6 +90,23 @@ impl EmbeddingCallbacks {
         );
         result
     }
+}
+
+/// The endpoint behind the module's `"custom"` embedding provider.
+///
+/// Settings > Embeddings saves a custom OpenAI-compatible endpoint as
+/// `memory.embedding_provider = "custom:<url>"`, never as a `cloud_providers`
+/// entry, so the slug lookup in `embed` cannot find it (#6984). This reads it
+/// the way `embedding_host::rpc::embed` already does.
+fn custom_embedding_endpoint<'a>(config: &'a Config, provider: &str) -> Option<&'a str> {
+    if provider != "custom" {
+        return None;
+    }
+    config
+        .memory
+        .embedding_provider
+        .strip_prefix("custom:")
+        .map(str::trim)
 }
 
 #[derive(Clone)]
