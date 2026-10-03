@@ -32,6 +32,7 @@ use crate::agent::tinyagents::tools::EarlyExitHook;
 use crate::agent::tinyagents::turn_models::TurnModels;
 use crate::agent::tinyagents::turn_outcome::{HaltSummarySlot, ToolOutcomeSink};
 use crate::agent::tinyagents::turn_policy::{run_policy_for, REPEATED_TOOL_FAILURE_THRESHOLD};
+use crate::agent::tinyagents::verify_before_finish;
 use tinyagents_harness::store::InMemoryStore as ToolResultArtifactIndexStore;
 
 use super::ToolPolicyEnforcement;
@@ -594,6 +595,9 @@ pub(super) fn assemble_turn_harness(
         pause_at_cap && subagent_scope.is_none(),
         &tool_outcome_sink,
     );
+    // Issue #6952: one spec check before a root orchestrator turn's first answer.
+    let agent_definition_id = tool_policy.as_ref().map(|p| p.agent_definition_id.as_str());
+    verify_before_finish::install(&mut harness, subagent_scope.is_some(), agent_definition_id);
 
     // Direct web lookup is bounded. Once enough search/fetch results have
     // returned, the web tools leave the request so the run works with what it

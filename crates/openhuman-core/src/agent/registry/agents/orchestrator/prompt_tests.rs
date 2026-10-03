@@ -610,6 +610,18 @@ fn build_never_mandates_plan_review_and_allows_a_lead_in() {
 }
 
 #[test]
+fn build_carries_the_spec_check_grounding_rules() {
+    // Issue #6952: in every Terminal-Bench 4.0 failure the model's own checks
+    // passed without testing the deliverable against what the task stated.
+    let body = build(&ctx_with(&[])).unwrap();
+    assert!(body.contains("Checks must mirror how the task is specified or graded"));
+    assert!(body.contains("Never delete state, data or services the solution needs at runtime"));
+    assert!(body.contains("Verify the final state as a fresh consumer would see it."));
+    assert!(body
+        .contains("List the request's stated constraints, filters and thresholds as `todo` items"));
+}
+
+#[test]
 fn build_stays_inside_the_hermetic_byte_budget() {
     // The whole point of the rewrite (latency RCA, 2026-09-22): the hermetic
     // orchestrator body, identity included, fits in 8 KiB. Signed-in sessions

@@ -476,6 +476,9 @@ pub const GROUNDING_BODY: &str = "## Grounding and tool use\n\n\
     - Never substitute plausible looking but fabricated output (made up data, invented file contents, synthesised tool or API responses) for results you could not actually produce. If a step failed, say it failed.\n\
     - When a tool or delegated sub-agent hands back an incomplete or blocked result (for example a [SUBAGENT_INCOMPLETE] envelope), relay what it did accomplish and the blocker to the user. Do not present it as finished, fabricate the rest, or silently re-run the identical call: change the approach or ask the user.\n\
     - Ground every factual claim in evidence you actually observed: a tool result, the user's message, or cited memory. If the evidence is missing, partial, or truncated, say so or fetch more instead of guessing.\n\
+    - Independent checks, tests and benchmarks must mirror how the task is specified or graded. A check that shares your implementation's assumptions cannot fail; derive it from the request.\n\
+    - When you keep a `todo` list, add the request's stated constraints, filters and thresholds as items, not just the steps.\n\
+    - Never delete state, data or services the solution needs at runtime, including during cleanup. Before finishing, verify the final state the way a fresh consumer would see it.\n\
     - Skills run only via `run_workflow`, and only the skills listed as installed exist. Do not invent skill ids.";
 
 impl PromptSection for GroundingSection {

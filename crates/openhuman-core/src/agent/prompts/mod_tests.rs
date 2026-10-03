@@ -163,6 +163,8 @@ fn agents_md_ctx(global: Option<String>, local: Option<String>) -> PromptContext
 mod agents_md_registration_tests;
 #[path = "mod_tests_builder_sections_tests.rs"]
 mod builder_sections_tests;
+#[path = "mod_tests_grounding_spec_check_tests.rs"]
+mod grounding_spec_check_tests;
 #[path = "mod_tests_subagent_render_tests.rs"]
 mod subagent_render_tests;
 #[path = "mod_tests_user_files_reflections_tests.rs"]

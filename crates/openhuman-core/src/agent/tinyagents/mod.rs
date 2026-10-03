@@ -63,6 +63,7 @@ mod turn_run_error;
 mod turn_run_finalize;
 mod turn_runner;
 mod use_skill_dispatch;
+mod verify_before_finish;
 
 pub(crate) use crate::agent::message_convert::chat_message_to_message;
 #[cfg(feature = "flows")]
