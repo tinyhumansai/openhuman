@@ -328,6 +328,39 @@ pub(super) fn compression_policy(
         }
         None => window.map(summarization_policy),
     }
+    .map(|policy| with_turn_aware_tail(policy, window))
+}
+
+/// Share of the context window a compaction keeps verbatim as its tail.
+const COMPACTION_TAIL_WINDOW_FRACTION: f64 = 0.30;
+
+/// Size the kept tail in tokens and pin the turn's user message (#6960).
+///
+/// Split by count (the last eight messages), a long tool-driven turn that
+/// crosses the trigger mid-turn folds its only user message — the assignment
+/// being worked on — into the summary, and the agent loses the task. This
+/// keeps ~30% of the window verbatim instead, capped at half the trigger so a
+/// capped trigger (350k on a 1M window) still has room to fold, and pins the
+/// turn's user message to the front of that tail. With no known window the
+/// tail is 30% of the trigger.
+fn with_turn_aware_tail(
+    mut policy: tinyagents_harness::summarization::SummarizationPolicy,
+    window: Option<u64>,
+) -> tinyagents_harness::summarization::SummarizationPolicy {
+    let trigger = policy.trigger_budget();
+    let keep_tokens = match window {
+        Some(window) => ((window as f64 * COMPACTION_TAIL_WINDOW_FRACTION) as u64).min(trigger / 2),
+        None => (trigger as f64 * COMPACTION_TAIL_WINDOW_FRACTION) as u64,
+    };
+    tracing::debug!(
+        context_window = ?window,
+        trigger,
+        keep_tokens,
+        "[context_compression] token tail with the turn's user message pinned"
+    );
+    policy.keep_recent_tokens = Some(keep_tokens);
+    policy.pin_turn_user_message = true;
+    policy
 }
 
 #[cfg(test)]
