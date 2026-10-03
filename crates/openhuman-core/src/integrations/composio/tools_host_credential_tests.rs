@@ -1,4 +1,5 @@
-use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, RwLock};
 
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
@@ -10,7 +11,7 @@ use tinytools::Tool;
 use crate::config::{ComposioHostCredential, Config};
 use crate::integrations::composio::client::{resolve_composio_route, ComposioRoute};
 use crate::integrations::composio::connected_integrations::{
-    cache_key, composio_cache_test_lock, CachedIntegrations, INTEGRATIONS_CACHE,
+    cache_key, read_cached_integrations_from, CachedIntegrations,
 };
 use crate::integrations::composio::tools::{live_composio_config, ComposioListConnectionsTool};
 
@@ -175,7 +176,6 @@ async fn two_agents_on_one_runtime_each_call_composio_with_their_own_key() {
 
 #[test]
 fn connected_integrations_cache_is_keyed_per_credential() {
-    let _guard = composio_cache_test_lock();
     let tmp = tempfile::tempdir().unwrap();
     let base = shared_runtime_config(&tmp);
     let agent_a = pinned(&base, KEY_A, "tenant-a", None);
@@ -188,7 +188,11 @@ fn connected_integrations_cache_is_keyed_per_credential() {
     assert_eq!(cache_key(&agent_a), cache_key(&agent_a.clone()));
     assert!(!cache_key(&agent_a).contains(KEY_A));
 
-    INTEGRATIONS_CACHE.write().unwrap().insert(
+    // A private map, not the process-wide `INTEGRATIONS_CACHE`: any test that
+    // stores a credential invalidates the global map without taking the cache
+    // test lock, which would empty it between the insert and the reads below.
+    let cache = RwLock::new(HashMap::new());
+    cache.write().unwrap().insert(
         cache_key(&agent_a),
         CachedIntegrations {
             entries: vec![crate::agent::prompts::ConnectedIntegration {
@@ -204,12 +208,8 @@ fn connected_integrations_cache_is_keyed_per_credential() {
         },
     );
 
-    let seen_by_a = crate::integrations::composio::cached_active_integrations(&agent_a);
-    let seen_by_b = crate::integrations::composio::cached_active_integrations(&agent_b);
-    INTEGRATIONS_CACHE
-        .write()
-        .unwrap()
-        .remove(&cache_key(&agent_a));
+    let seen_by_a = read_cached_integrations_from(&cache, &agent_a);
+    let seen_by_b = read_cached_integrations_from(&cache, &agent_b);
 
     assert_eq!(seen_by_a.map(|v| v.len()), Some(1));
     assert!(seen_by_b.is_none());

@@ -58,27 +58,23 @@ fn the_withheld_block_renders_for_a_renamed_session_with_a_filter() {
         "expected the generated heading, got: {:?}",
         block.chars().take(120).collect::<String>()
     );
-    // The row this pins is a `documents`-gated skill, so the assertion depends
-    // on a Cargo feature the test does not declare. Under `default` the skill
-    // is not compiled, the row cannot render, and the failure reads as a broken
-    // block — which is how openhuman#6507 came to be filed and retracted.
-    //
-    // Unlike the tool-universe guard in `fleet_prompt_tests`, this test depends
-    // on exactly ONE feature and can ask about it directly, so there is no
-    // tool-to-feature mapping here to drift out of date.
+    // A packed delegate no Cargo feature gates must always render with its
+    // route; this is the row that pins the block in every build profile.
     assert!(
-        block.contains("`documents` (make_presentation"),
-        "a packed delegate must render with its route:{}\n{block}",
-        if cfg!(feature = "documents") {
-            String::new()
-        } else {
-            "\n\nNOTE — this may be a feature-profile artefact, not a rendering defect: \
-             the `documents` feature is NOT enabled in this build, so `make_presentation` \
-             does not exist and the row cannot render. Settle it by reproducing CI exactly:\
-             \n\n    cargo test -p openhuman --lib --features \"$(bash scripts/ci/product-features.sh)\"\
-             \n\nIf it passes there, this profile simply lacks the skill. See openhuman#6512."
-                .to_string()
-        }
+        block.contains("`tasks` (manage_tasks"),
+        "a packed delegate must render with its route:\n{block}"
+    );
+    // `make_presentation` is a `documents`-gated skill: under `default` it is
+    // not compiled and its row cannot render, so expecting it unconditionally
+    // reads as a broken block (which is how openhuman#6507 came to be filed
+    // and retracted). Assert it exactly when the feature is on, and assert its
+    // absence when it is off, so the expectation tracks the build profile.
+    let presentation_row = block.contains("`documents` (make_presentation");
+    assert_eq!(
+        presentation_row,
+        cfg!(feature = "documents"),
+        "the `documents` row must render exactly when the `documents` feature is enabled \
+         (see openhuman#6512):\n{block}"
     );
 }
 

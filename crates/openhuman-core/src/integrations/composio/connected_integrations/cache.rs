@@ -162,8 +162,19 @@ pub fn cached_active_integrations_including_expired(
 }
 
 fn read_cached_integrations(config: &Config) -> Option<Vec<ConnectedIntegration>> {
+    read_cached_integrations_from(&INTEGRATIONS_CACHE, config)
+}
+
+/// [`read_cached_integrations`] over an explicit map, so the credential-keyed
+/// lookup can be exercised against a private map instead of the process-wide
+/// [`INTEGRATIONS_CACHE`], which unrelated code paths clear at any time (see
+/// [`invalidate_connected_integrations_cache`]).
+pub(crate) fn read_cached_integrations_from(
+    cache: &RwLock<HashMap<String, CachedIntegrations>>,
+    config: &Config,
+) -> Option<Vec<ConnectedIntegration>> {
     let key = cache_key(config);
-    let guard = match INTEGRATIONS_CACHE.try_read() {
+    let guard = match cache.try_read() {
         Ok(g) => g,
         Err(_) => {
             tracing::trace!(

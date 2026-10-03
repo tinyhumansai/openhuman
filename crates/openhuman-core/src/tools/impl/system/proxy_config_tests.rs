@@ -10,6 +10,34 @@ fn test_security() -> Arc<SecurityPolicy> {
     })
 }
 
+/// Holds the crate-wide env lock and puts the process-wide runtime proxy back
+/// when the test ends.
+///
+/// The `set` action installs its proxy as `runtime_proxy_config()` for the whole
+/// process, and nothing else restores it: a test that sets one and returns leaves
+/// every later loopback client (MCP, composio, docker probes) dialling it, which
+/// reads as an unrelated "Connection refused" in whichever test runs next.
+struct RuntimeProxyRestore {
+    previous: crate::config::ProxyConfig,
+    _env: tokio::sync::MutexGuard<'static, ()>,
+}
+
+impl RuntimeProxyRestore {
+    async fn hold() -> Self {
+        let env = crate::config::TEST_ENV_LOCK.lock().await;
+        Self {
+            previous: runtime_proxy_config(),
+            _env: env,
+        }
+    }
+}
+
+impl Drop for RuntimeProxyRestore {
+    fn drop(&mut self) {
+        set_runtime_proxy_config(self.previous.clone());
+    }
+}
+
 async fn test_config(tmp: &TempDir) -> Arc<Config> {
     let config = Config {
         workspace_dir: tmp.path().join("workspace"),
@@ -57,6 +85,7 @@ async fn set_scope_services_requires_services_entries() {
 
 #[tokio::test]
 async fn set_and_get_round_trip_proxy_scope() {
+    let _proxy = RuntimeProxyRestore::hold().await;
     let tmp = TempDir::new().unwrap();
     let tool = ProxyConfigTool::new(test_config(&tmp).await, test_security());
 
@@ -65,6 +94,7 @@ async fn set_and_get_round_trip_proxy_scope() {
             "action": "set",
             "scope": "services",
             "http_proxy": "http://127.0.0.1:7890",
+            "no_proxy": ["127.0.0.1", "localhost"],
             "services": ["provider.openai", "tool.http_request"]
         }))
         .await
@@ -79,13 +109,15 @@ async fn set_and_get_round_trip_proxy_scope() {
 
 #[tokio::test]
 async fn set_null_proxy_url_clears_existing_value() {
+    let _proxy = RuntimeProxyRestore::hold().await;
     let tmp = TempDir::new().unwrap();
     let tool = ProxyConfigTool::new(test_config(&tmp).await, test_security());
 
     let set_result = tool
         .execute(json!({
             "action": "set",
-            "http_proxy": "http://127.0.0.1:7890"
+            "http_proxy": "http://127.0.0.1:7890",
+            "no_proxy": ["127.0.0.1", "localhost"]
         }))
         .await
         .unwrap();
