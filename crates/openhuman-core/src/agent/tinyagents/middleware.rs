@@ -29,6 +29,7 @@ mod cli_rpc_only;
 mod cost_budget;
 mod credential_scrub;
 mod embedder_hooks;
+mod fetched_site;
 mod loop_guards;
 mod memory_protocol;
 mod packed_tool_route;

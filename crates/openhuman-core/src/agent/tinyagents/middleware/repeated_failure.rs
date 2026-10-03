@@ -19,6 +19,7 @@ use tinyinference_llm::model::ModelRequest;
 use tinyinference_llm::tool::ToolCall as TaToolCall;
 use tinytools::ToolResult as TaToolResult;
 
+use super::fetched_site::{fetch_host_scope, fetched_site_policy};
 use super::loop_guards::{
     is_repeat_call_exempt, RECOVERABLE_NO_PROGRESS_FAILURE_THRESHOLD,
     RECOVERABLE_REPEAT_FAILURE_THRESHOLD,
@@ -216,6 +217,10 @@ pub(super) fn failure_scope(tool: &str, arguments: &serde_json::Value) -> String
             Some(serde_json::Value::Number(value)) => value.to_string(),
             _ => continue,
         };
+        if let Some(host_scope) = fetch_host_scope(tool, field, &value) {
+            scope.push_str(&host_scope);
+            continue;
+        }
         scope.push(':');
         scope.push_str(field);
         scope.push('=');
@@ -305,6 +310,10 @@ fn classified_recovery_policy(
         && error.contains("restart the app to try again")
     {
         return Some(("unavailable", 1));
+    }
+    // A site's refusal is not our credential failure (see `fetched_site`).
+    if let Some(policy) = fetched_site_policy(tool, error) {
+        return policy;
     }
     // A tool-owned JSON error contract is less ambiguous than rendered prose.
     // Read only explicit status/code fields; arbitrary response data is not a
@@ -474,6 +483,7 @@ impl Middleware<(), crate::agent::tinyagents::host::OpenHumanRunContext>
             for class in [
                 "permission",
                 "authentication",
+                "site_refused",
                 "policy",
                 "unsupported",
                 "missing_window",
