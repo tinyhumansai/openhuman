@@ -160,6 +160,9 @@
               "content": [
                 {
                   "text": "found"
+                },
+                {
+                  "text": "\n[took 0.0s]"
                 }
               ],
               "tool_call_id": "c1"
@@ -508,6 +511,9 @@
               "content": [
                 {
                   "text": "found"
+                },
+                {
+                  "text": "\n[took 0.0s]"
                 }
               ],
               "tool_call_id": "c1"
@@ -723,6 +729,9 @@
               "content": [
                 {
                   "text": "found"
+                },
+                {
+                  "text": "\n[took 0.0s]"
                 }
               ],
               "tool_call_id": "c1"
@@ -993,6 +1002,9 @@
               "content": [
                 {
                   "text": "found"
+                },
+                {
+                  "text": "\n[took 0.0s]"
                 }
               ],
               "tool_call_id": "c1"

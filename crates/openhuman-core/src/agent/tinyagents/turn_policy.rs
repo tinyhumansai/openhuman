@@ -168,6 +168,10 @@ pub(crate) fn run_policy_for(max_iterations: usize, response_cache_enabled: bool
     // delegations) are exempt in the harness and keep the remainder-only
     // budget. Env-overridable, `0` disables.
     policy.limits.max_model_call_ms = model_call_wall_clock_ms();
+    // Each executed tool row ends with `[took 12.3s]` (#6953). Without it the
+    // model cannot tell a fifteen-minute command from a fast one, so it cannot
+    // budget the rest of the turn against the ceiling above.
+    policy.tool_result_durations = true;
     // Crate-owned retry (Phase 3a), lengthened for #6413.
     //
     // The former schedule — 2 retries at 500 ms and 1 s — spent about 1.5 s in

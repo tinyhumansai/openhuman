@@ -10,3 +10,10 @@ async fn per_turn_tool_limit_reaches_the_execution_policy() {
     .await;
     assert_eq!(run_policy_for(10, false).limits.max_tool_calls, 80);
 }
+
+/// #6953: the model reads how long each tool call took, so it can budget the
+/// rest of the turn against it.
+#[test]
+fn tool_results_carry_their_duration() {
+    assert!(run_policy_for(10, false).tool_result_durations);
+}
