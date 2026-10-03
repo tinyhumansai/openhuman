@@ -168,6 +168,7 @@ async fn handle_validate_policy_valid() {
         workspace_root: std::path::PathBuf::from("/tmp/safe"),
         state_dir: std::path::PathBuf::from("/tmp/state"),
         read_only_mounts: vec![],
+        read_write_mounts: vec![],
         allow_network: false,
         env_passthrough: vec![],
         docker_overrides: None,
@@ -187,6 +188,7 @@ async fn handle_validate_policy_dangerous() {
         workspace_root: std::path::PathBuf::from("/"),
         state_dir: std::path::PathBuf::from("/tmp/state"),
         read_only_mounts: vec![],
+        read_write_mounts: vec![],
         allow_network: false,
         env_passthrough: vec![],
         docker_overrides: Some(super::super::types::DockerOverrides {

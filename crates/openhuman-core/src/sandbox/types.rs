@@ -32,6 +32,9 @@ pub struct SandboxPolicy {
     pub state_dir: PathBuf,
     /// Additional read-only mounts (e.g. `/usr/lib`, managed node).
     pub read_only_mounts: Vec<PathBuf>,
+    /// Additional read-write mounts (e.g. `~/.cargo`). Local jail only.
+    #[serde(default)]
+    pub read_write_mounts: Vec<PathBuf>,
     /// Whether outbound network is allowed inside the sandbox.
     pub allow_network: bool,
     /// Environment variables to passthrough into the sandbox.

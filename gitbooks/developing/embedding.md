@@ -26,7 +26,7 @@ Every feature on this crate forwards to the same-named feature on
 `openhuman-core`: `default`, `http-server`, `inference`, `documents`,
 `hosting`, `modules`, `voice`, `web3`, `runtime-node`, `contacts`, `media`,
 `flows`, `skills`, `mcp`, `crash-reporting`, `channels`,
-`sandbox-landlock`, `sandbox-bubblewrap`,
+`sandbox-bubblewrap`,
 `whatsapp-web`, `file-logging`, `scheduler-gate`. Two of them also gate
 items on this crate's own surface: `mcp` gates `HttpHeader`,
 `McpAuthConfig`, `McpServer`, `AgentSpec::mcp` and `HarnessBuilder::mcp`;

@@ -84,8 +84,7 @@ is actually for.
 | `desktop-automation` | — | — | **DROP** | AX / `computer` tool family drives a **local desktop UI** — meaningless headless | `uiautomation` |
 | `tui` | OFF | — | **DROP** | `openhuman tui`/`chat` terminal UI — no terminal in a library host | `ratatui`, `crossterm`, `unicode-width` |
 
-**Non-default optional features** (`sandbox-landlock`,
-`browser-native`/`fantoccini`, `whatsapp-web`,
+**Non-default optional features** (`browser-native`/`fantoccini`, `whatsapp-web`,
 `e2e-test-support`, `rss-bench`, `rss-bench-dhat`) are all default-OFF, so a
 `--no-default-features` build never links them unless explicitly added. None are
 needed for opencompany; `rss-bench`/`rss-bench-dhat` are dev/benchmark-only.

@@ -406,12 +406,16 @@ async fn concurrent_local_jail_runs_keep_their_outputs_separate() {
 async fn local_jail_captures_under_the_state_dir_and_removes_the_call_dir() {
     let action = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
-    let policy = local_policy(action.path(), state.path());
+    let mut policy = local_policy(action.path(), state.path());
     let capture_root = sandbox_capture_root(state.path());
     assert_eq!(
         capture_root,
         state.path().join("artifacts").join("sandbox-capture")
     );
+    // A real jail grants only the per-call dir, so the command cannot list the
+    // capture root on its own; grant it read-only so this test can look.
+    std::fs::create_dir_all(&capture_root).unwrap();
+    policy.read_only_mounts.push(capture_root.clone());
 
     // While running, exactly one per-call dir holding both streams exists.
     let during = run_local(&policy, &format!("ls '{}'/*", capture_root.display())).await;
@@ -448,4 +452,160 @@ async fn local_jail_removes_the_call_dir_when_the_spawn_fails() {
         "{err}"
     );
     assert!(entries(&sandbox_capture_root(state.path())).is_empty());
+}
+
+// ── tinybox `unsupported` backend is not a jail ──────────────────────────────
+
+#[test]
+fn local_status_is_inactive_for_the_unsupported_backend() {
+    assert_eq!(
+        local_status_for_backend(cwd_jail::detect::UNSUPPORTED_BACKEND_NAME),
+        SandboxStatus::Inactive,
+        "`pick_backend` answers `unsupported` when no OS jail exists and the host then runs \
+         commands through the no-op fallback; `Ready` would claim confinement that is absent"
+    );
+}
+
+// ── tinybox#23: with a real jail, everyday commands still work ───────────────
+//
+// These run a real Landlock jail and skip (loudly) where the kernel has none,
+// so they never fail a host that cannot confine.
+
+#[cfg(target_os = "linux")]
+fn landlock_in_force() -> bool {
+    let backend = cwd_jail::default_backend();
+    let ok = backend.name() == "landlock" && backend.is_available();
+    if !ok {
+        eprintln!(
+            "SKIP: no Landlock on this host (backend = {})",
+            backend.name()
+        );
+    }
+    ok
+}
+
+#[cfg(target_os = "linux")]
+fn host_has(program: &str) -> bool {
+    std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!("command -v {program}"))
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn landlock_jail_runs_cargo_and_mktemp_but_blocks_writes_outside() {
+    if !landlock_in_force() {
+        return;
+    }
+    let action = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let policy = local_policy(action.path(), state.path());
+
+    if host_has("cargo") {
+        let r = run_local(&policy, "cargo --version").await;
+        assert!(r.success(), "cargo failed under the jail: {}", r.stderr);
+        assert!(r.stdout.starts_with("cargo "), "stdout: {}", r.stdout);
+    } else {
+        eprintln!("SKIP cargo: not installed on this host");
+    }
+
+    // `/tmp` is not granted; `mktemp` lands in the per-call TMPDIR scratch dir.
+    let r = run_local(&policy, "mktemp").await;
+    assert!(r.success(), "mktemp failed under the jail: {}", r.stderr);
+    assert!(
+        r.stdout
+            .trim()
+            .starts_with(sandbox_scratch_root(state.path()).to_str().unwrap()),
+        "mktemp should land in the scratch dir, got {:?}",
+        r.stdout
+    );
+    assert!(
+        entries(&sandbox_scratch_root(state.path())).is_empty(),
+        "per-call scratch dir left behind"
+    );
+
+    // The jail still confines: writing outside the root fails.
+    let target = outside.path().join("pwned");
+    let r = run_local(&policy, &format!("echo x > '{}'", target.display())).await;
+    assert!(!r.success(), "write outside the root must fail");
+    assert!(!target.exists(), "the jail let a write escape");
+
+    // ...while the workspace root itself stays writable.
+    let r = run_local(&policy, "echo ok > inside.txt").await;
+    assert!(r.success(), "stderr: {}", r.stderr);
+    assert!(action.path().join("inside.txt").exists());
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn landlock_jail_denies_proc_unless_the_toggle_is_on() {
+    if !landlock_in_force() {
+        return;
+    }
+    let action = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let policy = local_policy(action.path(), state.path());
+    let denied = run_local(&policy, "cat /proc/self/environ > /dev/null").await;
+    assert!(!denied.success(), "/proc must be off by default");
+
+    let config = RuntimeConfig {
+        local_jail: crate::config::LocalJailConfig {
+            allow_proc: true,
+            ..Default::default()
+        },
+        ..RuntimeConfig::default()
+    };
+    let policy = resolve_sandbox_policy(
+        SandboxMode::Sandboxed,
+        action.path(),
+        state.path(),
+        &config,
+        false,
+    );
+    let allowed = run_local(&policy, "cat /proc/self/environ > /dev/null").await;
+    assert!(allowed.success(), "stderr: {}", allowed.stderr);
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn landlock_jail_cannot_read_the_users_ssh_directory() {
+    if !landlock_in_force() {
+        return;
+    }
+    let Some(ssh) = dirs::home_dir()
+        .map(|h| h.join(".ssh"))
+        .filter(|p| p.is_dir())
+    else {
+        eprintln!("SKIP: no ~/.ssh on this host");
+        return;
+    };
+    let action = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let policy = local_policy(action.path(), state.path());
+    let r = run_local(&policy, &format!("ls '{}'", ssh.display())).await;
+    assert!(!r.success(), "~/.ssh must stay unreachable from the jail");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn local_handle_status_matches_the_backend_actually_in_force() {
+    let action = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let handle = create_sandbox_backend(&local_policy(action.path(), state.path())).await;
+    let name = handle.backend_id.clone().unwrap();
+    let unconfined =
+        name == cwd_jail::NOOP_BACKEND_NAME || name == cwd_jail::detect::UNSUPPORTED_BACKEND_NAME;
+    assert_eq!(
+        handle.status,
+        if unconfined {
+            SandboxStatus::Inactive
+        } else {
+            SandboxStatus::Ready
+        },
+        "backend = {name}"
+    );
 }

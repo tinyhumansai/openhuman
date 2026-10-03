@@ -39,6 +39,7 @@ fn sandbox_policy_serializes_roundtrip() {
         workspace_root: PathBuf::from("/workspace"),
         state_dir: PathBuf::from("/tmp/state"),
         read_only_mounts: vec![PathBuf::from("/usr/lib")],
+        read_write_mounts: vec![],
         allow_network: false,
         env_passthrough: vec!["PATH".into()],
         docker_overrides: Some(DockerOverrides {

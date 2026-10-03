@@ -12,6 +12,9 @@ pub struct RuntimeConfig {
     pub kind: String,
     #[serde(default)]
     pub docker: DockerRuntimeConfig,
+    /// Filesystem grants for the local OS jail (`[runtime.local_jail]`).
+    #[serde(default)]
+    pub local_jail: super::LocalJailConfig,
     #[serde(default)]
     pub reasoning_enabled: Option<bool>,
     /// Reasoning ("thinking") effort for agent turns: `none`, `minimal`,
@@ -98,6 +101,7 @@ impl Default for RuntimeConfig {
         Self {
             kind: default_runtime_kind(),
             docker: DockerRuntimeConfig::default(),
+            local_jail: super::LocalJailConfig::default(),
             reasoning_enabled: None,
             reasoning_effort: None,
         }

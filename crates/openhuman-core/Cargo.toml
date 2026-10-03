@@ -1182,7 +1182,6 @@ crash-reporting = ["dep:sentry"]
 # is a compile-surface and architecture win, NOT a dependency win — see the
 # measured note above before claiming otherwise.
 channels = ["dep:tinychannels", "tinychannels/email", "tinychannels/lark"]
-sandbox-landlock = ["tinybox-jail/landlock"]
 # The WhatsApp Web provider now lives in tinychannels; forward to its feature.
 # It is a refinement INSIDE the `channels` gate — enabling it pulls in the whole
 # channels domain (the provider re-exports live under `channels/providers/`).

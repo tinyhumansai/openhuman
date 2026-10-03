@@ -15,6 +15,7 @@
 /// WHEN to jail stays in [`ops`].
 pub use tinybox_jail as cwd_jail;
 pub mod docker;
+pub mod grants;
 pub mod ops;
 pub mod schemas;
 pub mod types;

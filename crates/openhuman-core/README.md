@@ -92,9 +92,9 @@ asserts the two stay in sync. Slim or headless-embedding builds use
 Gate names (see `Cargo.toml` for the full rationale behind each): `http-server`,
 `inference`, `documents`, `hosting`, `modules`, `voice`, `web3`,
 `runtime-node`, `contacts`, `media`, `flows`, `skills`, `mcp`,
-`crash-reporting`, `channels`, `sandbox-landlock`,
+`crash-reporting`, `channels`,
 `sandbox-bubblewrap`, `browser-native`, `fantoccini`,
-`landlock`, `whatsapp-web`, `e2e-test-support`, `rss-bench`,
+`whatsapp-web`, `e2e-test-support`, `rss-bench`,
 `rss-bench-dhat`, `file-logging`, `scheduler-gate`, `bin-tools`. Read the
 policy comments above `[features]` in `Cargo.toml` before changing either
 feature list.

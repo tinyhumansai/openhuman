@@ -19,11 +19,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-#[cfg(any(
-    all(target_os = "linux", feature = "sandbox-landlock"),
-    target_os = "macos",
-    target_os = "windows"
-))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use openhuman_core::sandbox::cwd_jail::spawn;
 use openhuman_core::sandbox::cwd_jail::Jail;
 
@@ -42,10 +38,27 @@ fn unique_tempdir(tag: &str) -> PathBuf {
 }
 
 // ── Linux: Landlock real-sandbox enforcement ────────────────────────
+//
+// Landlock is always compiled in on Linux (tinybox-jail enables it by default),
+// but the running kernel may not support it; then `spawn` answers
+// `Unsupported` rather than running the command unconfined, and these tests
+// skip.
 
-#[cfg(all(target_os = "linux", feature = "sandbox-landlock"))]
+#[cfg(target_os = "linux")]
+fn landlock_in_force() -> bool {
+    let ok = openhuman_core::sandbox::cwd_jail::default_backend().name() == "landlock";
+    if !ok {
+        eprintln!("SKIP: this kernel has no Landlock");
+    }
+    ok
+}
+
+#[cfg(target_os = "linux")]
 #[test]
 fn linux_landlock_blocks_write_outside_root() {
+    if !landlock_in_force() {
+        return;
+    }
     let root = unique_tempdir("ll-root");
     let outside = unique_tempdir("ll-outside");
     let outside_target = outside.join("forbidden.txt");
@@ -69,9 +82,12 @@ fn linux_landlock_blocks_write_outside_root() {
     fs::remove_dir_all(&outside).ok();
 }
 
-#[cfg(all(target_os = "linux", feature = "sandbox-landlock"))]
+#[cfg(target_os = "linux")]
 #[test]
 fn linux_landlock_allows_write_inside_root() {
+    if !landlock_in_force() {
+        return;
+    }
     let root = unique_tempdir("ll-root-write");
     let inside = root.join("ok.txt");
 
