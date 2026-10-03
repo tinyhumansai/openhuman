@@ -39,6 +39,7 @@ impl SessionHostBuilder {
             event_session_id: None,
             event_channel: None,
             agent_definition_name: None,
+            runtime_config: None,
             session_definition: None,
             session_parent_prefix: None,
             session_history_locator: None,
@@ -301,6 +302,14 @@ impl SessionHostBuilder {
     /// wired automatically inside `build_session_agent_inner`; direct
     /// builder users (tests, CLI) must set it explicitly if they care
     /// about any of the surfaces above.
+    /// The `Config` snapshot this session is built from. Read while building
+    /// (the `spawn_async_subagent` enum follows a saved registry override of
+    /// this agent's `subagents`) and kept on the host as `runtime_config`.
+    pub fn runtime_config(mut self, config: Arc<crate::config::Config>) -> Self {
+        self.runtime_config = Some(config);
+        self
+    }
+
     pub fn agent_definition_name(mut self, name: impl Into<String>) -> Self {
         self.agent_definition_name = Some(name.into());
         self

@@ -27,7 +27,8 @@ impl SessionHostBuilder {
             .map(|definition| definition.id.clone())
             .or_else(|| self.agent_definition_name.clone());
         if let Some(agent_id) = spawn_scope_id {
-            let allowed = super::allowed_subagent_ids_for(agent_id.trim());
+            let allowed =
+                super::allowed_subagent_ids_for(agent_id.trim(), self.runtime_config.as_deref());
             if !allowed.is_empty() {
                 if let Some(slot) = tools
                     .iter_mut()
@@ -269,8 +270,12 @@ impl SessionHostBuilder {
         // provider. The explicit visible-tool allowlist and the resolved
         // channel permission policy must stay aligned so prompt-visible
         // tools cannot exceed the runtime execution boundary.
-        let visible_tool_specs_unfiltered =
-            visible_tool_specs_for_policy(&tool_specs, &visible_names, &tool_policy_session);
+        let visible_tool_specs_unfiltered = visible_tool_specs_for_policy(
+            &tool_specs,
+            &visible_names,
+            &tool_policy_session,
+            self.runtime_config.as_deref(),
+        );
 
         // Dedupe by tool name. Anthropic (and other strict providers)
         // rejects a chat/completions request that lists two tools with
@@ -461,7 +466,7 @@ impl SessionHostBuilder {
             run_queue: None,
             connected_integrations: Vec::new(),
             connected_integrations_initialized: false,
-            runtime_config: None,
+            runtime_config: self.runtime_config,
             hosted_base,
             definition: None,
             // Default to `true` (omit) so legacy / custom agents built

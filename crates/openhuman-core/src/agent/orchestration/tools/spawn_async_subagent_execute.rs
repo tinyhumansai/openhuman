@@ -54,10 +54,17 @@ impl SpawnAsyncSubagentTool {
                 ));
             }
         };
-        let definition = match registry.get(&agent_id).cloned() {
+        // Harness registry first, then an enabled custom agent in the
+        // session's config: a user-authored sub-agent lives only in the
+        // latter, so a registry-only lookup refused every allowlisted custom
+        // id as "unknown" (#6934).
+        let config = parent.runtime_config.as_deref();
+        let definition = match crate::agent::registry::resolve_spawnable_definition(
+            registry, config, &agent_id,
+        ) {
             Some(definition) => definition,
             None => {
-                let available: Vec<&str> = registry.list().iter().map(|d| d.id.as_str()).collect();
+                let available = crate::agent::registry::spawnable_ids(registry, config);
                 return Ok(ToolResult::error(format!(
                     "spawn_async_subagent: unknown agent_id '{agent_id}'. Available: {}",
                     available.join(", ")

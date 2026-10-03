@@ -63,6 +63,7 @@ fn test_parent_ctx(workspace_dir: PathBuf) -> ParentExecutionContext {
             "done",
         ]));
     ParentExecutionContext {
+        runtime_config: None,
         workspace_descriptor: None,
         agent_definition_id: "orchestrator".into(),
         allowed_subagent_ids: std::collections::HashSet::new(),

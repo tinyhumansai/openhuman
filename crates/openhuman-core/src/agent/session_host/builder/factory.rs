@@ -1026,15 +1026,17 @@ impl OpenHumanSessionHost {
             builder = builder.tool_policy(policy);
         }
         builder = builder.archivist_hook(archivist_hook_arc);
+        // The same snapshot `base_config` already holds — `Config` is immutable
+        // after construction, so a second deep clone bought nothing but a
+        // second resident copy of a 95-field struct with nested `Vec`s
+        // (openhuman#6218). Handed to the builder rather than set after
+        // `build()` so the spawn enum can honour a saved registry override of
+        // this agent's `subagents` while the tool belt is built (#6934).
+        builder = builder.runtime_config(Arc::clone(&base_config));
         let mut agent = builder.build()?;
         let connected_integrations_initialized = prewarmed_integrations.is_some();
         agent.connected_integrations = prewarmed_integrations.unwrap_or_default();
         agent.connected_integrations_initialized = connected_integrations_initialized;
-        // The same snapshot `base_config` already holds — `Config` is immutable
-        // after construction, so a second deep clone bought nothing but a
-        // second resident copy of a 95-field struct with nested `Vec`s
-        // (openhuman#6218).
-        agent.runtime_config = Some(Arc::clone(&base_config));
         agent.hosted_base = AgentDefinitionRegistry::global_arc().map(|definitions| {
             Arc::new(crate::agent::tinyagents::host::OpenHumanHostBase {
                 config: Arc::clone(&base_config),

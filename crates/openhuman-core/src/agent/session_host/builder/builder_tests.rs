@@ -65,6 +65,8 @@ mod host_tools_tests;
 mod memory_write_instruction_tests;
 #[path = "builder_tests_session_definition_tests.rs"]
 mod session_definition_tests;
+#[path = "builder_tests_subagent_override_tests.rs"]
+mod subagent_override_tests;
 #[path = "builder_tests_tool_exposure_tests.rs"]
 mod tool_exposure_tests;
 #[path = "builder_tests_tool_spec_views_tests.rs"]
@@ -134,7 +136,7 @@ fn visible_specs_scope_use_skills_index_to_the_session() {
     // denied, exactly like the orchestrator against `system` / `audio`.
     let session = session_allowing(&["run_workflow", tinyagents_harness::tool::packs::USE_SKILL]);
 
-    let out = visible_tool_specs_for_policy(&specs, &visible, &session);
+    let out = visible_tool_specs_for_policy(&specs, &visible, &session, None);
     let load = out
         .iter()
         .find(|s| s.name == tinyagents_harness::tool::packs::USE_SKILL)
@@ -171,7 +173,7 @@ fn visible_specs_drop_the_pack_tool_when_no_pack_is_reachable() {
     let visible: std::collections::HashSet<String> = specs.iter().map(|s| s.name.clone()).collect();
     let session = session_allowing(&[tinyagents_harness::tool::packs::USE_SKILL]);
 
-    let out = visible_tool_specs_for_policy(&specs, &visible, &session);
+    let out = visible_tool_specs_for_policy(&specs, &visible, &session, None);
     assert!(
         out.is_empty(),
         "with no reachable pack, the pack tool does not earn its schema: {:?}",
@@ -242,7 +244,7 @@ fn a_realistic_withheld_session_keeps_its_packs_advertised() {
         })
         .collect();
 
-    let out = visible_tool_specs_for_policy(&specs, &visible, &session);
+    let out = visible_tool_specs_for_policy(&specs, &visible, &session, None);
     let names: Vec<&str> = out.iter().map(|s| s.name.as_str()).collect();
 
     assert!(
@@ -289,7 +291,7 @@ fn use_skill_survives_a_ceiling_that_excludes_it_when_a_pack_is_still_reachable(
         vec![std::sync::Arc::new(use_skill_spec_from_registry())];
     let visible: std::collections::HashSet<String> = specs.iter().map(|s| s.name.clone()).collect();
 
-    let out = visible_tool_specs_for_policy(&specs, &visible, &session);
+    let out = visible_tool_specs_for_policy(&specs, &visible, &session, None);
     let load = out
         .iter()
         .find(|s| s.name == tinyagents_harness::tool::packs::USE_SKILL)

@@ -104,6 +104,7 @@ pub(super) fn visible_tool_specs_for_policy(
     tool_specs: &[Arc<ToolSpec>],
     visible_names: &std::collections::HashSet<String>,
     tool_policy: &ToolPolicySession,
+    config: Option<&crate::config::Config>,
 ) -> Vec<Arc<ToolSpec>> {
     // `use_skill`'s description carries the pack index, and its `skill` enum
     // carries the pack ids. Both are built once in `UseSkillTool::new`, before
@@ -147,7 +148,7 @@ pub(super) fn visible_tool_specs_for_policy(
             if spec.name == "spawn_async_subagent" {
                 // Same narrowing for the spawn enum: advertise only the ids
                 // this agent's `[subagents]` allowlist lets `execute` dispatch.
-                let allowed = allowed_subagent_ids_for(&tool_policy.profile.agent_id);
+                let allowed = allowed_subagent_ids_for(&tool_policy.profile.agent_id, config);
                 if !allowed.is_empty() {
                     crate::agent::orchestration::tools::scope_spawn_async_subagent_spec(
                         Arc::make_mut(&mut spec),
@@ -274,7 +275,11 @@ pub(super) fn should_synthesize_delegation_tools(def: &AgentDefinition) -> bool 
 /// orchestrator prompt does: exact match first, then the longest registry id
 /// the name extends at an `_` boundary. Empty when the registry is not up or
 /// the id resolves to nothing, which leaves the schema untouched.
-fn allowed_subagent_ids_for(agent_id: &str) -> Vec<String> {
+///
+/// The shipped `[subagents]` list is replaced by a saved registry override
+/// (`agent_registry_update` on this agent) when `config` carries one, so the
+/// advertised enum follows the user's edit without a restart (#6934).
+fn allowed_subagent_ids_for(agent_id: &str, config: Option<&crate::config::Config>) -> Vec<String> {
     let Some(registry) = crate::agent::harness::AgentDefinitionRegistry::global() else {
         return Vec::new();
     };
@@ -295,5 +300,5 @@ fn allowed_subagent_ids_for(agent_id: &str) -> Vec<String> {
     let Some(definition) = definition else {
         return Vec::new();
     };
-    definition.allowed_subagent_ids()
+    crate::agent::registry::effective_subagent_allowlist(config, definition)
 }

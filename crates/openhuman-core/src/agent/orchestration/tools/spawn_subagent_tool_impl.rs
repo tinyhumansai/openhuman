@@ -142,10 +142,21 @@ impl SpawnSubagentTool {
             }
         };
 
-        let definition = match registry.get(agent_id.as_str()) {
+        // Harness registry first, then an enabled custom agent in the
+        // session's config — a user-authored sub-agent lives only in the
+        // latter (#6934).
+        let config = run_context
+            .parent
+            .as_ref()
+            .and_then(|parent| parent.runtime_config.as_deref());
+        let definition = match crate::agent::registry::resolve_spawnable_definition(
+            registry,
+            config,
+            agent_id.as_str(),
+        ) {
             Some(def) => def,
             None => {
-                let available: Vec<&str> = registry.list().iter().map(|d| d.id.as_str()).collect();
+                let available = crate::agent::registry::spawnable_ids(registry, config);
                 return Ok(ToolResult::error(format!(
                     "spawn_subagent: unknown agent_id '{agent_id}'. Available: {}",
                     available.join(", ")

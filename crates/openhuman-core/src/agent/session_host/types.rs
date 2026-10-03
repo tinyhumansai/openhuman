@@ -586,6 +586,11 @@ pub struct SessionHostBuilder {
     pub(super) event_session_id: Option<String>,
     pub(super) event_channel: Option<String>,
     pub(super) agent_definition_name: Option<String>,
+    /// The `Config` snapshot the session is built from; carried onto the host
+    /// (`OpenHumanSessionHost::runtime_config`) and consulted while building
+    /// so the `spawn_async_subagent` enum honours a saved registry override of
+    /// this agent's `subagents` (#6934).
+    pub(super) runtime_config: Option<Arc<crate::config::Config>>,
     /// The session's own definition, when the caller has one rather than a
     /// registry id to name.
     ///
