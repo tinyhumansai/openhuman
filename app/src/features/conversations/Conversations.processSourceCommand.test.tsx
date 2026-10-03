@@ -9,7 +9,7 @@
  * swapped, so the overlays (and the command) are live in both modes.
  */
 import { combineReducers, configureStore } from '@reduxjs/toolkit';
-import { act, cleanup, render } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -27,30 +27,59 @@ import threadTodosReducer from '../../store/threadTodosSlice';
 import type { Thread } from '../../types/thread';
 import Conversations from './Conversations';
 
-const { mockGetThreads, mockGetThreadMessages, mockUseUsageState } = vi.hoisted(() => ({
-  mockGetThreads: vi.fn().mockResolvedValue({ threads: [], count: 0 }),
-  mockGetThreadMessages: vi.fn().mockResolvedValue({ messages: [], count: 0 }),
-  mockUseUsageState: vi.fn(() => ({
-    teamUsage: null,
-    currentPlan: null,
-    currentTier: 'FREE' as const,
-    isFreeTier: true,
-    usagePct: 0,
-    isNearLimit: false,
-    isAtLimit: false,
-    isBudgetExhausted: false,
-    shouldShowBudgetCompletedMessage: false,
-    isLoading: false,
-    refresh: vi.fn(),
-  })),
-}));
+const { mockGetThreads, mockGetThreadMessages, mockUseUsageState, mockChatSend } = vi.hoisted(
+  () => ({
+    mockGetThreads: vi.fn().mockResolvedValue({ threads: [], count: 0 }),
+    mockGetThreadMessages: vi.fn().mockResolvedValue({ messages: [], count: 0 }),
+    mockChatSend: vi.fn().mockResolvedValue(undefined),
+    mockUseUsageState: vi.fn(() => ({
+      teamUsage: null,
+      currentPlan: null,
+      currentTier: 'FREE' as const,
+      isFreeTier: true,
+      usagePct: 0,
+      isNearLimit: false,
+      isAtLimit: false,
+      isBudgetExhausted: false,
+      shouldShowBudgetCompletedMessage: false,
+      isLoading: false,
+      refresh: vi.fn(),
+    })),
+  })
+);
 
 vi.mock('../../services/chatService', () => ({
   chatCancel: vi.fn().mockResolvedValue({ accepted: true, turnCancelled: true }),
   chatClearQueue: vi.fn().mockResolvedValue(0),
-  chatSend: vi.fn().mockResolvedValue(undefined),
+  chatSend: mockChatSend,
   subscribeChatEvents: vi.fn(() => () => {}),
   useRustChat: vi.fn(() => true),
+}));
+
+vi.mock('../../components/chat/ModelQualityPill', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../components/chat/ModelQualityPill')>();
+  return { ...actual, useModelPickerProviders: () => ({ providers: [], loading: false }) };
+});
+
+vi.mock('../../components/settings/panels/ai/ProviderModelPickerDialog', () => ({
+  ProviderModelPickerDialog: ({
+    onSelect,
+  }: {
+    onSelect: (selection: {
+      source: { kind: 'cloud'; providerSlug: string };
+      model: string;
+    }) => void;
+  }) => (
+    <div data-testid="provider-model-picker-dialog">
+      <button
+        type="button"
+        onClick={() =>
+          onSelect({ source: { kind: 'cloud', providerSlug: 'huggingface' }, model: 'org/model' })
+        }>
+        Pick Hugging Face model
+      </button>
+    </div>
+  ),
 }));
 
 vi.mock('../../services/api/threadApi', () => ({
@@ -134,13 +163,17 @@ function buildStore(preload: Record<string, unknown>) {
   });
 }
 
-async function renderChat(composer?: 'text' | 'mic-cloud', withProcessData = false) {
+async function renderChat(
+  composer?: 'text' | 'mic-cloud',
+  withProcessData = false,
+  active = false
+) {
   mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
   const store = buildStore({
     thread: {
       threads: [thread],
       selectedThreadId: THREAD_ID,
-      activeThreadIds: {},
+      activeThreadIds: active ? { [THREAD_ID]: true } : {},
       welcomeThreadId: null,
       messagesByThreadId: { [THREAD_ID]: [] },
       messages: [],
@@ -172,6 +205,25 @@ async function renderChat(composer?: 'text' | 'mic-cloud', withProcessData = fal
       </Provider>
     );
   });
+}
+
+async function submitComposerText(text: string) {
+  const input = screen.getByRole('textbox');
+  await act(async () => {
+    input.textContent = text;
+    fireEvent.input(input, { data: text, inputType: 'insertText' });
+  });
+  const sendButton = screen.getByTestId('send-message-button');
+  await waitFor(() => expect(sendButton).not.toBeDisabled());
+  await act(async () => {
+    fireEvent.click(sendButton);
+  });
+  await waitFor(() => expect(mockChatSend).toHaveBeenCalledTimes(1));
+}
+
+async function selectPickerModel() {
+  fireEvent.click(screen.getByTestId('composer-chat-settings'));
+  fireEvent.click(await screen.findByRole('button', { name: 'Pick Hugging Face model' }));
 }
 
 // The predicate's other half (`selectedThreadId !== null`) is deliberately not
@@ -209,5 +261,52 @@ describe('the agent-process-source command follows the panel that hosts it', () 
     expect(action, 'the command is registered in voice mode').toBeDefined();
     expect(action?.enabled?.()).toBe(true);
     expect(registry.runAction(ACTION_ID)).toBe(true);
+  });
+});
+
+describe('composer model routing', () => {
+  afterEach(() => {
+    cleanup();
+    registry.reset();
+  });
+
+  it('leaves the persisted model to the core for a normal send by default', async () => {
+    mockChatSend.mockClear();
+    await renderChat('text');
+    await submitComposerText('normal default route');
+
+    expect(mockChatSend.mock.calls[0][0]).not.toHaveProperty('model');
+  });
+
+  it('leaves the persisted model to the core for a follow-up send by default', async () => {
+    mockChatSend.mockClear();
+    await renderChat('text', false, true);
+    await submitComposerText('follow-up default route');
+
+    expect(mockChatSend.mock.calls[0][0]).toMatchObject({ queueMode: 'followup' });
+    expect(mockChatSend.mock.calls[0][0]).not.toHaveProperty('model');
+  });
+
+  it('forwards the concrete provider/model chosen in the picker for a normal send', async () => {
+    mockChatSend.mockClear();
+    await renderChat('text');
+
+    await selectPickerModel();
+    await submitComposerText('explicit picker route');
+
+    expect(mockChatSend.mock.calls[0][0]).toMatchObject({ model: 'huggingface:org/model' });
+  });
+
+  it('forwards the concrete provider/model chosen in the picker for a follow-up send', async () => {
+    mockChatSend.mockClear();
+    await renderChat('text', false, true);
+
+    await selectPickerModel();
+    await submitComposerText('explicit follow-up picker route');
+
+    expect(mockChatSend.mock.calls[0][0]).toMatchObject({
+      model: 'huggingface:org/model',
+      queueMode: 'followup',
+    });
   });
 });

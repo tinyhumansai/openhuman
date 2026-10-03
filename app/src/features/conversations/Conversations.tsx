@@ -1198,7 +1198,7 @@ const Conversations = ({
     pendingSendsRef.current.add(sendingThreadId);
     addPendingSendingThread(sendingThreadId);
     const pendingAttachments = attachments.slice();
-    const modelOverride = composerModelOverride ?? CHAT_MODEL_HINT;
+    const modelOverride = composerModelOverride ?? undefined;
     const messageText = buildMessageWithAttachments(trimmed, pendingAttachments);
     const userMessage: ThreadMessage = {
       id: `msg_${globalThis.crypto.randomUUID()}`,
@@ -1271,7 +1271,7 @@ const Conversations = ({
       await chatSend({
         threadId: sendingThreadId,
         message: messageText,
-        model: modelOverride,
+        ...(modelOverride !== undefined ? { model: modelOverride } : {}),
         locale: uiLocale,
         reasoningEffort: composerReasoningEffort,
       });
@@ -1328,7 +1328,7 @@ const Conversations = ({
     const pendingAttachments = attachments.slice();
     if (!normalized && pendingAttachments.length === 0) return;
 
-    const modelOverride = composerModelOverride ?? CHAT_MODEL_HINT;
+    const modelOverride = composerModelOverride ?? undefined;
     const messageText = buildMessageWithAttachments(normalized, pendingAttachments);
     // Build the full user message exactly like a normal send (content +
     // attachment metadata) so the follow-up persists identically when it is
@@ -1370,7 +1370,7 @@ const Conversations = ({
       await chatSend({
         threadId,
         message: messageText,
-        model: modelOverride,
+        ...(modelOverride !== undefined ? { model: modelOverride } : {}),
         locale: uiLocale,
         queueMode: 'followup',
         reasoningEffort: composerReasoningEffort,

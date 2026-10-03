@@ -130,3 +130,5 @@ Notes:
 ```
 
 Paste the filled block as a commit comment on the `v<version>-staging` tagged commit before promoting to production.
+
+- [ ] **Chat model picker selects the provider as well as the model (#6938)** — In an isolated test profile, switch the same thread from managed to Ollama, then to a configured BYOK provider, and back to a managed catalog model (including a `:free` variant). Verify the actual request endpoint and model match each selection, configured background routes stay unchanged, and reopening the app restores the selected provider/model. Selecting a workload hint must retain its configured route.

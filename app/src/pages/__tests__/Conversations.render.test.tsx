@@ -862,13 +862,15 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
         expect.objectContaining({ content: 'hello cloud', sender: 'user', type: 'text' })
       );
     });
-    expect(chatSend).toHaveBeenCalledWith({
-      threadId: thread.id,
-      message: 'hello cloud',
-      model: 'hint:chat',
-      locale: 'en',
-      reasoningEffort: 'default',
-    });
+    expect(chatSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadId: thread.id,
+        message: 'hello cloud',
+        locale: 'en',
+        reasoningEffort: 'default',
+      })
+    );
+    expect(chatSend.mock.calls[0][0]).not.toHaveProperty('model');
   });
 
   it('auto-sends a dictation transcript (autoSend) straight to chat without the composer', async () => {
@@ -886,13 +888,15 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
 
     await waitFor(() => {
-      expect(chatSend).toHaveBeenCalledWith({
-        threadId: thread.id,
-        message: 'play highway to hell',
-        model: 'hint:chat',
-        locale: 'en',
-        reasoningEffort: 'default',
-      });
+      expect(chatSend).toHaveBeenCalledWith(
+        expect.objectContaining({
+          threadId: thread.id,
+          message: 'play highway to hell',
+          locale: 'en',
+          reasoningEffort: 'default',
+        })
+      );
+      expect(chatSend.mock.calls[0][0]).not.toHaveProperty('model');
     });
   });
 
@@ -938,13 +942,15 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       expect(chatSend).toHaveBeenCalledTimes(1);
     });
     expect(threadApi.appendMessage).toHaveBeenCalledTimes(1);
-    expect(chatSend).toHaveBeenCalledWith({
-      threadId: thread.id,
-      message: 'slow backend',
-      model: 'hint:chat',
-      locale: 'en',
-      reasoningEffort: 'default',
-    });
+    expect(chatSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadId: thread.id,
+        message: 'slow backend',
+        locale: 'en',
+        reasoningEffort: 'default',
+      })
+    );
+    expect(chatSend.mock.calls[0][0]).not.toHaveProperty('model');
     // The send cleared the composer; with an empty composer mid-send the Send
     // button morphs into the Stop button, so there is no Send affordance left
     // to fire a duplicate send.
@@ -2028,13 +2034,15 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
 
     await waitFor(() => {
-      expect(chatSend).toHaveBeenCalledWith({
-        threadId: thread.id,
-        message: 'enter send',
-        model: 'hint:chat',
-        locale: 'en',
-        reasoningEffort: 'default',
-      });
+      expect(chatSend).toHaveBeenCalledWith(
+        expect.objectContaining({
+          threadId: thread.id,
+          message: 'enter send',
+          locale: 'en',
+          reasoningEffort: 'default',
+        })
+      );
+      expect(chatSend.mock.calls[0][0]).not.toHaveProperty('model');
     });
   });
 
@@ -2103,13 +2111,15 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
 
     await waitFor(() => {
-      expect(chatSend).toHaveBeenCalledWith({
-        threadId: thread.id,
-        message: '안녕',
-        model: 'hint:chat',
-        locale: 'en',
-        reasoningEffort: 'default',
-      });
+      expect(chatSend).toHaveBeenCalledWith(
+        expect.objectContaining({
+          threadId: thread.id,
+          message: '안녕',
+          locale: 'en',
+          reasoningEffort: 'default',
+        })
+      );
+      expect(chatSend.mock.calls[0][0]).not.toHaveProperty('model');
     });
   });
 
