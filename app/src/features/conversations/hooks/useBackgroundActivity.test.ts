@@ -1,20 +1,17 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { callCoreRpc } from '../../../services/coreRpcClient';
+import { memorySourcesList } from '../../../services/api/memoryApi';
 import { isTauri } from '../../../utils/tauriCommands/common';
 import { openhumanCronList } from '../../../utils/tauriCommands/cron';
-import { memorySyncStatusList } from '../../../utils/tauriCommands/memoryTree';
 import { useBackgroundActivity, useMemorySyncActive } from './useBackgroundActivity';
 
 vi.mock('../../../utils/tauriCommands/common', () => ({ isTauri: vi.fn(() => true) }));
 vi.mock('../../../utils/tauriCommands/cron', () => ({ openhumanCronList: vi.fn() }));
-vi.mock('../../../utils/tauriCommands/memoryTree', () => ({ memorySyncStatusList: vi.fn() }));
-vi.mock('../../../services/coreRpcClient', () => ({ callCoreRpc: vi.fn() }));
+vi.mock('../../../services/api/memoryApi', () => ({ memorySourcesList: vi.fn() }));
 
 const mockCron = vi.mocked(openhumanCronList);
-const mockSyncList = vi.mocked(memorySyncStatusList);
-const mockRpc = vi.mocked(callCoreRpc);
+const mockSources = vi.mocked(memorySourcesList);
 const mockIsTauri = vi.mocked(isTauri);
 
 function fixtures() {
@@ -36,18 +33,19 @@ function fixtures() {
     ],
     logs: [],
   });
-  mockRpc.mockResolvedValue({ running: true, current_title: 'Inbox', queue_depth: 1 });
-  mockSyncList.mockResolvedValue([
-    {
-      provider: 'slack',
-      chunks_synced: 5,
-      chunks_pending: 0,
-      batch_total: 0,
-      batch_processed: 0,
-      last_chunk_at_ms: null,
-      freshness: 'active',
-    },
-  ]);
+  mockSources.mockResolvedValue({
+    sources: [
+      { id: 's1', kind: 'folder', target: '/notes', label: 'Inbox', status: 'syncing', items: 3 },
+      {
+        id: 's2',
+        kind: 'rss',
+        target: 'https://example.com/feed',
+        label: '',
+        status: 'idle',
+        items: 0,
+      },
+    ],
+  });
 }
 
 describe('useBackgroundActivity', () => {
@@ -71,7 +69,22 @@ describe('useBackgroundActivity', () => {
       currentTitle: 'Inbox',
       queueDepth: 1,
     });
-    expect(result.current.memory.providers).toHaveLength(1);
+    expect(result.current.memory.providers).toEqual([
+      { provider: 'Inbox', freshness: 'active' },
+      { provider: 'https://example.com/feed', freshness: 'idle' },
+    ]);
+  });
+
+  it('shows no memory activity when memory is off', async () => {
+    mockSources.mockRejectedValue(new Error('MEMORY_OFF'));
+    const { result } = renderHook(() => useBackgroundActivity(true));
+    await waitFor(() => expect(result.current.cronJobs).toHaveLength(1));
+    expect(result.current.memory).toEqual({
+      ingesting: false,
+      currentTitle: undefined,
+      queueDepth: 0,
+      providers: [],
+    });
   });
 
   it('polls core RPC outside Tauri too (browser attached to a core)', async () => {

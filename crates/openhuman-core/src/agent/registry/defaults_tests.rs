@@ -5,7 +5,7 @@ fn default_agents_include_core_personas() {
     let agents = default_agents();
     let ids: Vec<&str> = agents.iter().map(|agent| agent.id.as_str()).collect();
     assert!(ids.contains(&"orchestrator"));
-    assert!(ids.contains(&"archivist"));
+    assert!(ids.contains(&"summarizer"));
     assert!(
         !ids.contains(&"researcher"),
         "the researcher agent was removed"
@@ -36,7 +36,7 @@ fn custom_entry(id: &str) -> AgentRegistryEntry {
         enabled: true,
         model: Some("hint:reasoning".to_string()),
         system_prompt: Some("You are a meticulous finance analyst.".to_string()),
-        tool_allowlist: vec!["memory_search".to_string(), "web_search".to_string()],
+        tool_allowlist: vec!["memory".to_string(), "web_search".to_string()],
         tool_denylist: vec!["file_write".to_string()],
         subagents: AgentSubagentPolicy::from_allowlist(vec!["researcher".to_string()]),
         tags: vec!["finance".to_string()],
@@ -59,7 +59,7 @@ fn definition_from_registry_entry_preserves_tools_model_denylist_subagents() {
     assert!(matches!(
         def.tools,
         ToolScope::Named(ref names)
-            if names == &vec!["memory_search".to_string(), "web_search".to_string()]
+            if names == &vec!["memory".to_string(), "web_search".to_string()]
     ));
     assert_eq!(def.disallowed_tools, vec!["file_write".to_string()]);
     assert_eq!(

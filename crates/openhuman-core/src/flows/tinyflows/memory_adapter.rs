@@ -1,32 +1,35 @@
 //! `OpenHumanMemory`: the host adapter backing the tinyflows `memory` node's
-//! `tinyflows::caps::MemoryProvider` capability (PR2 of the memory-node
-//! feature — tracking issue #5226; see
-//! `my_docs/memory_access_in_workflows/08-memory-node.md` for the design).
+//! `tinyflows::caps::MemoryProvider` capability, over memory v2.
 //!
-//! **No new permission path.** Every operation routes through the exact same
+//! **No new permission path.** Every operation routes through the same
 //! [`enforce_node_tier_gate`] / [`gate_call_for_tier`] pair every other acting
-//! adapter in [`super::caps`] uses (`OpenHumanTools`, `OpenHumanHttp`,
-//! `OpenHumanCode`) — `CommandClass::Read` for `recall`/`search`/`flavour`/
-//! `people`, `CommandClass::Write` for `remember`/`forget`.
+//! adapter in [`super::caps`] uses — `CommandClass::Read` for `recall`/
+//! `search`/`flavour`/`people`, `CommandClass::Write` for `remember`/`forget`.
 //!
-//! **Coherence with `flow_memory_recall`/`flow_memory_remember` (#5176).**
-//! `scope: "flow"` reads and writes the *same* `flow_<id>` namespace those
-//! agent tools use — both derive it from
-//! [`crate::flows::flow_namespace`], and `scope: "flows"` recall
-//! delegates to the exact same [`crate::flows::cross_flow_recall`]
-//! those tools now share. A `memory[remember·flow]` node, the
-//! `flow_memory_agent`, and the post-run digest subscriber therefore all read
-//! and write one consistent store — never three namespace conventions that
-//! happen to overlap by convention.
+//! **Scopes map onto tag filters.** `scope: "user"` reads the whole store
+//! (no filter); `scope: "flow"` reads the running flow's own items
+//! ([`crate::flows::flow_filter`], tag `flow:<id>`); `scope: "flows"` reads
+//! every flow's items ([`crate::flows::cross_flow_filter`], tag `flows`).
+//! `recall` asks the engine for a synthesised answer with citations
+//! (`memory::ops::recall`); `search` returns raw ranked hits
+//! (`memory::ops::fetch`). These are the same tags `flow_memory_recall`/
+//! `flow_memory_remember` and the post-run digest use, so all three read and
+//! write one consistent slice of memory.
+//!
+//! **Keys.** `remember(key, value)` stores a learning tagged
+//! [`crate::flows::flow_meta`] plus the per-key tag, replacing an earlier
+//! value under the same key ([`crate::flows::remember_keyed`]); `forget(key)`
+//! forgets by that per-key tag filter. Forgetting an absent key forgets
+//! nothing and is not an error.
+//!
+//! **`flavour` and `people`.** Memory v2 has neither flavoured profiles nor a
+//! people store: `flavour` reports every slug as unknown (the trait's error
+//! case) and `people` returns an empty listing marked `supported: false`.
 //!
 //! **Defense-in-depth on writes.** The engine's own `validate_all` already
 //! rejects `remember`/`forget` nodes authored with `scope: "user"` before a
-//! run ever starts (`vendor/tinyflows/src/validate.rs`). `recall` hard-refuses
-//! any `scope` it doesn't recognise; `remember` and `forget` separately
-//! hard-refuse anything other than `scope: "flow"` — never `"user"`, never
-//! `"flows"` — so even a compromised or out-of-band caller of this adapter
-//! (bypassing the validator entirely) can never write outside a flow's own
-//! sandboxed namespace.
+//! run starts; this adapter separately hard-refuses anything other than
+//! `scope: "flow"`, and takes the flow id only from the run's trusted origin.
 
 use std::sync::Arc;
 
@@ -35,20 +38,20 @@ use serde_json::{json, Value};
 use tinyflows::caps::MemoryProvider;
 use tinyflows::error::{EngineError, Result};
 
-use crate::agent::harness::memory_context_safety::{
-    is_potentially_untrusted, wrap_untrusted_for_agent,
-};
+use crate::agent::harness::memory_context_safety::wrap_untrusted_for_agent;
 use crate::agent::turn_origin::{self, AgentTurnOrigin, TrustedAutomationSource};
 use crate::config::Config;
-use crate::flows::{cross_flow_recall, flow_namespace};
-use crate::memory::tools::flavour::{lookup_flavour, FlavourLookup};
+use crate::flows::{
+    cross_flow_filter, flow_filter, flow_key_of, flow_key_tag, forget_matching, remember_keyed,
+    FLOWS_TAG,
+};
+use crate::memory::types::{FetchParams, RecallParams};
+use crate::memory::MemoryError;
 use crate::security::approval::{
     redact_args, summarize_action, ApprovalGate, ExecutionOutcome, GateOutcome,
 };
 use crate::security::{CommandClass, SecurityPolicy};
-use tinymemory_api::provider::{MemoryCore, MemoryRecall};
-use tinymemory_api::recall::OwnedRecallOpts;
-use tinymemory_api::types::{MemoryCategory, MemoryEntry, MemoryTaint};
+use tinymemory::{Hit, LearningKind, MemoryMeta, MetaFilter, SourceKind};
 
 use super::caps::{enforce_node_tier_gate, gate_call_for_tier};
 
@@ -56,14 +59,6 @@ use super::caps::{enforce_node_tier_gate, gate_call_for_tier};
 /// logs memory *content* or PII — only operation names, scopes, resolved
 /// namespaces, tier-gate decisions, hit/miss, and result sizes.
 const LOG_PREFIX: &str = "[memory-node-host]";
-
-/// The user's durable, cross-flow memory namespace `scope: "user"` reads from
-/// — the same default namespace `memory_recall`/`memory_hybrid_search`
-/// resolve to when the agent doesn't name one explicitly
-/// (`RecallOpts.namespace: None` falls back to this same constant inside the
-/// store). Named here explicitly (rather than passing `None`) purely so it
-/// shows up in the debug log.
-const USER_NAMESPACE: &str = tinymemory_api::types::GLOBAL_NAMESPACE;
 
 /// Host-injected memory access for `memory` nodes. See the module doc for the
 /// security contract; see [`super::caps::OpenHumanAgentRunner`] for the
@@ -74,19 +69,6 @@ pub struct OpenHumanMemory {
 }
 
 impl OpenHumanMemory {
-    /// Resolves the process-global memory store, matching how every other
-    /// memory-backed agent tool (`flow_memory_recall`, `memory_recall`, the
-    /// post-run digest subscriber) reaches it —
-    /// `memory::ops::helpers::active_memory_client()` reuses the already-
-    /// initialised global client when ready, else lazily initialises it for
-    /// the current workspace. No adapter-local memory instance is ever
-    /// constructed, so there is exactly one on-disk store in play.
-    async fn memory(&self) -> Result<Arc<crate::memory::guard::MemoryGuard>> {
-        crate::memory::ops::guard::active_memory_guard()
-            .await
-            .map_err(EngineError::Capability)
-    }
-
     /// The running flow's own id, from the run's trusted
     /// `TrustedAutomation { Workflow }` turn origin — the ONLY authoritative
     /// source. Mirrors `flows::memory_tools::trusted_flow_id`'s security
@@ -110,10 +92,16 @@ impl OpenHumanMemory {
         }
     }
 
-    /// [`flow_namespace`] for the running flow — the same `flow_<id>`
-    /// namespace `flow_memory_recall`/`flow_memory_remember` read and write.
-    fn flow_memory_namespace(&self) -> Result<String> {
-        self.trusted_flow_id().map(|id| flow_namespace(&id))
+    /// The tag filter a read in `scope` applies; `None` reads everything.
+    fn scope_filter(&self, scope: &str) -> Result<Option<MetaFilter>> {
+        match scope {
+            "user" => Ok(None),
+            "flow" => self.trusted_flow_id().map(|id| Some(flow_filter(&id))),
+            "flows" => Ok(Some(cross_flow_filter())),
+            other => Err(EngineError::Capability(format!(
+                "memory node: unknown scope \"{other}\" (expected \"user\", \"flow\", or \"flows\")"
+            ))),
+        }
     }
 
     /// Read-side tier gate: `CommandClass::Read` is `Allow` at every autonomy
@@ -196,46 +184,43 @@ impl OpenHumanMemory {
         gate.record_execution(id, exec, error);
     }
 
-    /// Shapes a batch of [`MemoryEntry`] hits into the node's `recall`/
-    /// `search` output: `{ scope, query, results: [{ id, key, text, score,
-    /// namespace, category }] }`. Each entry's `text` passes through
-    /// [`wrap_untrusted_for_agent`] when [`is_potentially_untrusted`] flags
-    /// it — a connector-synced row (email, Slack, …) reaching downstream
-    /// `agent`/`condition` bindings must carry the same untrusted-source
-    /// marking a normal agent-prompt recall would give it.
-    fn shape_recall_result(scope: &str, query: &str, entries: &[MemoryEntry]) -> Value {
-        let results: Vec<Value> = entries
-            .iter()
-            .map(|entry| {
-                let text = if is_potentially_untrusted(entry.namespace.as_deref(), &entry.key) {
-                    let hint = entry.namespace.as_deref().unwrap_or(scope);
-                    wrap_untrusted_for_agent(&entry.content, hint)
-                } else {
-                    entry.content.clone()
-                };
-                json!({
-                    "id": entry.id,
-                    "key": entry.key,
-                    "text": text,
-                    "score": entry.score,
-                    "namespace": entry.namespace,
-                    "category": entry.category.to_string(),
-                })
-            })
-            .collect();
-        json!({ "scope": scope, "query": query, "results": results })
+    /// Shapes one result row. Text that did not come from a plain agent
+    /// learning (a synced source, a conversation, or any flow's own
+    /// automation output) passes through [`wrap_untrusted_for_agent`], so it
+    /// reaches downstream `agent`/`condition` bindings marked as data.
+    fn shape_row(id: &str, text: &str, meta: &MemoryMeta, score: Option<f32>) -> Value {
+        let text = if is_untrusted(meta) {
+            wrap_untrusted_for_agent(text, meta.source.kind.as_str())
+        } else {
+            text.to_string()
+        };
+        json!({
+            "id": id,
+            "key": flow_key_of(meta),
+            "text": text,
+            "score": score,
+            "source": meta.source.kind.as_str(),
+        })
     }
+}
+
+/// Whether an item's text must be marked untrusted before it reaches an
+/// agent: anything but a plain (non-flow) agent learning.
+fn is_untrusted(meta: &MemoryMeta) -> bool {
+    meta.source.kind != SourceKind::Agent || meta.tags.iter().any(|tag| tag == FLOWS_TAG)
+}
+
+/// Maps a memory failure onto the node's capability error.
+fn capability_error(op: &str, error: &MemoryError) -> EngineError {
+    EngineError::Capability(format!("memory node: {op} failed: {error}"))
 }
 
 #[async_trait]
 impl MemoryProvider for OpenHumanMemory {
-    /// Backs both `recall` and `search` (`opts.operation` distinguishes them
-    /// only for the `tracing::debug!` logs below — [`Self::shape_recall_result`]
-    /// returns `{ scope, query, results }` with no `operation` field, so the
-    /// two ops are otherwise indistinguishable in the response; both
-    /// currently route through the same [`Memory::recall`] call, as there is
-    /// no separate hybrid-search path reachable through the generic
-    /// `Arc<dyn Memory>` trait object this adapter holds).
+    /// Backs both `recall` and `search`. `recall` returns the engine's
+    /// synthesised `answer` plus its citations as `results`; `search` returns
+    /// raw ranked hits as `results`. Each row is `{ id, key, text, score,
+    /// source }`; rows under the node's `min_score` are dropped.
     async fn recall(&self, scope: &str, query: &str, opts: Value) -> Result<Value> {
         let operation: &str = opts
             .get("operation")
@@ -259,166 +244,84 @@ impl MemoryProvider for OpenHumanMemory {
         );
 
         self.tier_gate_read(operation)?;
+        let filter = self.scope_filter(scope)?;
 
-        let entries = match scope {
-            "user" => {
-                let memory = self.memory().await?;
-                let recall_opts = OwnedRecallOpts {
-                    namespace: Some(USER_NAMESPACE.to_string()),
-                    min_score,
-                    ..Default::default()
-                };
-                tracing::debug!(
-                    target: "flows",
-                    operation,
-                    namespace = USER_NAMESPACE,
-                    "{LOG_PREFIX} recall: querying user-scope namespace"
-                );
-                memory
-                    .recall(query, limit, &recall_opts, None)
-                    .await
-                    .map_err(|e| {
-                        EngineError::Capability(format!("memory node: recall failed: {e}"))
-                    })?
-            }
-            "flow" => {
-                let namespace = self.flow_memory_namespace()?;
-                let memory = self.memory().await?;
-                let recall_opts = OwnedRecallOpts {
-                    namespace: Some(namespace.as_str().to_string()),
-                    min_score,
-                    ..Default::default()
-                };
-                tracing::debug!(
-                    target: "flows",
-                    operation,
-                    namespace = %namespace,
-                    "{LOG_PREFIX} recall: querying this flow's own namespace"
-                );
-                memory
-                    .recall(query, limit, &recall_opts, None)
-                    .await
-                    .map_err(|e| {
-                        EngineError::Capability(format!("memory node: recall failed: {e}"))
-                    })?
-            }
-            "flows" => {
-                // Read-only, and — via `cross_flow_recall` — confined to the
-                // shared `flow_*` namespace prefix. This is intentionally
-                // NOT a broad cross-namespace scan: it can never reach the
-                // user's personal/global memory, only other flows' own
-                // automation output, exactly like `flow_memory_recall`'s
-                // `scope: "flows"` arm it delegates to.
-                let memory = self.memory().await?;
-                tracing::debug!(
-                    target: "flows",
-                    operation,
-                    "{LOG_PREFIX} recall: querying cross-flow (flow_* prefix only)"
-                );
-                cross_flow_recall(&memory, query, limit, min_score)
-                    .await
-                    .map_err(|e| {
-                        EngineError::Capability(format!(
-                            "memory node: cross-flow recall failed: {e}"
-                        ))
-                    })?
-            }
-            other => {
-                return Err(EngineError::Capability(format!(
-                    "memory node: unknown scope \"{other}\" (expected \"user\", \"flow\", or \"flows\")"
-                )));
-            }
+        let (answer, results): (Option<String>, Vec<Value>) = if operation == "search" {
+            let page = crate::memory::ops::fetch(
+                &self.config,
+                FetchParams {
+                    query: query.to_string(),
+                    mode: None,
+                    filter,
+                    limit: Some(limit),
+                    cursor: None,
+                },
+            )
+            .await
+            .map_err(|e| capability_error(operation, &e))?;
+            let rows = page
+                .hits
+                .iter()
+                .filter(|hit| passes_min_score(Some(hit.score), min_score))
+                .map(|hit: &Hit| Self::shape_row(&hit.id.0, &hit.text, &hit.meta, Some(hit.score)))
+                .collect();
+            (None, rows)
+        } else {
+            let view = crate::memory::ops::recall(
+                &self.config,
+                RecallParams {
+                    question: query.to_string(),
+                    filter,
+                    limit: Some(limit),
+                },
+            )
+            .await
+            .map_err(|e| capability_error(operation, &e))?;
+            let rows = view
+                .citations
+                .iter()
+                .filter(|c| passes_min_score(c.score, min_score))
+                .map(|c| Self::shape_row(&c.id.0, &c.snippet, &c.meta, c.score))
+                .collect();
+            (Some(view.answer), rows)
         };
 
         tracing::debug!(
             target: "flows",
             operation,
             scope,
-            hit_count = entries.len(),
-            "{LOG_PREFIX} recall: store returned"
+            hit_count = results.len(),
+            "{LOG_PREFIX} recall: engine returned"
         );
 
-        Ok(Self::shape_recall_result(scope, query, &entries))
-    }
-
-    /// Delegates to [`lookup_flavour`] — the exact same flavoured-tree read
-    /// path `memory_flavour` (`MemoryFlavourTool`, #5175) uses.
-    async fn flavour(&self, slug: &str) -> Result<Value> {
-        tracing::debug!(target: "flows", flavour = slug, "{LOG_PREFIX} flavour: entry");
-        self.tier_gate_read("flavour")?;
-
-        match lookup_flavour(&self.config, slug).await {
-            Err(hard) => {
-                tracing::debug!(target: "flows", flavour = slug, "{LOG_PREFIX} flavour: rejected (bad slug)");
-                Err(EngineError::Capability(format!("memory node: {hard}")))
-            }
-            Ok(FlavourLookup::Profile(body)) => {
-                tracing::debug!(
-                    target: "flows",
-                    flavour = slug,
-                    profile_chars = body.chars().count(),
-                    "{LOG_PREFIX} flavour: hit"
-                );
-                Ok(json!({ "flavour": slug, "found": true, "profile": body }))
-            }
-            Ok(FlavourLookup::NotBuilt(message)) => {
-                tracing::debug!(target: "flows", flavour = slug, "{LOG_PREFIX} flavour: no profile built yet");
-                Ok(
-                    json!({ "flavour": slug, "found": false, "profile": Value::Null, "message": message }),
-                )
-            }
-            Ok(FlavourLookup::Failed(message)) => {
-                tracing::warn!(target: "flows", flavour = slug, "{LOG_PREFIX} flavour: lookup failed");
-                Err(EngineError::Capability(format!("memory node: {message}")))
-            }
+        let mut out = json!({ "scope": scope, "query": query, "results": results });
+        if let Some(answer) = answer {
+            out["answer"] = Value::String(answer);
         }
+        Ok(out)
     }
 
-    /// Delegates to the same op the `people_list` agent tool calls
-    /// (`people::rpc::handle_list` over the current-context `PeopleStore`),
-    /// then narrows the ranked listing to entries whose display name,
-    /// primary email/phone, or any handle value contains `query`
-    /// (case-insensitive substring — this adapter has no access to a richer
-    /// query DSL than that).
+    /// Memory v2 keeps no flavoured profiles, so every slug is unknown.
+    async fn flavour(&self, slug: &str) -> Result<Value> {
+        tracing::debug!(target: "flows", flavour = slug, "{LOG_PREFIX} flavour: unsupported");
+        self.tier_gate_read("flavour")?;
+        Err(EngineError::Capability(format!(
+            "memory node: unknown flavour \"{slug}\" (this host's memory keeps no flavour profiles)"
+        )))
+    }
+
+    /// Memory v2 keeps no people store: an empty listing marked unsupported.
     async fn people(&self, query: Option<&str>) -> Result<Value> {
-        let query = query.map(str::trim).filter(|q| !q.is_empty());
-        tracing::debug!(target: "flows", has_query = query.is_some(), "{LOG_PREFIX} people: entry");
-        self.tier_gate_read("people")?;
-
-        // Reads people through the bound driver, like every other people caller
-        // — the store moved behind the loaded module.
-        use tinymemory_api::provider::MemoryProvider;
-        let guard = crate::memory::ops::guard::active_memory_guard()
-            .await
-            .map_err(|e| {
-                EngineError::Capability(format!("memory node: people unavailable: {e}"))
-            })?;
-        let people = guard.as_people().ok_or_else(|| {
-            EngineError::Capability(
-                "memory node: memory driver does not support the people family".to_string(),
-            )
-        })?;
-
-        const DEFAULT_PEOPLE_LIMIT: usize = 100;
-        let outcome = crate::memory::people::rpc::handle_list(people, DEFAULT_PEOPLE_LIMIT)
-            .await
-            .map_err(EngineError::Capability)?;
-
-        let shaped = match query {
-            None => outcome.value,
-            Some(q) => filter_people_by_query(outcome.value, q),
-        };
-
         tracing::debug!(
             target: "flows",
-            result_count = shaped.get("people").and_then(serde_json::Value::as_array).map_or(0, Vec::len),
-            "{LOG_PREFIX} people: done"
+            has_query = query.is_some_and(|q| !q.trim().is_empty()),
+            "{LOG_PREFIX} people: unsupported, empty listing"
         );
-        Ok(shaped)
+        self.tier_gate_read("people")?;
+        Ok(json!({ "people": [], "supported": false }))
     }
 
-    /// Writes `value` under `key` into this flow's own `flow_<id>`
-    /// namespace — see the module doc's defense-in-depth note. Never
+    /// Writes `value` under `key` into this flow's own memory — see the module doc's defense-in-depth note. Never
     /// reachable for `scope != "flow"`, regardless of what the caller
     /// passes: this is checked here independently of the engine's own
     /// `validate_all` rejection of `scope: "user"` writes.
@@ -450,7 +353,7 @@ impl MemoryProvider for OpenHumanMemory {
         // up front rather than spend that approval round-trip on a write
         // that was always going to be rejected (review fix — see #5227).
         let content = value_to_content(&value);
-        if crate::memory::safety::has_likely_secret(&content) {
+        if crate::security::scrub::has_likely_secret(&content) {
             tracing::warn!(
                 target: "flows",
                 key_chars = key.chars().count(),
@@ -465,19 +368,11 @@ impl MemoryProvider for OpenHumanMemory {
         let action = json!({ "operation": "remember", "scope": scope, "key": key });
         let audit_id = self.tier_gate_write("remember", &action).await?;
 
-        let namespace = self.flow_memory_namespace()?;
-        let memory = self.memory().await?;
-        let store_result = memory
-            .store(
-                &namespace,
-                key,
-                &content,
-                MemoryCategory::Core,
-                None,
-                MemoryTaint::ExternalSync,
-            )
-            .await
-            .map_err(|e| EngineError::Capability(format!("memory node: remember failed: {e}")));
+        let flow_id = self.trusted_flow_id()?;
+        let store_result =
+            remember_keyed(&self.config, &flow_id, key, &content, LearningKind::Fact)
+                .await
+                .map_err(|e| capability_error("remember", &e));
         Self::record_write_execution(
             "remember",
             audit_id.as_deref(),
@@ -492,7 +387,7 @@ impl MemoryProvider for OpenHumanMemory {
 
         tracing::debug!(
             target: "flows",
-            namespace = %namespace,
+            flow_id = %flow_id,
             key_chars = key.chars().count(),
             content_chars = content.chars().count(),
             "{LOG_PREFIX} remember: stored"
@@ -500,7 +395,7 @@ impl MemoryProvider for OpenHumanMemory {
         Ok(())
     }
 
-    /// Deletes `key` from this flow's own `flow_<id>` namespace — same
+    /// Forgets this flow's value for `key` (by its per-key tag) — same
     /// `scope`-lockdown as [`Self::remember`].
     async fn forget(&self, scope: &str, key: &str) -> Result<()> {
         if scope != "flow" {
@@ -525,12 +420,14 @@ impl MemoryProvider for OpenHumanMemory {
         let action = json!({ "operation": "forget", "scope": scope, "key": key });
         let audit_id = self.tier_gate_write("forget", &action).await?;
 
-        let namespace = self.flow_memory_namespace()?;
-        let memory = self.memory().await?;
-        let forget_result = memory
-            .forget(&namespace, key)
+        let flow_id = self.trusted_flow_id()?;
+        let filter = MetaFilter {
+            tags_any: vec![flow_key_tag(&flow_id, key)],
+            ..MetaFilter::default()
+        };
+        let forget_result = forget_matching(&self.config, filter)
             .await
-            .map_err(|e| EngineError::Capability(format!("memory node: forget failed: {e}")));
+            .map_err(|e| capability_error("forget", &e));
         Self::record_write_execution(
             "forget",
             audit_id.as_deref(),
@@ -545,7 +442,7 @@ impl MemoryProvider for OpenHumanMemory {
 
         tracing::debug!(
             target: "flows",
-            namespace = %namespace,
+            flow_id = %flow_id,
             key_chars = key.chars().count(),
             removed,
             "{LOG_PREFIX} forget: done"
@@ -556,7 +453,7 @@ impl MemoryProvider for OpenHumanMemory {
 
 /// Renders a `remember` node's `value` (arbitrary JSON — a plain string when
 /// the author wrote a literal, or any resolved `=`-expression result
-/// otherwise) into the `&str` content [`Memory::store_with_taint`] persists.
+/// otherwise) into the learning text it is stored as.
 /// A JSON string is stored verbatim (not re-quoted); anything else is
 /// serialized to its compact JSON form so structured values round-trip
 /// losslessly through recall.
@@ -567,40 +464,13 @@ fn value_to_content(value: &Value) -> String {
     }
 }
 
-/// Narrows a `{"people": [...]}` listing (as returned by
-/// `people::rpc::handle_list`) to entries whose display name, primary email,
-/// primary phone, or any handle value contains `query` — case-insensitive
-/// substring match. Malformed/missing fields on an entry just don't match
-/// (never panics on an unexpected shape).
-fn filter_people_by_query(listing: Value, query: &str) -> Value {
-    let needle = query.to_ascii_lowercase();
-    let people = listing
-        .get("people")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let matches = |field: Option<&str>| {
-        field
-            .map(|s| s.to_ascii_lowercase().contains(&needle))
-            .unwrap_or(false)
-    };
-    let filtered: Vec<Value> = people
-        .into_iter()
-        .filter(|person| {
-            matches(person.get("display_name").and_then(Value::as_str))
-                || matches(person.get("primary_email").and_then(Value::as_str))
-                || matches(person.get("primary_phone").and_then(Value::as_str))
-                || person
-                    .get("handles")
-                    .and_then(Value::as_array)
-                    .is_some_and(|handles| {
-                        handles
-                            .iter()
-                            .any(|h| matches(h.get("value").and_then(Value::as_str)))
-                    })
-        })
-        .collect();
-    json!({ "people": filtered })
+/// Whether a row's score clears the node's optional `min_score`. A row the
+/// engine did not score passes.
+fn passes_min_score(score: Option<f32>, min_score: Option<f64>) -> bool {
+    match (score, min_score) {
+        (Some(score), Some(min)) => f64::from(score) >= min,
+        _ => true,
+    }
 }
 
 #[cfg(test)]

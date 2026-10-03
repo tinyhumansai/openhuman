@@ -38,27 +38,3 @@ fn reset_guard_accepts_explicit_e2e_mode() {
     ensure_e2e_mode_value(Some("true")).expect("true enables E2E mode");
     ensure_e2e_mode_value(Some("yes")).expect("yes enables E2E mode");
 }
-
-#[tokio::test]
-async fn wipe_memory_tree_removes_content_dirs_and_reports_summary() {
-    let tmp = TempDir::new().unwrap();
-    let mut config = Config::default();
-    config.workspace_dir = tmp.path().join("workspace");
-
-    let content_root = config.memory_tree_content_root();
-    let raw_dir = content_root.join("raw");
-    let wiki_dir = content_root.join("wiki");
-    std::fs::create_dir_all(&raw_dir).unwrap();
-    std::fs::create_dir_all(&wiki_dir).unwrap();
-    std::fs::write(raw_dir.join("chunk.md"), "test chunk").unwrap();
-    std::fs::write(wiki_dir.join("summary.md"), "test summary").unwrap();
-
-    let summary = wipe_memory_tree(&config).await.unwrap();
-
-    assert_eq!(summary.rows_deleted, 0);
-    assert_eq!(summary.sync_state_cleared, 0);
-    assert!(summary.dirs_removed.contains(&"raw".to_string()));
-    assert!(summary.dirs_removed.contains(&"wiki".to_string()));
-    assert!(!raw_dir.exists());
-    assert!(!wiki_dir.exists());
-}

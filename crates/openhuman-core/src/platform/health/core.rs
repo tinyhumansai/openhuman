@@ -119,14 +119,10 @@ pub fn snapshot_json() -> serde_json::Value {
 /// `update_checker` are therefore intentionally **non-critical**.
 ///
 /// - `core` — the core process / RPC serving capability itself.
-/// - `memory_tree_db` — the memory database. Its health signal is a *debounced*
-///   circuit breaker that only trips after several consecutive schema-init
-///   failures (a genuine, restart-worthy data-layer fault), so unlike the
-///   scheduler case it does not false-trip on a transient blip.
 ///
 /// New components default to **non-critical**: add a name here deliberately when
 /// its failure should recycle the container.
-const CRITICAL_COMPONENTS: &[&str] = &["core", "memory_tree_db"];
+const CRITICAL_COMPONENTS: &[&str] = &["core"];
 
 /// Whether `name` is a critical component (see [`CRITICAL_COMPONENTS`]).
 pub fn is_critical_component(name: &str) -> bool {

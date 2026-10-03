@@ -287,8 +287,8 @@ pub fn fire_hooks(hooks: &[Arc<dyn PostTurnHook>], ctx: TurnContext) {
     // Capture the ambient CoreContext before detaching: a bare `tokio::spawn`
     // does not inherit the `CURRENT_CONTEXT` task-local, so under a scoped
     // multi-tenant dispatch a detached hook would fall back to the process
-    // default context — and anything context-derived inside the hook (the
-    // archivist's `active_memory_guard`, goals enrichment) would read and
+    // default context — and anything context-derived inside the hook (for
+    // example a workspace-scoped store) would read and
     // write another tenant's workspace. Re-entering the scope inside the task
     // keeps the hook on the dispatch it belongs to; when there is no scoped
     // context (the desktop's single-tenant path), `current()` already answers

@@ -63,9 +63,9 @@ OpenHuman は、ほとんどのアシスタントが持っていない 3 つの�
 
 ### 🧠 脳
 
-- **[Memory Tree](https://tinyhumans.gitbook.io/openhuman/features/memory-tree) + [Obsidian Wiki](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki)**: あなたのデータはスコアリングされた Markdown ツリーへ圧縮されてあなたのマシン上の SQLite に保存され、開いて編集できる [Obsidian ボルト](https://x.com/karpathy/status/2039805659525644595)としてミラーリングされます。ベクトルスープのブラックボックスではありません。
+- **[Memory](../gitbooks/features/memory.md)**: 差し替え可能なエンジン(TinyHumans ホスト版、または自前の CortexDB)上の Recall・Fetch・Store。ドキュメント、会話、学びを保存し、引用付きで回答し、新しいチャットごとに `context.md` の要約を渡します。
 - **[100+ の OAuth 統合、5,000+ の MCP サーバー、90,000+ の Skills](https://tinyhumans.gitbook.io/openhuman/features/integrations)**: Gmail、Notion、GitHub、Slack などのスタックにワンクリックで接続。[自動取得](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki/auto-fetch)が 20 分ごとに脳に栄養を与えるので、今朝の時点で明日のコンテキストを持っています。
-- **[Goals & Todos](https://tinyhumans.gitbook.io/openhuman/features/goals-and-todos)**: 長期ゴール、スレッドごとの永続ゴール、そしてチャットに表示されるエージェントのToDoリスト。
+- **[Goals & Todos](https://tinyhumans.gitbook.io/openhuman/features/goals-and-todos)**: スレッドごとの永続ゴールと、チャットに表示されるエージェントのToDoリスト。
 - **[TokenJuice](https://tinyhumans.gitbook.io/openhuman/features/token-compression)**: ツール出力はモデルに届く前に圧縮され、同じ情報を最大 80% 少ないトークンで扱えます。これがなければ、これほど大きな脳は維持できません。
 
 ### 🕸️ オーケストレーター
@@ -90,17 +90,11 @@ OpenHuman は、ほとんどのアシスタントが持っていない 3 つの�
 
 OpenHuman は、数分であなたのことを理解する初めてのエージェントハーネスです。[Karpathy 氏の LLM ナレッジベース](https://x.com/karpathy/status/2039805659525644595)にインスパイアされました。ほとんどのエージェントは冷えた状態から始まります。Hermes はあなたの作業を見て学習し、OpenClaw はプラグインがコンテキストを運び込むのを待ちます。いずれにせよ、エージェントがあなたのスタックを十分理解して本当に役立つようになるまで、数日から数週間を費やすことになります。
 
-<p align="center">
- <img src="../gitbooks/.gitbook/assets/memory.png" alt="OpenHuman のコンテキスト構築図">
-</p>
-
 > OpenHuman はあなたのすべてのドキュメント、メール、チャットを要約・圧縮し、エージェントがあなたについてすべてを覚えていられるメモリーグラフを作成します。
 
-OpenHuman はその待ち時間をスキップします。アカウントを接続し、[自動取得](https://tinyhumans.gitbook.io/openhuman/features/integrations/auto-fetch)に 20 分ループでローカルにデータを取得させ、その後 [Memory Trees](https://tinyhumans.gitbook.io/openhuman/features/memory-tree) ですべてを Markdown ファイルに圧縮し、[Karpathy 流の Obsidian wiki](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki) にインテリジェントに保存します。
+OpenHuman はその待ち時間をスキップします。ソース(フォルダ、ファイル、リンク、GitHub、RSS、接続済みアプリ)を追加すれば、スケジュールで同期され、エージェントは [Memory](../gitbooks/features/memory.md) からすぐに答えられます。
 
 たった 1 回の同期パスで、エージェントはあなたの受信箱、カレンダー、リポジトリ、ドキュメント、メッセージの完全な(圧縮された)コンテキストを得ます。トレーニング期間も「数週間お待ちください」もありません。エージェントはあなたになり、あなたによって制御されます。
-
-既に他のコーディングエージェント間で [agentmemory](https://github.com/rohitg00/agentmemory) をセルフホストしていますか? OpenHuman にはそれにプロキシするオプションの `Memory` バックエンドが同梱されています。`config.toml` で `memory.backend = "agentmemory"` を設定すれば、同じ永続ストアが Claude Code、Cursor、Codex、OpenCode と並んで OpenHuman を駆動します。セットアップ方法は [agentmemory バックエンド](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki/agentmemory-backend)のページを参照してください。
 
 ## チャットボットではなく、オーケストレーター
 
@@ -137,9 +131,9 @@ n8n と Zapier に強くインスパイアされた[ワークフロー](https://
 | **オープンソース**         | 🚫 プロプライエタリ    | ✅ MIT              | ✅ MIT              | ✅ GNU                                                                                                             |
 | **開始が簡単**             | ✅ デスクトップ + CLI  | ⚠️ ターミナル中心   | ⚠️ ターミナル中心   | ✅ クリーンな UI、数分                                                                                             |
 | **コスト**                 | ⚠️ サブスク + アドオン | ⚠️ モデル持ち込み   | ⚠️ モデル持ち込み   | ✅ 1 つのサブスク + TokenJuice                                                                                     |
-| **メモリ**                 | ✅ チャット範囲のみ    | ⚠️ プラグイン依存   | ✅ 自己学習         | 🚀 Memory Tree + Obsidian ボルト、オプションの [agentmemory](https://github.com/rohitg00/agentmemory) バックエンド |
+| **メモリ**                 | ✅ チャット範囲のみ    | ⚠️ プラグイン依存   | ✅ 自己学習         | 🚀 差し替え可能なエンジン(TinyHumans / 自前 CortexDB)、引用、`context.md` |
 | **統合**                   | ⚠️ 少数のコネクター    | ⚠️ 持ち込み         | ⚠️ 持ち込み         | 🚀 100+ OAuth · 5k+ MCP · 90k+ Skills                                                                              |
-| **自動取得**               | 🚫 なし                | 🚫 なし             | 🚫 なし             | ✅ 20 分同期でメモリに取り込み                                                                                     |
+| **ソース同期**             | 🚫 なし                | 🚫 なし             | 🚫 なし             | ✅ スケジュール同期でメモリに取り込み |
 | **オーケストレーション**   | ⚠️ サブタスク          | ⚠️ 単一ループ       | ⚠️ 単一ループ       | 🚀 エージェントグラフ + チェックポイント + E2E 暗号化 A2A                                                          |
 | **ワークフロー**           | 🚫 なし                | ⚠️ スクリプト       | ⚠️ スクリプト       | 🚀 ビジュアル、永続、エージェント提案、承認ゲート付き                                                              |
 | **会議**                   | 🚫 なし                | 🚫 なし             | 🚫 なし             | 🚀 Meet/Zoom/Teams/Webex に参加、発話、ライブ文字起こし                                                            |

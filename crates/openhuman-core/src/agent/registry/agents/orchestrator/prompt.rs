@@ -13,8 +13,8 @@
 use crate::agent::harness::definition::SubagentEntry;
 use crate::agent::harness::AgentDefinitionRegistry;
 use crate::agent::prompts::{
-    render_datetime, render_identity, render_tools, render_user_files, render_workspace,
-    ConnectedIntegration, PromptContext, ToolCallFormat,
+    render_datetime, render_identity, render_tools, render_workspace, ConnectedIntegration,
+    PromptContext, ToolCallFormat,
 };
 use crate::skills::ops_types::Workflow;
 use crate::tools::orchestrator_tools::sanitise_slug;
@@ -104,7 +104,6 @@ pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
     // ── Volatile tier: the user's state, changes between sessions ────────
     out.push_str(PROMPT_TIER_VOLATILE_MARKER);
     out.push('\n');
-    push(&mut out, &render_user_files(ctx)?);
     push(&mut out, ctx.connected_identities_md.as_str());
     push(
         &mut out,
@@ -355,8 +354,8 @@ fn strip_route_lines(archetype: &str, skills: bool, mcp: bool, composio: bool) -
 ///
 /// So: exact match first, then the longest registry id that `agent_id` extends
 /// at an `_` boundary. Longest wins because ids are not prefix-free —
-/// no id is a prefix of another today, but ids that share a stem (`goals_agent`
-/// vs a future `goals`) would, and a shorter accidental match would resolve
+/// no id is a prefix of another today, but ids that share a stem (`task_manager_agent`
+/// vs a future `task_manager`) would, and a shorter accidental match would resolve
 /// a renamed session onto the wrong agent's subagent list.
 fn resolve_definition<'r>(
     registry: &'r AgentDefinitionRegistry,

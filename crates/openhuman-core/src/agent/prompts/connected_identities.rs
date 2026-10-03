@@ -13,10 +13,8 @@
 /// `integrations::composio::identity_store`'s module docs), which makes it
 /// async. This function's ~7 call sites build a `PromptContext` struct
 /// literal from a mix of sync and async functions, so rather than threading
-/// `async`/`.await` through every one of them, this stays sync and uses the
-/// same `block_in_place` + current-runtime-handle pattern
-/// `session::builder::helpers::prefetch_tool_memory_rules_blocking` already
-/// uses for the identical shape of problem. Best-effort: no runtime, a
+/// `async`/`.await` through every one of them, this stays sync and uses a
+/// `block_in_place` + current-runtime-handle bridge. Best-effort: no runtime, a
 /// single-threaded runtime, or a config-load/driver failure all render an
 /// empty section rather than panicking or blocking a prompt on a memory read.
 pub fn render_connected_identities() -> String {
@@ -24,7 +22,7 @@ pub fn render_connected_identities() -> String {
     crate::integrations::composio::providers::render_connected_identities_section(&identities)
 }
 
-fn fetch_identities_blocking() -> Vec<tinymemory_api::composio::ConnectedIdentity> {
+fn fetch_identities_blocking() -> Vec<crate::integrations::composio::contract::ConnectedIdentity> {
     let Ok(handle) = tokio::runtime::Handle::try_current() else {
         return Vec::new();
     };

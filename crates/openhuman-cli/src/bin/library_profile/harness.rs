@@ -114,7 +114,7 @@ pub struct ProfileResult {
     pub budget: Option<FleetBudget>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checkpoints: Option<Vec<Checkpoint>>,
-    /// (`subagent-storm`) K parallel `agent_memory` subagents fanned out in the turn.
+    /// (`subagent-storm`) K parallel `vision_agent` subagents fanned out in the turn.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subagents: Option<usize>,
     /// (`skill-run`) process-tree RSS including interpreter child processes.
@@ -152,7 +152,7 @@ impl Drop for EnvGuard {
 }
 
 /// A hermetic config rooted in a throwaway temp workspace. Local inference,
-/// Python, spaCy, and embeddings are all disabled so runs are offline.
+/// Python and embeddings are all disabled so runs are offline.
 pub struct Fixture {
     pub config: Config,
     _workspace_env: EnvGuard,
@@ -186,19 +186,16 @@ runtime_enabled = false
 
 [runtime_python]
 enabled = false
-
-[memory_tree]
-spacy_enabled = false
 "#
     .to_string();
     if std::env::var_os("OPENHUMAN_PROFILE_DISABLE_MEMORY_WRITES").is_some() {
         config_toml.push_str(
             r#"
-[memory]
-auto_save = false
+[memory.conversations]
+enabled = false
 
-[learning]
-episodic_capture_enabled = false
+[memory.context]
+enabled = false
 "#,
         );
     }
@@ -222,9 +219,6 @@ level = "full"
     let mut config: Config = toml::from_str(&config_toml)?;
     config.workspace_dir = workspace;
     config.action_dir = action_dir;
-    config.memory_tree.embedding_endpoint = None;
-    config.memory_tree.embedding_model = None;
-    config.memory_tree.embedding_strict = false;
 
     Ok(Fixture {
         config,

@@ -158,7 +158,7 @@ impl LatencyKnobs {
 }
 
 /// Orchestration mock: the first (orchestrator) turn emits a
-/// `spawn_parallel_agents` tool call fanning out to **K** `agent_memory` workers;
+/// `spawn_parallel_agents` tool call fanning out to **K** `vision_agent` workers;
 /// each worker turn returns its finding; the final merge turn returns plain
 /// text once all K findings are present.
 ///
@@ -200,7 +200,7 @@ impl SubagentMock {
         (1..=self.width).all(|i| joined.contains(&finding_text(i)))
     }
 
-    /// True when this call is a real `agent_memory` worker turn: exactly one task
+    /// True when this call is a real `vision_agent` worker turn: exactly one task
     /// marker is present and the executing agent is not the orchestrator (its
     /// Tool Policy Boundary header names it, and its merge turn also carries
     /// every marker). The memory agent's system
@@ -209,7 +209,7 @@ impl SubagentMock {
         self.worker_index(joined).is_some() && !joined.contains("Agent: orchestrator")
     }
 
-    /// Build the fan-out tool call delegating to K parallel `agent_memory` workers. Only
+    /// Build the fan-out tool call delegating to K parallel `vision_agent` workers. Only
     /// valid on an **orchestrator** turn — other agents have no
     /// `spawn_parallel_agents` tool, so they `delegate_orchestrator` first.
     fn spawn_call(&self) -> ChatResponse {
@@ -217,7 +217,7 @@ impl SubagentMock {
         let tasks: Vec<serde_json::Value> = (1..=self.width)
             .map(|i| {
                 serde_json::json!({
-                    "agent_id": "agent_memory",
+                    "agent_id": "vision_agent",
                     // The nonce keeps each fan-out's tasks byte-distinct so the
                     // parallel-graph result cache can't short-circuit a re-spawn.
                     "prompt": format!("{} [spawn {nonce}]: inspect subsystem {i}", subagent_marker(i)),
@@ -239,7 +239,7 @@ impl SubagentMock {
     }
 
     /// A non-orchestrator parent's first turn: hand the task to the orchestrator (which
-    /// owns `spawn_parallel_agents` and allows the `agent_memory` subagent).
+    /// owns `spawn_parallel_agents` and allows the `vision_agent` subagent).
     fn delegate_orchestrator_call(&self) -> ChatResponse {
         ChatResponse {
             text: Some("Delegating to the orchestrator for a parallel research fan-out.".into()),
@@ -259,11 +259,11 @@ impl SubagentMock {
 
     /// Classify the turn by the *executing agent* (from the Tool Policy Boundary
     /// header) and script the delegation chain: orchestrator →
-    /// `spawn_parallel_agents(K)` → K agent_memory workers → orchestrator merge.
+    /// `spawn_parallel_agents(K)` → K vision_agent workers → orchestrator merge.
     /// No latency/recording here — the async `chat` wrappers handle sleeping +
     /// latency capture around this.
     fn reply(&self, joined: &str) -> ChatResponse {
-        // agent_memory worker: return its finding.
+        // vision_agent worker: return its finding.
         if self.is_worker_turn(joined) {
             let i = self.worker_index(joined).expect("worker turn has a marker");
             return response(&finding_text(i));

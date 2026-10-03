@@ -155,7 +155,7 @@ Install:
 
 Why:
 
-- Native dependencies (`cpal` for audio capture behind the `inference` feature, which `voice` requires; the `objc2` Contacts cohort compiled by the vendored `tinymemory` module) compile C/Objective-C code during the build and need Apple toolchains and SDK headers present.
+- Native dependencies (`cpal` for audio capture behind the `inference` feature, which `voice` requires; the `objc2` Contacts cohort compiled by the vendored `tinymemory` crates) compile C/Objective-C code during the build and need Apple toolchains and SDK headers present.
 
 After Xcode CLT is installed, the core should build with the cargo commands above.
 

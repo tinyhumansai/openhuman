@@ -4,19 +4,19 @@ icon: shield
 
 # Privacy & Security
 
-OpenHuman is designed so that the **memory of your life lives on your machine**. The local SQLite Memory Tree, the Markdown Obsidian vault, your audio buffers, all of that stays under your control. The OpenHuman backend handles things that have to be brokered (LLM calls, OAuth tokens, search proxying), and nothing more.
+OpenHuman is designed so that the **memory of your life lives on your machine**. Your workspace files, your audio buffers and your choice of memory engine stay under your control. The OpenHuman backend handles things that have to be brokered (LLM calls, OAuth tokens, search proxying), and nothing more.
 
 ---
 
 ## Privacy by Design
 
-**The Memory Tree is local.** The SQLite database (`<workspace>/memory_tree/chunks.db`) and the Markdown vault (`<workspace>/wiki/`) live on your machine. The agent reads from them locally; nothing about your raw source data sits on the OpenHuman backend.
+**You choose where memory lives.** [Memory](memory.md) is stored by the engine you select: hosted TinyHumans (CortexDB behind the OpenHuman backend, requires sign-in) or your own CortexDB endpoint. With neither, memory is off and nothing is stored. Secrets and personal identifiers are scrubbed from every item before it is sent, tool-call arguments are never stored, and you can delete any item.
 
 **Integration tokens are held by the backend, not on your laptop.** OAuth tokens are never written to disk in plaintext on your device. The OpenHuman backend brokers each integration request, the core never speaks any third-party API directly.
 
 **OS-level credential storage.** Sensitive local secrets are rooted in your platform's secure keychain, macOS Keychain, Windows Credential Manager, Linux Secret Service. See [OS Keyring & Secret Storage](os-keyring-and-secret-storage.md).
 
-**No training on your data.** Your conversations, your Memory Tree, and your personal information are never used to train AI models or improve systems.
+**No training on your data.** Your conversations, your memories, and your personal information are never used to train AI models or improve systems.
 
 **Optional** [**Local AI**](model-routing/local-ai.md)**.** If you want embeddings and summary-tree building to stay on your machine, run a local runtime such as Ollama, pull the models yourself, and add it as a provider. Learning and reflection passes, and chat if you choose, can be moved on-device the same way. OpenHuman does not install the runtime or download models.
 
@@ -26,8 +26,8 @@ OpenHuman is designed so that the **memory of your life lives on your machine**.
 
 |                                 |                                                                 |
 | ------------------------------- | --------------------------------------------------------------- |
-| **Memory Tree SQLite database** | Local - `<workspace>/memory_tree/chunks.db`.                    |
-| **Obsidian Markdown vault**     | Local - `<workspace>/wiki/`. Yours to read, edit, copy, delete. |
+| **Compiled `context.md`**       | Local - `<workspace>/memory/context.md`.                        |
+| **Memory items**                | In your selected engine (hosted TinyHumans or your CortexDB).   |
 | **Audio capture buffers**       | Local. Discarded after STT.                                     |
 | **Local model state**           | Local.                                                          |
 
@@ -46,23 +46,21 @@ OpenHuman is designed so that the **memory of your life lives on your machine**.
 
 OpenHuman accesses an integration only after you complete its OAuth flow. Each connection has its own scope; you can revoke any of them at any time from the **Connections** page.
 
-[Auto-fetch](obsidian-wiki/auto-fetch.md) does run continuously while a connection is active, that is the whole point. But it is bound by:
+[Memory sources](memory.md) sync on a schedule while they exist, which is the point. Integration sync is bound by:
 
 - The **OAuth scope** you granted that integration.
 - A **per-provider sync interval** (e.g. Gmail every 15 min by default).
 - A **daily budget** per connection that caps API usage.
 
-If you revoke a connection, the next tick stops syncing it; chunks already in your local Memory Tree remain there because they're yours.
+If you revoke a connection, the next sync stops; items already stored in your memory engine remain until you forget them.
 
 ---
 
-## Why a local memory is privacy
+## Why memory is scrubbed and scoped
 
-Most AI assistants face a tradeoff: more context means more raw data sent to the cloud. The Memory Tree eliminates this tradeoff.
+Memory only helps if it is safe to keep. Every item passes through secret and PII scrubbing before it is stored, conversations record tool-call names and ids but never arguments, and the agent only sees what a recall or fetch returns at the moment of a turn. You can inspect and delete everything from **Connections → Memory**.
 
-Because canonicalization, chunking, scoring and summary trees all run **inside your local Rust core**, your raw source data never leaves your machine. The only thing the LLM sees is what the agent retrieves from your local Memory Tree at the moment of a turn, and that retrieval is governed by your prompt, not by background uploads.
-
-Compression and locality together become the privacy architecture.
+Scrubbing and scoped retrieval together become the privacy architecture.
 
 <figure><img src="../.gitbook/assets/V17 — Privacy Shield@2x.png" alt=""><figcaption></figcaption></figure>
 
@@ -94,6 +92,6 @@ OpenHuman includes an intelligence layer designed to help you reason about credi
 
 ## Shared environments
 
-In team or community settings, privacy remains user-centric. Each user's connected sources are scoped to their account; admins do not get a backdoor into other users' Memory Trees.
+In team or community settings, privacy remains user-centric. Each user's connected sources are scoped to their account; admins do not get a backdoor into other users' memory.
 
 Community-level intelligence is derived from aggregated and anonymized signals, never from direct access to individual message content.

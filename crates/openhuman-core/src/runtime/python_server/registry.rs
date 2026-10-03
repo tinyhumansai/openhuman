@@ -2,7 +2,6 @@ use crate::config::Config;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimePythonBackend {
-    Spacy,
     /// TokenJuice ML plain-text compressor ("Kompress", ModernBERT via torch).
     Kompress,
 }
@@ -10,7 +9,6 @@ pub enum RuntimePythonBackend {
 impl RuntimePythonBackend {
     pub fn id(self) -> &'static str {
         match self {
-            Self::Spacy => "spacy",
             Self::Kompress => "kompress",
         }
     }
@@ -22,9 +20,6 @@ pub fn enabled_backends(config: &Config) -> Vec<RuntimePythonBackend> {
     }
 
     let mut backends = Vec::new();
-    if config.memory_tree.spacy_enabled {
-        backends.push(RuntimePythonBackend::Spacy);
-    }
     if config.tokenjuice.ml_compression_enabled {
         backends.push(RuntimePythonBackend::Kompress);
     }

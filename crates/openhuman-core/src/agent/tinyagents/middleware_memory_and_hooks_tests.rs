@@ -95,36 +95,3 @@ async fn embedder_tool_hooks_post_use_without_pre_call_falls_back_to_null() {
     assert_eq!(post[0].1, serde_json::Value::Null);
     assert_eq!(post[0].2, Some(true));
 }
-
-/// The OpenHuman tool vocabulary reaches the upstream middleware intact: the
-/// note names the host's recall and index-update tools, and `SKILL.md` edits do
-/// not close the cycle.
-#[tokio::test]
-async fn openhuman_spec_drives_the_upstream_memory_protocol() {
-    use tinyagents_harness::middleware::{Middleware, ToolInvocationIdentity};
-    let mw = crate::agent::tinyagents::middleware::memory_protocol_middleware(true);
-    let mut call = TaToolCall {
-        id: "c1".into(),
-        name: "memory_store".into(),
-        arguments: json!({}),
-        invalid: None,
-    };
-    // One run context for both hooks: the middleware keys its protocol state
-    // by run instance, so `before_tool` and `after_tool` must see the same run.
-    let mut run_ctx = ctx();
-    mw.before_tool(&mut run_ctx, &(), &mut call).await.unwrap();
-    let mut result = TaToolResult::success("stored");
-    mw.after_tool(
-        &mut run_ctx,
-        &(),
-        &ToolInvocationIdentity::new("c1", "memory_store"),
-        &mut result,
-    )
-    .await
-    .unwrap();
-    let text = result_text(&result);
-    assert!(text.starts_with("stored"), "{text}");
-    assert!(text.contains("(e.g. `memory_recall`)"), "{text}");
-    assert!(text.contains("call `update_memory_md`"), "{text}");
-    assert!(text.contains("MEMORY.md index"), "{text}");
-}

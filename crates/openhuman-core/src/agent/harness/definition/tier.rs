@@ -31,7 +31,7 @@ pub enum AgentTier {
     /// to one or more `Worker`s. Must NOT delegate to another
     /// `Reasoning` agent.
     Reasoning,
-    /// Leaf executor — code executors, critics, archivists,
+    /// Leaf executor — code executors, critics, summarizers,
     /// integration specialists, etc. Workers do the actual work and must
     /// NOT spawn further subagents (a `Worker` with a non-empty
     /// `subagents` list is rejected by the loader).

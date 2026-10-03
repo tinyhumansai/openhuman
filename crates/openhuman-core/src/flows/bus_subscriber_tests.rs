@@ -1,8 +1,6 @@
 use super::*;
 use crate::flows::types::FlowRun;
-use crate::memory::MemoryTaint;
 use tinyflows::model::TriggerKind;
-use tinymemory_api::provider::MemoryCore;
 
 #[test]
 fn pinned_trigger_inputs_reads_values_an_author_fixed_for_unattended_runs() {
@@ -233,7 +231,7 @@ async fn digest_handle_does_not_panic_on_unrelated_events() {
 async fn digest_ignores_failed_run() {
     let tmp = tempfile::TempDir::new().unwrap();
     let config = test_config(&tmp);
-    let memory = digest_test_memory(&tmp);
+    let _engine = digest_test_engine(&config);
 
     let flow = flow_with_trigger_config("f-failed", true, json!({}));
     store::upsert_flow(&config, &flow).unwrap();
@@ -257,7 +255,7 @@ async fn digest_ignores_failed_run() {
     )
     .unwrap();
 
-    let sub = FlowRunDigestSubscriber::with_memory(config, memory.clone());
+    let sub = FlowRunDigestSubscriber::new(config.clone());
     sub.handle(&DomainEvent::FlowRunFinished {
         flow_id: "f-failed".into(),
         run_id: "run-failed".into(),
@@ -265,13 +263,9 @@ async fn digest_ignores_failed_run() {
     })
     .await;
 
-    let entry = memory
-        .get(&flow_namespace("f-failed"), "run_digest:run-failed")
-        .await
-        .unwrap();
     assert!(
-        entry.is_none(),
-        "a failed run must never produce a run_digest entry"
+        stored_digests(&config, "f-failed").await.is_empty(),
+        "a failed run must never produce a run digest"
     );
 }
 
@@ -279,7 +273,7 @@ async fn digest_ignores_failed_run() {
 async fn digest_ignores_cancelled_run() {
     let tmp = tempfile::TempDir::new().unwrap();
     let config = test_config(&tmp);
-    let memory = digest_test_memory(&tmp);
+    let _engine = digest_test_engine(&config);
 
     let flow = flow_with_trigger_config("f-cancelled", true, json!({}));
     store::upsert_flow(&config, &flow).unwrap();
@@ -303,7 +297,7 @@ async fn digest_ignores_cancelled_run() {
     )
     .unwrap();
 
-    let sub = FlowRunDigestSubscriber::with_memory(config, memory.clone());
+    let sub = FlowRunDigestSubscriber::new(config.clone());
     sub.handle(&DomainEvent::FlowRunFinished {
         flow_id: "f-cancelled".into(),
         run_id: "run-cancelled".into(),
@@ -311,18 +305,14 @@ async fn digest_ignores_cancelled_run() {
     })
     .await;
 
-    let entry = memory
-        .get(&flow_namespace("f-cancelled"), "run_digest:run-cancelled")
-        .await
-        .unwrap();
-    assert!(entry.is_none());
+    assert!(stored_digests(&config, "f-cancelled").await.is_empty());
 }
 
 #[tokio::test]
 async fn digest_writes_run_digest_entry_for_completed_run() {
     let tmp = tempfile::TempDir::new().unwrap();
     let config = test_config(&tmp);
-    let memory = digest_test_memory(&tmp);
+    let _engine = digest_test_engine(&config);
 
     let flow = flow_with_trigger_config("f-ok", true, json!({}));
     store::upsert_flow(&config, &flow).unwrap();
@@ -354,7 +344,7 @@ async fn digest_writes_run_digest_entry_for_completed_run() {
     )
     .unwrap();
 
-    let sub = FlowRunDigestSubscriber::with_memory(config, memory.clone());
+    let sub = FlowRunDigestSubscriber::new(config.clone());
     sub.handle(&DomainEvent::FlowRunFinished {
         flow_id: "f-ok".into(),
         run_id: "run-ok".into(),
@@ -362,23 +352,26 @@ async fn digest_writes_run_digest_entry_for_completed_run() {
     })
     .await;
 
-    let entry = memory
-        .get(&flow_namespace("f-ok"), "run_digest:run-ok")
-        .await
-        .unwrap()
-        .expect("completed run must produce a run_digest entry");
-    assert_eq!(entry.taint, MemoryTaint::ExternalSync);
-    assert!(entry.content.contains("f-ok"));
-    assert!(entry.content.contains("completed"));
-    assert!(entry.content.contains("n1"));
-    assert!(entry.content.chars().count() <= DIGEST_MAX_CHARS);
+    let digests = stored_digests(&config, "f-ok").await;
+    assert_eq!(
+        digests.len(),
+        1,
+        "completed run must produce one run digest"
+    );
+    let entry = &digests[0];
+    assert_eq!(entry.meta.source.kind, tinymemory::SourceKind::Agent);
+    assert!(entry.meta.tags.contains(&crate::flows::flow_tag("f-ok")));
+    assert!(entry.text.contains("f-ok"));
+    assert!(entry.text.contains("completed"));
+    assert!(entry.text.contains("n1"));
+    assert!(entry.text.chars().count() <= DIGEST_MAX_CHARS);
 }
 
 #[tokio::test]
 async fn digest_treats_completed_with_warnings_as_success() {
     let tmp = tempfile::TempDir::new().unwrap();
     let config = test_config(&tmp);
-    let memory = digest_test_memory(&tmp);
+    let _engine = digest_test_engine(&config);
 
     let flow = flow_with_trigger_config("f-warn", true, json!({}));
     store::upsert_flow(&config, &flow).unwrap();
@@ -402,7 +395,7 @@ async fn digest_treats_completed_with_warnings_as_success() {
     )
     .unwrap();
 
-    let sub = FlowRunDigestSubscriber::with_memory(config, memory.clone());
+    let sub = FlowRunDigestSubscriber::new(config.clone());
     sub.handle(&DomainEvent::FlowRunFinished {
         flow_id: "f-warn".into(),
         run_id: "run-warn".into(),
@@ -410,11 +403,50 @@ async fn digest_treats_completed_with_warnings_as_success() {
     })
     .await;
 
-    let entry = memory
-        .get(&flow_namespace("f-warn"), "run_digest:run-warn")
+    assert_eq!(stored_digests(&config, "f-warn").await.len(), 1);
+}
+
+#[tokio::test]
+async fn digest_is_skipped_quietly_when_memory_is_off() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mut config = (*test_config(&tmp)).clone();
+    config.memory.engine = String::new();
+    let config = Arc::new(config);
+    let flow = flow_with_trigger_config("f-off", true, json!({}));
+    store::upsert_flow(&config, &flow).unwrap();
+    // No run row exists: with memory off the subscriber must return before
+    // even loading it, so this completes without a warning path.
+    FlowRunDigestSubscriber::new(config)
+        .handle(&DomainEvent::FlowRunFinished {
+            flow_id: "f-off".into(),
+            run_id: "missing".into(),
+            status: "completed".into(),
+        })
+        .await;
+}
+
+#[tokio::test]
+async fn retention_cap_forgets_the_oldest_digests() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let _engine = digest_test_engine(&config);
+    let base = chrono::Utc::now();
+    for i in 0..4_i64 {
+        let mut meta = crate::flows::flow_meta("f-cap", &["flow_run_digest".to_string()]);
+        meta.observed_at = Some(base + chrono::Duration::seconds(i));
+        crate::memory::ops::store_item(
+            &config,
+            tinymemory::StoreItem::document(format!("digest {i}"), meta),
+        )
         .await
         .unwrap();
-    assert!(entry.is_some());
+    }
+    assert_eq!(enforce_retention_cap(&config, "f-cap", 2).await.unwrap(), 2);
+    let kept = stored_digests(&config, "f-cap").await;
+    assert_eq!(kept.len(), 2);
+    assert!(kept
+        .iter()
+        .all(|hit| hit.text.contains("digest 2") || hit.text.contains("digest 3")));
 }
 
 #[test]

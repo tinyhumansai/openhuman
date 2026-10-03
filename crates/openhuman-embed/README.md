@@ -151,7 +151,7 @@ embeddings, voice (STT and TTS), web search, media generation, the Jev ranker,
 Composio and the other `/agent-integrations/*` tools, referral, and webhooks.
 The realtime voice agent and Socket.IO relay require a signed-in user session. Callers that
 can only send a bearer (the vendored STT and embedding clients, the connector
-module's proxy route, TinyCortex's Composio sync) send the key as
+module's proxy route, the memory engine's sync) send the key as
 `Authorization: Bearer`, which the backend accepts because it recognises the
 `tiny_live_` / `tiny_test_` prefix. What a key may reach is decided by its
 scopes on the backend: `inference`, `voice`, `search`, `media`, `storage`,

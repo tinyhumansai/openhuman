@@ -32,8 +32,7 @@
 //! `get_composio_trigger_settings`, `get_autonomy_settings`,
 //! `update_autonomy_settings`, `get_privacy_mode`, `set_privacy_mode`,
 //! `get_agent_settings`, `update_agent_settings`, `update_search_settings`,
-//! `get_search_settings`, `get_memory_sync_settings`,
-//! `update_memory_sync_settings`, `get_sandbox_settings`,
+//! `get_search_settings`, `get_sandbox_settings`,
 //! `update_sandbox_settings`.
 
 mod controllers;

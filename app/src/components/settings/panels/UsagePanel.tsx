@@ -1,11 +1,8 @@
-import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import { useT } from '../../../lib/i18n/I18nContext';
-import { type AISettings, loadAISettings } from '../../../services/api/aiSettingsApi';
 import CostDashboardPanel from '../../dashboard/CostDashboardPanel';
 import UsageLogPanel from '../../dashboard/UsageLogPanel';
-import { Alert, AlertDescription, CenteredLoadingState } from '../../ui';
 import SettingsTabbedPage from '../layout/SettingsTabbedPage';
 import BackgroundLoopControls from './ai/BackgroundLoopControls';
 import TokenUsagePanel from './TokenUsagePanel';
@@ -70,49 +67,11 @@ const UsagePanel = () => {
   );
 };
 
-/**
- * Background-activity tab body. Fetches the AI settings snapshot (routing map
- * + cloud providers) that BackgroundLoopControls needs — lazily, only when
- * this tab is mounted, so the default Costs tab doesn't pay for it.
- */
-const BackgroundActivityTab = () => {
-  const { t } = useT();
-  const [snapshot, setSnapshot] = useState<AISettings | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    loadAISettings()
-      .then(s => {
-        if (!cancelled) setSnapshot(s);
-      })
-      .catch(err => {
-        if (!cancelled) setLoadError(err instanceof Error ? err.message : String(err));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return (
-    <div className="space-y-4" data-testid="usage-background-tab">
-      {loadError && (
-        <Alert variant="destructive" density="compact">
-          <AlertDescription>{loadError}</AlertDescription>
-        </Alert>
-      )}
-      {snapshot ? (
-        <BackgroundLoopControls
-          view="all"
-          hideHeader
-          routing={snapshot.routing}
-          cloudProviders={snapshot.cloudProviders}
-        />
-      ) : !loadError ? (
-        <CenteredLoadingState label={t('common.loading')} />
-      ) : null}
-    </div>
-  );
-};
+/** Background-activity tab body: the loop map plus the credit ledger. */
+const BackgroundActivityTab = () => (
+  <div className="space-y-4" data-testid="usage-background-tab">
+    <BackgroundLoopControls view="all" hideHeader />
+  </div>
+);
 
 export default UsagePanel;

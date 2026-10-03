@@ -10,7 +10,7 @@ use super::support::{envelope, workspace_dir};
 use crate::agent::goals::goal_to_value;
 use crate::agent::todos::ops::{self as todos_ops, TodoScope};
 use crate::core::Outcome;
-use crate::memory::ApiEnvelope;
+use crate::threads::ApiEnvelope;
 
 /// Request for [`goal_get`] / [`todos_get`]: the thread to read.
 #[derive(Debug, Clone, serde::Deserialize)]

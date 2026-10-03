@@ -52,7 +52,6 @@ function toPanelRoutingFromApi(api: ApiAISettings): { panel: AISettings } {
     coding: liftRef(api.routing.coding),
     vision: liftRef(api.routing.vision),
     memory: liftRef(api.routing.memory),
-    learning: liftRef(api.routing.learning),
   };
   return {
     panel: {
@@ -81,7 +80,6 @@ function toApiSettings(panel: AISettings): ApiAISettings {
       coding: panel.routing.coding,
       vision: panel.routing.vision,
       memory: panel.routing.memory,
-      learning: panel.routing.learning,
     },
     modelRegistry: panel.modelRegistry,
     defaultModel: panel.defaultModel ?? '',

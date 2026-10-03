@@ -54,7 +54,7 @@ pub(crate) async fn deliver_response(
     request_id: &str,
     full_response: &str,
     user_message: &str,
-    citations: &[crate::memory::agent::memory_loader::MemoryCitation],
+    citations: &[crate::memory::types::TurnCitation],
     usage: Option<&LastTurnUsage>,
     workspace_dir: Option<&std::path::Path>,
     timing: Option<super::turn_timing::TurnTimingSnapshot>,
@@ -284,7 +284,7 @@ fn publish_chat_done(
     thread_id: &str,
     request_id: &str,
     full_response: &str,
-    citations: &[crate::memory::agent::memory_loader::MemoryCitation],
+    citations: &[crate::memory::types::TurnCitation],
     usage_payload: Option<TurnUsagePayload>,
     timing_payload: Option<crate::web_chat::TurnTimingPayload>,
 ) {

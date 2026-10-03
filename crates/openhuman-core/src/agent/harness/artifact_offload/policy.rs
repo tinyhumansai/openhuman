@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use tinyagents_harness::artifacts::{ArtifactPathPolicy, ArtifactRedactor, Redacted};
 
-use crate::memory::safety::sanitize_text;
+use crate::security::scrub::sanitize_text;
 use crate::security::SecurityPolicy;
 
 /// Refuses artifact writes that reach the core's internal `workspace_dir`.

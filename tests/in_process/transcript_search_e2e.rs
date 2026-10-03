@@ -15,7 +15,7 @@ use std::path::Path;
 use serde_json::json;
 use tempfile::tempdir;
 
-use openhuman_core::memory::conversations::{
+use openhuman_core::threads::store::{
     ConversationMessage, ConversationStore, CreateConversationThread,
 };
 use openhuman_core::threads::ops::transcript_search;

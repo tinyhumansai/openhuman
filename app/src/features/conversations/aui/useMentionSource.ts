@@ -3,9 +3,9 @@
  * `unstable_useMentionAdapter` for the vendored `ComposerTriggerPopover`.
  *
  * Two categories:
- * - **Memory** — semantic recall over the memory tree
- *   (`openhuman.memory_tree_recall` via {@link memoryTreeRecall}) for the
- *   `@query` being typed, debounced. The adapter's own search is a substring
+ * - **Memory** — a search of stored memory (`openhuman.memory_fetch` via
+ *   {@link memoryFetch}, the engine's default mode) for the `@query` being
+ *   typed, debounced. With memory off the call fails and the category is empty. The adapter's own search is a substring
  *   filter, which would drop semantic hits whose label does not literally
  *   contain the query, so `search` is extended to always include them.
  * - **Files** — the thread's ready artifacts, read from
@@ -28,13 +28,13 @@ import { AtSignIcon, BrainIcon, FileIcon } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
+import { type Hit, memoryFetch } from '../../../services/api/memoryApi';
 import type { ArtifactSnapshot } from '../../../store/chatRuntimeSlice';
 import { useAppSelector } from '../../../store/hooks';
-import { type Chunk, memoryTreeRecall } from '../../../utils/tauriCommands/memoryTree';
 
 const log = debug('openhuman:chat:mentions');
 
-const RECALL_K = 8;
+const FETCH_LIMIT = 8;
 const RECALL_DEBOUNCE_MS = 200;
 const MIN_QUERY_LENGTH = 2;
 const MAX_LABEL_LENGTH = 48;
@@ -60,12 +60,12 @@ function directiveSafe(text: string): string {
     : flat;
 }
 
-export function memoryMentionsFromChunks(chunks: readonly Chunk[]): Unstable_Mention[] {
-  return chunks.map(chunk => ({
-    id: directiveSafe(chunk.id),
+export function memoryMentionsFromHits(hits: readonly Hit[]): Unstable_Mention[] {
+  return hits.map(hit => ({
+    id: directiveSafe(hit.id),
     type: 'memory',
-    label: directiveSafe(chunk.content_preview || chunk.source_id),
-    description: chunk.source_kind,
+    label: directiveSafe(hit.text || hit.meta?.file_path || hit.meta?.thread_id || hit.id),
+    description: hit.kind,
     icon: 'memory',
   }));
 }
@@ -100,16 +100,16 @@ export function useMentionSource(threadId: string | null) {
     const seq = ++requestSeq.current;
     setIsLoading(true);
     const timer = setTimeout(() => {
-      log('recall: query_len=%d', query.length);
-      memoryTreeRecall(query, RECALL_K)
-        .then(response => memoryMentionsFromChunks(response.chunks ?? []))
+      log('fetch: query_len=%d', query.length);
+      memoryFetch({ query, limit: FETCH_LIMIT })
+        .then(response => memoryMentionsFromHits(response.hits ?? []))
         .catch(error => {
-          log('recall failed, no memory mentions: %o', error);
+          log('fetch failed, no memory mentions: %o', error);
           return [] as Unstable_Mention[];
         })
         .then(mentions => {
           if (seq !== requestSeq.current) return;
-          log('recall: %d hit(s)', mentions.length);
+          log('fetch: %d hit(s)', mentions.length);
           setMemory(mentions);
           setIsLoading(false);
         });

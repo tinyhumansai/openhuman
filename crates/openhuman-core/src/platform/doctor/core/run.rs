@@ -7,7 +7,7 @@ use crate::config::Config;
 use super::config_checks::check_config_semantics;
 use super::daemon_env_checks::{check_daemon_state, check_environment};
 use super::memory_agent_checks::{
-    check_claude_agent_sdk, check_embedding_model_health, check_memory_tree_db,
+    check_claude_agent_sdk, check_embedding_model_health, check_memory_engine,
 };
 use super::types::{
     DiagnosticItem, DoctorReport, DoctorSummary, ModelProbeEntry, ModelProbeOutcome,
@@ -15,38 +15,32 @@ use super::types::{
 };
 use super::workspace_checks::check_workspace;
 
-/// How many chunks the bound memory driver holds, or why the count could not
-/// be taken.
-///
-/// The one probe [`run`] cannot take for itself. The count comes from
-/// `MemoryMaintenance::store_stats` — driver-neutral, and the reason this
-/// check no longer opens the store's SQLite file directly (#5560) — and that
-/// member is `async`, while [`run`] is blocking by contract. Blocking on it
-/// from inside [`run`] is not an option in either direction: a
-/// `Handle::block_on` panics on a current-thread runtime and deadlocks the
-/// multi-thread one it is already occupying a worker of.
-///
-/// So the caller awaits it and hands the answer down. `Err` carries the
-/// driver's own message and becomes the `Error` item this check has always
-/// pushed when the probe failed.
-pub type MemoryChunkCount = Result<u64, String>;
+/// The memory engine's status, taken by the async caller (engine health is
+/// an HTTP call and [`run`] is blocking by contract).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryEngineCheck {
+    /// The configured engine id.
+    pub engine: Option<String>,
+    /// `ok` | `degraded` | `down` | `off`.
+    pub status: String,
+    /// Why the status is not `ok`.
+    pub reason: Option<String>,
+}
 
 /// Build the full doctor report.
 ///
 /// `ops::doctor_report` runs this in `tokio::task::spawn_blocking` because the
 /// checks are synchronous and may touch the file system, sqlite, or local HTTP
 /// endpoints. Keep this function blocking-only; add async probes in the caller
-/// or behind their own runtime boundary instead of introducing `.await` here —
-/// `memory_chunks` is the first probe to take that route, and `ops`'
-/// `memory_chunk_count` is the shape to copy for the next one.
-pub fn run(config: &Config, memory_chunks: MemoryChunkCount) -> Result<DoctorReport> {
+/// (as `memory` is) instead of introducing `.await` here.
+pub fn run(config: &Config, memory: MemoryEngineCheck) -> Result<DoctorReport> {
     let mut items: Vec<DiagnosticItem> = Vec::new();
 
     check_config_semantics(config, &mut items);
     check_workspace(config, &mut items);
     check_daemon_state(config, &mut items);
     check_environment(&mut items);
-    check_memory_tree_db(config, &memory_chunks, &mut items);
+    check_memory_engine(&memory, &mut items);
     check_embedding_model_health(config, &mut items);
     check_claude_agent_sdk(config, &mut items);
 

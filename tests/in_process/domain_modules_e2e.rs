@@ -7,7 +7,6 @@
 
 use crate::env_guard::env_lock_async;
 use crate::env_guard::EnvVarGuard;
-use crate::memory_module;
 use crate::rpc_harness::serve_rpc;
 use crate::rpc_harness::{ok, payload, rpc, schema, write_min_config};
 
@@ -38,22 +37,6 @@ async fn setup() -> TestHarness {
         EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_ENDPOINT", ""),
         EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_MODEL", ""),
     ];
-
-    // The HTTP router is intentionally transport-only and does not construct a
-    // Core runtime context. Memory-backed RPC reads still need the explicit
-    // tinymemory host seams before they can load their configured provider.
-    // Same rule for the modules policy, which became load-bearing when the
-    // status RPCs started reading diagnostics through the bound driver
-    // (#5560): resolving a driver refuses outright until boot publishes the
-    // config to load against — "call modules::memory::set_modules_policy
-    // during boot" — and this harness is the boot. With the policy published,
-    // the provider loads the artifact CI installs (TINYMEMORY_TEST_MODULE);
-    // where none is present the binding degrades to its null placeholder and
-    // the diagnostics answer empty, which is a round-trippable result rather
-    // than a JSON-RPC error.
-    openhuman_core::modules::memory::set_modules_policy(std::sync::Arc::new(
-        openhuman_core::config::Config::default(),
-    ));
 
     let (addr, join) = serve_rpc().await;
     TestHarness {
@@ -123,9 +106,6 @@ async fn target_domain_schemas_are_exposed_over_http_schema_catalog() {
         "tool_registry",
         "approval",
         "memory",
-        "memory_tree",
-        "memory_sync",
-        "memory_sources",
         "embeddings",
         "channels",
         "composio",
@@ -147,9 +127,7 @@ async fn target_domain_schemas_are_exposed_over_http_schema_catalog() {
         "openhuman.tools_web_search",
         "openhuman.tool_registry_list",
         "openhuman.approval_list_pending",
-        "openhuman.memory_ingestion_status",
-        "openhuman.memory_tree_pipeline_status",
-        "openhuman.memory_sync_status_list",
+        "openhuman.memory_engines_list",
         "openhuman.memory_sources_list",
         "openhuman.embeddings_get_settings",
         "openhuman.channels_list",
@@ -425,8 +403,6 @@ async fn config_agent_tools_and_threads_mutation_paths_round_trip() {
 async fn target_domain_read_paths_round_trip_through_json_rpc_transport() {
     let _lock = env_lock_async().await;
     let harness = setup().await;
-    // The memory_* reads below reach the driver; wait out the module's load.
-    memory_module::settle().await;
 
     let calls = [
         ("openhuman.config_get_client_config", json!({})),
@@ -441,10 +417,7 @@ async fn target_domain_read_paths_round_trip_through_json_rpc_transport() {
             "openhuman.approval_list_recent_decisions",
             json!({ "limit": 5 }),
         ),
-        ("openhuman.memory_ingestion_status", json!({})),
-        ("openhuman.memory_tree_pipeline_status", json!({})),
-        ("openhuman.memory_sync_status_list", json!({})),
-        ("openhuman.memory_sources_list", json!({})),
+        ("openhuman.memory_engines_list", json!({})),
         ("openhuman.embeddings_get_settings", json!({})),
         ("openhuman.channels_list", json!({})),
         ("openhuman.composio_get_mode", json!({})),

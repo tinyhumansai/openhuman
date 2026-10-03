@@ -114,18 +114,6 @@ case "$(uname -s):$(uname -m)" in
     ;;
 esac
 
-# The product test surface exercises memory through its native module. CI builds
-# the pinned submodule and supplies this explicit override; mirror that setup
-# locally so the full runner never falls back to GitHub release metadata (which
-# makes an otherwise hermetic mock-backend suite network-bound).
-if [ -z "${TINYMEMORY_TEST_MODULE:-}" ]; then
-  memory_manifest="vendor/tinymemory/crates/tinymemory-module/Cargo.toml"
-  memory_module="vendor/tinymemory/crates/tinymemory-module/target/release/libtinymemory_module.$module_ext"
-  echo "Building TinyMemory test module from the pinned submodule ..."
-  cargo build --release --manifest-path "$memory_manifest"
-  export TINYMEMORY_TEST_MODULE="$REPO_ROOT/$memory_module"
-fi
-
 # Tokenjuice JSON-RPC coverage loads the production native module. Keep the
 # test run hermetic by building the pinned submodule instead of falling back
 # to GitHub release metadata.

@@ -7,7 +7,7 @@
 
 use super::load_builtins;
 use crate::agent::harness::definition::{AgentDefinition, PromptSource, SubagentEntry, ToolScope};
-use crate::agent::prompts::{LearnedContextData, PromptContext, ToolCallFormat};
+use crate::agent::prompts::{PromptContext, ToolCallFormat};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::Arc;
 
@@ -59,14 +59,10 @@ fn render(def: &AgentDefinition, definitions: &[AgentDefinition]) -> String {
         tools: &[],
         workflows: &[],
         dispatcher_instructions: "",
-        learned: LearnedContextData::default(),
         visible_tool_names: &visible,
         tool_call_format: ToolCallFormat::PFormat,
         connected_integrations: &[],
         connected_identities_md: String::new(),
-        include_profile: false,
-        include_memory_md: false,
-        curated_snapshot: None,
         user_identity: None,
         personality_roster: vec![],
         agents_md_global: None,
@@ -263,7 +259,6 @@ const KNOWN_UNCALLABLE: &[(&str, &str, &str)] = &[
         "an example of a payload's source tool",
     ),
     ("workflow_builder", "http_request", "a flow node kind"),
-    ("workflow_builder", "memory", "a flow node kind"),
     ("workflow_builder", "schedule", "a flow trigger field"),
     ("workflow_builder", "shell", "a flow node kind"),
     (
@@ -341,7 +336,7 @@ fn every_prompt_names_only_tools_its_agent_can_call() {
 
 /// Agents whose prompt defers to the rendered tool list instead of naming a
 /// tool; [`every_prompt_names_at_least_one_tool_it_can_call`] skips them.
-const NAMES_NO_TOOL: &[&str] = &["critic", "archivist"];
+const NAMES_NO_TOOL: &[&str] = &["critic"];
 
 const SKILL_SETUP_NAME: Option<&str> = if cfg!(feature = "skills") {
     Some("skill_setup")

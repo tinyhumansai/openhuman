@@ -2,7 +2,6 @@ use super::*;
 use crate::agent::harness::fork_context::ParentExecutionContext;
 use crate::agent::prompts::ToolCallFormat;
 use crate::config::AgentConfig;
-use crate::memory::test_support::NoopMemory;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
@@ -117,7 +116,6 @@ fn parent_context(workspace_dir: &Path) -> ParentExecutionContext {
         model_name: "test-model".into(),
         temperature: 0.0,
         workspace_dir: workspace_dir.to_path_buf(),
-        memory: Arc::new(NoopMemory),
         agent_config: AgentConfig::default(),
         workflows: Arc::new(Vec::new()),
         memory_context: Arc::new(None),

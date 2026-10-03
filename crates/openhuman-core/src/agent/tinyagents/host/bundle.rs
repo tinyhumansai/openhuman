@@ -8,23 +8,21 @@
 use std::sync::Arc;
 
 use tinyagents_harness::host::{
-    AgentMemory, BudgetGate, ContextComposer, ExperienceStore, HostCapabilities, LearningSink,
-    ModelResolver, ProgressSink, SecurityGate, ToolOutcomeClassifier,
+    BudgetGate, ContextComposer, HostCapabilities, LearningSink, ModelResolver, ProgressSink,
+    SecurityGate, ToolOutcomeClassifier,
 };
 
 use crate::agent::harness::definition::AgentDefinitionRegistry;
 use crate::agent::hooks::PostTurnHook;
 use crate::config::Config;
-use crate::memory::Memory;
 use crate::security::policy::SecurityPolicy;
 use crate::tools::agent_policy::ToolPolicySession;
 use tinytools::Tool;
 
 use super::{
-    OpenHumanAgentMemory, OpenHumanBudgetGate, OpenHumanContextComposer,
-    OpenHumanDefinitionRegistry, OpenHumanExperienceStore, OpenHumanLearningSink,
-    OpenHumanModelResolver, OpenHumanProgressSink, OpenHumanRunContext, OpenHumanSecurityGate,
-    OpenHumanToolOutcomeClassifier,
+    OpenHumanBudgetGate, OpenHumanContextComposer, OpenHumanDefinitionRegistry,
+    OpenHumanLearningSink, OpenHumanModelResolver, OpenHumanProgressSink, OpenHumanRunContext,
+    OpenHumanSecurityGate, OpenHumanToolOutcomeClassifier,
 };
 
 /// Runtime-owned inputs required to build every OpenHuman host capability.
@@ -38,7 +36,6 @@ pub struct OpenHumanHostBundleInputs {
     pub security_policy: Arc<SecurityPolicy>,
     pub tool_sets: Vec<Arc<Vec<Box<dyn Tool>>>>,
     pub tool_policy: Option<Arc<ToolPolicySession>>,
-    pub memory: Arc<dyn Memory>,
     pub post_turn_hooks: Vec<Arc<dyn PostTurnHook>>,
     /// See [`OpenHumanHostBase::session_definition`].
     pub session_definition: Option<Arc<crate::agent::harness::definition::AgentDefinition>>,
@@ -54,7 +51,6 @@ pub struct OpenHumanHostBase {
     pub config: Arc<Config>,
     pub definitions: Arc<AgentDefinitionRegistry>,
     pub security_policy: Arc<SecurityPolicy>,
-    pub memory: Arc<dyn Memory>,
     pub post_turn_hooks: Vec<Arc<dyn PostTurnHook>>,
     /// The session's own caller-supplied definition, when it was built from one
     /// rather than from a registry id — see
@@ -74,7 +70,9 @@ pub struct OpenHumanHostInvocationInputs {
     pub model_resolver: Option<Arc<dyn ModelResolver<()>>>,
 }
 
-/// OpenHuman's ten concrete capability adapters plus their erased crate bundle.
+/// OpenHuman's concrete capability adapters plus their erased crate bundle.
+/// The harness's memory and experience capabilities are left unset: memory is
+/// the `memory` tool, not a harness capability.
 ///
 /// Typed handles make it possible to verify wiring without downcasting trait
 /// objects. The runtime consumes [`Self::capabilities`]; the typed fields exist
@@ -85,12 +83,10 @@ pub struct OpenHumanHostBundle {
     pub definitions: Arc<OpenHumanDefinitionRegistry>,
     pub security: Arc<OpenHumanSecurityGate>,
     pub models: Arc<OpenHumanModelResolver>,
-    pub memory: Arc<OpenHumanAgentMemory>,
     pub budget: Arc<OpenHumanBudgetGate>,
     pub progress: Arc<OpenHumanProgressSink>,
     pub learning: Arc<OpenHumanLearningSink>,
     pub tool_outcomes: Arc<OpenHumanToolOutcomeClassifier>,
-    pub experience: Arc<OpenHumanExperienceStore>,
 }
 
 /// Builds the full OpenHuman host bundle for an explicit turn.
@@ -110,7 +106,6 @@ impl OpenHumanHostBundleFactory {
                 security_policy: inputs.base.security_policy.clone(),
                 tool_sets: inputs.tool_sets,
                 tool_policy: inputs.tool_policy,
-                memory: inputs.base.memory.clone(),
                 post_turn_hooks: inputs.base.post_turn_hooks.clone(),
                 session_definition: inputs.base.session_definition.clone(),
             },
@@ -122,7 +117,7 @@ impl OpenHumanHostBundleFactory {
         bundle
     }
 
-    /// Constructs all ten concrete adapters from a single session input set.
+    /// Constructs every concrete adapter from a single session input set.
     ///
     /// The run context supplies per-turn state, while `inputs` supplies durable
     /// session/runtime dependencies. No adapter is optional for OpenHuman. The
@@ -174,7 +169,6 @@ impl OpenHumanHostBundleFactory {
         }
         let security = Arc::new(security);
         let models = Arc::new(OpenHumanModelResolver::new(Arc::clone(&inputs.config)));
-        let memory = Arc::new(OpenHumanAgentMemory::new(Arc::clone(&inputs.memory)));
         let budget = Arc::new(OpenHumanBudgetGate::new(Arc::clone(&inputs.config)));
         // The turn's live `AgentProgress` channel is fed by exactly one
         // producer: `OpenhumanEventBridge`, which `turn_runner` subscribes to
@@ -190,7 +184,6 @@ impl OpenHumanHostBundleFactory {
         let progress = Arc::new(OpenHumanProgressSink::new(tokio::sync::mpsc::channel(1).0));
         let learning = Arc::new(OpenHumanLearningSink::new(inputs.post_turn_hooks));
         let tool_outcomes = Arc::new(OpenHumanToolOutcomeClassifier::new());
-        let experience = Arc::new(OpenHumanExperienceStore::new(inputs.memory));
 
         let capabilities = HostCapabilities::new(
             context.clone() as Arc<dyn ContextComposer>,
@@ -198,12 +191,10 @@ impl OpenHumanHostBundleFactory {
             security.clone() as Arc<dyn SecurityGate>,
             models.clone() as Arc<dyn ModelResolver<()>>,
         )
-        .with_memory(memory.clone() as Arc<dyn AgentMemory>)
         .with_budget(budget.clone() as Arc<dyn BudgetGate>)
         .with_progress(progress.clone() as Arc<dyn ProgressSink>)
         .with_learning(learning.clone() as Arc<dyn LearningSink>)
-        .with_tool_outcomes(tool_outcomes.clone() as Arc<dyn ToolOutcomeClassifier>)
-        .with_experience(experience.clone() as Arc<dyn ExperienceStore>);
+        .with_tool_outcomes(tool_outcomes.clone() as Arc<dyn ToolOutcomeClassifier>);
 
         OpenHumanHostBundle {
             capabilities,
@@ -211,12 +202,10 @@ impl OpenHumanHostBundleFactory {
             definitions,
             security,
             models,
-            memory,
             budget,
             progress,
             learning,
             tool_outcomes,
-            experience,
         }
     }
 }

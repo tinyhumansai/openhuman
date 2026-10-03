@@ -20,8 +20,8 @@ describe('parseHarnessInitSnapshot', () => {
             updated_at: '2026-06-23T00:00:01Z',
           },
           {
-            id: 'spacy',
-            label: 'spaCy',
+            id: 'kompress',
+            label: 'Compression runtime',
             required: false,
             state: 'running',
             message: null,
@@ -37,7 +37,7 @@ describe('parseHarnessInitSnapshot', () => {
     expect(snap?.startedAt).toBe('2026-06-23T00:00:00Z');
     expect(snap?.steps).toHaveLength(2);
     expect(snap?.steps[0]).toMatchObject({ id: 'python_runtime', state: 'done', percent: 100 });
-    expect(snap?.steps[1]).toMatchObject({ id: 'spacy', state: 'running', percent: null });
+    expect(snap?.steps[1]).toMatchObject({ id: 'kompress', state: 'running', percent: null });
   });
 
   it('returns null when the envelope has no snapshot', () => {

@@ -610,7 +610,7 @@ fn toolkit_for_contract_slug_accepts_real_action_slugs() {
     // The shared helper stays permissive for its other callers — this stricter
     // rule is this controller's, not `toolkit_from_slug`'s.
     assert_eq!(
-        tinymemory_api::composio::toolkit_from_slug("nodashhere").as_deref(),
+        crate::integrations::composio::contract::toolkit_from_slug("nodashhere").as_deref(),
         Some("nodashhere")
     );
     assert_eq!(toolkit_for_contract_slug("nodashhere"), None);

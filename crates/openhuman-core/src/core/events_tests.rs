@@ -400,31 +400,6 @@ fn all_variants_have_correct_domain() {
             },
             "triage",
         ),
-        // Tree Summarizer
-        (
-            DomainEvent::TreeSummarizerHourCompleted {
-                namespace: "n".into(),
-                node_id: "2024/03/15/14".into(),
-                token_count: 500,
-            },
-            "tree_summarizer",
-        ),
-        (
-            DomainEvent::TreeSummarizerPropagated {
-                namespace: "n".into(),
-                node_id: "2024/03/15".into(),
-                level: "day".into(),
-                token_count: 1000,
-            },
-            "tree_summarizer",
-        ),
-        (
-            DomainEvent::TreeSummarizerRebuildCompleted {
-                namespace: "n".into(),
-                total_nodes: 10,
-            },
-            "tree_summarizer",
-        ),
         // Notification
         (
             DomainEvent::NotificationIngested {
@@ -478,29 +453,6 @@ fn all_variants_have_correct_domain() {
                 component: "c".into(),
             },
             "system",
-        ),
-        // Memory tree
-        (
-            DomainEvent::DocumentCanonicalized {
-                source_id: "gmail:abc".into(),
-                source_kind: "email".into(),
-                chunks_written: 3,
-                chunk_ids: vec!["c1".into(), "c2".into(), "c3".into()],
-                canonicalized_at: 1_700_000_000.0,
-                body_preview: Some("Thanks,\nAlice".into()),
-            },
-            "memory",
-        ),
-        // Learning
-        (
-            DomainEvent::CacheRebuilt {
-                added: 2,
-                evicted: 1,
-                kept: 5,
-                total_size: 7,
-                rebuilt_at: 1_700_000_000.0,
-            },
-            "learning",
         ),
         // Auth
         (
@@ -618,17 +570,6 @@ fn workflows_changed_domain_and_name() {
     };
     assert_eq!(event.domain(), "workflow");
     assert_eq!(event.variant_name(), "WorkflowsChanged");
-}
-
-#[test]
-fn memory_driver_bind_failed_domain_and_name() {
-    let event = DomainEvent::MemoryDriverBindFailed {
-        configured_driver: "supermemory".into(),
-        bound_driver: "null".into(),
-        reason: "external driver is untrusted".into(),
-    };
-    assert_eq!(event.domain(), "memory");
-    assert_eq!(event.variant_name(), "MemoryDriverBindFailed");
 }
 
 /// The Event Log's "agent" column is the only per-row context the stream

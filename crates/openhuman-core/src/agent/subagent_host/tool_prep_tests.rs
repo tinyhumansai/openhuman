@@ -25,7 +25,6 @@ fn unprefixed_delegate_name_overrides_are_treated_as_spawn_tools() {
         // `documents` feature.
         #[cfg(feature = "documents")]
         "make_presentation",
-        "archive_session",
     ] {
         assert!(
             is_subagent_spawn_tool(delegate),

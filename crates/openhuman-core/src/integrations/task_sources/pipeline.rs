@@ -112,8 +112,8 @@ pub async fn run_source_once(
 /// tasks.
 fn fetch_tasks_unavailable(
     source: &TaskSource,
-    _filter: &tinymemory_api::composio::TaskFetchFilter,
-) -> Result<Vec<tinymemory_api::composio::NormalizedTask>, String> {
+    _filter: &crate::integrations::composio::contract::TaskFetchFilter,
+) -> Result<Vec<crate::integrations::composio::contract::NormalizedTask>, String> {
     Err(format!(
         "task_sources fetch for toolkit '{}' is unavailable: tinymemory v1.13.4 deleted \
          ComposioProvider::fetch_tasks with no replacement, and the tinyconnectors module \

@@ -669,9 +669,9 @@ const SUPERVISED_AUTONOMY_CONFIG: &str = "[autonomy]\nenabled = true\nlevel = \"
 
 async fn boot_stack_with_config(extra_config: &str) -> Stack {
     // Ensure the global AgentDefinitionRegistry is populated with built-in
-    // archetypes (orchestrator, task_manager_agent, task_manager_agent, etc.) before
+    // archetypes (orchestrator, vision_agent, task_manager_agent, etc.) before
     // the RPC stack starts. Without this the session builder cannot synthesise
-    // delegation tools and every `manage_tasks`/`spawn_subagent` call becomes
+    // delegation tools and every `analyze_image`/`spawn_subagent` call becomes
     // "Unknown tool: …", making delegation tests vacuous.
     init_agent_def_registry();
 
@@ -918,21 +918,21 @@ async fn multi_turn_state_persistence_inner() {
 // ─── Task 3: Subagent delegation happy path ───────────────────────────────────
 //
 // Tool surface (crates/openhuman-core/src/tools/orchestrator_tools.rs,
-//   crates/openhuman-core/src/memory/agent/agent/agent.toml):
-//   - task_manager_agent has `delegate_name = "manage_tasks"`, so the
-//     orchestrator LLM sees a tool named "manage_tasks" synthesised by collect_orchestrator_tools.
+//   crates/openhuman-core/src/agent/registry/agents/vision_agent/agent.toml):
+//   - vision_agent has `delegate_name = "analyze_image"`, so the
+//     orchestrator LLM sees a tool named "analyze_image" synthesised by collect_orchestrator_tools.
 //   - The tool takes { "prompt": string, ... } per ArchetypeDelegationTool schema.
-//   - The orchestrator TOML lists "task_manager_agent" in its subagents.allowlist.
+//   - The orchestrator TOML lists "vision_agent" in its subagents.allowlist.
 //   - AgentDefinitionRegistry must be initialised (done in boot_stack) for the
-//     delegation tool to be synthesised; without it the call becomes "Unknown tool: manage_tasks".
+//     delegation tool to be synthesised; without it the call becomes "Unknown tool: analyze_image".
 //
 // Actual LLM request ordering (with registry init):
-//   request[0] = orchestrator → model returns { tool_calls: [manage_tasks(...)] }
-//   request[1] = task_manager_agent subagent inner loop → model returns canary text
+//   request[0] = orchestrator → model returns { tool_calls: [analyze_image(...)] }
+//   request[1] = vision_agent subagent inner loop → model returns canary text
 //   request[2] = orchestrator synthesis → model returns final text with canary
 
-/// Orchestrator delegates to task_manager_agent via the `manage_tasks`
-/// tool (delegate_name on the task_manager_agent definition); the subagent runs
+/// Orchestrator delegates to vision_agent via the `analyze_image`
+/// tool (delegate_name on the vision_agent definition); the subagent runs
 /// its own inner LLM call; the final orchestrator synthesis reply contains the
 /// subagent canary. Three upstream requests prove the full delegation path ran.
 #[test]
@@ -946,13 +946,13 @@ fn subagent_delegation_happy_path() {
 async fn subagent_delegation_happy_path_inner() {
     let _lock = env_lock();
     reset_script(vec![
-        // request[0]: Orchestrator calls the `manage_tasks` tool
-        // (task_manager_agent's delegate_name).
+        // request[0]: Orchestrator calls the `analyze_image` tool
+        // (vision_agent's delegate_name).
         tool_call_completion(
-            "manage_tasks",
+            "analyze_image",
             json!({ "prompt": "Find the marker phrase", "blocking": true }),
         ),
-        // request[1]: task_manager_agent subagent inner LLM call returns its canary.
+        // request[1]: vision_agent subagent inner LLM call returns its canary.
         text_completion("MEMORY_CANARY_42 is the marker."),
         // request[2]: Orchestrator receives the subagent result and synthesizes.
         text_completion("Done. The result is: MEMORY_CANARY_42"),
@@ -990,8 +990,8 @@ async fn subagent_delegation_happy_path_inner() {
     );
 
     // Delegation evidenced by ≥3 captured upstream requests:
-    //   request[0] = orchestrator turn: manage_tasks tool call returned
-    //   request[1] = task_manager_agent subagent inner LLM call: canary text returned
+    //   request[0] = orchestrator turn: analyze_image tool call returned
+    //   request[1] = vision_agent subagent inner LLM call: canary text returned
     //   request[2] = orchestrator synthesis: canary forwarded in final reply
     //
     // NOTE: a completed turn's snapshot is now RETAINED (lifecycle `Completed`)
@@ -1002,7 +1002,7 @@ async fn subagent_delegation_happy_path_inner() {
     let requests = with_captured(|c| c.clone());
     assert!(
         requests.len() >= 3,
-        "expected ≥3 upstream requests (orchestrator + task_manager_agent + orchestrator synthesis), \
+        "expected ≥3 upstream requests (orchestrator + vision_agent + orchestrator synthesis), \
          got {};\nall requests: {}",
         requests.len(),
         serde_json::to_string_pretty(&requests).unwrap_or_default()
@@ -1017,7 +1017,7 @@ async fn subagent_delegation_happy_path_inner() {
         serde_json::to_string_pretty(&requests).unwrap_or_default()
     );
 
-    // request[1] (task_manager_agent subagent) must have different system/message content
+    // request[1] (vision_agent subagent) must have different system/message content
     // from request[0] (orchestrator) — proves a genuinely different agent context
     // ran, not the same orchestrator re-called.
     let req0_sys = requests
@@ -1033,7 +1033,7 @@ async fn subagent_delegation_happy_path_inner() {
     assert_ne!(
         req0_sys, req1_sys,
         "request[0] and request[1] share identical first-message content — \
-         task_manager_agent subagent did not build its own context; \
+         vision_agent subagent did not build its own context; \
          content: {req0_sys:?}"
     );
 
@@ -1847,8 +1847,8 @@ async fn provider_error_retry_inner() {
 // parallel_subagent_fanout:
 //   spawn_parallel_agents is in the orchestrator's named tools (agent.toml:165)
 //   and is registered via ops.rs:163. Requires ≥2 tasks, each { agent_id, prompt }.
-//   The orchestrator's subagents.allowlist includes "task_manager_agent",
-//   so agent_id:"task_manager_agent" is valid. children run via join_all (spawn_parallel_agents.rs
+//   The orchestrator's subagents.allowlist includes "vision_agent",
+//   so agent_id:"vision_agent" is valid. children run via join_all (spawn_parallel_agents.rs
 //   ~line 322 — "let futures = prepared.into_iter().map(…)"). Both children
 //   consume from the same global FIFO scripted-response queue. Because
 //   join_all spawns futures concurrently but the queue pop is under a Mutex,
@@ -1856,15 +1856,15 @@ async fn provider_error_retry_inner() {
 //   carry distinct canaries; the synthesis quotes both.
 //   LLM request ordering (4 upstream calls):
 //     request[0]  = orchestrator → spawn_parallel_agents tool call
-//     request[1,2] = task_manager_agent child 1 & child 2 (order nondeterministic,
+//     request[1,2] = vision_agent child 1 & child 2 (order nondeterministic,
 //                    both return distinct canaries)
 //     request[3]  = orchestrator synthesis with both canaries
 //
 // multi_hop_delegation_chain:
-//   Depth-1 subagents (task_manager_agent, vision_agent, etc.) do NOT have spawn
-//   tools in their named lists. Verified: task_manager_agent's agent.toml
-//   (memory/agent/agent/agent.toml) has only read-only memory tools plus
-//   ask_user_clarification. It contains no
+//   Depth-1 subagents (vision_agent, task_manager_agent, etc.) do NOT have
+//   spawn tools in their named lists. Verified: vision_agent's agent.toml
+//   (agent/registry/agents/vision_agent/agent.toml) names only `file_read` and
+//   `image_info`. It contains no
 //   spawn_subagent, spawn_worker_thread, or spawn_parallel_agents. The only
 //   agents with spawn tools are orchestrator and trigger_reactor (loader.rs:383,
 //   527). trigger_reactor is not in the orchestrator's subagents.allowlist.
@@ -1872,19 +1872,19 @@ async fn provider_error_retry_inner() {
 //   with the current built-in agent graph; the cap is a safety net for
 //   runtime-registered agents.
 //
-//   Fallback (plan Task 9, step 9.2 fallback): orchestrator → task_manager_agent
-//   (via `manage_tasks`) → task_manager_agent scripted to call file_write (not in
-//   task_manager_agent's read-only named tools → SubagentToolSource::execute returns
-//   a blocked response, tool loop continues) → task_manager_agent second LLM call
-//   returns DEPTH2_CANARY text → dispatch_subagent forwards as `manage_tasks`
+//   Fallback (plan Task 9, step 9.2 fallback): orchestrator → vision_agent
+//   (via `analyze_image`) → vision_agent scripted to call file_write (not in
+//   vision_agent's read-only named tools → SubagentToolSource::execute returns
+//   a blocked response, tool loop continues) → vision_agent second LLM call
+//   returns DEPTH2_CANARY text → dispatch_subagent forwards as `analyze_image`
 //   tool result → orchestrator synthesis. The three-level synthesis path (user
-//   turn → task_manager_agent subagent → tool-loop continuation → orchestrator
+//   turn → vision_agent subagent → tool-loop continuation → orchestrator
 //   synthesis) is the deepest path reachable with built-in agents without src/
 //   changes.
 //   LLM request ordering (4 upstream calls):
-//     request[0] = orchestrator → `manage_tasks` delegation
-//     request[1] = task_manager_agent (inner loop) → file_write (blocked)
-//     request[2] = task_manager_agent (inner loop continuation) → DEPTH2_CANARY text
+//     request[0] = orchestrator → `analyze_image` delegation
+//     request[1] = vision_agent (inner loop) → file_write (blocked)
+//     request[2] = vision_agent (inner loop continuation) → DEPTH2_CANARY text
 //     request[3] = orchestrator synthesis
 
 /// Two `spawn_async_subagent` calls issued together really do put two workers
@@ -1936,11 +1936,11 @@ async fn parallel_subagent_fanout_inner() {
         tool_calls_completion(&[
             (
                 "spawn_async_subagent",
-                json!({ "agent_id": "task_manager_agent", "prompt": "Find PARALLEL_ALPHA_CANARY" }),
+                json!({ "agent_id": "vision_agent", "prompt": "Find PARALLEL_ALPHA_CANARY" }),
             ),
             (
                 "spawn_async_subagent",
-                json!({ "agent_id": "task_manager_agent", "prompt": "Find PARALLEL_BETA_CANARY" }),
+                json!({ "agent_id": "vision_agent", "prompt": "Find PARALLEL_BETA_CANARY" }),
             ),
         ]),
         text_completion("Spawned two workers; results will arrive as they land."),
@@ -2032,23 +2032,21 @@ async fn parallel_subagent_fanout_inner() {
     );
 }
 
-/// Orchestrator delegates to task_manager_agent via `manage_tasks`; it calls
+/// Orchestrator delegates to vision_agent via `analyze_image`; it calls
 /// file_write (not in its read-only named tools, so SubagentToolSource
-/// returns error); task_manager_agent loops and returns DEPTH2_CANARY;
+/// returns error); vision_agent loops and returns DEPTH2_CANARY;
 /// dispatch_subagent forwards the result; orchestrator synthesizes.
 ///
-/// Depth behavior discovered: task_manager_agent's agent.toml has only read-only
-/// memory tools plus ask_user_clarification (no spawn_subagent,
+/// Depth behavior discovered: vision_agent's agent.toml names only `file_read`
+/// and `image_info` (no spawn_subagent,
 /// spawn_worker_thread, spawn_parallel_agents). MAX_SPAWN_DEPTH=3
 /// (spawn_depth_context.rs:16) is unreachable with built-in agents; it guards
 /// runtime/workspace agents. The three-level synthesis (user-turn root →
-/// task_manager_agent subagent → orchestrator synthesis) is the deepest path
+/// vision_agent subagent → orchestrator synthesis) is the deepest path
 /// available without src/ changes. Documented per plan Task 9 step 9.2 fallback.
 ///
-/// The out-of-scope call is `file_write`, not `ask_user_clarification`:
-/// task_manager_agent owns `ask_user_clarification`, so that call would park the
-/// child (the `delegated_clarification_flow` mechanic) instead of being
-/// refused and letting the inner loop continue.
+/// The out-of-scope call is `file_write`: it is not on vision_agent's belt, so
+/// it is refused and the inner loop continues.
 #[test]
 fn multi_hop_delegation_chain() {
     run_on_agent_stack(
@@ -2060,14 +2058,14 @@ fn multi_hop_delegation_chain() {
 async fn multi_hop_delegation_chain_inner() {
     let _lock = env_lock();
     reset_script(vec![
-        // request[0]: Orchestrator delegates to task_manager_agent via
-        // `manage_tasks` (its delegate_name, memory/agent/agent/agent.toml:3).
+        // request[0]: Orchestrator delegates to vision_agent via
+        // `analyze_image` (its delegate_name, agent/registry/agents/vision_agent/agent.toml:3).
         tool_call_completion(
-            "manage_tasks",
+            "analyze_image",
             json!({ "prompt": "deep question", "blocking": true }),
         ),
-        // request[1]: task_manager_agent first inner LLM call → scripts file_write.
-        // file_write is NOT in task_manager_agent's read-only named tools
+        // request[1]: vision_agent first inner LLM call → scripts file_write.
+        // file_write is NOT in vision_agent's read-only named tools
         // (`[tools] named`), so SubagentToolSource returns a blocked/error
         // result (tool_source.rs:36). The subagent loop continues to a second
         // LLM call.
@@ -2075,10 +2073,10 @@ async fn multi_hop_delegation_chain_inner() {
             "file_write",
             json!({ "path": "depth-2.txt", "content": "depth-2 write?" }),
         ),
-        // request[2]: task_manager_agent second inner LLM call → text result.
-        // This becomes the `manage_tasks` tool result forwarded by dispatch_subagent.
+        // request[2]: vision_agent second inner LLM call → text result.
+        // This becomes the `analyze_image` tool result forwarded by dispatch_subagent.
         text_completion("DEPTH2_CANARY"),
-        // request[3]: Orchestrator receives the manage_tasks result and synthesizes.
+        // request[3]: Orchestrator receives the analyze_image result and synthesizes.
         text_completion("Final answer: DEPTH2_CANARY"),
     ]);
     let stack = boot_stack().await;
@@ -2114,26 +2112,26 @@ async fn multi_hop_delegation_chain_inner() {
 
     // ≥4 upstream requests prove the full delegation path ran (≥3 would
     // false-pass if the subagent inner loop early-exited):
-    //   request[0] = orchestrator (manage_tasks call),
-    //   request[1] = task_manager_agent first iter (file_write → blocked),
-    //   request[2] = task_manager_agent second iter (DEPTH2_CANARY text),
+    //   request[0] = orchestrator (analyze_image call),
+    //   request[1] = vision_agent first iter (file_write → blocked),
+    //   request[2] = vision_agent second iter (DEPTH2_CANARY text),
     //   request[3] = orchestrator synthesis.
     let requests = with_captured(|c| c.clone());
     assert!(
         requests.len() >= 4,
-        "expected ≥4 upstream requests (orchestrator + task_manager_agent x2 + synthesis), got {};\
+        "expected ≥4 upstream requests (orchestrator + vision_agent x2 + synthesis), got {};\
         \nrequests: {}",
         requests.len(),
         serde_json::to_string_pretty(&requests).unwrap_or_default()
     );
 
-    // No unknown-tool result for `manage_tasks` — delegation was synthesised correctly.
-    // Scoped to `manage_tasks`: the subagent's `file_write` call IS
+    // No unknown-tool result for `analyze_image` — delegation was synthesised correctly.
+    // Scoped to `analyze_image`: the subagent's `file_write` call IS
     // rejected as unknown by design (see the ordering note above), so a blanket
     // check would fail on the very mechanic this test exercises.
     assert!(
-        !captured_requests_reject_tool_as_unknown(&requests, "manage_tasks"),
-        "found an unknown-tool result — `manage_tasks` delegation was not synthesised; requests: {}",
+        !captured_requests_reject_tool_as_unknown(&requests, "analyze_image"),
+        "found an unknown-tool result — `analyze_image` delegation was not synthesised; requests: {}",
         serde_json::to_string_pretty(&requests).unwrap_or_default()
     );
 
@@ -2189,10 +2187,9 @@ mod streaming_support {
     };
     use openhuman_core::agent::OpenHumanSessionHost;
     use openhuman_core::config::{AgentConfig, ContextConfig};
-    use openhuman_core::memory::Memory;
     use serde_json::json;
     use std::collections::VecDeque;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
@@ -2317,72 +2314,6 @@ mod streaming_support {
 
     /// A memory that stores nothing, which is what this helper always built.
     ///
-    /// It used to ask the engine's factory for `backend: "none"` — an engine
-    /// call whose whole purpose was to get back something that does not store.
-    /// The agent under test needs *a* memory to be constructed with; it never
-    /// reads one back. So the no-op is not a downgrade from what was here, it
-    /// is the same behaviour without linking 133k lines to obtain it.
-    #[derive(Debug)]
-    struct NoMemory;
-
-    #[async_trait::async_trait]
-    impl Memory for NoMemory {
-        fn name(&self) -> &str {
-            "none"
-        }
-        async fn store(
-            &self,
-            _namespace: &str,
-            _key: &str,
-            _content: &str,
-            _category: openhuman_core::memory::api::types::MemoryCategory,
-            _session_id: Option<&str>,
-        ) -> anyhow::Result<()> {
-            Ok(())
-        }
-        async fn recall(
-            &self,
-            _query: &str,
-            _limit: usize,
-            _opts: openhuman_core::memory::api::recall::RecallOpts<'_>,
-        ) -> anyhow::Result<Vec<openhuman_core::memory::api::types::MemoryEntry>> {
-            Ok(Vec::new())
-        }
-        async fn get(
-            &self,
-            _namespace: &str,
-            _key: &str,
-        ) -> anyhow::Result<Option<openhuman_core::memory::api::types::MemoryEntry>> {
-            Ok(None)
-        }
-        async fn list(
-            &self,
-            _namespace: Option<&str>,
-            _category: Option<&openhuman_core::memory::api::types::MemoryCategory>,
-            _session_id: Option<&str>,
-        ) -> anyhow::Result<Vec<openhuman_core::memory::api::types::MemoryEntry>> {
-            Ok(Vec::new())
-        }
-        async fn forget(&self, _namespace: &str, _key: &str) -> anyhow::Result<bool> {
-            Ok(false)
-        }
-        async fn namespace_summaries(
-            &self,
-        ) -> anyhow::Result<Vec<openhuman_core::memory::api::types::NamespaceSummary>> {
-            Ok(Vec::new())
-        }
-        async fn count(&self) -> anyhow::Result<usize> {
-            Ok(0)
-        }
-        async fn health_check(&self) -> bool {
-            true
-        }
-    }
-
-    fn memory_for_workspace_s(_path: &Path) -> Arc<dyn Memory> {
-        Arc::new(NoMemory)
-    }
-
     /// The session's own hosted root authority. Every session turn resolves its
     /// agent id against the host catalogue; `agent_definition_name` only stamps
     /// an id, so a fixture-only name needs a definition behind it (#6377/#6375).
@@ -2407,7 +2338,6 @@ mod streaming_support {
         OpenHumanSessionHost::builder()
             .chat_model(provider)
             .tools(tools)
-            .memory(memory_for_workspace_s(&workspace_path))
             .tool_dispatcher(Box::new(NativeDialect))
             .workspace_dir(workspace_path)
             .event_context("stream-accum-session", "stream-accum-channel")
@@ -2415,8 +2345,6 @@ mod streaming_support {
             .agent_definition(stream_definition())
             .config(config)
             .context_config(ContextConfig::default())
-            .auto_save(true)
-            .explicit_preferences_enabled(false)
             .build()
             .unwrap()
     }
@@ -4188,12 +4116,8 @@ async fn orchestrator_calls_a_connected_mcp_tool_directly_inner() {
 mod tool_policy_boundary_placement {
     use anyhow::Result;
     use async_trait::async_trait;
-    use openhuman_core::agent::prompts::LearnedContextData;
     use openhuman_core::agent::OpenHumanSessionHost;
     use openhuman_core::config::AgentConfig;
-    use openhuman_core::memory::{
-        Memory, MemoryCategory, MemoryEntry, NamespaceSummary as MemoryNamespaceSummary, RecallOpts,
-    };
     use tinytools::{PermissionLevel, Tool, ToolResult};
     use tinytools_agent::dialect::NativeDialect;
 
@@ -4202,56 +4126,6 @@ mod tool_policy_boundary_placement {
 
     use super::streaming_support::ScriptedProvider;
     use tinyinference_llm::model::{ChatModel, ModelProfile};
-
-    struct StubMemory;
-
-    #[async_trait]
-    impl Memory for StubMemory {
-        async fn store(
-            &self,
-            _namespace: &str,
-            _key: &str,
-            _content: &str,
-            _category: MemoryCategory,
-            _session_id: Option<&str>,
-        ) -> Result<()> {
-            Ok(())
-        }
-        async fn recall(
-            &self,
-            _query: &str,
-            _limit: usize,
-            _opts: RecallOpts<'_>,
-        ) -> Result<Vec<MemoryEntry>> {
-            Ok(Vec::new())
-        }
-        async fn get(&self, _namespace: &str, _key: &str) -> Result<Option<MemoryEntry>> {
-            Ok(None)
-        }
-        async fn list(
-            &self,
-            _namespace: Option<&str>,
-            _category: Option<&MemoryCategory>,
-            _session_id: Option<&str>,
-        ) -> Result<Vec<MemoryEntry>> {
-            Ok(Vec::new())
-        }
-        async fn forget(&self, _namespace: &str, _key: &str) -> Result<bool> {
-            Ok(false)
-        }
-        async fn namespace_summaries(&self) -> Result<Vec<MemoryNamespaceSummary>> {
-            Ok(Vec::new())
-        }
-        async fn count(&self) -> Result<usize> {
-            Ok(0)
-        }
-        async fn health_check(&self) -> bool {
-            true
-        }
-        fn name(&self) -> &str {
-            "boundary-placement-memory"
-        }
-    }
 
     /// Two tools at different permission levels. A `read_only` channel
     /// permission blocks the write one, and that restriction is what makes the
@@ -4305,7 +4179,6 @@ mod tool_policy_boundary_placement {
                     level: PermissionLevel::Write,
                 }),
             ])
-            .memory(Arc::new(StubMemory))
             .tool_dispatcher(Box::new(NativeDialect))
             .workspace_dir(workspace.path().to_path_buf())
             .event_context("boundary-session", "boundary-channel")
@@ -4313,9 +4186,7 @@ mod tool_policy_boundary_placement {
             .build()
             .expect("complete builder should succeed");
 
-        agent
-            .build_system_prompt(LearnedContextData::default())
-            .expect("system prompt builds")
+        agent.build_system_prompt().expect("system prompt builds")
     }
 
     /// #5821 (closes #5704). Every line of the boundary block is session-scoped
@@ -4991,7 +4862,7 @@ async fn cancelling_a_running_background_subagent_settles_it_inner() {
     reset_script(vec![
         tool_calls_completion(&[(
             "spawn_async_subagent",
-            json!({ "agent_id": "task_manager_agent", "prompt": "Find CANCEL_E2E_CANARY" }),
+            json!({ "agent_id": "vision_agent", "prompt": "Find CANCEL_E2E_CANARY" }),
         )]),
         text_completion("Spawned a worker; its result will arrive later."),
         text_completion("worker would have finished here"),

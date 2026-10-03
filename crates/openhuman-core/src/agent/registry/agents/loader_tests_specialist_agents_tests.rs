@@ -22,12 +22,8 @@ fn workflow_builder_is_registered_worker_with_bounded_authoring_scope() {
     // (hard-refused otherwise, regardless of the user's scope preference)
     // against an already-connected toolkit — see `builder_tools.rs`'s
     // module doc. This pins the invariant in the agent definition itself,
-    // not just the tool implementations. It also has read-only grounding
-    // in the user's memory via `memory_recall` (direct lookups) and
-    // `memory_hybrid_search` (keyword/lexical lookups — pairs with
-    // `memory_recall` the same way the sibling `flow_discovery` agent
-    // does) — no `memory_store`, so it can look up context but never
-    // write it.
+    // not just the tool implementations. It reaches the user's memory
+    // through the single `memory` tool.
     let def = find("workflow_builder");
     assert_eq!(def.agent_tier, AgentTier::Worker);
     assert_eq!(def.delegate_name.as_deref(), Some("build_workflow"));
@@ -84,8 +80,7 @@ fn workflow_builder_is_registered_worker_with_bounded_authoring_scope() {
                 "composio_list_toolkits",
                 "composio_list_connections",
                 "composio_connect",
-                "memory_recall",
-                "memory_hybrid_search",
+                "memory",
             ];
             for required in expected {
                 assert!(
@@ -112,8 +107,6 @@ fn workflow_builder_is_registered_worker_with_bounded_authoring_scope() {
                 "apply_patch",
                 "composio_execute",
                 "spawn_subagent",
-                // Memory access must stay read-only: no write tool.
-                "memory_store",
             ] {
                 assert!(
                     !names.iter().any(|n| n == forbidden),
@@ -161,7 +154,6 @@ fn flow_discovery_is_registered_readonly_reasoning_scout() {
             );
             // A representative slice of the read-only gathering surface.
             for required in [
-                "memory_recall",
                 "list_flows",
                 "list_flow_connections",
                 "search_tool_catalog",
@@ -183,7 +175,7 @@ fn flow_discovery_is_registered_readonly_reasoning_scout() {
                 "shell",
                 "file_write",
                 "edit",
-                "memory_store",
+                "memory",
                 "thread_message_append",
                 "spawn_subagent",
             ] {
@@ -240,22 +232,14 @@ fn specialist_agents_are_registered_with_narrow_tools() {
         match &presentation.tools {
             ToolScope::Named(names) => {
                 assert!(names.iter().any(|name| name == "generate_presentation"));
-                assert!(!names.iter().any(|name| name == "call_memory_agent"));
                 assert!(names.iter().any(|name| name == "web_search_tool"));
             }
             other => panic!("presentation_agent must use Named tool scope, got {other:?}"),
         }
-        // Memory pre-fetch is no longer eager; `omit_memory_context = false`
-        // still gives the deck builder the cheap per-turn recall.
-        assert_eq!(presentation.trigger_memory_agent, TriggerMemoryAgent::Never);
+        // `omit_memory_context = false` opens the deck builder's session
+        // with the compiled memory context.
+        assert!(!presentation.omit_memory_context);
     }
-}
-
-#[test]
-fn archivist_runs_in_background() {
-    let def = find("archivist");
-    assert!(def.background);
-    assert_eq!(def.max_iterations, 3);
 }
 
 #[test]
@@ -266,111 +250,36 @@ fn morning_briefing_is_read_only() {
     // for every registered tool.
     match &def.tools {
         ToolScope::Named(tools) => {
-            for required in [
-                "memory_tree",
-                "composio_execute",
-                "tool_search",
-                "current_time",
-            ] {
+            for required in ["composio_execute", "tool_search", "current_time"] {
                 assert!(
                     tools.iter().any(|t| t == required),
                     "morning_briefing needs `{required}`"
                 );
             }
             assert!(!tools.iter().any(|t| t == "shell" || t == "file_write"));
+            // `memory` reports Write permission without arguments, which the
+            // read-only sandbox cannot admit.
+            assert!(!tools.iter().any(|t| t == "memory"));
         }
         ToolScope::Wildcard => panic!("morning_briefing must have a named belt"),
     }
-    // The brief pulls its own last-24h memory via the `memory_tree`
-    // `cover_window` tool, so the stale all-time memory blob is suppressed.
-    assert!(def.omit_memory_context);
+    // The brief grounds itself in the compiled memory context.
+    assert!(!def.omit_memory_context);
     assert!(def.omit_identity);
     assert!(def.omit_safety_preamble);
     assert_eq!(def.max_iterations, 8);
 }
 
-#[cfg(feature = "flows")]
-#[test]
-fn flow_memory_agent_is_read_only_worker_with_bounded_memory_belt() {
-    let def = find("flow_memory_agent");
-    assert_eq!(def.agent_tier, AgentTier::Worker);
-    assert_eq!(def.sandbox_mode, SandboxMode::ReadOnly);
-    assert!(
-        matches!(&def.model, ModelSpec::Hint(h) if h == "burst"),
-        "flow_memory_agent must spawn on the burst tier, got {:?}",
-        def.model
-    );
-    // Bundle cap — load-bearing for the flow's context budget.
-    assert_eq!(def.max_result_chars, Some(4000));
-    // Keeps goals/profile + long-term memory so it can ground retrieval
-    // in who the user is and what they want.
-    assert!(
-        !def.omit_profile,
-        "flow_memory_agent needs PROFILE.md (goals)"
-    );
-    assert!(!def.omit_memory_md, "flow_memory_agent needs MEMORY.md");
-    // Strictly bounded read-only memory/context belt — exactly 8 tools,
-    // no more, no less.
-    match &def.tools {
-        ToolScope::Named(tools) => {
-            let expected = ["memory_recall", "memory_hybrid_search", "memory_flavour"];
-            for required in expected {
-                assert!(
-                    tools.iter().any(|t| t == required),
-                    "flow_memory_agent needs read-only belt tool `{required}`"
-                );
-            }
-            assert_eq!(
-                tools.len(),
-                expected.len(),
-                "flow_memory_agent scope must be EXACTLY the bounded read-only \
-                 memory belt (got {tools:?})"
-            );
-            for forbidden in [
-                // `memory_tree` bundles a write mode (`ingest_document`)
-                // under a ReadOnly-declared wrapper — must never be
-                // reachable by this auto-run, prompt-injectable agent.
-                "memory_tree",
-                "memory_store",
-                "update_memory_md",
-                "shell",
-                "file_write",
-                "spawn_subagent",
-                "web_search_tool",
-                "web_fetch",
-            ] {
-                assert!(
-                    !tools.iter().any(|t| t == forbidden),
-                    "flow_memory_agent must NOT have `{forbidden}` — it only \
-                     retrieves memory/context"
-                );
-            }
-        }
-        ToolScope::Wildcard => panic!("flow_memory_agent must have a Named tool scope"),
-    }
-    // Worker leaf: no onward delegation.
-    assert!(
-        def.subagents.is_empty(),
-        "flow_memory_agent is a leaf and must not list subagents"
-    );
-}
-
 #[test]
 fn chatty_sub_agents_have_bounded_output() {
-    // critic + archivist results flow up to the orchestrator verbatim
-    // (delegate_critic / delegate_archivist). Without a cap their output
-    // is unbounded and bloats the orchestrator's context (#4099). Both
-    // must carry the normal sub-agent cap so a long diff review or a
-    // verbose memory-write confirmation can't leak unbounded text.
+    // critic results flow up verbatim. Without a cap the output is
+    // unbounded and bloats the caller's context (#4099), so it must carry
+    // the normal sub-agent cap so a long diff review can't leak unbounded
+    // text.
     assert_eq!(
         find("critic").max_result_chars,
         Some(8000),
         "critic output must be bounded so reviews don't leak unbounded text up"
-    );
-    assert_eq!(
-        find("archivist").max_result_chars,
-        Some(8000),
-        "archivist output must be bounded so memory summaries stay concise"
     );
 }
 

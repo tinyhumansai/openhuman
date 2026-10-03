@@ -14,7 +14,7 @@ Under the hood, the connector layer is powered by [Composio](https://composio.de
 Once a service is connected, it shows up in four places at once:
 
 1. As an **agent tool**, the model can call it directly.
-2. As a **memory source**, [auto-fetch](../obsidian-wiki/auto-fetch.md) syncs it into the [Memory Tree](../obsidian-wiki/memory-tree.md) every twenty minutes.
+2. As a **memory source** (kind `composio`), it syncs into [memory](../memory.md) on demand and on a schedule.
 3. As a **profile signal**, your activity across services feeds your personalization.
 4. As a **trigger source**, live events (a new email, a new charge, an inbound DM) flow into the [Triggers](triggers.md) pipeline and can fire off agent actions automatically.
 
@@ -35,11 +35,11 @@ The catalog spans productivity, business, social, messaging and Google. A non-ex
 
 ## Native vs proxied
 
-Some services have **native providers**. Rust modules that know how to ingest the service into the Memory Tree directly (e.g. Gmail's native ingest path). Others are exposed as **proxied tools** only: the agent can call them, but there's no automatic ingest yet. New native providers are added as features land.
+Some services have **native providers**. Rust modules that know how to ingest the service into memory directly (e.g. Gmail's native ingest path). Others are exposed as **proxied tools** only: the agent can call them, but there's no automatic ingest yet. New native providers are added as features land.
 
 ## How connections work
 
-Click **Connect** on any integration. A browser window opens for OAuth. Once you sign in, the connection becomes active and OpenHuman starts syncing it through [auto-fetch](../obsidian-wiki/auto-fetch.md) on the next 20-minute tick.
+Click **Connect** on any integration. A browser window opens for OAuth. Once you sign in, the connection becomes active and you can add it as a [memory source](../memory.md) to sync it on a schedule.
 
 Each integration shows its current status:
 
@@ -72,7 +72,7 @@ See [MCP Servers & Skills](mcp-and-skills.md) for the full picture.
 
 Two capabilities ship native rather than as integrations because they're load-bearing for the desktop experience:
 
-- [**Voice**](../native-tools/voice.md). STT in, TTS out, plus a live Google Meet agent that joins meetings, transcribes them into your Memory Tree, and can speak back into the call.
+- [**Voice**](../native-tools/voice.md). STT in, TTS out, plus a live Google Meet agent that joins meetings, stores them as conversations in memory, and can speak back into the call.
 - [**Native tools**](../native-tools/README.md). built-in web search, web-fetch scraper, and a full filesystem/git/lint/test/grep coder toolset that the agent uses out of the box.
 
 ## Privacy boundary
@@ -86,5 +86,4 @@ See [Privacy & Security](../privacy-and-security.md) for the full boundary.
 ## See also
 
 - [Triggers](triggers.md), live events from connected integrations and how they fire agent actions.
-- [Auto-fetch from Integrations](../obsidian-wiki/auto-fetch.md)
-- [Memory Tree](../obsidian-wiki/memory-tree.md)
+- [Memory](../memory.md)

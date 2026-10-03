@@ -39,8 +39,9 @@ const ITEM = '[cmdk-item]';
  * version of this map (#5887, CodeRabbit):
  *
  *   nav.intelligence -> `/settings/intelligence`, which is itself
- *     `<Navigate to="/brain">` (settingsRouteElements.tsx:184), so it lands on
- *     `#/brain` — NOT `#/settings/intelligence` as I first wrote.
+ *     `<Navigate to="/connections?tab=brain">` (settingsRouteElements.tsx), so
+ *     it lands on the Memory page `#/connections?tab=brain` — NOT
+ *     `#/settings/intelligence` as I first wrote.
  *   nav.settings -> `/settings`, whose index is `SettingsIndexRedirect`; at the
  *     >=768px viewport Playwright runs, that is `<Navigate to="/settings/account">`
  *     (SettingsIndexRedirect.tsx:15-18). So `#/settings/account`.
@@ -53,7 +54,7 @@ const ITEM = '[cmdk-item]';
 const DESTINATIONS: Record<string, RegExp> = {
   'nav.home': /^#\/chat(?:[/?]|$)/, // /home -> /chat
   'nav.chat': /^#\/chat(?:[/?]|$)/,
-  'nav.intelligence': /^#\/brain(?:[?]|$)/, // /settings/intelligence -> /brain
+  'nav.intelligence': /^#\/connections\?.*tab=brain/, // /settings/intelligence -> Memory
   'nav.skills': /^#\/connections(?:[?]|$)/,
   'nav.activity': /^#\/settings\/notifications(?:[?]|$)/, // /activity -> here
   'nav.settings': /^#\/settings\/account(?:[?]|$)/, // /settings index -> account
@@ -118,7 +119,8 @@ test.describe('Command palette — keyboard-only selection', () => {
     // fired item 0, the test must fail.
     //
     // Start somewhere NO mapped action lands, so "the route changed" carries
-    // information. `/brain` would not do — it is nav.intelligence's landing.
+    // information. The Memory page (`/connections?tab=brain`) would not do —
+    // it is nav.intelligence's landing.
     await page.goto('/#/notifications');
     await openPalette(page);
 

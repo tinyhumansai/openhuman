@@ -20,7 +20,14 @@
 //!
 //! - **Event bus** (`bus.rs`) — `ComposioTriggerSubscriber` listens for
 //!   [`DomainEvent::ComposioTriggerReceived`] events published by the
-//!   socket transport when the backend emits `composio:trigger`.
+//!   socket transport when the backend emits `composio:trigger`; the
+//!   connection-created and config-changed subscribers keep the
+//!   integrations cache fresh.
+//!
+//! - **Memory sync** (`ops::sync`) — `composio_sync` / `run_sync_pass` read a
+//!   connection through the connector module and store the records via
+//!   `memory::sources::composio`. Scheduling is memory's (v2 source
+//!   schedules); this domain has no periodic loop.
 //!
 //! ## Socket.IO trigger flow
 //!
@@ -40,16 +47,16 @@ pub mod bus;
 pub mod catalog;
 pub mod client;
 pub mod connected_integrations;
+pub mod contract;
 pub mod contract_gate;
 pub(crate) mod direct_auth;
 pub mod execute_dispatch;
+pub(crate) mod file_store;
 pub mod googlecalendar_args;
 pub mod identity;
 pub mod identity_store;
 pub mod module_client;
 pub mod ops;
-pub mod periodic;
-pub mod profile_md;
 pub mod providers;
 pub mod schemas;
 pub mod tools;
@@ -58,18 +65,17 @@ pub mod types;
 
 pub use crate::agent::prompts::types::ConnectedIntegration;
 pub use crate::integrations::composio::providers::{ProviderUserProfile, SyncOutcome, SyncReason};
-pub use crate::memory::sync::composio::bus::{
-    register_composio_trigger_subscriber, ComposioConfigChangedSubscriber,
-    ComposioTriggerSubscriber,
-};
 pub use action_tool::ComposioActionTool;
+pub use bus::{
+    register_composio_trigger_subscriber, ComposioConfigChangedSubscriber,
+    ComposioConnectionCreatedSubscriber, ComposioTriggerSubscriber,
+};
 pub use identity::connection_identity;
 pub use ops::{
     cached_active_integrations, cached_active_integrations_including_expired, connected_set_hash,
     fetch_connected_integrations, fetch_connected_integrations_status,
     invalidate_connected_integrations_cache, FetchConnectedIntegrationsStatus,
 };
-pub use periodic::{record_sync_success, start_periodic_sync};
 pub use schemas::{
     all_controller_schemas as all_composio_controller_schemas,
     all_registered_controllers as all_composio_registered_controllers,

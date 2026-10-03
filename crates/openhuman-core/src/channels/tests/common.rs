@@ -1,5 +1,4 @@
 use crate::channels::{traits, Channel, SendMessage};
-use crate::memory::{Memory, MemoryCategory, MemoryEntry};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -67,20 +66,13 @@ pub(super) use crate::agent::bus::use_real_agent_handler;
 
 pub(super) fn make_workspace() -> TempDir {
     let tmp = TempDir::new().unwrap();
-    // Create minimal workspace files — only the bundled identity prompts
-    // plus a MEMORY.md stand-in for what the archivist would write.
+    // Create minimal workspace files — only the bundled identity prompts.
     std::fs::write(tmp.path().join("SOUL.md"), "# Soul\nBe helpful.").unwrap();
     std::fs::write(
         tmp.path().join("IDENTITY.md"),
         "# Identity\nName: OpenHuman",
     )
     .unwrap();
-    std::fs::write(
-        tmp.path().join("PROFILE.md"),
-        "# User Profile\nName: Test User",
-    )
-    .unwrap();
-    std::fs::write(tmp.path().join("MEMORY.md"), "# Memory\nUser likes Rust.").unwrap();
     tmp
 }
 
@@ -348,64 +340,6 @@ impl Tool for MockPriceTool {
         }
 
         Ok(ToolResult::success("BTC is $65,000"))
-    }
-}
-
-pub(super) struct NoopMemory;
-
-#[async_trait::async_trait]
-impl Memory for NoopMemory {
-    fn name(&self) -> &str {
-        "noop"
-    }
-
-    async fn store(
-        &self,
-        _namespace: &str,
-        _key: &str,
-        _content: &str,
-        _category: MemoryCategory,
-        _session_id: Option<&str>,
-    ) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    async fn recall(
-        &self,
-        _query: &str,
-        _limit: usize,
-        _opts: crate::memory::RecallOpts<'_>,
-    ) -> anyhow::Result<Vec<MemoryEntry>> {
-        Ok(Vec::new())
-    }
-
-    async fn get(&self, _namespace: &str, _key: &str) -> anyhow::Result<Option<MemoryEntry>> {
-        Ok(None)
-    }
-
-    async fn list(
-        &self,
-        _namespace: Option<&str>,
-        _category: Option<&MemoryCategory>,
-        _session_id: Option<&str>,
-    ) -> anyhow::Result<Vec<MemoryEntry>> {
-        Ok(Vec::new())
-    }
-
-    async fn forget(&self, _namespace: &str, _key: &str) -> anyhow::Result<bool> {
-        Ok(false)
-    }
-
-    async fn namespace_summaries(&self) -> anyhow::Result<Vec<crate::memory::NamespaceSummary>> {
-        Ok(Vec::new())
-    }
-
-    async fn count(&self) -> anyhow::Result<usize> {
-        Ok(0)
-    }
-
-    async fn health_check(&self) -> bool {
-        true
     }
 }
 

@@ -236,24 +236,6 @@ fn check_command_available(
     }
 }
 
-// ── Memory-tree DB health ────────────────────────────────────────
-
-/// Probe the memory-tree and push [`DiagnosticItem`]s.
-///
-/// - If the legacy SQLite file does not exist: `Warn` (not yet created by the
-///   embedded driver). This is an informational SQLite-artifact check, not a
-///   gate: drivers that store memory elsewhere have no `chunks.db` by design.
-/// - If a stale `.db-shm` file is present alongside the DB: `Warn`.
-/// - If the driver answered with a chunk count: `Ok`.
-/// - If it did not: `Error`.
-///
-/// The file checks are this function's own — they are `std::fs` calls about a
-/// path, and a driver has nothing to say about them. The count is
-/// `memory_chunks`, taken by the async caller: see [`MemoryChunkCount`] for
-/// why it arrives as an argument rather than being read here.
-///
-/// The driver probe always runs regardless of file existence, so a bound driver
-/// that does not use SQLite still surfaces its health here.
 pub(super) fn truncate_for_display(text: &str, max_len: usize) -> String {
     if text.chars().count() <= max_len {
         return text.to_string();

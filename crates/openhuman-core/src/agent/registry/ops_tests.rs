@@ -12,7 +12,7 @@ fn custom_agent(id: &str, enabled: bool) -> AgentRegistryEntry {
         enabled,
         model: Some("reasoning-v1".to_string()),
         system_prompt: Some("Do custom work.".to_string()),
-        tool_allowlist: vec!["memory.search".to_string()],
+        tool_allowlist: vec!["memory".to_string()],
         tool_denylist: Vec::new(),
         subagents: AgentSubagentPolicy::default(),
         tags: vec!["custom".to_string()],
@@ -23,8 +23,8 @@ fn custom_agent(id: &str, enabled: bool) -> AgentRegistryEntry {
 #[test]
 fn merge_entries_applies_default_overrides_and_filters_disabled() {
     let configured = vec![AgentRegistryEntry {
-        id: "archivist".to_string(),
-        name: "Archivist".to_string(),
+        id: "summarizer".to_string(),
+        name: "Summarizer".to_string(),
         description: "Disabled for this workspace.".to_string(),
         source: AgentRegistrySource::Default,
         enabled: false,
@@ -38,11 +38,11 @@ fn merge_entries_applies_default_overrides_and_filters_disabled() {
     }];
 
     let visible = merge_entries(&configured, false);
-    assert!(!visible.iter().any(|agent| agent.id == "archivist"));
+    assert!(!visible.iter().any(|agent| agent.id == "summarizer"));
 
     let all = merge_entries(&configured, true);
-    let archivist = all.iter().find(|agent| agent.id == "archivist").unwrap();
-    assert!(!archivist.enabled);
+    let summarizer = all.iter().find(|agent| agent.id == "summarizer").unwrap();
+    assert!(!summarizer.enabled);
 }
 
 #[test]
@@ -71,10 +71,10 @@ fn find_custom_in_config_ignores_default_source_entries() {
     let mut config = Config::default();
     config.agent_registry.entries = vec![AgentRegistryEntry {
         source: AgentRegistrySource::Default,
-        ..custom_agent("archivist", true)
+        ..custom_agent("summarizer", true)
     }];
 
-    assert!(find_custom_in_config(&config, "archivist").is_none());
+    assert!(find_custom_in_config(&config, "summarizer").is_none());
 }
 
 #[test]

@@ -377,7 +377,7 @@ pub(crate) fn validate_binding_resolvability(graph: &WorkflowGraph) -> Vec<Strin
 /// checks the custom agent registry and would reject a valid harness agent
 /// as unknown. So this gate defensively (re-)initialises the harness registry
 /// itself, same idempotent (`OnceLock`) idiom as
-/// `memory_goals::enrich::enrich`, before resolving any ref — the two planes
+/// other lazy registry users, before resolving any ref — the two planes
 /// (author-time gate and `OpenHumanAgentRunner::run_agent` at actual run
 /// time) then always see the same registry state. Second, it threads through
 /// to `agent_registry::get_agent`'s underlying config load.

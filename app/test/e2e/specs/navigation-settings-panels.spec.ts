@@ -8,8 +8,8 @@
  * Tests:
  *   N2.1 — /settings (root index)
  *   N2.2 — /settings/connections
- *   N2.3 — /settings/memory-data
- *   N2.4 — /settings/intelligence
+ *   N2.3 — /settings/memory-data (redirects to the Memory page's Documents chip)
+ *   N2.4 — /settings/intelligence (redirects to the Memory page)
  *   N2.5 — /settings/developer-options
  *   N2.6 — /settings/billing
  *   N2.7 — /settings/appearance
@@ -51,15 +51,16 @@ const PANELS: PanelCheck[] = [
     markers: ['Connections', 'Connect', 'Provider', 'Gmail', 'Telegram', 'Settings'],
   },
   {
-    // N2.3 — memory / data panel
+    // N2.3 — the v1 memory data panel is gone; the slug redirects to the
+    // Memory page's Documents chip (/connections?tab=brain&brain=documents).
     hash: '/settings/memory-data',
-    markers: ['Memory', 'Data', 'Storage', 'Export', 'Import', 'Settings'],
+    markers: ['Documents', 'Memory', 'Engine'],
   },
   {
-    // N2.4 — intelligence dashboard moved into Brain (the legacy /intelligence
-    // and /settings/intelligence routes redirect here).
-    hash: '/brain?tab=intelligence',
-    markers: ['Intelligence', 'Memory', 'Graph', 'Settings'],
+    // N2.4 — intelligence moved into the Memory page (the legacy /brain and
+    // /settings/intelligence routes redirect to /connections?tab=brain).
+    hash: '/brain',
+    markers: ['Memory', 'Engine', 'Ask'],
   },
   {
     // N2.5 — developer options

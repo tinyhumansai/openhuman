@@ -161,22 +161,17 @@ jobs:
           key: core
       - name: Build native test modules
         run: |
-          # Memory and connector tests exercise host/module seams. Supplying
+          # Connector and other module tests exercise host/module seams. Supplying
           # local native fixtures keeps them independent of GitHub's release
           # metadata API and mirrors the Rust E2E and desktop-E2E jobs.
           # tinybus validates every directory ancestor, so a container-root
           # owned directory outside the runner-owned checkout is required.
           module_root="/opt/openhuman-test-modules/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          memory_dir="$module_root/tinymemory"
           juice_dir="$module_root/tinyjuice"
           connectors_dir="$module_root/tinyconnectors"
           search_dir="$module_root/tinysearch"
           rm -rf "$module_root"
-          mkdir -p "$memory_dir" "$juice_dir" "$connectors_dir" "$search_dir"
-          bash scripts/ci-cancel-aware.sh cargo build --release \
-            --manifest-path vendor/tinymemory/crates/tinymemory-module/Cargo.toml
-          cp vendor/tinymemory/crates/tinymemory-module/target/release/libtinymemory_module.so \
-            "$memory_dir/libtinymemory_module.so"
+          mkdir -p "$juice_dir" "$connectors_dir" "$search_dir"
           bash scripts/ci-cancel-aware.sh cargo build --release \
             --manifest-path vendor/tinyjuice/crates/tinyjuice-module/Cargo.toml
           cp vendor/tinyjuice/target/release/libtinyjuice_module.so \
@@ -189,7 +184,6 @@ jobs:
             --manifest-path vendor/tinysearch/crates/tinysearch/Cargo.toml
           cp vendor/tinysearch/target/release/libtinysearch.so \
             "$search_dir/libtinysearch.so"
-          echo "TINYMEMORY_TEST_MODULE=$memory_dir/libtinymemory_module.so" >> "$GITHUB_ENV"
           echo "TINYJUICE_TEST_MODULE=$juice_dir/libtinyjuice_module.so" >> "$GITHUB_ENV"
           echo "TINYCONNECTORS_TEST_MODULE=$connectors_dir/libtinyconnectors.so" >> "$GITHUB_ENV"
           echo "TINYSEARCH_TEST_MODULE=$search_dir/libtinysearch.so" >> "$GITHUB_ENV"

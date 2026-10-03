@@ -20,8 +20,8 @@ vi.mock('react-router-dom', async importOriginal => {
   return { ...actual, useNavigate: () => navigateMock };
 });
 
-vi.mock('../../../components/settings/panels/MemoryDataPanel', () => ({
-  default: () => <div data-testid="memory-data-panel">Memory Data Panel</div>,
+vi.mock('../../../components/memory/MemoryEngineSetup', () => ({
+  default: () => <div data-testid="memory-engine-setup">Memory Engine Setup</div>,
 }));
 
 vi.mock('../../../providers/CoreStateProvider', () => ({
@@ -64,7 +64,7 @@ describe('VaultSetupStep', () => {
   it('forces configure mode and hides chooser cards for local sessions', () => {
     renderPage();
 
-    expect(screen.getByTestId('memory-data-panel')).toBeInTheDocument();
+    expect(screen.getByTestId('memory-engine-setup')).toBeInTheDocument();
     expect(screen.queryByTestId('onboarding-custom-vault-step-default')).not.toBeInTheDocument();
     expect(screen.queryByTestId('onboarding-custom-vault-step-configure')).not.toBeInTheDocument();
   });

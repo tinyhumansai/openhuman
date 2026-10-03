@@ -131,15 +131,6 @@ pub enum ExpectedErrorKind {
     LoopbackUnavailable,
     PromptInjectionBlocked,
     ContextWindowExceeded,
-    /// The memory-store chunk DB's per-path circuit breaker is currently open
-    /// because too many consecutive SQLite init attempts failed. This is the
-    /// breaker doing its job — it opened *after* the underlying transient
-    /// SQLite I/O errors (typically Windows `xShmMap` / `unable to open
-    /// database file` against `chunks.db`, see `is_sqlite_io_transient` /
-    /// `is_io_open_error`) hit a threshold, and it self-resolves once the
-    /// reset window elapses and a subsequent init succeeds.
-    ///
-    MemoryStoreBreakerOpen,
     // (WhatsApp structured-ingest SQLite busy/corrupt classifiers were removed
     // when that store moved to the Tauri shell; the store itself is gone now —
     // its only writer was the CDP scanner deleted in #5478 — so no build
@@ -366,33 +357,6 @@ pub enum ExpectedErrorKind {
     /// [`crate::web3::wallet::WALLET_NOT_CONFIGURED_MESSAGE`]
     /// constant so producer and classifier cannot drift.
     WalletNotConfigured,
-    /// The memory store refused a write because the caller-supplied
-    /// **namespace / key** failed a boundary check — it carries secret-shaped
-    /// text, or it trimmed to empty. The rejection is deterministic in the
-    /// caller's own input (`memory_store::namespace_store::documents`,
-    /// `namespace_store::fts5`, the tinycortex KV store): the same call retried
-    /// with the same identifier fails identically, so every retry produced
-    /// another `report_error_or_expected` capture through the RPC dispatcher.
-    /// That is how the PII variant of this family reached 3,055 events from a
-    /// single user in one day (TAURI-RUST-QWW, #5164) — the flood was retry
-    /// volume, not 3,055 distinct defects.
-    ///
-    /// The PII half of the family no longer rejects at all: those identifiers
-    /// are canonicalized on write and on read (see
-    /// [`tinymemory_core::store::safety::canonical_identifier`]). This
-    /// arm covers the rejections that remain deliberate — a secret must never
-    /// be persisted as a storage address (#4947), and an empty key has no row
-    /// to address — and keeps their retry volume out of the error stream.
-    /// Sentry has no remediation path either way: the fix is the caller passing
-    /// a stable opaque identifier, which is a code change in the calling sync
-    /// provider, not a signal that repeats per attempt.
-    ///
-    /// Anchored on the store's own rejection wording (`"cannot contain
-    /// secrets"` / `"document key cannot be empty"` scoped to a
-    /// document/kv/episodic subject) so unrelated failures on the same write
-    /// path — SQLite errors, embedding failures, sidecar IO — still reach
-    /// Sentry as errors.
-    MemoryIdentifierRejected,
 }
 
 pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
@@ -463,16 +427,6 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     // ordering here is for clarity rather than precedence.
     if is_wallet_not_configured_message(&lower) {
         return Some(ExpectedErrorKind::WalletNotConfigured);
-    }
-    // TAURI-RUST-QWW (#5164) — the memory store rejected a write because the
-    // caller's namespace/key failed a boundary check. Deterministic in the
-    // caller's input, so the same call retried fails identically and each retry
-    // captured another event (3,055 events / 1 user / 1 day). Highly specific
-    // anchors, checked before the generic matchers; see
-    // `is_memory_identifier_rejection_message` and
-    // `ExpectedErrorKind::MemoryIdentifierRejected`.
-    if is_memory_identifier_rejection_message(&lower) {
-        return Some(ExpectedErrorKind::MemoryIdentifierRejected);
     }
     if lower.contains("local ai is disabled") {
         return Some(ExpectedErrorKind::LocalAiDisabled);
@@ -658,9 +612,6 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if tinyinference_llm::failure::is_context_window_exceeded_message(message) {
         return Some(ExpectedErrorKind::ContextWindowExceeded);
     }
-    if is_memory_store_breaker_open(&lower) {
-        return Some(ExpectedErrorKind::MemoryStoreBreakerOpen);
-    }
     if is_disk_full_message(&lower) {
         return Some(ExpectedErrorKind::DiskFull);
     }
@@ -720,21 +671,19 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
 /// A fifth shape comes from SQLite itself. When the engine detects the
 /// disk-full condition during its own page bookkeeping (journal/WAL extension)
 /// before the next syscall surfaces an errno, rusqlite renders the `SQLITE_FULL`
-/// result code as `"database or disk is full"` (Sentry TAURI-RUST-B6N, hit at
-/// `memory_store::namespace_store::documents::tx.commit()` during
-/// `openhuman.memory_doc_ingest`). `SQLITE_FULL` has only two causes:
+/// result code as `"database or disk is full"` (Sentry TAURI-RUST-B6N, hit
+/// while committing a local SQLite transaction). `SQLITE_FULL` has only two causes:
 /// genuine ENOSPC/ERROR_DISK_FULL (always the case in practice — the same
 /// burst always produces an os-error-28/112 sibling event) or a
 /// `max_page_count` PRAGMA cap (we set none).
 ///
 /// rusqlite renders `SQLITE_FULL` in one of two shapes. The **bare** shape is
-/// the five words `"database or disk is full"` — Our local memory-store write
-/// call-sites wrap it with `format!("<verb>: {e}")` (e.g. `"commit tx: ..."` /
-/// `"clear_namespace commit tx: ..."` in `memory_store::namespace_store::documents`),
+/// the five words `"database or disk is full"` — Our local SQLite write
+/// call-sites wrap it with `format!("<verb>: {e}")` (e.g. `"commit tx: ..."`),
 /// so the phrase lands as the **suffix** of the local emit. The **extended**
 /// shape carries the full error-code envelope, `"database or disk is full:
 /// Error code 13: Insertion failed because database is full"` (Sentry
-/// TAURI-RUST-4R8, `memory_queue::store::claim_next` on `mem_tree_jobs`); here
+/// TAURI-RUST-4R8, a local job-queue claim); here
 /// the canonical phrase sits mid-string, so the suffix anchor can't catch it.
 /// We detect this shape by requiring **both** local fragments together — the
 /// `"database or disk is full"` phrase AND the libsqlite3-sys `code_to_str`
@@ -939,26 +888,6 @@ fn is_embedding_model_rejected(lower: &str) -> bool {
     tinyinference_embeddings::probe::is_embedding_model_rejected(lower)
 }
 
-/// Detect the memory-store chunk DB's circuit-breaker-open message that
-/// `memory_store::chunks::store::get_or_init_connection` emits via
-/// `anyhow::bail!` when the per-path breaker rejects new init attempts.
-///
-/// Canonical wire shape (after the `chunk aggregates: …` context wrap added by
-/// `memory_tree::tree::rpc::pipeline_status_rpc`):
-///
-/// ```text
-/// chunk aggregates: [memory_tree] circuit breaker open for <path>: too many consecutive init failures
-/// ```
-///
-/// The `[memory_tree]` tag is the anchor — it's specific to the chunk-store
-/// emit site and won't collide with unrelated "circuit breaker" mentions in
-/// other domains (provider reliability layer logs, doc strings, …). The
-/// `circuit breaker open` substring is required so a log line that merely
-/// mentions the `[memory_tree]` prefix doesn't get swallowed.
-fn is_memory_store_breaker_open(lower: &str) -> bool {
-    lower.contains("[memory_tree]") && lower.contains("circuit breaker open")
-}
-
 /// Detect **app-session-expired** boundary errors that bubble up from any
 /// backend-touching call site (agent, web channel, cron, integrations).
 ///
@@ -1103,38 +1032,6 @@ fn is_mcp_server_needs_auth_message(lower: &str) -> bool {
 /// See [`ExpectedErrorKind::WalletNotConfigured`].
 fn is_wallet_not_configured_message(lower: &str) -> bool {
     lower.contains(crate::web3::wallet::WALLET_NOT_CONFIGURED_MESSAGE)
-}
-
-/// Detect a memory-store **identifier** rejection: the caller's namespace/key
-/// (or episodic `session_id`/`role`) failed a write-boundary check.
-///
-/// Matches the store's own rejection wording, verbatim and subject-scoped:
-///   - `document namespace/key cannot contain secrets`
-///     (`namespace_store::documents`, both upsert paths)
-///   - `document key cannot be empty` (same paths, post-trim)
-///   - `kv key cannot contain secrets` / `kv namespace/key cannot contain
-///     secrets` (`tinycortex::memory::store::kv`)
-///   - `episodic session_id/role cannot contain secrets`
-///     (`namespace_store::fts5`)
-///   - the retired `… cannot contain personal identifiers` wording, so a client
-///     still running a pre-#5164 core (the releases the flood came from) is
-///     demoted too
-///
-/// Requiring the subject prefix (`document` / `kv` / `episodic`) keeps the
-/// demotion inside the memory store: a real defect on the same write path —
-/// SQLite failure, embedding provider error, markdown sidecar IO — carries none
-/// of these bodies and still reaches Sentry as an error. See
-/// [`ExpectedErrorKind::MemoryIdentifierRejected`].
-fn is_memory_identifier_rejection_message(lower: &str) -> bool {
-    let rejects_identifier = lower.contains("cannot contain secrets")
-        || lower.contains("cannot contain personal identifiers")
-        || lower.contains("key cannot be empty");
-    rejects_identifier
-        && (lower.contains("document namespace/key")
-            || lower.contains("document key")
-            || lower.contains("kv key")
-            || lower.contains("kv namespace/key")
-            || lower.contains("episodic session_id/role"))
 }
 
 /// Detect the "a configured provider has no API key" user-config state.
@@ -2119,24 +2016,6 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                  error (message withheld: the wrapper around the sentinel is caller-supplied)"
             );
         }
-        ExpectedErrorKind::MemoryIdentifierRejected => {
-            // The memory store refused a write whose namespace/key failed a
-            // boundary check (secret-shaped, or empty after trim). Deterministic
-            // in the caller's input: retrying the same call rejects again, so
-            // this repeats at the caller's retry rate rather than carrying new
-            // signal each time (TAURI-RUST-QWW: 3,055 events / 1 user / 1 day,
-            // #5164). The remedy is the calling sync provider passing a stable
-            // opaque identifier — a code change, not a per-attempt signal — so
-            // demote to warn: the breadcrumb survives for triage, no error event
-            // fires.
-            tracing::warn!(
-                domain = domain,
-                operation = operation,
-                kind = "memory_identifier_rejected",
-                error = %message,
-                "[observability] {domain}.{operation} skipped expected memory identifier rejection: {message}"
-            );
-        }
         ExpectedErrorKind::ProviderConfigRejection => {
             // User-config state: a custom cloud provider rejected the
             // request because of the user's model / parameter setup — an
@@ -2292,14 +2171,6 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 operation = operation,
                 kind = "windows_file_system_limitation",
                 "[observability] {domain}.{operation} skipped expected Windows file-system-limitation error (os error 665)"
-            );
-        }
-        ExpectedErrorKind::MemoryStoreBreakerOpen => {
-            tracing::warn!(
-                domain = domain,
-                operation = operation,
-                kind = "memory_store_breaker_open",
-                "[observability] {domain}.{operation} skipped expected memory-store circuit-breaker-open error"
             );
         }
         ExpectedErrorKind::FilesystemUserPathInvalid => {

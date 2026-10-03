@@ -22,8 +22,8 @@ OpenHuman is a **React + Tauri v2 desktop app** with a **Rust core** doing the h
                      │ JSON-RPC (loopback HTTP) ↕
 ┌──────────────────────────────────────────────────────────────────┐
 │ Rust core (crates/openhuman-core/, binary `openhuman-core`)      │
-│ • Memory Tree pipeline                                           │
-│ • Integration adapters + auto-fetch scheduler                    │
+│ • Memory v2 (engine binding, recall/fetch/store, context.md)     │
+│ • Integration adapters + memory source sync                      │
 │ • Provider router (model routing)                                │
 │ • TokenJuice compression                                         │
 │ • Native tools (search, fetch, fs, git, …)                       │
@@ -40,7 +40,7 @@ OpenHuman is a **React + Tauri v2 desktop app** with a **Rust core** doing the h
 
 **Where logic lives:**
 
-- **Rust core**. All business logic: Memory Tree, integrations, model routing, tools, voice. Authoritative.
+- **Rust core**. All business logic: Memory, integrations, model routing, tools, voice. Authoritative.
 - **Tauri shell**. Windowing, process lifecycle, IPC. A delivery vehicle, not where features live.
 - **React frontend**. UI and orchestration. Calls into core via JSON-RPC: `coreRpcClient` `fetch()`es `http://127.0.0.1:<port>/rpc` directly; only non-loopback plain-`http://` runtimes go through the shell's `relay_http_rpc` command (the `openhuman-rpc` HTTP client).
 
@@ -59,13 +59,13 @@ The full table is under "Repository layout" in the [deep architecture reference]
 ## Data flow
 
 1. **Connect**. OAuth into an [integration](../../features/integrations/README.md). Backend stores the token; core never sees it in plaintext.
-2. **Auto-fetch**. Every twenty minutes the [scheduler](../../features/obsidian-wiki/auto-fetch.md) walks every active connection and asks each native provider to sync.
-3. **Canonicalize**. Provider output (an email page, a GitHub diff, a Slack channel dump) is normalized into provenance-tagged Markdown.
-4. **Chunk**. Markdown is split into ≤3k-token deterministic chunks.
-5. **Store**. Chunks land in SQLite (`<workspace>/memory_tree/chunks.db`) and as `.md` files in `<workspace>/wiki/`.
-6. **Score**. Background workers run embeddings, entity extraction, hotness scoring.
-7. **Summarize**. Source / topic / global summary trees are built and refreshed from the chunk pool.
-8. **Retrieve**. When you ask a question, the agent queries the Memory Tree (search / drill down / topic / global / fetch).
+2. **Sync**. A [memory source](../../features/memory.md) (folder, file, link, GitHub, RSS, or a connected Composio toolkit) syncs on demand and on its own schedule.
+3. **Read**. `tinymemory-sources` turns the source into documents, with an SSRF guard on links.
+4. **Scrub**. `tinymemory-safety` removes secrets and personal identifiers from every item.
+5. **Store**. The item goes to the selected engine (hosted TinyHumans or your CortexDB). Conversations are stored after every few turns, learnings when the agent or you add one.
+6. **Recall / Fetch**. The agent's `memory` tool asks the engine a question (with citations) or runs a raw hybrid search.
+7. **Context**. `context.md` is compiled on a schedule and injected into new chats only.
+8. **Forget**. Items are removed by id from the Memory page or the tool.
 9. **Compress**. Tool output and large source data go through [TokenJuice](../../features/token-compression.md) before entering LLM context.
 10. **Route**. The [router](../../features/model-routing/) picks the right provider and model for the task hint, one of several [pluggable engines](../engines.md) the core chooses at runtime.
 
@@ -73,8 +73,7 @@ The full table is under "Repository layout" in the [deep architecture reference]
 
 Stays on your machine:
 
-- The Memory Tree SQLite DB.
-- The Obsidian Markdown vault.
+- Workspace config and `memory/context.md` (the compiled brief).
 - Audio capture buffers and any local model state.
 
 Goes through the OpenHuman backend (under one subscription, and one TinyHumans API key for embedders):

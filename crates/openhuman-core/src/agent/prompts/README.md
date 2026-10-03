@@ -8,12 +8,10 @@ domains use to compose their own prompts.
 ## Public surface (from `mod.rs`)
 
 - `types::*`: `PromptContext`, `PromptSection` trait, `PromptTier`,
-  `PromptTool`, `ToolCallFormat`, `LearnedContextData`, `UserIdentity`,
-  `ConnectedIntegration`, `NamespaceSummary`, `SubagentRenderOptions`. Pure
-  data, no rendering logic. Also holds the `pub(crate)` caps
-  `BOOTSTRAP_MAX_CHARS` (20K, for `SOUL.md`/`IDENTITY.md`/`ROLE.md` and each
-  `AGENTS.md` layer) and `USER_FILE_MAX_CHARS` (2K, for `PROFILE.md`,
-  `MEMORY.md` and the snapshot `USER.md` block).
+  `PromptTool`, `ToolCallFormat`, `UserIdentity`, `ConnectedIntegration`,
+  `SubagentRenderOptions`. Pure data, no rendering logic. Also holds the
+  `pub(crate)` cap `BOOTSTRAP_MAX_CHARS` (20K, for
+  `SOUL.md`/`IDENTITY.md`/`ROLE.md` and each `AGENTS.md` layer).
 - `render_connected_identities` (`connected_identities.rs`): best-effort,
   sync render of the `## Connected Identities` block. It reads through the
   bound memory driver via `block_in_place` and returns empty when there is no
@@ -25,8 +23,7 @@ domains use to compose their own prompts.
   assembles ordered `PromptSection`s into a final prompt string (or a
   `TieredPrompt` with cache-breakpoint offsets).
 - `sections::*`: the concrete `PromptSection` structs (`IdentitySection`,
-  `ToolsSection`, `SafetySection`, `UserFilesSection`, `UserMemorySection`,
-  `UserReflectionsSection`, `UserIdentitySection`, `WorkspaceSection`,
+  `ToolsSection`, `SafetySection`, `UserIdentitySection`, `WorkspaceSection`,
   `DateTimeSection`, `RuntimeSection`, `AgentsInstructionsSection`,
   `PersonalityRosterSection`, `ArchetypePromptSection`,
   `DynamicPromptSection`, `GroundingSection`).
@@ -35,9 +32,8 @@ domains use to compose their own prompts.
   `workspace_files.rs`): free `render_*` functions (thin wrappers over the
   section structs), the workspace-file helpers
   (`inject_workspace_file[_capped]`, `inject_inline_content`,
-  `inject_snapshot_content`, `sync_workspace_file`,
-  `default_workspace_file_content`), `current_datetime_line`,
-  `memory_date_label`, and the sub-agent renderer
+  `sync_workspace_file`, `default_workspace_file_content`),
+  `current_datetime_line`, and the sub-agent renderer
   (`render_subagent_system_prompt[_with_format]`). These let a caller
   assemble a prompt by calling functions directly instead of going through
   `SystemPromptBuilder`.
@@ -66,9 +62,12 @@ as `GLOBAL_STYLE_SUFFIX`. There are two uses:
 
 `USER.md` is different: nothing in this module reads it. It is exposed as the
 `openhuman://prompts/user` MCP resource by `mcp/server/resources.rs`
-(`include_str!("../../agent/prompts/USER.md")`). The `USER.md` block that
-appears in prompts comes from the curated-memory snapshot
-(`CuratedMemoryPromptSnapshot.user`), not from this file.
+(`include_str!("../../agent/prompts/USER.md")`).
+
+The user's memory is not part of the system prompt: memory v2 injects the
+compiled `context.md` as the first user message of a new session (gated by
+`AgentDefinition::omit_memory_context`), and agents reach anything deeper
+through the `memory` tool.
 
 Editing these files changes the shipped default agent's persona and style
 without a code change.
@@ -83,11 +82,6 @@ module for this API.
 
 Other domains contribute prompt content without living in this directory:
 
-- `agent/learning/prompt_sections.rs`: `LearnedContextSection`,
-  `UserProfileSection`, `MemoryAccessSection`, `MemoryWriteSection`
-  (`PromptSection` impls, config-gated; `agent/session_host/builder/factory.rs`
-  and `.../builder/helpers.rs` append them with `add_section` /
-  `insert_section_before` when learning or explicit preferences are enabled).
 - `tools/agent_policy/prompt.rs`: `render_tool_policy_boundary` is not a
   section. `agent/session_host/turn/context.rs` string-appends its
   `## Tool Policy Boundary` block after the builder output so the
@@ -103,8 +97,7 @@ and so on) live in `agent/registry/agents/<name>/prompt.rs` and
 ## Builder entry points
 
 - `SystemPromptBuilder::with_defaults()`: the primary-agent chain (identity,
-  user files, `AGENTS.md`, user memory, tools, safety, workspace, datetime,
-  runtime).
+  `AGENTS.md`, tools, safety, workspace, datetime, runtime).
 - `SystemPromptBuilder::for_subagent(archetype_prompt_text, omit_identity,
   omit_safety_preamble)`: narrow chain driven by a sub-agent definition's
   `omit_*` flags. It deliberately excludes `DateTimeSection` so repeat spawns
@@ -129,27 +122,25 @@ prefix cache hits. `PromptSection::tier()` (`PromptTier::Stable` / `Context` /
 `PromptSection::build_parts` and its parts are bucketed by tier. Stable bytes
 (identity, rules, tool protocol, datetime rules, the shared grounding contract
 and `STYLE.md`) come first, then per-session context (`AGENTS.md`, workspace,
-model-gated execution discipline), then volatile bytes (user files, memory,
-reflections, standing preferences, installed skills, connected integrations
-and MCP servers) last.
+model-gated execution discipline), then volatile bytes (the signed-in user,
+installed skills, connected integrations and MCP servers) last.
 
 A `PromptSource::Dynamic` builder declares its own tiers by emitting
 `PROMPT_TIER_CONTEXT_MARKER` / `PROMPT_TIER_VOLATILE_MARKER` on their own lines
 (`split_prompt_tiers`); a builder that emits neither stays wholly `Volatile`.
 The orchestrator does this so its identity and rules lead the stable tier
-instead of trailing the memory sections.
+instead of trailing the volatile sections.
 
 `TieredPrompt::system_messages()` hands the session one system message for
 `Stable + Context` and a second for `Volatile`. The tinyagents harness gives
 each leading system message its own cacheable segment
-(`PromptBuilder::push_system_messages`), so a rewritten memory file or a newly
+(`PromptBuilder::push_system_messages`), so a newly
 connected service changes the second segment and leaves the first
 byte-identical (`system`, `system.1`). A prefix is reusable only up to the first differing
 byte, so a volatile section rendered early invalidates every stable byte
-behind it. Two consequences are visible in this module: `DateTimeSection`
+behind it. One consequence is visible in this module: `DateTimeSection`
 renders only the clock *rules* and is `Stable` (the live timestamp rides the
-user message via `current_datetime_line`), and `memory_date_label` renders
-`NamespaceSummary.updated_at` as an absolute date rather than "N days ago".
+user message via `current_datetime_line`).
 
 ## Used by
 
@@ -157,7 +148,7 @@ user message via `current_datetime_line`), and `memory_date_label` renders
   connected identities into `PromptContext`, calls the builder, and appends
   the tool-policy boundary.
 - `agent/session_host/builder/factory.rs`: picks the entry point per
-  `PromptSource` and registers the learning/profile sections.
+  `PromptSource`.
 - `agent/debug/`: `dump_agent_prompt` / `dump_all_agent_prompts` (`mod.rs`)
   build the same `PromptContext` to render each agent's prompt,
   `dump_writer.rs` writes it to disk, `prompt_size.rs` measures it.

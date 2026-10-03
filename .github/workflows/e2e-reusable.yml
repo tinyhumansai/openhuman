@@ -157,33 +157,6 @@ jobs:
           # Appium builds; install idempotently and ignore "already installed".
           bash scripts/ci-cancel-aware.sh appium driver install --source=npm appium-chromium-driver >/dev/null 2>&1 || true
 
-      - name: Install checksum-pinned TinyMemory test module
-        run: |
-          # Keep memory E2E independent of the GitHub release-metadata API.
-          # tinybus validates every directory ancestor, so the fixture must
-          # live outside the runner-owned checkout in this root-run container.
-          # Version and digest are ONE decision and live on adjacent lines for that
-          # reason: the archive name, the release tag and the checksum each used to
-          # carry the version independently, so a bump could update two of the three
-          # and leave a stale digest that only fails after the download. Both values
-          # are the ubuntu-22.04-x86_64 row of `crates/openhuman-core/src/modules/registry.rs`,
-          # which is the authoritative pin — copy them from there, never recompute.
-          memory_version="1.22.4"
-          memory_sha256="52b364047b1a7aaf287d5bb17840fcda20547286f3db98211bfe1d9962518ee9"
-          module_root="/opt/openhuman-test-modules/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          memory_dir="$module_root/tinymemory"
-          memory_archive="$memory_dir/tinymemory-module-${memory_version}-ubuntu-22.04-x86_64.tar.gz"
-          rm -rf "$memory_dir"
-          mkdir -p "$memory_dir"
-          curl --fail --location --silent --show-error --retry 4 --retry-delay 2 \
-            "https://github.com/tinyhumansai/tinymemory/releases/download/v${memory_version}/$(basename "$memory_archive")" \
-            --output "$memory_archive"
-          echo "${memory_sha256}  $memory_archive" \
-            | sha256sum --check
-          tar --no-same-owner -xzf "$memory_archive" -C "$memory_dir"
-          echo "TINYMEMORY_TEST_MODULE=$memory_dir/libtinymemory_module.so" \
-            >> "$GITHUB_ENV"
-
       - name: Build E2E app
         run: bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app test:e2e:build
 
@@ -364,35 +337,18 @@ jobs:
 
       - name: Install native E2E test modules
         run: |
-          # Every shard resets memory and calls Composio RPCs. Supply both
-          # modules so the packaged app never depends on release metadata or
-          # a runner-owned cache while tests are running.
-          # Version and digest are ONE decision and live on adjacent lines for that
-          # reason: the archive name, the release tag and the checksum each used to
-          # carry the version independently, so a bump could update two of the three
-          # and leave a stale digest that only fails after the download. Both values
-          # are the ubuntu-22.04-x86_64 row of `crates/openhuman-core/src/modules/registry.rs`,
-          # which is the authoritative pin — copy them from there, never recompute.
-          memory_version="1.22.4"
-          memory_sha256="52b364047b1a7aaf287d5bb17840fcda20547286f3db98211bfe1d9962518ee9"
+          # Every shard calls Composio RPCs. Supply the connectors module
+          # (built from the checked-out submodule) so the packaged app never
+          # depends on release metadata or a runner-owned cache while tests
+          # are running.
           module_root="/opt/openhuman-test-modules/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          memory_dir="$module_root/tinymemory"
           connectors_dir="$module_root/tinyconnectors"
-          memory_archive="$memory_dir/tinymemory-module-${memory_version}-ubuntu-22.04-x86_64.tar.gz"
-          rm -rf "$memory_dir" "$connectors_dir"
-          mkdir -p "$memory_dir" "$connectors_dir"
-          curl --fail --location --silent --show-error --retry 4 --retry-delay 2 \
-            "https://github.com/tinyhumansai/tinymemory/releases/download/v${memory_version}/$(basename "$memory_archive")" \
-            --output "$memory_archive"
-          echo "${memory_sha256}  $memory_archive" \
-            | sha256sum --check
-          tar --no-same-owner -xzf "$memory_archive" -C "$memory_dir"
+          rm -rf "$connectors_dir"
+          mkdir -p "$connectors_dir"
           bash scripts/ci-cancel-aware.sh cargo build --release \
             --manifest-path vendor/tinyconnectors/crates/tinyconnectors/Cargo.toml
           cp vendor/tinyconnectors/target/release/libtinyconnectors.so \
             "$connectors_dir/libtinyconnectors.so"
-          echo "TINYMEMORY_TEST_MODULE=$memory_dir/libtinymemory_module.so" \
-            >> "$GITHUB_ENV"
           echo "TINYCONNECTORS_TEST_MODULE=$connectors_dir/libtinyconnectors.so" \
             >> "$GITHUB_ENV"
 
@@ -487,34 +443,23 @@ jobs:
           # fixture outside the checkout owned by the host runner.
           # Version and digest are the ubuntu-22.04-x86_64 registry pin; do
           # not derive a replacement checksum from a local build.
-          memory_version="1.22.4"
-          memory_sha256="52b364047b1a7aaf287d5bb17840fcda20547286f3db98211bfe1d9962518ee9"
           juice_version="0.5.2"
           juice_sha256="1a9bc9479ce51c87d82a6f145408cfcbe7d06de4613b0ca7cec1fd04bbc2b5b5"
           module_root="/opt/openhuman-test-modules/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          memory_dir="$module_root/tinymemory"
           juice_dir="$module_root/tinyjuice"
           connectors_dir="$module_root/tinyconnectors"
-          memory_archive="$memory_dir/tinymemory-module-${memory_version}-ubuntu-22.04-x86_64.tar.gz"
           juice_archive="$juice_dir/tinyjuice-module-${juice_version}-ubuntu-22.04-x86_64.tar.gz"
-          rm -rf "$memory_dir" "$juice_dir" "$connectors_dir"
-          mkdir -p "$memory_dir" "$juice_dir" "$connectors_dir"
-          curl --fail --location --silent --show-error --retry 4 --retry-delay 2 \
-            "https://github.com/tinyhumansai/tinymemory/releases/download/v${memory_version}/$(basename "$memory_archive")" \
-            --output "$memory_archive"
+          rm -rf "$juice_dir" "$connectors_dir"
+          mkdir -p "$juice_dir" "$connectors_dir"
           curl --fail --location --silent --show-error --retry 4 --retry-delay 2 \
             "https://github.com/tinyhumansai/tinyjuice/releases/download/v${juice_version}/$(basename "$juice_archive")" \
             --output "$juice_archive"
-          echo "${memory_sha256}  $memory_archive" | sha256sum --check
           echo "${juice_sha256}  $juice_archive" | sha256sum --check
-          tar --no-same-owner -xzf "$memory_archive" -C "$memory_dir"
           tar --no-same-owner -xzf "$juice_archive" -C "$juice_dir"
           bash scripts/ci-cancel-aware.sh cargo build --release \
             --manifest-path vendor/tinyconnectors/crates/tinyconnectors/Cargo.toml
           cp vendor/tinyconnectors/target/release/libtinyconnectors.so \
             "$connectors_dir/libtinyconnectors.so"
-          echo "TINYMEMORY_TEST_MODULE=$memory_dir/libtinymemory_module.so" \
-            >> "$GITHUB_ENV"
           echo "TINYJUICE_TEST_MODULE=$juice_dir/libtinyjuice_module.so" \
             >> "$GITHUB_ENV"
           echo "TINYCONNECTORS_TEST_MODULE=$connectors_dir/libtinyconnectors.so" \

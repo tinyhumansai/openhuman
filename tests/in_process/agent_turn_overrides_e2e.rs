@@ -27,7 +27,6 @@
 
 use crate::env_guard::env_lock_async;
 use crate::env_guard::EnvVarGuard;
-use crate::noop_memory;
 use async_trait::async_trait;
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -259,7 +258,6 @@ fn agent_with(
     OpenHumanSessionHost::builder()
         .chat_model(model)
         .tools(tools)
-        .memory(noop_memory::noop_memory())
         .tool_dispatcher(dispatcher)
         .workspace_dir(workspace_path)
         .event_context("turn-overrides-session", "turn-overrides-channel")
@@ -274,8 +272,6 @@ fn agent_with(
             ..AgentConfig::default()
         })
         .context_config(ContextConfig::default())
-        .auto_save(true)
-        .explicit_preferences_enabled(false)
         .build()
         .expect("build agent")
 }

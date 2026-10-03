@@ -94,7 +94,7 @@ async fn registry_extension_is_gated_by_its_domain_group() {
 
     let mut domains = DomainSet::full();
     domains.hosted = false;
-    let ctx = CoreContext::for_test(domains, None, None);
+    let ctx = CoreContext::for_test(domains, None);
     let hidden = CoreContext::scope(ctx, async {
         (
             try_invoke_registered_rpc("openhuman.ext_gate_ping", Map::new())

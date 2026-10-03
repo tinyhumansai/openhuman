@@ -463,7 +463,7 @@ async fn thread_update_title_rejects_empty_and_whitespace_only_titles() {
     let _workspace_guard = EnvVarGuard::set("OPENHUMAN_WORKSPACE", workspace.path());
 
     for title in ["", "   "] {
-        let err = thread_update_title(crate::memory::UpdateConversationThreadTitleRequest {
+        let err = thread_update_title(crate::threads::UpdateConversationThreadTitleRequest {
             thread_id: "t-1".to_string(),
             title: title.to_string(),
         })

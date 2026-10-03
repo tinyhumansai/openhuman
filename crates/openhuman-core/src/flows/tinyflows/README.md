@@ -63,8 +63,12 @@ security model); this README covers only the host seam.
   pair as the other acting adapters (`CommandClass::Read` for
   `recall`/`search`/`flavour`/`people`, `CommandClass::Write` for
   `remember`/`forget`); `remember`/`forget` hard-refuse any scope other than
-  `"flow"`, and `scope: "flow"` shares the `flow_namespace` the
-  `flow_memory_*` agent tools use.
+  `"flow"`. Scopes are memory v2 tag filters: `user` reads everything,
+  `flow` reads the run's own `flow:<id>` items, `flows` reads every flow's
+  items (tag `flows`) — the same tags the `flow_memory_*` agent tools use.
+  `recall` returns the engine's answer plus citations, `search` raw hits;
+  `flavour` and `people` are unsupported in v2 (unknown slug / empty
+  listing).
 - `observability.rs`: `tinyflows::observability::RunObserver` impls:
   `FlowRunObserver`, which persists live
   steps via `flows::upsert_flow_run_step` and publishes
@@ -100,7 +104,6 @@ new origin wrapper.
 `tinyflows_tests.rs` (capability-seam smoke tests against the real engine;
 note the real `HttpRequestTool` blocks loopback, so HTTP coverage asserts the
 SSRF/allowlist rejections rather than a mock round-trip),
-`memory_node_e2e_tests.rs` (the `memory` node through the real engine,
-adapter, and on-disk store; kept apart from `tinyflows_tests.rs` because the
-unit tests only exercise error paths against an empty workspace), plus a
-`<module>_tests.rs` file beside most modules above.
+`memory_adapter_tests.rs` (the `memory` node adapter against an in-memory
+reference engine), plus a `<module>_tests.rs` file beside most modules
+above.

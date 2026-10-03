@@ -149,3 +149,94 @@ test("forget rejects unsupported selectors and scopes ID deletion", async () => 
   const otherScope = await call("POST", "/memory/recall", { scope: "scope-b" });
   assert.equal(otherScope.json.data.layers.events.length, 1);
 });
+
+const writeLabelled = (scope, key, text, labels, role = "user") =>
+  call("POST", "/memory/experience", {
+    scope,
+    idempotency_key: key,
+    modality: "observation",
+    content: { kind: "message", role, text },
+    context: { labels },
+  });
+
+test("events keep context labels and the labels filter keeps any match", async () => {
+  await writeLabelled("s", "k1", "alpha", ["item:a"]);
+  await writeLabelled("s", "k2", "beta", ["item:b"]);
+  await writeLabelled("s", "k3", "gamma", ["item:c", "item:a"]);
+  const all = await call("GET", "/memory/events?scope=s&limit=50");
+  assert.equal(all.json.data.items.length, 6, "every event is emitted twice");
+  const some = await call("GET", "/memory/events?scope=s&labels=item%3Aa%2Citem%3Ab");
+  const ids = new Set(some.json.data.items.map((e) => e.id));
+  assert.deepEqual([...ids].sort(), ["evt_1", "evt_2", "evt_3"]);
+  const onlyB = await call("GET", "/memory/events?scope=s&labels=item%3Ab");
+  assert.deepEqual([...new Set(onlyB.json.data.items.map((e) => e.id))], ["evt_2"]);
+  assert.deepEqual(onlyB.json.data.items[0].context.labels, ["item:b"]);
+});
+
+test("events/:id returns one event and 404s an unknown id", async () => {
+  await writeLabelled("s", "k1", "alpha", ["item:a"]);
+  const hit = await call("GET", "/memory/events/evt_1");
+  assert.equal(hit.status, 200);
+  assert.equal(hit.json.data.content.text, "alpha");
+  const miss = await call("GET", "/memory/events/evt_99");
+  assert.equal(miss.status, 404);
+  assert.equal(miss.json.errorCode, "NOT_FOUND");
+});
+
+test("recall ranks by query words, honours labels, budgets and descend", async () => {
+  await writeLabelled("app:tinymemory/app:learnings", "k1", "Alice prefers dark roast coffee", ["l:1"], "user");
+  await writeLabelled("app:tinymemory/app:learnings", "k2", "Bob likes green tea", ["l:2"], "assistant");
+  await writeLabelled("app:tinymemory/app:documents", "k3", "coffee machine manual", ["d:1"]);
+  const exact = await call("POST", "/memory/recall", {
+    scope: "app:tinymemory/app:learnings",
+    query: "what coffee does Alice prefer?",
+  });
+  assert.equal(exact.json.data.layers.events.length, 1);
+  assert.equal(exact.json.data.layers.events[0].content.text, "[user] Alice prefers dark roast coffee");
+  const descend = await call("POST", "/memory/recall", {
+    scope: "app:tinymemory",
+    view: "descend",
+    query: "coffee",
+  });
+  assert.equal(descend.json.data.layers.events.length, 2);
+  const flat = await call("POST", "/memory/recall", { scope: "app:tinymemory", query: "coffee" });
+  assert.equal(flat.json.data.layers.events.length, 0);
+  const filtered = await call("POST", "/memory/recall", {
+    scope: "app:tinymemory",
+    view: "descend",
+    query: "",
+    filters: { metadata: { labels: ["l:2"] } },
+  });
+  assert.equal(filtered.json.data.layers.events[0].content.text, "[assistant] Bob likes green tea");
+  const budget = await call("POST", "/memory/recall", {
+    scope: "app:tinymemory",
+    view: "descend",
+    query: "",
+    budgets: { per_layer_limits: { events: 1 } },
+  });
+  assert.equal(budget.json.data.layers.events.length, 1);
+});
+
+test("answer is grounded in the pack it is given and refuses an unknown pack", async () => {
+  await writeLabelled("s", "k1", "The deploy key rotates monthly", ["l:1"]);
+  const pack = await call("POST", "/memory/recall", { scope: "s", query: "deploy key" });
+  const packId = pack.json.data.pack_id;
+  const answered = await call("POST", "/memory/answer", {
+    scope: "s",
+    question: "when does the deploy key rotate?",
+    use_pack_id: packId,
+  });
+  assert.equal(answered.status, 200);
+  assert.match(answered.json.data.answer, /rotates monthly/);
+  assert.equal(answered.json.data.citations[0].id, "evt_1");
+  const bad = await call("POST", "/memory/answer", { scope: "s", question: "q", use_pack_id: "pack_nope" });
+  assert.equal(bad.status, 400);
+  assert.equal(bad.json.errorCode, "MISSING_PACK");
+});
+
+test("scopes honours the prefix filter", async () => {
+  await write("app:tinymemory/app:learnings", "k1", "x");
+  await write("other:scope", "k2", "y");
+  const r = await call("GET", "/memory/scopes?prefix=app%3Atinymemory");
+  assert.deepEqual(r.json.data.items.map((i) => i.path), ["app:tinymemory/app:learnings"]);
+});

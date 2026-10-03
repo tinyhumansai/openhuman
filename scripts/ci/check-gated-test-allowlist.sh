@@ -23,7 +23,6 @@ agent/session_host/runtime_session.rs
 agent/session_host/runtime_session_tests.rs
 agent/registry/agents/loader.rs
 agent/registry/agents/loader_tests_specialist_agents_tests.rs
-agent/registry/agents/mod.rs
 agent/tinyagents/mod.rs
 commands/ops.rs
 config/migrations/retire_local_whisper_stt_tests.rs

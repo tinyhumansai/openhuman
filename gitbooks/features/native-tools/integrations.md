@@ -20,9 +20,9 @@ A few examples of what becomes available:
 
 ## Native vs proxied
 
-Some services have **native providers** - Rust modules that know how to ingest the service into the [Memory Tree](../obsidian-wiki/memory-tree.md) directly (e.g. Gmail's native ingest path). Others are exposed as **proxied tools** only: the agent can call them, but there's no automatic ingest yet. New native providers are added as features land.
+Some services have **native providers** - Rust modules that know how to ingest the service into [memory](../memory.md) directly (e.g. Gmail's native ingest path). Others are exposed as **proxied tools** only: the agent can call them, but there's no automatic ingest yet. New native providers are added as features land.
 
-Lark / Feishu currently has two surfaces: a native real-time channel for message send/receive, and a Composio-proxied workspace toolkit entry for chat, docs, wiki, and meeting actions when the backend allowlist exposes it. Historical chat/doc backfill into the Memory Tree is not yet a native provider; track that separately from the live channel connector.
+Lark / Feishu currently has two surfaces: a native real-time channel for message send/receive, and a Composio-proxied workspace toolkit entry for chat, docs, wiki, and meeting actions when the backend allowlist exposes it. Historical chat/doc backfill into memory is not yet a native provider; track that separately from the live channel connector.
 
 ## Privacy boundary
 
@@ -31,5 +31,5 @@ For Composio-proxied integrations, OpenHuman's core never calls any third-party 
 ## See also
 
 - [Third-party Integrations (catalog)](../integrations/README.md) - the user-facing pitch, OAuth flow, and connection management.
-- [Auto-fetch](../obsidian-wiki/auto-fetch.md) - how connected services flow into the Memory Tree.
+- [Memory](../memory.md) - how connected services become memory sources (Composio kind).
 - [Privacy & Security](../privacy-and-security.md) - the full boundary.

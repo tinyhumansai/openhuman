@@ -139,6 +139,19 @@ path = "../../tests/x402_twit_sh_live.rs"
 required-features = ["web3"]
 
 [[test]]
+name = "memory_v2_e2e"
+path = "../../tests/memory_v2_e2e.rs"
+# Memory v2 over JSON-RPC against the shared node mock backend
+# (`scripts/mock-api-server.mjs`, which needs `node` on PATH).
+
+[[test]]
+name = "memory_cortexdb_live"
+path = "../../tests/memory_cortexdb_live.rs"
+# Memory v2 through the real `openhuman-core` binary against a live CortexDB.
+# Skips unless OPENHUMAN_LIVE_CORTEXDB_URL is set; run it with
+# scripts/test-memory-cortexdb-live.sh, which boots the server in Docker.
+
+[[test]]
 name = "json_rpc_e2e"
 path = "../../tests/json_rpc_e2e.rs"
 # `voice::reply_speech::{test_seam, TEST_SEAM_ENV}` — the reply-speech seam
@@ -220,36 +233,20 @@ path = "../../tests/media_generation_e2e.rs"
 required-features = ["media"]
 
 [[test]]
-# Memory-engine selection over JSON-RPC against a hosted-CortexDB double.
-name = "memory_engine_e2e"
-path = "../../tests/memory_engine_e2e.rs"
-# Needs the memory module (the migration source) and the remote-engine gate.
-required-features = ["modules", "memory-remote"]
-
-[[test]]
-# Engine migration, cancel, credits and config safety.
-name = "memory_engine_migrate_e2e"
-path = "../../tests/memory_engine_migrate_e2e.rs"
-required-features = ["modules", "memory-remote"]
-
-[[test]]
-# The memory surface on the hosted engine: auto-recall, refusals, the error
-# vocabulary and the families it does not serve (openhuman#6718).
-name = "memory_hosted_surface_e2e"
-path = "../../tests/memory_hosted_surface_e2e.rs"
-required-features = ["modules", "memory-remote"]
-
-[[test]]
-name = "memory_roundtrip_e2e"
-path = "../../tests/memory_roundtrip_e2e.rs"
-
-[[test]]
 name = "observability_wallet_expected_e2e"
 path = "../../tests/observability_wallet_expected_e2e.rs"
 
 [[test]]
 name = "skills_mcp_registry_live"
 path = "../../tests/skills_mcp_registry_live.rs"
+
+[[test]]
+name = "memory_roundtrip_e2e"
+path = "../../tests/memory_roundtrip_e2e.rs"
+
+[[example]]
+name = "run_memory_reconcile"
+path = "../../examples/run_memory_reconcile.rs"
 
 [[example]]
 name = "embed_headless"
@@ -258,14 +255,6 @@ path = "../../examples/embed_headless.rs"
 [[example]]
 name = "embed_kernel"
 path = "../../examples/embed_kernel.rs"
-
-[[example]]
-name = "run_memory_doctor"
-path = "../../examples/run_memory_doctor.rs"
-
-[[example]]
-name = "run_memory_reconcile"
-path = "../../examples/run_memory_reconcile.rs"
 
 [dependencies]
 # Direct core access: every test and bin names `openhuman_core::` paths.
@@ -326,7 +315,6 @@ tinyinference-local = { path = "../../vendor/tinyagents/vendor/tinyinference/cra
 tinyinference-voice = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-voice" }
 tinymcp = { path = "../../vendor/tinymcp/crates/tinymcp", default-features = false, features = ["rustls-tls"] }
 tinymcp-bus = { path = "../../vendor/tinymcp/crates/tinymcp-bus", features = ["schemars"] }
-tinymemory-api = { path = "../../vendor/tinymemory/crates/tinymemory-api" }
 tinytools-agent = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinytools-agent" }
 tokio = { version = "1", features = ["full", "test-util"] }
 tokio-stream = { version = "0.1.18", default-features = false, features = ["sync"] }
@@ -353,9 +341,7 @@ hosting = ["openhuman-core/hosting", "openhuman-tinyhumans/hosting"]
 modules = ["openhuman-core/modules", "openhuman-tinyhumans/modules"]
 voice = ["openhuman-core/voice", "openhuman-tinyhumans/voice"]
 web3 = ["openhuman-core/web3", "openhuman-tinyhumans/web3"]
-memory-remote = ["openhuman-core/memory-remote", "openhuman-tinyhumans/memory-remote"]
 runtime-node = ["openhuman-core/runtime-node", "openhuman-tinyhumans/runtime-node"]
-contacts = ["openhuman-core/contacts", "openhuman-tinyhumans/contacts"]
 media = ["openhuman-core/media", "openhuman-tinyhumans/media"]
 flows = ["openhuman-core/flows", "openhuman-tinyhumans/flows"]
 skills = ["openhuman-core/skills", "openhuman-tinyhumans/skills"]

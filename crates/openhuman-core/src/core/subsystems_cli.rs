@@ -63,16 +63,8 @@ pub fn run_subsystems_command(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// The slot table for a standalone CLI invocation.
-///
-/// [`subsystems_status`] resolves memory through [`memory_subsystem_status`],
-/// which now handles the no-`CoreContext` standalone case itself by reading the
-/// on-disk config and binding the configured workspace's driver (see
-/// `memory::ops::provider::standalone_status`) — the same way
-/// `cli_capability::bound_memory_driver_for` does. So the bare table and the
-/// `subsystems status` JSON path both render the same resolved row, on the same
-/// code, and neither reports an unresolved `driver = ""` row on a healthy
-/// install.
+/// The slot table for a standalone CLI invocation: the same rows the
+/// `subsystems status` RPC returns, resolved from the on-disk config.
 async fn cli_subsystems_status() -> Vec<SubsystemStatus> {
     subsystems_status().await
 }

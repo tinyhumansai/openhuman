@@ -51,7 +51,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
             namespace: "test",
             function: "reset",
             description:
-                "Wipe persistent sidecar state in-place: clears auth, onboarding, cron jobs, and memory tree. \
+                "Wipe persistent sidecar state in-place: clears auth, onboarding, and cron jobs. \
                  E2E specs call this between tests so each starts from a fresh-install baseline.",
             inputs: vec![],
             outputs: vec![FieldSchema {
@@ -62,24 +62,6 @@ pub fn schemas(function: &str) -> ControllerSchema {
                             name: "cron_jobs_removed",
                             ty: TypeSchema::U64,
                             comment: "Number of cron jobs deleted from the workspace database.",
-                            required: true,
-                        },
-                        FieldSchema {
-                            name: "memory_tree_rows_deleted",
-                            ty: TypeSchema::U64,
-                            comment: "Number of memory-tree SQLite rows deleted.",
-                            required: true,
-                        },
-                        FieldSchema {
-                            name: "memory_tree_dirs_removed",
-                            ty: TypeSchema::Array(Box::new(TypeSchema::String)),
-                            comment: "Memory-tree content directories removed.",
-                            required: true,
-                        },
-                        FieldSchema {
-                            name: "memory_tree_sync_state_cleared",
-                            ty: TypeSchema::U64,
-                            comment: "Number of Composio memory-tree sync-state rows deleted.",
                             required: true,
                         },
                         FieldSchema {

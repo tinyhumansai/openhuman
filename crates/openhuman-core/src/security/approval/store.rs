@@ -30,7 +30,7 @@ use rusqlite::{params, types::Type, Connection};
 use crate::config::Config;
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
-use crate::memory::safety::sanitize_text;
+use crate::security::scrub::sanitize_text;
 
 use super::types::{
     ApprovalAuditEntry, ApprovalDecision, ApprovalSourceContext, ExecutionOutcome, PendingApproval,

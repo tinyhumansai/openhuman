@@ -23,7 +23,7 @@ This is the "start here" guide. It assumes nothing beyond a downloaded app.
 ## Privacy implications
 
 - Signing in **does not** grant ongoing access to anything. Every integration is a separate, explicit OAuth approval you can revoke later.
-- Your memory (the local database and the Markdown vault) is created **on your machine**. Raw source data does not sit on the OpenHuman backend.
+- Your memory is stored by the engine you choose: hosted TinyHumans or your own CortexDB. With neither, memory is off.
 - By default, chat/reasoning runs through the OpenHuman-hosted [model router](../features/model-routing/). If you want inference on-device instead, see [Use OpenHuman with a local model](local-model.md).
 - Full detail: [Keep sensitive data private](privacy-sensitive-data.md).
 
@@ -49,7 +49,7 @@ If you're not sure, pick **Cloud**. You can change any of this later in **Settin
 An assistant with no memory is just a chatbot. Connect at least one source so it has context to draw on:
 
 - Open **Settings** and connect an integration (Gmail is the common starting point). Each connection is a one-click OAuth approval.
-- Once connected, [auto-fetch](../features/obsidian-wiki/auto-fetch.md) starts pulling data into your [Memory Tree](../features/obsidian-wiki/memory-tree.md) on a schedule (the first Gmail tick lands within about twenty minutes).
+- Once connected, add the integration as a source under **Connections → Memory → Documents** (kind `composio`); it syncs into [Memory](../features/memory.md) on a schedule.
 
 ### 4. Set your boundaries
 
@@ -89,7 +89,7 @@ You have a working assistant when **all** of these are true:
 - [ ] The app is signed in (you're past the welcome screen and in the chat/home view).
 - [ ] At least one integration shows as **connected** in Settings.
 - [ ] A briefing prompt ("what's waiting on me?") returns something drawn from your actual data, not a generic answer.
-- [ ] Opening the **Memory** tab shows summaries appearing (give it one auto-fetch cycle, up to about 20 minutes, after connecting a source).
+- [ ] Opening **Connections → Memory → Documents** shows your source with an item count after it syncs.
 - [ ] When you ask it to do something with an external effect (e.g. "draft and send an email"), you see an **Approval Request card** appear above the chat box rather than it silently acting.
 
 ## Common failures
@@ -97,7 +97,7 @@ You have a working assistant when **all** of these are true:
 | Symptom                                          | What it means                                                          | Fix                                                                                               |
 | ------------------------------------------------ | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | Sign-in returns to the welcome screen            | The OAuth callback didn't reach the app                                | Follow [Troubleshooting Sign-In](../overview/troubleshooting-sign-in.md)                          |
-| Connected a source but memory stays empty        | First auto-fetch tick hasn't run yet, or the OAuth scope is too narrow | Wait one cycle (~20 min); re-check the connection in Settings                                     |
+| Connected a source but memory stays empty        | Source not added or not synced yet, or the OAuth scope is too narrow    | Press sync on the source; re-check the connection in Settings                                     |
 | Assistant answers generically, ignores your data | It answered without recalling memory                                   | Ask again and reference the source explicitly ("from my email…"); confirm the source is connected |
 | It performed an action you didn't expect         | Autonomy tier may be set to **Full**                                   | Set **Settings → Agents → Agent access** back to **Supervised**                                   |
 
@@ -112,5 +112,4 @@ You have a working assistant when **all** of these are true:
 ## Next steps
 
 - [Use OpenHuman with a local model](local-model.md): keep inference on-device.
-- [Connect OpenHuman to Obsidian](connect-obsidian.md): read and edit the memory by hand.
 - [Keep sensitive data private](privacy-sensitive-data.md): understand exactly what leaves your machine.

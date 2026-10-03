@@ -15,11 +15,9 @@ use tinytools_std::detect_tools::DetectToolsTool;
 use tinytools_std::filesystem::{
     ApplyPatchTool, CsvExportTool, EditFileTool, FileReadTool, FileWriteTool, GitOperationsTool,
     GlobTool, GrepTool, ImageInfoTool, ListFilesTool, ReadDiffTool, RunLinterTool, RunTestsTool,
-    UpdateMemoryMdTool, WorkspaceStateTool,
+    WorkspaceStateTool,
 };
 use tinytools_std::network::{CurlTool, PushoverTool};
-
-pub(crate) use super::capability::tool_capability;
 
 /// Create the default tool registry
 pub fn default_tools(security: Arc<SecurityPolicy>) -> Vec<Box<dyn Tool>> {
@@ -380,57 +378,6 @@ pub fn all_tools_with_runtime(
         Box::new(WalletTxReceiptTool::new(crate::web3::seams::engine())),
         #[cfg(feature = "web3")]
         Box::new(WalletLookupTxTool::new(crate::web3::seams::engine())),
-        // The memory surface the model sees. The eleven per-operation tools it
-        // dispatches to stay registered as `ToolExposure::Hidden` so a
-        // replayed transcript or a saved skill naming `memory_*` still works —
-        // see `memory::tools::collapsed`.
-        Box::new(crate::memory::tools::MemoryTool::new(
-            config.clone(),
-            security.clone(),
-        )),
-        Box::new(MemoryStoreTool::new(security.clone())),
-        Box::new(MemoryRecallTool::new()),
-        Box::new(MemoryForgetTool::new(security.clone())),
-        // #4458: the memory read→dedupe→write→update-index protocol
-        // (`agent::harness::memory_protocol`) can only close its write cycle via a
-        // successful `update_memory_md` call, and the archivist's `[tools] named`
-        // allowlist selects it — but subagents only filter the *parent* tool set,
-        // so if this tool is absent from the registry the archivist silently loses
-        // it and the model hits a permanent unsatisfiable "call update_memory_md"
-        // nag loop (unknown-tool error → the tracker never sees IndexUpdate). It is
-        // always registered here (same as the other memory tools); per-agent
-        // visibility is governed by each agent's `named` allowlist. Targets the
-        // workspace `MEMORY.md`/`SKILL.md` (where `channels_prompt`/`session_memory`
-        // read them from), and prefers the live TinyAgents workspace descriptor at
-        // execution time when one is present.
-        Box::new(UpdateMemoryMdTool::new(root_config.workspace_dir.clone())),
-        // #002: read-only self-diagnosis of the memory pipeline so the agent
-        // can explain an empty/stalled wiki + the fix.
-        Box::new(MemoryDoctorTool::new(config.clone())),
-        // #5172: read-only access to the compiled persona flavour profiles
-        // (communication/coding_style/stack/workflow/environment/directives/
-        // anti_preferences) that persona ingestion builds but nothing
-        // previously surfaced to the agent loop.
-        Box::new(MemoryFlavourTool::new(config.clone())),
-        Box::new(MemoryQueryTool::default()),
-        // memory_search tools — vector search, chunk context, hybrid search,
-        // and previously unregistered raw store tools.
-        Box::new(MemoryVectorSearchTool::default()),
-        Box::new(MemoryChunkContextTool::default()),
-        Box::new(MemoryHybridSearchTool::default()),
-        Box::new(MemoryStoreRawSearchTool::default()),
-        Box::new(MemoryStoreRawChunksTool::default()),
-        Box::new(MemoryStoreKindsTool::default()),
-        // Explicit user-preference pinning — always registered so the model
-        // can save user-stated preferences regardless of whether the full
-        // inference-based learning subsystem is enabled.  The preference
-        // injection into the system prompt is controlled independently by
-        // `config.learning.explicit_preferences_enabled`.
-        Box::new(RememberPreferenceTool::new(security.clone())),
-        // Two-lane explicit preferences (general → system prompt, situational →
-        // per-query recall). Written verbatim to user_pref_{general,situational};
-        // bypasses the inference/stability pipeline. Always registered.
-        Box::new(SavePreferenceTool::new(security.clone())),
         Box::new(ScheduleTool::new(security.clone(), root_config.clone())),
         Box::new(ProxyConfigTool::new(config.clone(), security.clone())),
         Box::new(UpdateCheckTool::new()),
@@ -505,21 +452,6 @@ pub fn all_tools_with_runtime(
         Box::new(WorkflowInstallFromUrlTool::new(config.clone())),
         #[cfg(feature = "skills")]
         Box::new(WorkflowUninstallTool),
-        // Learning (user-profile facet cache) tools. Reads ship default-ON;
-        // every mutator ships default-OFF via `tools::user_filter`
-        // (learning_manage toggle) — they persistently rewrite the assistant's
-        // model of the user. enrich_profile also flags external_effect.
-        Box::new(LearningListFacetsTool),
-        Box::new(LearningGetFacetTool),
-        Box::new(LearningCacheStatsTool),
-        Box::new(LearningUpdateFacetTool),
-        Box::new(LearningPinFacetTool),
-        Box::new(LearningUnpinFacetTool),
-        Box::new(LearningForgetFacetTool),
-        Box::new(LearningRebuildCacheTool),
-        Box::new(LearningResetCacheTool),
-        Box::new(LearningSaveProfileTool),
-        Box::new(LearningEnrichProfileTool),
         // Task & productivity tools (issue: agent-tool expansion).
         // Read/observe + bounded-write tools are registered here; the
         // destructive/overextending siblings (artifact_delete,
@@ -628,10 +560,15 @@ pub fn all_tools_with_runtime(
         Box::new(WorkspaceInitTool),
     ];
 
-    log::debug!(
-        "[tools::ops][memory_search] registered memory_vector_search, memory_chunk_context, \
-         memory_hybrid_search, memory_store_raw_search, memory_store_raw_chunks, memory_store_kinds"
-    );
+    // The single `memory` tool (recall | fetch | learn | forget), registered
+    // only while memory is on: with no usable engine (signed out, no CortexDB
+    // key) the model is not offered a tool that can only fail.
+    if crate::memory::engine::is_on(root_config) {
+        tools.push(Box::new(crate::memory::MemoryTool::new(config.clone())));
+        tracing::debug!("[tools::ops] registered memory tool");
+    } else {
+        tracing::debug!("[tools::ops] memory off; memory tool not registered");
+    }
 
     // `juice_find` / `juice_extract` / `juice_summarize`: only while a handle can name them.
     tools.extend(crate::inference::tokenjuice::repl_tools_for(root_config));
@@ -654,14 +591,6 @@ pub fn all_tools_with_runtime(
     tools.push(Box::new(DocumentTool::for_config(
         root_config,
         security.clone(),
-    )));
-
-    // Long-term goals list tool. Used primarily by the background
-    // `goals_agent` (which filters to it via its `[tools] named` allowlist);
-    // also available to the main agent for explicit edits. One `op`-dispatched
-    // tool, not four — see the module docs on `memory::tools::goals`.
-    tools.push(Box::new(crate::memory::tools::goals::GoalsTool::new(
-        root_config.workspace_dir.clone(),
     )));
 
     // Thread-level goal tools (Codex-style per-thread completion contract).
@@ -891,17 +820,6 @@ pub fn all_tools_with_runtime(
     // Image metadata is always available for user-provided images.
     tools.push(Box::new(ImageInfoTool::new(security.clone())));
 
-    // Tool effectiveness stats (enabled when learning is on)
-    tracing::debug!(
-        learning_enabled = root_config.learning.enabled,
-        tool_tracking_enabled = root_config.learning.tool_tracking_enabled,
-        "evaluating ToolStatsTool registration"
-    );
-    if root_config.learning.enabled && root_config.learning.tool_tracking_enabled {
-        tools.push(Box::new(ToolStatsTool::new()));
-        tracing::debug!("ToolStatsTool registered");
-    }
-
     // Add delegation tool when agents are configured
     if !agents.is_empty() {
         let delegate_agents: HashMap<String, DelegateAgentConfig> = agents
@@ -997,9 +915,7 @@ pub fn all_tools_with_runtime(
         tracing::debug!("[lsp] capability gate off (set OPENHUMAN_LSP_ENABLED=1 to register)");
     }
 
-    // Two INDEPENDENT post-filters over the assembled list (kernel.md §3.7's
-    // separate axes — a narrowed DomainSet must not narrow capabilities, and
-    // vice versa):
+    // Post-filters over the assembled list:
     //
     // 1. DomainSet (#4796): drop tools whose DomainGroup is disabled under the
     //    ambient CoreContext. With no active context, or under
@@ -1008,14 +924,7 @@ pub fn all_tools_with_runtime(
     //    are dropped so agent turns can't call a domain that isn't live;
     //    only the memory + threads tools survive (the mapped harness families)
     //    — see `tool_group` for the classification and its Platform-default
-    //    caveat.
-    // 2. Memory capability (M5.3): drop tools whose memory family the bound
-    //    driver does not advertise — see `tool_capability`.
-    //
-    // Both default OPEN: with no ambient context and with nothing bound the
-    // list is unchanged. Absence beats a stub that errors — a
-    // registered-but-failing memory tool teaches the model the capability
-    // exists and makes it retry (the `flows` compile-gate's reasoning).
+    //    caveat. Default OPEN: with no ambient context the list is unchanged.
     let before = tools.len();
     let domains = crate::core::runtime::context::CoreContext::current().map(|c| c.domains());
     let mut tools: Vec<Box<dyn Tool>> = if let Some(set) = domains {
@@ -1029,13 +938,10 @@ pub fn all_tools_with_runtime(
     };
     let after_domains = tools.len();
 
-    tools.retain(|t| crate::core::all::capability_allowed(tool_capability(t.name())));
-    let after_capabilities = tools.len();
-
-    // 3. ToolGroups: a group an embedder set to `Off` is not registered at all.
+    // 2. ToolGroups: a group an embedder set to `Off` is not registered at all.
     //    `Advertised` and `Withheld` both keep the tool here — they differ only
     //    in whether its schema reaches the provider, which is decided later by
-    //    `strip_packed_from_visible`. Same default-open rule as the two filters
+    //    `strip_packed_from_visible`. Same default-open rule as the filter
     //    above: with no ambient context every group is `Withheld`, so nothing
     //    is dropped and the desktop list is unchanged.
     {
@@ -1045,7 +951,7 @@ pub fn all_tools_with_runtime(
 
     log::debug!(
         "[tools::ops][post-filter] {before} assembled → {after_domains} after DomainSet → \
-         {after_capabilities} after memory capabilities → {} after ToolGroups",
+         {} after ToolGroups",
         tools.len()
     );
 
@@ -1157,16 +1063,6 @@ fn tool_group(name: &str) -> crate::core::all::DomainGroup {
         "notify_user",
     ];
     const THREADS_EXTRA: &[&str] = &["goal_get", "goal_set", "goal_complete"];
-    // Memory extras not covered by the `memory_`/`goals_` prefixes. `goals`
-    // has no trailing underscore since the four `goals_*` tools collapsed into
-    // one `op`-dispatched tool, so it needs an entry here rather than a prefix.
-    const MEMORY_EXTRA: &[&str] = &[
-        "remember_preference",
-        "save_preference",
-        "update_memory_md",
-        "tool_stats",
-        "goals",
-    ];
 
     // MCP: every MCP tool name is `mcp_` prefixed (mcp_registry_*,
     // mcp_call_tool, mcp_list_servers, mcp_list_tools).
@@ -1196,17 +1092,8 @@ fn tool_group(name: &str) -> crate::core::all::DomainGroup {
     {
         return DomainGroup::Voice;
     }
-    // Memory family (harness-kept): memory_* store/search/etc + goals_* + extras.
-    //
-    // The bare `memory` name is matched explicitly: the collapsed tool drops
-    // the `memory_` prefix its members carry, so prefix matching alone would
-    // land it in `Platform` and leave the whole memory surface callable under
-    // a `DomainSet { platform: true, memory: false }`.
-    if name == crate::memory::tools::MEMORY_TOOL_NAME
-        || name.starts_with("memory_")
-        || name.starts_with("goals_")
-        || MEMORY_EXTRA.contains(&name)
-    {
+    // Memory family (harness-kept): the single `memory` tool.
+    if name == crate::memory::MEMORY_TOOL_NAME {
         return DomainGroup::Memory;
     }
     // Threads family (harness-kept): thread_* + per-thread goal + search.

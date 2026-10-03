@@ -11,7 +11,7 @@
 
 use crate::agent::harness::definition::AgentDefinitionRegistry;
 use crate::agent::subagent_host::{run_subagent_with_parent, SubagentRunOptions};
-use crate::memory::conversations;
+use crate::threads::store as conversations;
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;

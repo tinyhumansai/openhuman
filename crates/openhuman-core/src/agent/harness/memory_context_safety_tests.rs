@@ -1,23 +1,4 @@
 use super::*;
-// Only the tests build entries; the predicate itself takes a namespace and
-// a key, which is what decoupled it from either `MemoryEntry` type.
-use crate::memory::MemoryCategory;
-use crate::memory::MemoryEntry;
-
-fn entry(namespace: Option<&str>, key: &str) -> MemoryEntry {
-    MemoryEntry {
-        id: "test".into(),
-        key: key.into(),
-        content: "irrelevant".into(),
-        namespace: namespace.map(str::to_string),
-        category: MemoryCategory::Custom("test".into()),
-        timestamp: "2026-05-20T00:00:00Z".into(),
-        session_id: None,
-        score: None,
-        taint: Default::default(),
-    }
-}
-
 #[test]
 fn locally_authored_namespaces_are_trusted() {
     for ns in [

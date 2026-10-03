@@ -44,7 +44,7 @@ pub async fn call_tool(
         .ok_or_else(|| ToolCallError::InvalidParams(format!("unknown MCP tool `{name}`")))?;
 
     let audit_arguments = arguments.clone();
-    let mut params = match build_rpc_params(spec.name, arguments) {
+    let params = match build_rpc_params(spec.name, arguments) {
         Ok(params) => params,
         Err(err) => {
             if write_dispatch::is_write_tool(spec.name) {
@@ -75,7 +75,7 @@ pub async fn call_tool(
             enforce_act_policy(spec.name).await?;
             return run_subagent_tool(&params).await;
         }
-        "memory.store" | "memory.note" | "tree.tag" => {
+        "memory.learn" | "memory.forget" => {
             let config = write_dispatch::load_write_config(spec.name).await?;
             if let Err(err) = write_dispatch::enforce_write_policy_for_config(spec.name, &config) {
                 write_dispatch::audit_write_rejection(
@@ -88,10 +88,6 @@ pub async fn call_tool(
                 );
                 return Err(err);
             }
-            params.insert(
-                "source_type".to_string(),
-                Value::String(client_info.to_string()),
-            );
             if let Err(err) = validate_controller_params(&spec, &params) {
                 write_dispatch::audit_write_rejection(
                     &config,
@@ -103,8 +99,15 @@ pub async fn call_tool(
                 );
                 return Err(err);
             }
+            let rpc_method = spec.rpc_method.ok_or_else(|| {
+                ToolCallError::Internal(format!(
+                    "MCP tool `{}` is missing its RPC mapping",
+                    spec.name
+                ))
+            })?;
             return write_dispatch::dispatch_write_tool(
                 spec.name,
+                rpc_method,
                 &params,
                 &audit_arguments,
                 client_info,

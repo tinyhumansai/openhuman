@@ -5,14 +5,13 @@ temperature = 0.5
 max_iterations = 8
 sandbox_mode = "read_only"
 
-# The brief pulls its recent memory itself via `memory_tree_cover_window`
-# (last 24h, source-grouped) — see prompt.md. We therefore suppress the
-# injected all-time memory blob (`## User Memory`, the namespace root
-# summaries): it is stale relative to "today" and would compete with the
-# fresh windowed tool result. Identity/safety boilerplate stays off too —
-# the prompt carries its own voice.
+# The brief grounds itself in the compiled memory context injected at
+# session start (`omit_memory_context = false`) plus live integration
+# reads. It has no `memory` tool: the tool reports `Write` permission
+# without arguments, which the read-only sandbox cannot admit.
+# Identity/safety boilerplate stays off — the prompt carries its own voice.
 omit_identity = true
-omit_memory_context = true
+omit_memory_context = false
 omit_safety_preamble = true
 
 [model]
@@ -20,14 +19,12 @@ hint = "agentic"
 
 [tools]
 # Named, not wildcard: a wildcard belt here handed a cron-driven read-only
-# job every registered tool. The brief needs its memory window, the user's
+# job every registered tool. The brief needs the user's
 # connected integrations (calendar, email, tasks — the composio meta-tools,
 # plus each connected action as a `Deferred` tool through `tool_search`), and
 # the clock. `sandbox_mode = "read_only"` keeps `composio_execute` to
 # Read-scoped actions.
 named = [
-    "memory_tree",
-    "memory_recall",
     "composio_list_connections",
     "composio_list_tools",
     "composio_execute",

@@ -15,7 +15,7 @@ mod run;
 mod types;
 mod workspace_checks;
 
-pub use run::{run, run_models, MemoryChunkCount};
+pub use run::{run, run_models, MemoryEngineCheck};
 pub use types::{
     DiagnosticItem, DoctorReport, DoctorSummary, ModelProbeEntry, ModelProbeOutcome,
     ModelProbeReport, ModelProbeSummary, Severity,
@@ -26,4 +26,4 @@ use config_checks::{check_config_semantics, embedding_provider_validation_error}
 #[cfg(test)]
 use daemon_env_checks::truncate_for_display;
 #[cfg(test)]
-use memory_agent_checks::{check_memory_tree_db, model_matches};
+use memory_agent_checks::model_matches;

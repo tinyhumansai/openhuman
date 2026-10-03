@@ -157,8 +157,7 @@ fn print_help() {
     eprintln!("Tools exposed (stdio and HTTP):");
     eprintln!("  core.list_tools, core.tool_instructions");
     eprintln!("  agent.list_subagents, agent.run_subagent");
-    eprintln!("  memory.search, memory.recall, tree.read_chunk, tree.browse,");
-    eprintln!("  tree.top_entities, tree.list_sources");
+    eprintln!("  memory.recall, memory.fetch, memory.list, memory.learn, memory.forget");
     eprintln!();
     eprintln!("Logging is written to stderr. Stdio protocol messages use stdout only.");
 }

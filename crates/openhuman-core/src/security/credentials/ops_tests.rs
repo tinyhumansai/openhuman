@@ -21,17 +21,6 @@ fn test_config(tmp: &TempDir) -> Config {
         config_path: tmp.path().join("config.toml"),
         ..Config::default()
     };
-    // Storing a session asks the memory driver to re-embed, and resolving a
-    // driver that nothing has installed means attempting to load the compiled
-    // module — which a unit test cannot do, but takes seconds to fail at.
-    // These are credentials tests; binding is not what they are about, and one
-    // of them asserts a latency budget that the attempt blows straight through.
-    crate::memory::binding::install_diagnostics_for_test(
-        &config.workspace_dir,
-        &config.subsystems.memory,
-        Default::default(),
-        Default::default(),
-    );
     config
 }
 

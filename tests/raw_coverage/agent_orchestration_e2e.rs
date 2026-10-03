@@ -1,8 +1,7 @@
 //! JSON-RPC E2E coverage for the agent-orchestration controllers that no e2e
 //! target reached: durable workflow-run `stop` / `resume`, the command
 //! center's `agent_work_control`, `agent_team_list` / `agent_team_close`, the
-//! detached sub-agent controls (`subagent_cancel` / `subagent_steer`), and the
-//! whole `agent_experience` store.
+//! detached sub-agent controls (`subagent_cancel` / `subagent_steer`).
 //!
 //! Every case boots the real Axum JSON-RPC router over HTTP against an
 //! isolated `HOME` and asserts on the **content** of the response. Nothing
@@ -17,7 +16,7 @@
 use crate::env_guard::EnvVarGuard;
 use std::net::SocketAddr;
 use std::path::Path;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use axum::http::header::AUTHORIZATION;
@@ -38,7 +37,6 @@ const TEST_RPC_TOKEN: &str = "agent-orchestration-e2e-token";
 const BUILTIN_WORKFLOW_ID: &str = "parallel_research_cross_check";
 
 static AUTH_INIT: OnceLock<()> = OnceLock::new();
-static MEMORY_SEAMS_INIT: OnceLock<()> = OnceLock::new();
 
 /// The crate-wide env lock, not a private one. Every aggregated suite in
 /// `raw_coverage_all` shares one process, so libtest runs them concurrently
@@ -69,47 +67,6 @@ fn ensure_rpc_auth() -> &'static str {
         init_rpc_token(&token_dir).expect("init rpc auth token");
     });
     get_rpc_token().expect("rpc token initialized")
-}
-
-/// The transport-only JSON-RPC router builds no core runtime context, so
-/// neither the memory host seams nor the **module host policy** a
-/// driver-backed controller (`agent_experience`) needs are installed by booting
-/// it. Without the policy every call fails with "the module host policy was
-/// never published, so module 'tinymemory' cannot be loaded".
-///
-/// Both are installed on a thread with a stack of its own: `Config::default()`
-/// is large enough to overflow the 2 MiB libtest stack if materialised inside
-/// an async test frame.
-///
-/// `MODULES_POLICY` is a process-global `OnceLock` and several other aggregated
-/// suites publish their own, so **this may lose the race** — `set_modules_policy`
-/// silently ignores a later call, and the loaded module keeps whichever
-/// workspace won. The experience cases below are therefore written not to
-/// depend on owning the store: they use ids unique to this suite and assert on
-/// their own records rather than on the store being empty.
-fn ensure_memory_seams() {
-    crate::tinyhumans_boot::boot();
-    MEMORY_SEAMS_INIT.get_or_init(|| {
-        std::thread::Builder::new()
-            .name("agent-orchestration-e2e-memory-seams".to_string())
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let workspace = tempfile::tempdir()
-                    .expect("module workspace tempdir")
-                    .keep()
-                    .join("workspace");
-                std::fs::create_dir_all(&workspace).expect("create module workspace");
-                let config = Arc::new(openhuman_core::config::Config {
-                    workspace_dir: workspace,
-                    ..openhuman_core::config::Config::default()
-                });
-                #[cfg(feature = "modules")]
-                openhuman_core::modules::memory::set_modules_policy(config);
-            })
-            .expect("spawn agent orchestration e2e seam installer")
-            .join()
-            .expect("agent orchestration e2e seam installer panicked");
-    });
 }
 
 async fn serve_rpc() -> (
@@ -793,264 +750,6 @@ async fn subagent_steer_honours_and_defaults_the_queue_mode() {
         bogus_mode.get("mode").and_then(Value::as_str),
         Some("steer"),
         "an unknown mode degrades to the default: {bogus_mode}"
-    );
-
-    h.join.abort();
-}
-
-// ── agent_experience ────────────────────────────────────────────────────────
-
-fn experience(id: &str, summary: &str, lesson: &str, tools: &[&str], tags: &[&str]) -> Value {
-    let now = 1_760_000_000_000i64;
-    json!({
-        "id": id,
-        "created_at_ms": now,
-        "updated_at_ms": now,
-        "source": "manual",
-        "agent_id": "planner",
-        "entrypoint": "chat",
-        "task_fingerprint": format!("fp-{id}"),
-        "task_summary": summary,
-        "tools_used": tools,
-        "tool_sequence": tools,
-        "outcome": "success",
-        "error_class": null,
-        "lesson": lesson,
-        "reuse_hint": "reuse when the same tools are available",
-        "avoid_hint": null,
-        "confidence": 0.9,
-        "tags": tags,
-        "payload_hash": null,
-        "dismissed": false
-    })
-}
-
-/// The procedural-experience store end to end: capture persists, list reads
-/// back, retrieve ranks against a task query, and dismiss takes a record out of
-/// retrieval **without** deleting it.
-#[tokio::test]
-async fn agent_experience_capture_list_retrieve_and_dismiss_round_trip() {
-    let _lock = env_lock_async().await;
-    ensure_memory_seams();
-    let h = setup().await;
-
-    let before: Vec<String> = h
-        .ok(3701, "openhuman.agent_experience_list", json!({}))
-        .await
-        .as_array()
-        .expect("list returns an array")
-        .iter()
-        .map(|entry| str_at(entry, "/id").to_string())
-        .collect();
-    assert!(
-        !before.iter().any(|id| id.starts_with("w1exp-")),
-        "this suite's ids are unique to it, so none may pre-exist: {before:?}"
-    );
-
-    let stored = h
-        .ok(
-            3702,
-            "openhuman.agent_experience_capture",
-            json!({
-                "experience": experience(
-                    "w1exp-deploy",
-                    "deploy the staging build",
-                    "run the migration before restarting the service",
-                    &["shell_exec", "http_request"],
-                    &["deploy", "staging"],
-                ),
-            }),
-        )
-        .await;
-    assert_eq!(
-        stored.get("id").and_then(Value::as_str),
-        Some("w1exp-deploy"),
-        "capture returns the stored record: {stored}"
-    );
-    assert_eq!(
-        stored.get("dismissed").and_then(Value::as_bool),
-        Some(false)
-    );
-
-    h.ok(
-        3703,
-        "openhuman.agent_experience_capture",
-        json!({
-            "experience": experience(
-                "w1exp-unrelated",
-                "reconcile the invoice ledger",
-                "always reconcile before closing the month",
-                &["read_file"],
-                &["finance"],
-            ),
-        }),
-    )
-    .await;
-
-    let listed = h
-        .ok(3704, "openhuman.agent_experience_list", json!({}))
-        .await;
-    let mine: Vec<&str> = listed
-        .as_array()
-        .expect("list returns an array")
-        .iter()
-        .map(|entry| str_at(entry, "/id"))
-        .filter(|id| id.starts_with("w1exp-"))
-        .collect();
-    assert_eq!(mine.len(), 2, "both captures are readable: {listed}");
-    assert!(mine.contains(&"w1exp-deploy") && mine.contains(&"w1exp-unrelated"));
-
-    // Retrieval must RANK, not just return everything: the deploy query has to
-    // put the deploy experience first.
-    let hits = h
-        .ok(
-            3705,
-            "openhuman.agent_experience_retrieve",
-            json!({
-                "query": "deploy the staging build",
-                "tools": ["shell_exec"],
-                "tags": ["deploy"],
-                "max_hits": 5,
-            }),
-        )
-        .await;
-    let hits = hits.as_array().expect("retrieve returns an array").clone();
-    let rank = |id: &str| {
-        hits.iter()
-            .position(|hit| hit.pointer("/experience/id").and_then(Value::as_str) == Some(id))
-    };
-    let deploy_rank = rank("w1exp-deploy")
-        .unwrap_or_else(|| panic!("the captured experience is recalled: {hits:?}"));
-    if let Some(unrelated_rank) = rank("w1exp-unrelated") {
-        assert!(
-            deploy_rank < unrelated_rank,
-            "retrieval RANKS: the deploy query puts the deploy experience above \
-             the finance one ({deploy_rank} vs {unrelated_rank}): {hits:?}"
-        );
-    }
-    let hit = &hits[deploy_rank];
-    assert!(
-        hit.get("score")
-            .and_then(Value::as_f64)
-            .is_some_and(|score| score > 0.0),
-        "a hit carries a positive score: {hit:?}"
-    );
-    assert!(
-        hit.get("match_reasons")
-            .and_then(Value::as_array)
-            .is_some_and(|reasons| !reasons.is_empty()),
-        "and says why it matched: {hit:?}"
-    );
-
-    // `max_hits` is a cap, not a hint.
-    let capped = h
-        .ok(
-            3706,
-            "openhuman.agent_experience_retrieve",
-            json!({ "query": "deploy the staging build", "max_hits": 1 }),
-        )
-        .await;
-    assert!(
-        capped.as_array().map(Vec::len).unwrap_or(0) <= 1,
-        "retrieve honours max_hits: {capped}"
-    );
-
-    let dismissed = h
-        .ok(
-            3707,
-            "openhuman.agent_experience_dismiss",
-            json!({ "id": "w1exp-deploy" }),
-        )
-        .await;
-    assert_eq!(
-        dismissed.get("id").and_then(Value::as_str),
-        Some("w1exp-deploy")
-    );
-    assert_eq!(
-        dismissed.get("dismissed").and_then(Value::as_bool),
-        Some(true),
-        "an existing experience is marked dismissed: {dismissed}"
-    );
-
-    let after = h
-        .ok(
-            3708,
-            "openhuman.agent_experience_retrieve",
-            json!({ "query": "deploy the staging build", "max_hits": 5 }),
-        )
-        .await;
-    assert!(
-        !after
-            .as_array()
-            .expect("retrieve array")
-            .iter()
-            .any(
-                |hit| hit.pointer("/experience/id").and_then(Value::as_str) == Some("w1exp-deploy")
-            ),
-        "a dismissed experience is out of retrieval: {after}"
-    );
-
-    // Dismissing something absent is reported, not raised.
-    let absent = h
-        .ok(
-            3709,
-            "openhuman.agent_experience_dismiss",
-            json!({ "id": "w1exp-does-not-exist" }),
-        )
-        .await;
-    assert_eq!(
-        absent.get("dismissed").and_then(Value::as_bool),
-        Some(false),
-        "dismissing an unknown id reports false rather than erroring: {absent}"
-    );
-
-    h.join.abort();
-}
-
-/// Every `agent_experience` controller deserializes its params as a typed
-/// struct, so a missing or wrongly shaped field is rejected at the boundary
-/// instead of being defaulted into a silently wrong record.
-#[tokio::test]
-async fn agent_experience_controllers_reject_malformed_params() {
-    let _lock = env_lock_async().await;
-    ensure_memory_seams();
-    let h = setup().await;
-
-    let no_experience = h
-        .err(3801, "openhuman.agent_experience_capture", json!({}))
-        .await;
-    assert!(
-        no_experience.contains("experience"),
-        "capture names the field it needs: {no_experience}"
-    );
-
-    // A record missing a required field must not be defaulted into existence.
-    let incomplete = h
-        .err(
-            3802,
-            "openhuman.agent_experience_capture",
-            json!({ "experience": { "id": "w1exp-partial", "task_summary": "half a record" } }),
-        )
-        .await;
-    assert!(
-        !incomplete.is_empty(),
-        "an incomplete experience is refused: {incomplete}"
-    );
-
-    let no_query = h
-        .err(3803, "openhuman.agent_experience_retrieve", json!({}))
-        .await;
-    assert!(
-        no_query.contains("query"),
-        "retrieve names its required query: {no_query}"
-    );
-
-    let no_id = h
-        .err(3804, "openhuman.agent_experience_dismiss", json!({}))
-        .await;
-    assert!(
-        no_id.contains("id"),
-        "dismiss names its required id: {no_id}"
     );
 
     h.join.abort();

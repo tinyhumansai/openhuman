@@ -5,7 +5,7 @@
 //! the propose-only contract, and the turn brief that opens an authoring turn —
 //! lives in `tinyflows-copilot` and names no harness. What is here is the
 //! wiring: [`prompt`] assembles that archetype with this host's runtime
-//! sections (user files, the agent's tool list, the workspace footer), and
+//! sections (the agent's tool list, the workspace footer), and
 //! `agent.toml` registers the agent with this host's registry.
 //!
 //! [`builder_prompt`] is the historical path the brief was reached by; it is a

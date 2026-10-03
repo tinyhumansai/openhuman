@@ -133,6 +133,22 @@ describe('tool labels: regressions', () => {
     expect(done('browser', { action: 'click', selector: '#go' })).toBe('Clicked');
   });
 
+  it('labels the memory v2 actions and chips their main argument', () => {
+    const recall = describeToolCall({
+      name: 'memory',
+      args: { action: 'recall', question: 'what do I prefer?' },
+    });
+    expect(recall.chip).toBe('what do I prefer?');
+    expect(done('memory', { action: 'fetch', query: 'tea' })).toBe(done('memory_hybrid_search'));
+    expect(describeToolCall({ name: 'memory', args: { action: 'fetch', query: 'tea' } }).chip).toBe(
+      'tea'
+    );
+    expect(done('memory', { action: 'learn', text: 'likes tea' })).toBe('Saved to memory');
+    expect(
+      describeToolCall({ name: 'memory', args: { action: 'learn', text: 'likes tea' } }).chip
+    ).toBe('likes tea');
+  });
+
   it('labels named agents and delegations by what they do', () => {
     expect(done('subagent:planner')).toBe('Planned next steps');
     expect(done('spawn_subagent', { agent_id: 'critic' })).toBe('Reviewed the work');

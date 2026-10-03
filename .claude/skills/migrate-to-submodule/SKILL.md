@@ -137,9 +137,8 @@ Modules are pinned **twice**, and both must describe the same release
    - At load time tinybus fetches the release's own `checksum.toml`, compares it
      with the host pin, hashes the archive, then extracts. A re-cut tag stops
      matching instead of silently replacing what runs in-process.
-3. Update anything else that names the version (for tinymemory:
-   `ARTIFACT_CAPABILITIES_PIN` and the workflow `memory_version`/`memory_sha256`
-   pairs). If a module is deliberately off-tag, that needs an entry in
+3. Update anything else that names the version (for example the pinned
+   archive version and sha256 in the CI workflows). If a module is deliberately off-tag, that needs an entry in
    `scripts/ci/module-pin-exemptions.json` with a reason. Prefer a fresh
    release over an exemption.
 4. Bump the OpenHuman-side contract crate reference if the `*-bus` version moved,

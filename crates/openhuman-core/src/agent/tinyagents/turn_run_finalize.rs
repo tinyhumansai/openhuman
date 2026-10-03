@@ -119,7 +119,7 @@ pub(super) async fn finalize_turn_outcome(
         // signal: drop it and `parent_completed` stays false, so the bridge
         // marks a turn that actually finished as `interrupted` and never emits
         // `chat_done`. The turn's output still reaches the journal, session
-        // transcript and memory tree, so the agent "remembers" replying while
+        // transcript and memory, so the agent "remembers" replying while
         // the user's thread shows silence. A heavy turn (many tools + long
         // streaming) reliably fills the 256-slot channel, which is why only
         // tool-heavy turns were affected.

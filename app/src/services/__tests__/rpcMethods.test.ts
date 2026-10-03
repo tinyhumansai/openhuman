@@ -173,8 +173,6 @@ describe('rpcMethods catalog', () => {
       readWithParts('../../../../crates/openhuman-core/src/channels/controllers/schemas.rs'),
       // The credential handoff RPCs (`auth_set_credential` / `auth_clear_credential`).
       readWithParts('../../../../crates/openhuman-core/src/security/credentials/schemas.rs'),
-      // The selectable memory-engine RPCs (`memory_engine_*` / `memory_engines_list`).
-      readWithParts('../../../../crates/openhuman-core/src/memory/schemas/engine.rs'),
       // The channels_* namespace/function literals now live in the vendored
       // tinychannels workspace (`ChannelControllerSchema`), not in the thin
       // `crates/openhuman-core/src/channels/controllers/schemas.rs` adapter above, which
@@ -198,6 +196,8 @@ describe('rpcMethods catalog', () => {
       // core.* methods (e.g. core.ping) are special dispatch methods, not in the schema catalog.
       if (!method.startsWith('openhuman.')) continue;
       const methodRoot = method.slice('openhuman.'.length);
+      // Memory v2 methods have their own guard below.
+      if (methodRoot.startsWith('memory_')) continue;
       const namespace = methodRoot.startsWith('auth_')
         ? 'auth'
         : methodRoot.startsWith('inference_')
@@ -214,12 +214,40 @@ describe('rpcMethods catalog', () => {
                     ? 'channels'
                     : methodRoot.startsWith('tool_registry_')
                       ? 'tool_registry'
-                      : methodRoot.startsWith('memory_engine')
-                        ? 'memory'
-                        : 'config';
+                      : 'config';
       const fnName = methodRoot.slice(`${namespace}_`.length);
       expect(schemaSources).toContain(`namespace: "${namespace}"`);
       expect(schemaSources).toContain(`function: "${fnName}"`);
+    }
+  });
+  // Memory v2 (docs/specs/memory-v2.md): every `openhuman.memory_*` method the
+  // UI calls must be a controller somewhere under the core's memory domain.
+  // The whole tree is scanned so the guard follows the domain's layout instead
+  // of one schema file. Until the v2 controllers land in the core (marker:
+  // `memory_items_list`, which v1 never had) the check is reported as skipped
+  // rather than silently passing.
+  const memoryDomainDir = path.resolve(__dirname, '../../../../crates/openhuman-core/src/memory');
+  const readMemoryTree = (dir: string): string[] =>
+    fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
+      const entryPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) return readMemoryTree(entryPath);
+      return entry.name.endsWith('.rs') && !entry.name.endsWith('_tests.rs')
+        ? [fs.readFileSync(entryPath, 'utf8')]
+        : [];
+    });
+  const memorySources = fs.existsSync(memoryDomainDir)
+    ? readMemoryTree(memoryDomainDir).join('\n')
+    : '';
+  const memoryV2Landed = memorySources.includes('function: "items_list"');
+
+  test.skipIf(!memoryV2Landed)('memory v2 methods exist in the core memory domain', () => {
+    const memoryMethods = Object.values(CORE_RPC_METHODS).filter(m =>
+      m.startsWith('openhuman.memory_')
+    );
+    expect(memoryMethods.length).toBeGreaterThan(0);
+    for (const method of memoryMethods) {
+      const fnName = method.slice('openhuman.memory_'.length);
+      expect(memorySources).toContain(`function: "${fnName}"`);
     }
   });
 });

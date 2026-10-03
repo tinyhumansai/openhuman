@@ -1,6 +1,6 @@
 # doctor
 
-Diagnostic / self-check domain for OpenHuman. Runs a synchronous battery of probes against the live `Config`, the workspace directory, the daemon state file, the local environment, the memory-tree SQLite DB, the embedding provider (Ollama), and the Claude Agent SDK binary, then aggregates the findings into a severity-tagged `DoctorReport`. Exposed to CLI and JSON-RPC as `doctor.report` and `doctor.models`. This is what powers `openhuman doctor` / the Settings health surface.
+Diagnostic / self-check domain for OpenHuman. Runs a synchronous battery of probes against the live `Config`, the workspace directory, the daemon state file, the local environment, the embedding provider (Ollama), and the Claude Agent SDK binary, then aggregates the findings into a severity-tagged `DoctorReport`. Exposed to CLI and JSON-RPC as `doctor.report` and `doctor.models`. This is what powers `openhuman doctor` / the Settings health surface.
 
 ## Responsibilities
 
@@ -8,7 +8,7 @@ Diagnostic / self-check domain for OpenHuman. Runs a synchronous battery of prob
 - Check workspace integrity: directory existence, write probe (create/write/delete a temp probe file), `memory/` dir, `SYSTEM.md` prompt, and best-effort free disk space (warns under 512 MB; uses `df -m` on Unix, PowerShell `Get-PSDrive` on Windows).
 - Inspect daemon state file: presence, JSON validity, heartbeat freshness (stale > 30s = error), scheduler component health (stale > 120s), and per-channel component freshness (stale > 300s).
 - Probe environment commands: `git --version`, `curl --version`, `$SHELL`, and `$HOME`/`$USERPROFILE`.
-- Probe memory-tree DB: warn on stale `-shm`/`-wal` SQLite side-files or not-yet-created DB; otherwise report the chunk count the bound memory driver answered with (`MemoryMaintenance::store_stats`), taken by `ops::memory_chunk_count` before the blocking hop.
+- Probe the memory engine (`memory_agent_checks::check_memory_engine`): report `ok`, `degraded`, `down` or `off` (memory is off with no usable engine) from the `MemoryEngineCheck` the async caller takes from the memory domain's status before the blocking hop.
 - Probe embedding-model health: if provider is `ollama`, do a 3s blocking HTTP GET to `<base_url>/api/tags` and verify the configured model is installed; non-ollama providers report OK without a local probe.
 - Probe the Claude Agent SDK: if enabled, run `<binary> --version`.
 - Probe provider model availability via `run_models` (currently a stub: see Notes).
@@ -59,13 +59,13 @@ None. No `bus.rs` / event-bus subscribers or publishers.
 
 ## Persistence
 
-None of its own (no `store.rs`). It only **reads** existing state owned by other domains: the daemon state file (`service::daemon::state_file_path`), the memory-tree SQLite DB (`<workspace>/memory_tree/chunks.db`), config files, and `<workspace>/SYSTEM.md` / `<workspace>/memory/`. Its only writes are an ephemeral workspace probe file that is immediately deleted.
+None of its own (no `store.rs`). It only **reads** existing state owned by other domains: the daemon state file (`service::daemon::state_file_path`), the memory engine's status (passed in as `MemoryEngineCheck`), config files, and `<workspace>/SYSTEM.md` / `<workspace>/memory/`. Its only writes are an ephemeral workspace probe file that is immediately deleted.
 
 ## Dependencies
 
 - `crate::config::{Config, rpc}` — reads the live config for all probes; `config_rpc::load_config_with_timeout` in the handlers.
 - `crate::platform::service::daemon` — `state_file_path` for the daemon heartbeat/component snapshot.
-- `crate::memory::binding` — resolves the workspace's bound memory driver so `ops::memory_chunk_count` can ask `MemoryMaintenance::store_stats` for the chunk count. The engine crate is no longer named here (#5560).
+- `crate::memory::status` — the memory engine's status (`ok`/`degraded`/`down`/`off`), taken by `ops` before the blocking hop and passed to `run` as a `MemoryEngineCheck`.
 - `crate::inference::embedding_host::effective_embedding_settings` — resolves the intended embedding provider/model.
 - `crate::inference::{provider, local}` — `provider::list_providers` (model targets) and `local::ollama_base_url` (embedding probe).
 - `crate::backend::inference_base_url` — asks the installed transport for the inference base URL; `crate::security::credentials::jwt::get_session_token` for sign-in state.
@@ -80,8 +80,8 @@ None of its own (no `store.rs`). It only **reads** existing state owned by other
 ## Notes / gotchas
 
 - `run()` is **strictly blocking** by contract (file system, sqlite, blocking HTTP). `reqwest::blocking::Client` panics inside a tokio runtime, so `ops::doctor_report` runs the whole thing in `tokio::task::spawn_blocking`. Do not add `.await` inside `core::run`.
-- An async probe therefore arrives as an **argument**, resolved in `ops` before the blocking hop: `MemoryChunkCount` is the first of them. Do not reach for `Handle::block_on` inside `core`: it panics on a current-thread runtime and deadlocks the multi-thread one whose worker it is already occupying.
-- The chunk count comes from the bound driver, and a driver that does not serve `Maintenance` is reported as a **failed probe** rather than as zero. That is the opposite of what the `memory_tree` status RPCs do with a missing family, and deliberately so: a status panel is better off showing an empty store than an error, while the doctor exists to name what is wrong: and "0 chunks" from a driver that cannot count is indistinguishable from a store the user has just watched themselves fill.
+- An async probe therefore arrives as an **argument**, resolved in `ops` before the blocking hop: `MemoryEngineCheck` is the first of them. Do not reach for `Handle::block_on` inside `core`: it panics on a current-thread runtime and deadlocks the multi-thread one whose worker it is already occupying.
+- An engine that is down is reported as an error and memory being off as a warning, so the doctor names what is wrong instead of showing an empty store.
 - `run_models` / `doctor.models` is effectively a **stub**: it enumerates providers from `inference::provider::list_providers` but marks every entry `Skipped` with message "model catalog refresh removed" (catalog refresh was removed). It never actually probes auth/availability despite the schema description.
 - The embedding probe is capped at a 3s timeout to avoid stalling on a slow Ollama daemon; non-ollama providers short-circuit to OK.
 - `model_matches` treats `name` vs `name:tag` as a match only when at most one side is tagged; two differently-tagged names are not considered equal.

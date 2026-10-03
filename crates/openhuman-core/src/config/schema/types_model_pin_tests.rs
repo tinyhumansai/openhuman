@@ -143,13 +143,12 @@ fn workload_local_model_trims_and_only_honours_ollama_providers() {
     config.coding_provider = Some("ollama:code-local".into());
     config.memory_provider = Some("ollama:memory-local".into());
     config.embeddings_provider = Some("ollama:embed-local".into());
-    config.learning_provider = Some("ollama:learning-local".into());
     assert_eq!(
         config.workload_local_model("chat").as_deref(),
         Some("chat-local")
     );
     assert_eq!(config.workload_local_model("reasoning"), None);
-    for workload in ["agentic", "coding", "memory", "embeddings", "learning"] {
+    for workload in ["agentic", "coding", "memory", "embeddings"] {
         assert!(config.workload_uses_local(workload), "{workload}");
     }
     assert!(!config.workload_uses_local("unknown"));
@@ -177,4 +176,31 @@ fn default_temperature_unsupported_models_suppress_reasoning_families_only() {
             "{model} must have temperature suppressed"
         );
     }
+}
+
+/// The v1 learning workload is gone, but configs written by older builds still
+/// carry its keys. They must keep loading (unknown keys are ignored, never an
+/// error) and the surviving workload routes must be unaffected.
+#[test]
+fn config_with_retired_learning_keys_still_parses() {
+    let config: Config = toml::from_str(
+        r#"
+learning_provider = "cloud"
+memory_provider = "ollama:summary-local"
+
+[local_ai]
+runtime_enabled = true
+
+[local_ai.usage]
+embeddings = true
+learning_reflection = true
+"#,
+    )
+    .expect("config with retired learning keys must still load");
+    assert_eq!(
+        config.workload_local_model("memory").as_deref(),
+        Some("summary-local")
+    );
+    assert_eq!(config.workload_local_model("learning"), None);
+    assert!(config.local_ai.usage.embeddings);
 }

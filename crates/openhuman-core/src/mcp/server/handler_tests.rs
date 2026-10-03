@@ -34,8 +34,8 @@ async fn list_tools_advertises_the_base_catalog_with_annotations() {
     for expected in [
         "core.list_tools",
         "agent.run_subagent",
-        "memory.search",
-        "tree.tag",
+        "memory.recall",
+        "memory.forget",
     ] {
         assert!(names.contains(&expected), "missing {expected}: {names:?}");
     }
@@ -108,6 +108,6 @@ async fn the_http_client_round_trips_against_the_openhuman_handler() {
     let init = client.initialize().await.expect("initialize");
     assert_eq!(init.server_info["name"], "openhuman-core");
     let tools = client.list_tools().await.expect("tools/list");
-    assert!(tools.iter().any(|tool| tool.name == "memory.search"));
+    assert!(tools.iter().any(|tool| tool.name == "memory.recall"));
     client.close_session().await.expect("DELETE session");
 }

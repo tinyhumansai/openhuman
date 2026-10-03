@@ -207,17 +207,15 @@ pub fn spawn_channels_service() {
 /// [`start_bootstrap_jobs`] launches. Each field maps 1:1 to one spawn site.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BootstrapJobPlan {
-    /// Memory queue ingestion workers (`memory_queue::start`).
-    pub memory_queue: bool,
     /// Composio periodic connection sync (`composio::start_periodic_sync`).
     pub composio_integration_sync: bool,
-    /// Workspace memory-source periodic sync — repos, folders, RSS, web pages
-    /// (`memory_sync::workspace::start_workspace_periodic_sync`).
-    pub workspace_memory_sync: bool,
+    /// Memory background work: seed memory's cron jobs and recover source
+    /// sync state an interrupted process left `syncing`.
+    pub memory_jobs: bool,
     /// Proactive external task-source polling (`task_sources::start_periodic_poll`).
     pub task_source_pollers: bool,
-    /// Eager native-module preload (`modules::boot::load_declared_modules`):
-    /// the memory module resolving at boot, off the request path.
+    /// Native-module preload (`modules::boot::load_declared_modules`):
+    /// search-path artifacts and eager registry records, off the request path.
     pub module_preload: bool,
 }
 
@@ -229,13 +227,12 @@ pub(crate) struct BootstrapJobPlan {
 /// bootstrap job (its remaining meaning is exactly `spawn_channels_service`).
 pub(crate) fn bootstrap_job_plan(services: &ServiceSet) -> BootstrapJobPlan {
     BootstrapJobPlan {
-        memory_queue: services.memory_queue,
         composio_integration_sync: services.integrations,
-        workspace_memory_sync: services.memory_sync,
+        memory_jobs: services.memory_sync,
         task_source_pollers: services.cron,
-        // The memory module is the only eager module, so its preload is memory
-        // background work and rides the same flag as the queue.
-        module_preload: services.memory_queue,
+        // Module preload is background boot work like the integrations sync
+        // and rides the same flag.
+        module_preload: services.integrations,
     }
 }
 
@@ -251,101 +248,39 @@ pub(crate) fn bootstrap_job_plan(services: &ServiceSet) -> BootstrapJobPlan {
 /// silently lost all of them (#5028) — so they now sit behind `integrations` /
 /// `memory_sync` instead.
 ///
-/// `config` feeds the native-module preload and nothing else here: the
-/// engine's `queue::start` was this function's other consumer of it, and the
-/// loaded TinyMemory module starts that pool itself now (openhuman#5560).
+/// `config` feeds the native-module preload and memory's job seeding.
 pub fn start_bootstrap_jobs(services: ServiceSet, config: &Config) {
     let plan = bootstrap_job_plan(&services);
     log::debug!("[runtime.bootstrap] starting bootstrap jobs with plan {plan:?}");
 
-    // Native modules the registry marks eager — today TinyMemory, when the
-    // memory driver is module-backed. Off the boot path: the first launch on a
-    // machine downloads the release, and becoming RPC-ready must not wait on
-    // the network. A warm launch maps the cached library in milliseconds, so
-    // the first memory call finds it serving instead of starting the load
-    // itself and waiting behind it.
+    // Native modules on the search path and the registry's eager records. Off
+    // the boot path: the first launch on a machine may download a release, and
+    // becoming RPC-ready must not wait on the network.
     if plan.module_preload {
         spawn_module_preload(config);
     } else {
         log::debug!("[runtime.bootstrap] native module preload disabled by ServiceSet");
     }
 
-    // ── The queue pool moved into the module, and must NOT be started here ──
-    //
-    // This block used to call `tinymemory_core::queue::start(config.to_arc())`,
-    // and it was the only caller of the engine's worker pool in any tree.
-    // openhuman#5560 deletes the host's second, in-process engine, so that call
-    // has no engine to drain — and `tinymemory` v1.5.0's module starts its own
-    // pool at load (`tinymemory-module/src/lib.rs`, `start_queue_pool`), which
-    // is what keeps ingest, `retry_failed` and `ensure_reembed_backfill` alive.
-    //
-    // **Restoring the call would not be a duplicate, it would be a second pool
-    // that cannot see the first.** The `cdylib` links its own copy of
-    // `tinymemory-core`, so the `Once` inside `queue::start` is a *different*
-    // static from the host's: two pools would claim jobs from one SQLite queue
-    // with neither aware of the other. That is why the line is gone rather than
-    // gated.
-    //
-    // `plan.memory_queue` is kept — it is `ServiceSet`'s statement of intent
-    // and other jobs may hang off it — but the host has no work to do for it.
-    if plan.memory_queue {
-        log::debug!(
-            "[runtime.bootstrap] memory queue workers are owned by the tinymemory module (start_queue_pool); host starts none"
-        );
-    } else {
-        log::debug!("[runtime.bootstrap] memory queue workers disabled by ServiceSet");
-    }
-
-    // Integrations — Composio source reconcile. No-ops without active
-    // connections.
-    //
-    // ── The periodic loops are NOT started here any more ────────────────────
-    //
-    // They were, and deleting them was blocked on upstream rather than on
-    // taste: `start_periodic_sync` is not host code, it re-exported through
-    // `integrations::composio` to `memory::sync::composio::periodic`, which was
-    // `pub use tinymemory_core::sync::composio::*` — engine code running in
-    // this process against the engine this host used to boot.
-    //
-    // tinymemory v1.6.0 moves both loops into the module and closes the three
-    // things that stopped them working there: the cadence, the Composio mode,
-    // and the module's client not being in the engine's global slot. The host
-    // now passes the first two in `ModuleConfig` (see `modules::ops`).
-    //
-    // Restoring either call would be worse than a duplicate. The cdylib carries
-    // its OWN copy of `tinymemory-core`, so each loop's `OnceLock` is a
-    // different static from this process's: a host that starts them while
-    // loading the module gets TWO pairs of loops over one store, and neither
-    // can see the other.
+    // Integrations — no bootstrap job. Composio → memory syncs run on memory
+    // source schedules (`memory::sources`), not a host loop here.
     if plan.composio_integration_sync {
-        log::debug!("[runtime.bootstrap] starting composio source reconcile");
-        tokio::spawn(async {
-            log::debug!("[runtime.bootstrap] composio source reconcile started");
-            crate::memory::sources::reconcile::ensure_composio_sources().await;
-            log::debug!("[runtime.bootstrap] composio source reconcile completed");
-        });
-    } else {
         log::debug!(
-            "[runtime.bootstrap] composio integration sync + source reconcile disabled by ServiceSet"
+            "[runtime.bootstrap] composio integrations enabled; memory syncs run on memory source schedules"
         );
+    } else {
+        log::debug!("[runtime.bootstrap] composio integrations disabled by ServiceSet");
     }
 
-    // Memory sync — workspace-kind memory sources (GitHub repos, folders, RSS,
-    // web pages) get their own cadence loop; the Composio scheduler above only
-    // walks Composio connections.
-    if plan.workspace_memory_sync {
-        // Owned by the module for the same reason as the Composio loop above.
-        // The flag survives because `ServiceSet` is the host's declaration of
-        // which background work it wants running at all, and a host that turns
-        // this off should not have the module running it either — wiring that
-        // through is follow-up, and until then this logs the divergence rather
-        // than hiding it.
-        log::debug!(
-            "[runtime.bootstrap] workspace memory-source periodic sync is owned by the memory \
-             module; this process starts none"
-        );
+    // Memory: seed the `memory_context_refresh` / `memory_sources_sync` cron
+    // jobs (idempotent) and mark sources a killed process left `syncing` idle.
+    if plan.memory_jobs {
+        crate::memory::sources::state::reset_interrupted(&config.workspace_dir);
+        if let Err(error) = crate::cron::system_jobs::ensure_memory_jobs(config) {
+            log::warn!("[runtime.bootstrap] seeding memory cron jobs failed: {error}");
+        }
     } else {
-        log::debug!("[runtime.bootstrap] workspace periodic sync disabled by ServiceSet");
+        log::debug!("[runtime.bootstrap] memory background jobs disabled by ServiceSet");
     }
 
     if plan.task_source_pollers {

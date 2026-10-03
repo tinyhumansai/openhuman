@@ -55,19 +55,24 @@ pub fn schemas(function: &str) -> ControllerSchema {
             function: "get_settings",
             description: "Get current embedding settings and provider catalog.",
             inputs: vec![],
-            outputs: vec![json_output("settings", "Embedding settings and provider catalog.")],
+            outputs: vec![json_output(
+                "settings",
+                "Embedding settings and provider catalog.",
+            )],
         },
         "update_settings" => ControllerSchema {
             namespace: "embeddings",
             function: "update_settings",
-            description: "Update embedding provider, model, or dimensions. Requires confirm_wipe when signature changes.",
+            description: "Update embedding provider, model, or dimensions.",
             inputs: vec![
                 optional_string("provider", "Embedding provider slug."),
                 optional_string("model", "Model identifier."),
                 optional_u64("dimensions", "Output vector dimensions."),
-                optional_string("custom_endpoint", "Custom endpoint URL (for custom provider)."),
+                optional_string(
+                    "custom_endpoint",
+                    "Custom endpoint URL (for custom provider).",
+                ),
                 optional_u64("rate_limit_per_min", "Rate limit in requests per minute."),
-                optional_bool("confirm_wipe", "Confirm memory wipe on signature change."),
             ],
             outputs: vec![json_output("result", "Updated settings.")],
         },
@@ -76,7 +81,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
             function: "set_api_key",
             description: "Store an API key for an embedding provider.",
             inputs: vec![
-                required_string("provider", "Provider slug (e.g. voyage, openai, cohere, custom)."),
+                required_string(
+                    "provider",
+                    "Provider slug (e.g. voyage, openai, cohere, custom).",
+                ),
                 required_string("api_key", "The API key to store."),
             ],
             outputs: vec![json_output("result", "Storage confirmation.")],
@@ -85,9 +93,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
             namespace: "embeddings",
             function: "clear_api_key",
             description: "Remove the stored API key for an embedding provider.",
-            inputs: vec![
-                required_string("provider", "Provider slug."),
-            ],
+            inputs: vec![required_string("provider", "Provider slug.")],
             outputs: vec![json_output("result", "Removal confirmation.")],
         },
         "embed" => ControllerSchema {
@@ -137,8 +143,6 @@ struct UpdateSettingsParams {
     dimensions: Option<usize>,
     custom_endpoint: Option<String>,
     rate_limit_per_min: Option<u32>,
-    #[serde(default)]
-    confirm_wipe: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -183,7 +187,6 @@ fn handle_update_settings(params: Map<String, Value>) -> ControllerFuture {
                 p.dimensions,
                 p.custom_endpoint,
                 p.rate_limit_per_min,
-                p.confirm_wipe,
             )
             .await?,
         )

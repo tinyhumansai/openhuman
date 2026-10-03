@@ -240,7 +240,7 @@ Capability {
         domain: "flows",
         category: CapabilityCategory::Automation,
         description: "A read-only discovery agent (\"Flow Scout\") reads your memory, past \
-                      conversations, known people, connected apps, and existing flows to figure \
+                      conversations, connected apps, and existing flows to figure \
                       out which automations would actually help you, then proposes a handful of \
                       concrete, buildable workflow suggestions. Each card explains why it was \
                       suggested; \"Build this\" hands it to the workflow builder to author a real \
@@ -255,8 +255,8 @@ Capability {
         domain: "flows",
         category: CapabilityCategory::Automation,
         description: "A `memory` node inside a saved workflow graph, giving the flow direct, \
-                      in-graph memory access with no agent turn involved. It can recall/search/ \
-                      read style-flavour/look up people from your durable, cross-flow memory \
+                      in-graph memory access with no agent turn involved. It can recall/search \
+                      your durable, cross-flow memory \
                       (read-only — a flow can never write there) or from other flows' own \
                       memory (also read-only), and can remember/forget entries in its OWN \
                       private, flow-scoped memory namespace — never the user's personal memory, \

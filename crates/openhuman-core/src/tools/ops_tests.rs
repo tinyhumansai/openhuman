@@ -1,5 +1,5 @@
 use super::*;
-use crate::config::{BrowserConfig, Config, MemoryConfig};
+use crate::config::{BrowserConfig, Config};
 use crate::security::credentials::{AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME};
 use crate::security::AuditLogger;
 use crate::skills::types::ToolContent;
@@ -162,30 +162,10 @@ const KNOWLEDGE_TOOLS: &[&str] = &[
     "create_skill",
     "install_workflow_from_url",
     "uninstall_workflow",
-    "learning_list_facets",
-    "learning_get_facet",
-    "learning_cache_stats",
-    "learning_update_facet",
-    "learning_pin_facet",
-    "learning_unpin_facet",
-    "learning_forget_facet",
-    "learning_rebuild_cache",
-    "learning_reset_cache",
-    "learning_save_profile",
-    "learning_enrich_profile",
 ];
 
 fn knowledge_default_off() -> Vec<&'static str> {
-    let mut tools = vec![
-        "learning_update_facet",
-        "learning_pin_facet",
-        "learning_unpin_facet",
-        "learning_forget_facet",
-        "learning_rebuild_cache",
-        "learning_reset_cache",
-        "learning_save_profile",
-        "learning_enrich_profile",
-    ];
+    let mut tools: Vec<&'static str> = Vec::new();
     // These tools exist only when their feature gates are on. All of
     // create_skill / install_workflow_from_url / uninstall_workflow are
     // registered under `#[cfg(feature = "skills")]` in ops.rs — none of
@@ -199,7 +179,7 @@ fn knowledge_default_off() -> Vec<&'static str> {
 }
 
 fn knowledge_always_on() -> Vec<&'static str> {
-    let mut tools = vec!["learning_list_facets", "learning_cache_stats"];
+    let mut tools: Vec<&'static str> = Vec::new();
     // These tools exist only when the skills feature is on (`WorkflowListTool`
     // / `WorkflowRecentRunsTool` — both `#[cfg(feature = "skills")]`).
     if cfg!(feature = "skills") {
@@ -327,7 +307,7 @@ const REPRESENTATIVE: &[(&str, crate::core::all::DomainGroup)] = {
     use crate::core::all::DomainGroup as G;
     &[
         ("delegate", G::Agent),
-        ("memory_search", G::Memory),
+        ("memory", G::Memory),
         ("goal_get", G::Threads),
         ("mcp_list_servers", G::Mcp),
         ("wallet_get_address", G::Web3),
@@ -355,72 +335,6 @@ const TOOL_LESS: &[crate::core::all::DomainGroup] = {
     // its controllers and its inbound dispatch are all still there.
     &[G::Config, G::Security, G::Modules, G::Channels, G::Hosted]
 };
-
-// ---- tool_capability() drift guard (M5.3) ----------------------------------
-
-/// Driver-backed memory tools and the capability each requires.
-const MEMORY_TOOL_CAPABILITIES: &[(&str, tinymemory_api::capabilities::Capability)] = {
-    use tinymemory_api::capabilities::Capability as C;
-    &[
-        ("memory_store", C::Core),
-        ("memory_forget", C::Core),
-        ("remember_preference", C::Core),
-        ("save_preference", C::Core),
-        ("memory_recall", C::Recall),
-        ("memory_vector_search", C::Recall),
-        ("memory_chunk_context", C::Recall),
-        ("memory_hybrid_search", C::Recall),
-        ("memory_store_raw_chunks", C::Recall),
-        ("memory_tree", C::Tree),
-        ("memory_flavour", C::Tree),
-        ("memory_store_raw_search", C::Entities),
-        ("memory_doctor", C::Maintenance),
-        ("tool_stats", C::ToolMemory),
-        ("goals", C::Goals),
-    ]
-};
-
-/// Memory-family tools that are deliberately NOT driver-backed. Each entry is
-/// an argument, not an omission — see `tool_capability`.
-const MEMORY_TOOLS_NOT_DRIVER_BACKED: &[&str] = &["update_memory_md", "memory_store_kinds"];
-
-// ---- both-ways: the capability post-filter (M5.3) --------------------------
-//
-// The ABSENT half is the one that proves the filter removes anything.
-
-/// A distinct workspace per test: the memory binding cache is keyed by
-/// workspace dir, so sharing one path between an ON and an OFF test would make
-/// one of them silently assert the other's driver (the `caps_ws` convention
-/// from `core::all_tests`).
-fn caps_tools_ws(name: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("oh-m53-tools-{name}"))
-}
-
-/// `[subsystems.memory] driver = "null"` — `NullMemoryProvider` advertises
-/// exactly `Capability::MANDATORY` = {core, recall, portability}, so every
-/// optional family is OFF at once. An operator who wrote `driver = "null"` is
-/// honoured rather than falling back (`memory::binding`).
-fn null_driver_memory_cfg() -> crate::config::schema::MemorySubsystemConfig {
-    crate::config::schema::MemorySubsystemConfig {
-        driver: "null".into(),
-        ..Default::default()
-    }
-}
-
-/// The optional-family tools that must vanish under a driver advertising
-/// nothing optional.
-///
-const OPTIONAL_FAMILY_MEMORY_TOOLS: &[&str] = &[
-    "memory_tree",
-    "memory_flavour",
-    "memory_store_raw_search",
-    "memory_doctor",
-    "goals",
-];
-
-/// Memory-family tools that remain available when a null driver deliberately
-/// disables every driver-backed capability.
-const ALWAYS_PRESENT_MEMORY_TOOLS: &[&str] = &["update_memory_md", "memory_store_kinds"];
 
 #[path = "ops_tests_capability_gating_tests.rs"]
 mod capability_gating_tests;

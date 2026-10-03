@@ -40,10 +40,6 @@ openhuman-embed = { path = "crates/openhuman-embed", default-features = false }
 openhuman-tinyhumans = { path = "crates/openhuman-tinyhumans", default-features = false }
 
 # Patches are workspace-root settings; Cargo ignores them in member manifests.
-[patch."https://github.com/tinyhumansai/tinymemory"]
-tinymemory-api = { path = "vendor/tinymemory/crates/tinymemory-api" }
-tinymemory-safety = { path = "vendor/tinymemory/crates/tinymemory-safety" }
-
 [patch."https://github.com/tinyhumansai/tinytools"]
 # tinymcp's `tools` feature names tinytools by git rev so it can be built on its
 # own. Redirect it to the copy tinyagents vendors — the one the harness and

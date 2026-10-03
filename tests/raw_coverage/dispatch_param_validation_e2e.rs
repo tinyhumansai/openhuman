@@ -63,13 +63,13 @@ async fn missing_required_param_is_refused_with_the_schema_comment() {
 async fn unknown_param_is_refused_by_the_gate_alone() {
     let err = dispatch(
         state(),
-        "openhuman.memory_goals_list",
+        "openhuman.memory_engines_list",
         json!({ "nonsense_param": 1 }),
     )
     .await
     .expect_err("unknown params are refused");
 
-    assert_eq!(err, "unknown param 'nonsense_param' for memory_goals.list");
+    assert_eq!(err, "unknown param 'nonsense_param' for memory.engines_list");
 }
 
 /// Declared types are enforced at the same gate, so a handler's own
@@ -97,24 +97,27 @@ async fn mistyped_param_is_refused_with_the_declared_type() {
 /// directory call controllers.
 #[tokio::test]
 async fn handler_refusal_differs_from_the_dispatcher_refusal_for_an_absent_param() {
-    let dispatched = dispatch(state(), "openhuman.learning_get_facet", json!({}))
+    let dispatched = dispatch(state(), "openhuman.memory_recall", json!({}))
         .await
-        .expect_err("`class` is required");
+        .expect_err("`question` is required");
     assert!(
-        dispatched.starts_with("missing required param 'class': "),
+        dispatched.starts_with("missing required param 'question': "),
         "got: {dispatched}"
     );
 
     let controllers = all_registered_controllers();
     let controller = controllers
         .iter()
-        .find(|controller| rpc_method_name(&controller.schema) == "openhuman.learning_get_facet")
-        .expect("learning_get_facet is registered unconditionally");
+        .find(|controller| rpc_method_name(&controller.schema) == "openhuman.memory_recall")
+        .expect("memory_recall is registered unconditionally");
     let direct = (controller.handler)(Map::new())
         .await
         .expect_err("the handler refuses too");
 
-    assert_eq!(direct, "missing required `class`");
+    assert!(
+        direct.contains("INVALID_REQUEST") && direct.contains("question"),
+        "the handler refuses with the memory taxonomy's INVALID_REQUEST: {direct}"
+    );
     assert_ne!(
         dispatched, direct,
         "the two refusals must stay distinguishable: a test written against the \
@@ -130,17 +133,18 @@ async fn handler_refusal_differs_from_the_dispatcher_refusal_for_an_absent_param
 async fn explicit_null_passes_the_gate_and_the_handler_refuses_instead() {
     let err = dispatch(
         state(),
-        "openhuman.learning_get_facet",
-        json!({ "class": null, "key": "verbosity" }),
+        "openhuman.memory_recall",
+        json!({ "question": null }),
     )
     .await
-    .expect_err("`class` is null, so the handler refuses");
+    .expect_err("`question` is null, so the handler refuses");
 
-    // The handler's wording, not the dispatcher's — the mirror image of
+    // The handler's wording (the memory error taxonomy), not the dispatcher's
+    // — the mirror image of
     // `missing_required_param_is_refused_with_the_schema_comment`.
-    assert_eq!(err, "missing required `class`");
+    assert!(err.contains("INVALID_REQUEST"), "got: {err}");
     assert!(
-        !err.starts_with("missing required param 'class'"),
+        !err.starts_with("missing required param 'question'"),
         "the gate must NOT have refused this: {err}"
     );
 }

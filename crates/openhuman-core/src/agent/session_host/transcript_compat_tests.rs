@@ -181,8 +181,7 @@ pub(super) fn build_host(
         .chat_model(chat_model)
         .tools(tools())
         .workspace_dir(root.join("workspace"))
-        .action_dir(root.to_path_buf())
-        .memory(crate::memory::test_support::noop_memory());
+        .action_dir(root.to_path_buf());
     let builder = if native {
         builder.tool_dispatcher(Box::new(tinytools_agent::dialect::NativeDialect))
     } else {

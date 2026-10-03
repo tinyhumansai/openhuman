@@ -46,7 +46,7 @@ const MAX_CATALOG_RESULTS: usize = 40;
 /// in `query` (case-insensitive AND). When `toolkit` is set, only that
 /// toolkit is scanned — this is how the builder can search ANY named app
 /// (connected or not) rather than only the toolkits already
-/// `tinymemory_api::composio::agent_ready_toolkits`;
+/// `crate::integrations::composio::contract::agent_ready_toolkits`;
 /// with no `toolkit` filter, the search is scoped to that agent-ready set (a
 /// bare keyword query with no app named would otherwise have to fan out to
 /// every toolkit Composio knows about).
@@ -134,7 +134,7 @@ pub(crate) async fn search_catalog(
     use crate::flows::tinyflows::caps::fetch_live_toolkit_catalog;
     // Contract crate — same item the `memory::sync::composio::providers` shim
     // re-exported; see `ListConnectableToolkitsTool::execute` for why (#5560).
-    use tinymemory_api::composio::agent_ready_toolkits;
+    use crate::integrations::composio::contract::agent_ready_toolkits;
 
     let terms: Vec<String> = query
         .split_whitespace()

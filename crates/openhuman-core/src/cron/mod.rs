@@ -14,6 +14,7 @@ pub mod ops;
 mod schemas;
 pub mod seed;
 mod store;
+pub mod system_jobs;
 pub mod tools;
 
 pub mod scheduler;

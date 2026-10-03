@@ -12,7 +12,7 @@ use tinychannels::remote::{NewRemoteThread, RemoteControlHost, RemoteRoute, Remo
 use crate::channels::context::{
     clear_sender_history, ChannelRouteSelection, ChannelRuntimeContext,
 };
-use crate::memory::conversations::{self as conversations, CreateConversationThread};
+use crate::threads::store::{self as conversations, CreateConversationThread};
 
 /// Remote-control host state for one command, borrowed from the runtime.
 pub(crate) struct RuntimeRemoteControl<'a> {

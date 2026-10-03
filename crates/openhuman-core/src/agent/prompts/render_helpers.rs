@@ -8,7 +8,7 @@
 //!
 //! Split by responsibility:
 //! - [`section_renderers`] — the `render_*` wrappers, per-turn datetime stamp,
-//!   ambient-environment composer, and memory date label.
+//!   and ambient-environment composer.
 //! - [`subagent`] — the narrow KV-cache-stable sub-agent prompt renderer.
 //! - [`workspace_files`] — workspace-file seeding and prompt injection.
 
@@ -17,14 +17,13 @@ mod subagent;
 mod workspace_files;
 
 pub use section_renderers::{
-    current_datetime_line, memory_date_label, render_ambient_environment, render_datetime,
-    render_identity, render_runtime, render_safety, render_tools, render_user_files,
-    render_user_identity, render_user_reflections, render_workspace,
+    current_datetime_line, render_ambient_environment, render_datetime, render_identity,
+    render_runtime, render_safety, render_tools, render_user_identity, render_workspace,
 };
 pub(crate) use subagent::harness_json_tool_prompt;
 pub use subagent::{render_subagent_system_prompt, render_subagent_system_prompt_with_format};
 pub(crate) use workspace_files::write_agents_md_blocks;
 pub use workspace_files::{
-    default_workspace_file_content, inject_inline_content, inject_snapshot_content,
-    inject_workspace_file, inject_workspace_file_capped, sync_workspace_file,
+    default_workspace_file_content, inject_inline_content, inject_workspace_file,
+    inject_workspace_file_capped, sync_workspace_file,
 };

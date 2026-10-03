@@ -63,9 +63,9 @@ OpenHuman ist drei Dinge, die die meisten Assistenten nicht sind: **ein Gehirn**
 
 ### 🧠 Das Gehirn
 
-- **[Memory Tree](https://tinyhumans.gitbook.io/openhuman/features/memory-tree) + [Obsidian-Wiki](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki)**: deine Daten, komprimiert in bewertete Markdown-Bäume in SQLite auf deiner Maschine, gespiegelt als [Obsidian-Vault](https://x.com/karpathy/status/2039805659525644595), das du öffnen und editieren kannst. Keine Vektor-Suppen-Blackbox.
+- **[Memory](../gitbooks/features/memory.md)**: Recall, Fetch und Store über eine austauschbare Engine (gehostetes TinyHumans oder dein eigenes CortexDB). Dokumente, Konversationen und Learnings werden gespeichert, Antworten kommen mit Quellenangaben, und ein `context.md`-Briefing eröffnet jeden neuen Chat. Keine Vektor-Suppen-Blackbox.
 - **[100+ OAuth-Integrationen, 5.000+ MCP-Server, 90.000+ Skills](https://tinyhumans.gitbook.io/openhuman/features/integrations)**: mit einem Klick in Gmail, Notion, GitHub, Slack und den Rest deines Stacks. [Auto-Fetch](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki/auto-fetch) füttert das Gehirn alle 20 Minuten. So hat es den Kontext von morgen schon heute Früh.
-- **[Goals & Todos](https://tinyhumans.gitbook.io/openhuman/features/goals-and-todos)**: Langzeitziele, dauerhafte Ziele pro Thread und die im Chat sichtbare Todo-Liste des Agenten.
+- **[Goals & Todos](https://tinyhumans.gitbook.io/openhuman/features/goals-and-todos)**: dauerhafte Ziele pro Thread und die im Chat sichtbare Todo-Liste des Agenten.
 - **[TokenJuice](https://tinyhumans.gitbook.io/openhuman/features/token-compression)**: Tool-Ausgaben werden komprimiert, bevor sie das Modell erreichen: dieselbe Information, bis zu 80% weniger Tokens. Ein so großes Gehirn wäre ohne es unbezahlbar.
 
 ### 🕸️ Der Orchestrator
@@ -90,17 +90,11 @@ OpenHuman ist drei Dinge, die die meisten Assistenten nicht sind: **ein Gehirn**
 
 OpenHuman ist das erste Agent-Harness, das dich in Minuten kennenlernt. Inspiriert von [Karpathys LLM-Knowledgebase](https://x.com/karpathy/status/2039805659525644595). Die meisten Agenten starten aus dem Kalten. Hermes lernt, indem er dir bei der Arbeit zusieht; OpenClaw wartet darauf, dass Plugins Kontext einspielen. So oder so vergehen Tage oder Wochen, bevor der Agent genug über deinen Stack weiß, um wirklich nützlich zu sein.
 
-<p align="center">
- <img src="../gitbooks/.gitbook/assets/memory.png" alt="Diagramm zum OpenHuman-Kontextaufbau">
-</p>
+> OpenHuman speichert Dokumente, Konversationen und Learnings in einer Memory-Engine und beantwortet Fragen dazu mit Quellenangaben.
 
-> OpenHuman fasst all deine Dokumente, E-Mails und Chats zusammen, komprimiert sie und legt einen Memory Graph an, mit dem dein Agent sich alles über dich merken kann.
-
-OpenHuman überspringt die Wartezeit. Verbinde deine Accounts, lass [Auto-Fetch](https://tinyhumans.gitbook.io/openhuman/features/integrations/auto-fetch) die Daten lokal in einer 20-Minuten-Schleife abholen, und [Memory Trees](https://tinyhumans.gitbook.io/openhuman/features/memory-tree) komprimieren alles in Markdown-Dateien, intelligent abgelegt in einem [Obsidian-Wiki im Karpathy-Stil](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki).
+OpenHuman überspringt die Wartezeit. Füge Quellen hinzu (Ordner, Dateien, Links, GitHub, RSS, verbundene Apps), lass sie nach Zeitplan synchronisieren, und der Agent kann sofort mit [Memory](../gitbooks/features/memory.md) darauf antworten.
 
 Nach nur einem Sync-Durchlauf hat der Agent den vollständigen (komprimierten) Kontext deines Postfachs, deines Kalenders, deiner Repos, deiner Dokumente und deiner Nachrichten. Keine Trainingsphase. Kein „gib ihm ein paar Wochen". Er wird zu dir, gesteuert von dir.
-
-Du hostest [agentmemory](https://github.com/rohitg00/agentmemory) bereits selbst für andere Coding-Agenten? OpenHuman bringt ein optionales `Memory`-Backend mit, das dorthin proxyt: setze `memory.backend = "agentmemory"` in `config.toml`, und derselbe persistente Store treibt OpenHuman zusammen mit Claude Code, Cursor, Codex und OpenCode an. Setup-Details auf der Seite zum [agentmemory-Backend](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki/agentmemory-backend).
 
 ## Ein Orchestrator, kein Chatbot
 
@@ -137,9 +131,9 @@ Gespeicherte Workflows sind dauerhaft und trigger-gesteuert: sie feuern auf Zeit
 | **Quelloffen**         | 🚫 Proprietär         | ✅ MIT             | ✅ MIT             | ✅ GNU                                                                                                   |
 | **Einfacher Einstieg** | ✅ Desktop + CLI      | ⚠️ Terminal zuerst | ⚠️ Terminal zuerst | ✅ Aufgeräumte UI, in Minuten                                                                            |
 | **Kosten**             | ⚠️ Abo + Zusatzkosten | ⚠️ BYO-Modelle     | ⚠️ BYO-Modelle     | ✅ Ein Abo + TokenJuice                                                                                  |
-| **Memory**             | ✅ chat-gebunden      | ⚠️ plugin-abhängig | ✅ selbstlernend   | 🚀 Memory Tree + Obsidian-Vault, optional [agentmemory](https://github.com/rohitg00/agentmemory)-Backend |
+| **Memory**             | ✅ chat-gebunden      | ⚠️ plugin-abhängig | ✅ selbstlernend   | 🚀 Austauschbare Engine (TinyHumans oder dein CortexDB), Quellenangaben, `context.md` |
 | **Integrationen**      | ⚠️ wenige Konnektoren | ⚠️ BYO             | ⚠️ BYO             | 🚀 100+ OAuth · 5k+ MCP · 90k+ Skills                                                                    |
-| **Auto-Fetch**         | 🚫 keiner             | 🚫 keiner          | 🚫 keiner          | ✅ 20-Min.-Sync ins Memory                                                                               |
+| **Quellen-Sync**       | 🚫 keiner             | 🚫 keiner          | 🚫 keiner          | ✅ Geplanter Sync ins Memory |
 | **Orchestrierung**     | ⚠️ Sub-Tasks          | ⚠️ eine Schleife   | ⚠️ eine Schleife   | 🚀 Agent-Graphen + Checkpoints + E2E-verschlüsseltes A2A                                                 |
 | **Workflows**          | 🚫 keine              | ⚠️ Skripte         | ⚠️ Skripte         | 🚀 visuell, dauerhaft, agent-vorgeschlagen, freigabe-gesichert                                           |
 | **Meetings**           | 🚫 keine              | 🚫 keine           | 🚫 keine           | 🚀 nimmt an Meet/Zoom/Teams/Webex teil, spricht, Live-Transkript                                         |

@@ -77,9 +77,9 @@ OpenHuman تین چیزیں ہے جو زیادہ تر اسسٹنٹس نہیں ہ
 
 ### 🧠 دماغ
 
-- **[میموری ٹری](https://tinyhumans.gitbook.io/openhuman/features/memory-tree) + [Obsidian Wiki](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki)**: آپ کا ڈیٹا اسکور شدہ Markdown درختوں میں کمپریس ہو کر آپ کی مشین پر SQLite میں محفوظ ہوتا ہے، اور ایک [Obsidian والٹ](https://x.com/karpathy/status/2039805659525644595) کے طور پر عکس بند ہوتا ہے جسے آپ کھول اور ایڈٹ کر سکتے ہیں۔ کوئی ویکٹر سوپ بلیک باکس نہیں۔
+- **[میموری](../gitbooks/features/memory.md)**: تبدیل ہونے والے انجن (ہوسٹڈ TinyHumans یا آپ کا اپنا CortexDB) پر Recall، Fetch اور Store۔ دستاویزات، گفتگو اور سیکھی ہوئی باتیں محفوظ ہوتی ہیں، جواب حوالوں کے ساتھ ملتے ہیں، اور ہر نئی چیٹ `context.md` خلاصے سے شروع ہوتی ہے۔
 - **[100+ OAuth انضمام، 5,000+ MCP سرورز، 90,000+ سکلز](https://tinyhumans.gitbook.io/openhuman/features/integrations)**: ایک کلک سے Gmail، Notion، GitHub، Slack اور اپنے باقی اسٹیک میں پلگ ان کریں۔ [خودکار لانا](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki/auto-fetch) ہر 20 منٹ میں دماغ کو خوراک دیتا ہے۔ اس کے پاس آج صبح ہی کل کا سیاق و سباق ہوتا ہے۔
-- **[اہداف اور ٹوڈوز](https://tinyhumans.gitbook.io/openhuman/features/goals-and-todos)**: طویل مدتی اہداف، فی تھریڈ پائیدار اہداف، اور چیٹ میں دکھائی جانے والی ایجنٹ کی ٹوڈو فہرست۔
+- **[اہداف اور ٹوڈوز](https://tinyhumans.gitbook.io/openhuman/features/goals-and-todos)**: فی تھریڈ پائیدار اہداف اور چیٹ میں دکھائی جانے والی ایجنٹ کی ٹوڈو فہرست۔
 - **[TokenJuice](https://tinyhumans.gitbook.io/openhuman/features/token-compression)**: ٹول آؤٹ پٹ ماڈل تک پہنچنے سے پہلے کمپریس ہوتا ہے: وہی معلومات، 80% تک کم ٹوکنز۔ اتنا بڑا دماغ اس کے بغیر ناقابلِ برداشت مہنگا ہوتا۔
 
 ### 🕸️ آرکسٹریٹر
@@ -108,21 +108,15 @@ OpenHuman پہلا ایجنٹ ہارنس ہے جو منٹوں میں آپ کو �
 
 <div dir="ltr">
 
-<p align="center">
- <img src="../gitbooks/.gitbook/assets/memory.png" alt="OpenHuman سیاق و سباق بنانے کا خاکہ">
-</p>
-
 </div>
 
 <div dir="rtl" lang="ur">
 
-> OpenHuman آپ کی تمام دستاویزات، ای میلز اور چیٹس کا خلاصہ اور کمپریس کرتا ہے؛ اور ایک میموری گراف بناتا ہے جو آپ کے ایجنٹ کو آپ کے بارے میں سب کچھ یاد رکھنے دیتا ہے۔
+> OpenHuman دستاویزات، گفتگو اور سیکھی ہوئی باتیں میموری انجن میں رکھتا ہے اور حوالوں کے ساتھ سوالوں کے جواب دیتا ہے۔
 
-OpenHuman انتظار چھوڑ دیتا ہے۔ اپنے اکاؤنٹس جوڑیں، [خودکار لانے](https://tinyhumans.gitbook.io/openhuman/features/integrations/auto-fetch) کو 20 منٹ کے لوپ پر مقامی طور پر ڈیٹا کھینچنے دیں، اور پھر [میموری ٹریز](https://tinyhumans.gitbook.io/openhuman/features/memory-tree) کو ہر چیز کو Markdown فائلوں میں کمپریس کرنے دیں جو [Karpathy-style Obsidian wiki](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki) میں ذہانت سے ذخیرہ ہوتی ہیں۔
+OpenHuman انتظار چھوڑ دیتا ہے۔ ذرائع (فولڈر، فائلیں، لنکس، GitHub، RSS، جڑی ہوئی ایپس) شامل کریں، وہ شیڈول پر سنک ہوتے ہیں، اور ایجنٹ [میموری](../gitbooks/features/memory.md) سے فوراً جواب دے سکتا ہے۔
 
 صرف ایک سنک پاس میں، ایجنٹ کے پاس آپ کے ان باکس، کیلنڈر، ریپوز، دستاویزات، پیغامات کا مکمل (کمپریسڈ) سیاق و سباق ہوتا ہے۔ کوئی تربیتی مدت نہیں۔ کوئی "اسے کچھ ہفتے دو" نہیں۔ یہ آپ بن جاتا ہے، آپ کے کنٹرول میں۔
-
-پہلے سے دوسرے کوڈنگ ایجنٹس میں [agentmemory](https://github.com/rohitg00/agentmemory) سیلف ہوسٹ کر رہے ہیں؟ OpenHuman ایک اختیاری `Memory` بیک اینڈ بھیجتا ہے جو اسے پروکسی کرتا ہے: `config.toml` میں `memory.backend = "agentmemory"` سیٹ کریں اور وہی پائیدار اسٹور OpenHuman کے ساتھ Claude Code، Cursor، Codex، اور OpenCode کو طاقت دیتا ہے۔ سیٹ اپ کے لیے [agentmemory بیک اینڈ](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki/agentmemory-backend) صفحہ دیکھیں۔
 
 ## ایک آرکسٹریٹر، چیٹ بوٹ نہیں
 
@@ -179,9 +173,9 @@ n8n اور Zapier سے گہرے متاثر، [ورک فلوز](https://tinyhuman
 | **اوپن سورس**      | 🚫 ملکیتی                | ✅ MIT              | ✅ MIT              | ✅ GNU                                                                                                 |
 | **شروع کرنا آسان** | ✅ ڈیسک ٹاپ + کمانڈ لائن | ⚠️ پہلے ٹرمینل      | ⚠️ پہلے ٹرمینل      | ✅ صاف یوزر انٹرفیس، منٹوں میں                                                                         |
 | **لاگت**           | ⚠️ سبسکرپشن + ایڈ آنز    | ⚠️ اپنے ماڈل        | ⚠️ اپنے ماڈل        | ✅ ایک سبسکرپشن + TokenJuice                                                                           |
-| **یادداشت**        | ✅ چیٹ تک محدود          | ⚠️ پلگ ان پر انحصار | ✅ خود سیکھنا       | 🚀 میموری ٹری + Obsidian والٹ، اختیاری [agentmemory](https://github.com/rohitg00/agentmemory) بیک اینڈ |
+| **یادداشت**        | ✅ چیٹ تک محدود          | ⚠️ پلگ ان پر انحصار | ✅ خود سیکھنا       | 🚀 تبدیل ہونے والا انجن (TinyHumans یا اپنا CortexDB)، حوالے، `context.md` |
 | **انضمام**         | ⚠️ چند کنیکٹر            | ⚠️ خود لائیں        | ⚠️ خود لائیں        | 🚀 100+ OAuth · 5k+ MCP · 90k+ سکلز                                                                    |
-| **خودکار لانا**    | 🚫 کوئی نہیں             | 🚫 کوئی نہیں        | 🚫 کوئی نہیں        | ✅ 20 منٹ سنک میموری میں                                                                               |
+| **ذرائع سنک**      | 🚫 کوئی نہیں             | 🚫 کوئی نہیں        | 🚫 کوئی نہیں        | ✅ شیڈول پر میموری میں سنک |
 | **آرکسٹریشن**      | ⚠️ ذیلی ٹاسکس            | ⚠️ ایک لوپ          | ⚠️ ایک لوپ          | 🚀 ایجنٹ گرافس + چیک پوائنٹس + E2E-انکرپٹڈ A2A                                                         |
 | **ورک فلوز**       | 🚫 کوئی نہیں             | ⚠️ اسکرپٹس          | ⚠️ اسکرپٹس          | 🚀 بصری، پائیدار، ایجنٹ کی تجویز کردہ، منظوری سے محفوظ                                                 |
 | **میٹنگز**         | 🚫 کوئی نہیں             | 🚫 کوئی نہیں        | 🚫 کوئی نہیں        | 🚀 Meet/Zoom/Teams/Webex میں شامل، بولتا ہے، لائیو ٹرانسکرپٹ                                           |

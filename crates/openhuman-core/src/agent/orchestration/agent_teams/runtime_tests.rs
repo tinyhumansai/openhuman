@@ -8,7 +8,6 @@
 //! real entry point; its `Started` path (which spawns a loop building a real
 //! `Agent` from config) is covered by the JSON-RPC e2e over the live core stack.
 
-use crate::memory::test_support::NoopMemory;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -70,7 +69,6 @@ fn mock_parent(model: Arc<dyn ChatModel<()>>) -> ParentExecutionContext {
         model_name: "test-model".to_string(),
         temperature: 0.0,
         workspace_dir: std::env::temp_dir(),
-        memory: Arc::new(NoopMemory),
         agent_config: AgentConfig::default(),
         workflows: Arc::new(Vec::new()),
         memory_context: Arc::new(None),

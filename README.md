@@ -82,7 +82,7 @@ Every engine OpenHuman calls out to is chosen by config, not hardcoded:
 
 - LLM: the managed TinyHumans route, Ollama, LM Studio, MLX, any local OpenAI-compatible server, Claude Code or the Claude Agent SDK, and 26 bring-your-own-key providers including OpenRouter, OpenAI, Anthropic, Google, Groq, Mistral, DeepSeek, Together, and Fireworks. See [local models and BYOK](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-and-byok-models).
 - Embeddings: the managed Voyage-backed route, or your own Voyage, OpenAI, Cohere, Ollama, or OpenAI-compatible endpoint.
-- Memory: [Memory Trees](https://tinyhumans.gitbook.io/openhuman/features/memory-tree) on TinyCortex, mirrored as an [Obsidian vault](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki) on your machine, is the default and stays fully local. Settings > Memory Engine switches a live install, with no restart, to CortexDB hosted by TinyHumans (billed in credits, signed in with your account), or to Supermemory, Mem0, Cognee, CortexDB or AgentMemory with your own endpoint and key, and can copy your existing memories across. Remote engines need the `memory-remote` gate, which the shipped product includes.
+- Memory: [Memory v2](https://tinyhumans.gitbook.io/openhuman/features/memory) is Recall, Fetch and Store over a pluggable engine: TinyHumans (hosted CortexDB, signed in with your account) or your own CortexDB (endpoint and key). It stores documents (folders, files, links, GitHub, RSS, connected apps), conversations and learnings, answers questions with citations, and compiles a `context.md` brief for new chats. With neither engine, memory is off. Everything is switched under Connections > Memory.
 - Web search: managed search included with a subscription, or your own key for Parallel, Brave, Querit, Exa, Tavily, or a self-hosted SearXNG instance.
 
 Engine details: [engines](./gitbooks/developing/engines.md).
@@ -171,9 +171,9 @@ High-level comparison (products evolve, so verify against each vendor). OpenHuma
 | **Open-source**        | 🚫 Proprietary    | ✅ MIT            | ✅ MIT            | ✅ GNU                                                                                                   |
 | **Simple to start**    | ✅ Desktop + CLI  | ⚠️ Terminal-first | ⚠️ Terminal-first | ✅ Clean UI, minutes                                                                                     |
 | **Cost**               | ⚠️ Sub + add-ons  | ⚠️ BYO models     | ⚠️ BYO models     | ✅ One sub + TokenJuice                                                                                  |
-| **Memory**             | ✅ Chat-scoped    | ⚠️ Plugin-reliant | ✅ Self-learning  | 🚀 Memory Tree + Obsidian vault, optional [agentmemory](https://github.com/rohitg00/agentmemory) backend |
+| **Memory**             | ✅ Chat-scoped    | ⚠️ Plugin-reliant | ✅ Self-learning  | 🚀 Pluggable engine (hosted TinyHumans or your CortexDB), citations, `context.md` brief |
 | **Integrations**       | ⚠️ Few connectors | ⚠️ BYO            | ⚠️ BYO            | 🚀 100+ OAuth · 5k+ MCP · 90k+ Skills                                                                    |
-| **Auto-fetch**         | 🚫 None           | 🚫 None           | 🚫 None           | ✅ 20-min sync into memory                                                                               |
+| **Source sync**        | 🚫 None           | 🚫 None           | 🚫 None           | ✅ Scheduled sync of folders, repos, feeds and apps into memory                         |
 | **Orchestration**      | ⚠️ Sub-tasks      | ⚠️ Single loop    | ⚠️ Single loop    | 🚀 Agent graphs + checkpoints + E2E-encrypted A2A                                                        |
 | **Workflows**          | 🚫 None           | ⚠️ Scripts        | ⚠️ Scripts        | 🚀 Visual, durable, agent-proposed, approval-gated                                                       |
 | **Meetings**           | 🚫 None           | 🚫 None           | 🚫 None           | 🚀 Joins Meet/Zoom/Teams/Webex, speaks, live transcript                                                  |

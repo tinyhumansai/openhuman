@@ -75,10 +75,6 @@ pub fn run_from_cli_args(args: &[String]) -> Result<()> {
         // terminal frontend is its own workspace crate and executable.
         "tui" | "chat" => run_moved_tui_diagnostic(),
         "call" => run_call_command(&args[1..]),
-        "tree-summarizer" => {
-            crate::memory::tree::tree_runtime::cli::run_tree_summarizer_command(&args[1..])
-        }
-        "memory" => crate::core::memory_cli::run_memory_command(&args[1..]),
         "agent" => {
             log::debug!(
                 "[cli] dispatching to agent subcommand, args={:?}",
@@ -475,15 +471,6 @@ fn run_call_command(args: &[String]) -> Result<()> {
     let params =
         parse_json_params(params.as_deref().unwrap_or("{}")).map_err(anyhow::Error::msg)?;
 
-    // Raw calls bypass namespace parsing, but not the configured memory-driver
-    // binding. Without this gate an absent capability could still reach a
-    // destructive embedded handler because plain CLI invocations have no
-    // ambient CoreContext to filter the registry.
-    crate::core::cli_capability::ensure_capability_blocking(
-        all::capability_for_rpc_method(&method).flatten(),
-        &format!("openhuman call --method {method}"),
-    )?;
-
     // `call` invokes a JSON-RPC method that may run an orchestrator turn
     // (e.g. `agent.chat`), so it needs the same roomy stack as the server.
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -492,20 +479,7 @@ fn run_call_command(args: &[String]) -> Result<()> {
         .max_blocking_threads(crate::core::runtime::MAX_BLOCKING_THREADS)
         .build()?;
     let value = rt
-        .block_on(async {
-            // A raw call is its own process: the server publishes the module
-            // host policy during boot, and a method that crosses the memory
-            // module binding (since the round-2 migration, most of them)
-            // fails with "the module host policy was never published"
-            // without this — the same per-process publish the memory and
-            // tree-summarizer subcommand families already do.
-            // One line by design: `crates/openhuman-core/src/core/` is transport, and the load-
-            // config-install-sink-publish-policy sequence lives with the
-            // module host in the openhuman layer (review finding on #5932).
-            #[cfg(feature = "modules")]
-            crate::modules::memory::publish_cli_boot_policy().await?;
-            invoke_method(default_state(), &method, params).await
-        })
+        .block_on(async { invoke_method(default_state(), &method, params).await })
         .map_err(anyhow::Error::msg)?;
 
     // Output the result as pretty-printed JSON to stdout.
@@ -528,20 +502,6 @@ fn run_namespace_command(
     grouped: &BTreeMap<String, Vec<ControllerSchema>>,
 ) -> Result<()> {
     let Some(schemas) = grouped.get(namespace) else {
-        // Reachable only when `grouped` really was filtered — i.e. under
-        // `run`/`serve`/TUI, which build a `CoreContext`. On a plain CLI
-        // invocation there is no ambient context, so nothing is filtered and a
-        // gated namespace is still present; the per-function gate below is what
-        // fires there. Consult the UNFILTERED registry before reporting a typo:
-        // silence reads as a mistyped command and sends the user off debugging
-        // their own command line, which is exactly what `docs/specs/kernel.md`
-        // §3.3 carves the CLI out of. Same reasoning as the retained `mcp` and
-        // explicit compatibility arms above. A namespace that does not exist at all yields `None`
-        // and still reports unknown.
-        crate::core::cli_capability::ensure_capability_blocking(
-            all::sole_capability_for_namespace(namespace),
-            &format!("openhuman {namespace}"),
-        )?;
         return Err(anyhow::anyhow!(
             "unknown namespace '{namespace}'. Run `openhuman --help` to see available namespaces."
         ));
@@ -557,29 +517,6 @@ fn run_namespace_command(
     }
 
     let function = args[0].as_str();
-
-    // Gate BEFORE resolving the schema, not in the not-found arm below.
-    //
-    // `grouped` comes from `all_controller_schemas()`, which filters through the
-    // ambient `CoreContext` — and no plain CLI subcommand builds one, since
-    // `DEFAULT_CONTEXT` is set only in `CoreContext::init` (reached by
-    // `run`/`serve` and the TUI). So on a real `openhuman <ns> <fn>` invocation
-    // *nothing* is filtered, a gated function is still found here, and a check
-    // placed only in the not-found arm would never execute — the command would
-    // simply run. Gating the resolved function instead makes this fire on the
-    // path users actually take, and it stays correct under `run`/`serve` where
-    // `grouped` genuinely is filtered.
-    //
-    // `capability_for_parts` consults the UNFILTERED registry and yields `None`
-    // for a function registered nowhere, so a genuine typo short-circuits the
-    // gate and falls through to the unknown-function message below. Keeping the
-    // two distinguishable is the point: collapsing them would make real typos
-    // harder to diagnose, which is the failure `docs/specs/kernel.md` §3.3
-    // carves the CLI out of.
-    crate::core::cli_capability::ensure_capability_blocking(
-        all::capability_for_parts(namespace, function).flatten(),
-        &format!("openhuman {namespace} {function}"),
-    )?;
 
     let Some(schema) = schemas.iter().find(|s| s.function == function).cloned() else {
         return Err(anyhow::anyhow!(
@@ -738,14 +675,11 @@ fn print_general_help(grouped: &BTreeMap<String, Vec<ControllerSchema>>) {
     println!("  openhuman [OPTIONS]                     (show this help)");
     println!("  openhuman run [--host <addr>] [--port <u16>] [--jsonrpc-only] [--verbose]");
     println!("  openhuman call --method <name> [--params '<json>' | --params-stdin]");
-    println!(
-        "  openhuman mcp [-v|--verbose]              (stdio MCP server; read-only memory tools)"
-    );
+    println!("  openhuman mcp [-v|--verbose]              (stdio MCP server)");
     println!("  openhuman-tui [--thread <id>|--new]       (terminal UI; separate executable)");
     println!("  openhuman skills <subcommand> [options]   (skill development runtime)");
     println!("  openhuman agent <subcommand> [options]    (inspect agent definitions & prompts)");
     println!("  openhuman voice [--hotkey <combo>] [--mode <tap|push>]  (voice dictation server)");
-    println!("  openhuman tree-summarizer <subcommand> [options]  (summary tree CLI)");
     println!("  openhuman sentry-test [--message <text>] [--panic]  (verify Sentry wiring)");
     println!("  openhuman <namespace> <function> [--param value ...]\n");
     println!("Global options (place before the command):");

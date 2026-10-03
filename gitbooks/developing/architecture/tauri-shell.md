@@ -242,7 +242,6 @@ From **`workspace_paths.rs`** (closes `#1402`). These commands accept workspace-
 | `open_workspace_path`             | Open an existing workspace file or directory with the OS default app.  |
 | `reveal_workspace_path`           | Reveal an existing workspace file or directory in the OS file manager. |
 | `preview_workspace_text`          | Read a capped UTF-8 text preview from an existing workspace file.      |
-| `resolve_workspace_absolute_path` | Resolve a workspace-relative path to its validated absolute path.      |
 
 ### Push-to-talk (PTT) hotkey + overlay
 

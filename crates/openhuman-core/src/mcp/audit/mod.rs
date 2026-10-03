@@ -6,7 +6,7 @@
 //!
 //! # Where the rows are now
 //!
-//! The table used to be created inside this application's memory-tree database,
+//! The table used to be created inside a database owned by the retired v1 memory system,
 //! which is precisely what made it unmovable. It has its own file now,
 //! `mcp_audit/mcp_audit.db`, under the same workspace directory. Rows written
 //! before the move stay where they were: an audit log is history rather than

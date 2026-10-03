@@ -44,13 +44,11 @@ pub use crate::config::rpc as config_rpc;
 #[cfg(all(test, feature = "mcp"))]
 pub use crate::core::all;
 #[cfg(all(test, feature = "mcp"))]
-pub use params::{build_rpc_params, slug_from};
+pub use params::build_rpc_params;
 #[cfg(all(test, feature = "mcp"))]
 pub use serde_json::{json, Value};
 #[cfg(all(test, feature = "mcp"))]
-pub use types::SEARCH_MAX_RESULTS;
-#[cfg(all(test, feature = "mcp"))]
-pub use types::{DEFAULT_LIMIT, MAX_LIMIT, TREE_TAG_MAX_TAGS, TREE_TAG_MAX_TAG_LENGTH};
+pub use types::{MEMORY_FORGET_MAX_IDS, MEMORY_MAX_LIMIT, SEARCH_MAX_RESULTS};
 
 #[cfg(all(test, feature = "mcp"))]
 #[path = "../tools_tests.rs"]

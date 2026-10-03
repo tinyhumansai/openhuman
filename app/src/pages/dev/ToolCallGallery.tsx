@@ -52,7 +52,7 @@ import {
   MOCK_CONNECTION_PHASES,
   MOCK_CONTEXT_BREAKDOWN,
   MOCK_CONTEXT_USAGE,
-  MOCK_MEMORY_RECALL,
+  MOCK_MEMORY_FETCH,
   MOCK_MESSAGE_QUEUE,
   MOCK_THREAD_FILES,
 } from './assistant-ui-demo/assistantUiMock/mockScript';
@@ -575,10 +575,10 @@ export default function ToolCallGallery() {
             open
             data-testid="tool-gallery-mention-menu"
             className="relative bottom-auto mb-0">
-            {MOCK_MEMORY_RECALL.chunks.map((chunk, index) => (
-              <ComposerMenuItem key={chunk.id} active={index === 0}>
+            {MOCK_MEMORY_FETCH.hits.map((hit, index) => (
+              <ComposerMenuItem key={hit.id} active={index === 0}>
                 <BrainIcon className="text-foreground/35 size-3.5 shrink-0" />
-                <span className="flex-1 truncate text-start">{chunk.content_preview}</span>
+                <span className="flex-1 truncate text-start">{hit.text}</span>
               </ComposerMenuItem>
             ))}
             {MOCK_THREAD_FILES.map(file => (

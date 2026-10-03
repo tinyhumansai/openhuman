@@ -5,12 +5,7 @@
 //! startup. The actual compression runs inside the shared `server.py` (embedded in `tinyruntime-pyserver`) and is
 //! reached via [`request_kompress`] (→ `server::request("kompress.compress")`).
 //!
-//! Two provisioning entry points so the single-venv server can host Kompress
-//! alongside (or instead of) spaCy:
-//! - [`ensure_kompress`] creates a dedicated `kompress-venv` when Kompress is
-//!   the only heavy backend.
-//! - [`install_into`] adds torch + transformers to an *existing* venv (e.g. the
-//!   spaCy venv) when both backends are enabled and must share one interpreter.
+//! [`ensure_kompress`] creates the dedicated `kompress-venv` the server runs.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -23,7 +18,7 @@ use tokio::sync::OnceCell;
 use crate::config::Config;
 use crate::runtime::python::PythonBootstrap;
 
-use super::spacy::python_server_cache_root;
+use super::server::python_server_cache_root;
 
 const VENV_TIMEOUT: Duration = Duration::from_secs(120);
 /// torch + transformers wheels are large; allow a generous one-time window.
@@ -164,31 +159,6 @@ pub async fn ensure_kompress(config: &Config) -> Result<KompressRuntime> {
         python_bin: venv_python,
         hf_home: hf,
     })
-}
-
-/// Install torch + transformers + the model into an *existing* venv (shared with
-/// another backend, e.g. spaCy). Idempotent — a marker next to the interpreter
-/// records completion so repeat launches skip the heavy step.
-pub async fn install_into(config: &Config, venv_python: &Path) -> Result<PathBuf> {
-    let _guard = provision_lock().await.lock().await;
-    let hf = hf_home(config);
-    let shared_marker = venv_python
-        .parent()
-        .map(|d| marker_path(d, &config.tokenjuice.ml_model_id))
-        .unwrap_or_else(|| marker_path(Path::new("."), &config.tokenjuice.ml_model_id));
-    if shared_marker.exists() {
-        return Ok(hf);
-    }
-    tokio::fs::create_dir_all(&hf)
-        .await
-        .with_context(|| format!("creating kompress hf home {}", hf.display()))?;
-    log::info!(
-        "[runtime_python_server::kompress] installing torch+transformers into shared venv {}",
-        venv_python.display()
-    );
-    install_deps_and_model(venv_python, &hf, &config.tokenjuice.ml_model_id).await?;
-    let _ = tokio::fs::write(&shared_marker, config.tokenjuice.ml_model_id.as_bytes()).await;
-    Ok(hf)
 }
 
 /// pip-install torch (CPU wheel) + transformers, then pre-download the model so

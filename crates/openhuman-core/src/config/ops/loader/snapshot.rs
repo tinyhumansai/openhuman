@@ -107,7 +107,6 @@ pub fn client_config_json(config: &Config) -> serde_json::Value {
         "vision_provider": config.vision_provider,
         "memory_provider": config.memory_provider,
         "embeddings_provider": config.embeddings_provider,
-        "learning_provider": config.learning_provider,
         "voice_providers": config.voice_providers.iter().map(|v| {
             serde_json::json!({
                 "id": v.id,

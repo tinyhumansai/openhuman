@@ -1,4 +1,8 @@
-//! Shared channel runtime state and memory helpers.
+//! Shared channel runtime state and history helpers.
+//!
+//! Channel turns carry no per-turn memory recall: memory v2 reaches a new
+//! session through `context.md`, injected by the session host, and committed
+//! turns are ingested from the `ConversationTurnCommitted` bus event.
 
 use crate::agent::tinyagents::TurnModelSource;
 use crate::util::truncate_with_ellipsis;
@@ -9,12 +13,10 @@ use tinyagents_session::transcript::TranscriptMessage;
 use tinytools::Tool;
 
 pub(crate) use tinychannels::context::{
-    effective_channel_message_timeout_secs, should_skip_memory_context_entry,
-    ChannelRouteSelection, CHANNEL_HISTORY_COMPACT_CONTENT_CHARS,
-    CHANNEL_HISTORY_COMPACT_KEEP_MESSAGES, CHANNEL_MESSAGE_TIMEOUT_SECS,
-    CHANNEL_TYPING_REFRESH_INTERVAL_SECS, DEFAULT_CHANNEL_INITIAL_BACKOFF_SECS,
-    DEFAULT_CHANNEL_MAX_BACKOFF_SECS, MAX_CHANNEL_HISTORY, MEMORY_CONTEXT_ENTRY_MAX_CHARS,
-    MEMORY_CONTEXT_MAX_CHARS, MEMORY_CONTEXT_MAX_ENTRIES,
+    effective_channel_message_timeout_secs, ChannelRouteSelection,
+    CHANNEL_HISTORY_COMPACT_CONTENT_CHARS, CHANNEL_HISTORY_COMPACT_KEEP_MESSAGES,
+    CHANNEL_MESSAGE_TIMEOUT_SECS, CHANNEL_TYPING_REFRESH_INTERVAL_SECS,
+    DEFAULT_CHANNEL_INITIAL_BACKOFF_SECS, DEFAULT_CHANNEL_MAX_BACKOFF_SECS, MAX_CHANNEL_HISTORY,
 };
 
 #[cfg(test)]
@@ -33,7 +35,6 @@ pub(crate) struct ChannelRuntimeContext {
     /// Production contexts carry `config` and construct crate-native sources.
     pub(crate) turn_model_source: Option<TurnModelSource>,
     pub(crate) default_provider: Arc<String>,
-    pub(crate) memory: Arc<crate::memory::guard::MemoryGuard>,
     pub(crate) tools_registry: Arc<Vec<Box<dyn Tool>>>,
     /// Seeds every turn's history. Production uses the refreshing variant so
     /// the active profile and identity-file edits reach the next message
@@ -41,9 +42,7 @@ pub(crate) struct ChannelRuntimeContext {
     pub(crate) system_prompt: super::ChannelSystemPrompt,
     pub(crate) model: Arc<String>,
     pub(crate) temperature: f64,
-    pub(crate) auto_save_memory: bool,
     pub(crate) max_tool_iterations: usize,
-    pub(crate) min_relevance_score: f64,
     pub(crate) conversation_histories: ConversationHistoryMap,
     pub(crate) turn_model_source_cache: TurnModelSourceCacheMap,
     pub(crate) route_overrides: RouteSelectionMap,
@@ -58,10 +57,6 @@ pub(crate) struct ChannelRuntimeContext {
     /// Full config for building crate-native turn models (Phase 3 P3-B). `Some` in
     /// production; `None` lets tests inject a model source directly.
     pub(crate) config: Option<Arc<crate::config::Config>>,
-}
-
-pub(crate) fn conversation_memory_key(msg: &super::traits::ChannelMessage) -> String {
-    tinychannels::context::conversation_memory_key(msg)
 }
 
 pub(crate) fn conversation_history_key(msg: &super::traits::ChannelMessage) -> String {
@@ -107,70 +102,6 @@ pub(crate) fn compact_sender_history(ctx: &ChannelRuntimeContext, sender_key: &s
 
 pub(crate) fn is_context_window_overflow_error(err: &anyhow::Error) -> bool {
     tinychannels::context::is_context_window_overflow_message(&err.to_string())
-}
-
-use tinymemory_api::provider::MemoryRecall as _;
-
-pub(crate) async fn build_memory_context(
-    mem: &crate::memory::guard::MemoryGuard,
-    user_msg: &str,
-    min_relevance_score: f64,
-) -> String {
-    let mut context = String::new();
-
-    if let Ok(entries) = mem
-        .recall(
-            user_msg,
-            5,
-            &tinymemory_api::recall::OwnedRecallOpts::default(),
-            // Unrestricted: a channel turn carries no ambient source scope, and
-            // the guard narrows against its own allowlist regardless.
-            None,
-        )
-        .await
-    {
-        let mut included = 0usize;
-        let mut used_chars = 0usize;
-
-        for entry in entries.iter().filter(|e| match e.score {
-            Some(score) => score >= min_relevance_score,
-            None => true, // keep entries without a score (e.g. non-vector backends)
-        }) {
-            if included >= MEMORY_CONTEXT_MAX_ENTRIES {
-                break;
-            }
-
-            if should_skip_memory_context_entry(&entry.key, &entry.content) {
-                continue;
-            }
-
-            let content = if entry.content.chars().count() > MEMORY_CONTEXT_ENTRY_MAX_CHARS {
-                truncate_with_ellipsis(&entry.content, MEMORY_CONTEXT_ENTRY_MAX_CHARS)
-            } else {
-                entry.content.clone()
-            };
-
-            let line = format!("- {}: {}\n", entry.key, content);
-            let line_chars = line.chars().count();
-            if used_chars + line_chars > MEMORY_CONTEXT_MAX_CHARS {
-                break;
-            }
-
-            if included == 0 {
-                context.push_str("[Memory context]\n");
-            }
-
-            context.push_str(&line);
-            used_chars += line_chars;
-            included += 1;
-        }
-
-        if included > 0 {
-            context.push('\n');
-        }
-    }
-
-    context
 }
 
 #[cfg(test)]

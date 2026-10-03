@@ -3,7 +3,6 @@ use crate::agent::harness::definition::AgentDefinitionRegistry;
 use crate::agent::harness::fork_context::{with_parent_context, ParentExecutionContext};
 use crate::agent::prompts::ToolCallFormat;
 use crate::config::AgentConfig;
-use crate::memory::test_support::NoopMemory;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
@@ -291,7 +290,7 @@ fn extract_workflow_proposal_ignores_non_proposal_history() {
 
 #[test]
 fn attach_workflow_proposal_persists_thread_message_and_extends_summary() {
-    use crate::memory::conversations::CreateConversationThread;
+    use crate::threads::store::CreateConversationThread;
     let temp = tempfile::tempdir().expect("tempdir");
     conversations::ensure_thread(
         temp.path().to_path_buf(),
@@ -472,7 +471,6 @@ fn parent_context(workspace_dir: &Path) -> ParentExecutionContext {
         model_name: "test-model".into(),
         temperature: 0.0,
         workspace_dir: workspace_dir.to_path_buf(),
-        memory: Arc::new(NoopMemory),
         agent_config: AgentConfig::default(),
         workflows: Arc::new(Vec::new()),
         memory_context: Arc::new(None),

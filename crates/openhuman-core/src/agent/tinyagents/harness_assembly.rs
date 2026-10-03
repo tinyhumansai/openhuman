@@ -361,20 +361,6 @@ pub(super) fn assemble_turn_harness(
         harness.push_middleware(mw.clone());
     }
 
-    // Memory protocol (issue #4116): observe the read → dedupe → write →
-    // update-index cycle and append a corrective note when a write skips the
-    // dedupe read or leaves the index stale. Pushed ahead of every other
-    // result-rewriting middleware so its `after_tool` runs *after* the byte-cap
-    // truncation, keeping the note.
-    // Dedupe guidance stays active; only the closing-step reminder depends on
-    // whether this turn can call the index-update tool.
-    let can_update_index = allowed
-        .as_ref()
-        .is_none_or(|names| names.contains("update_memory_md"));
-    harness.push_middleware(Arc::new(middleware::memory_protocol_middleware(
-        can_update_index,
-    )));
-
     // Repeated-failure circuit breaker: pause the run when a tool returns the same
     // error `REPEATED_TOOL_FAILURE_THRESHOLD` times in a row, so a deterministic
     // security/approval denial or terminal tool error surfaces its root cause

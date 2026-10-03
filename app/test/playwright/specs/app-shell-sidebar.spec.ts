@@ -54,7 +54,6 @@ test.describe('App shell — sidebar navigation', () => {
     page,
   }) => {
     for (const [id, expectedHash] of [
-      ['brain', '/brain'],
       ['flows', '/flows'],
       ['connections', '/connections'],
       ['chat', '/chat'],

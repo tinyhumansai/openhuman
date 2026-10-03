@@ -1,70 +1,64 @@
-//! Agent tools giving a running flow a private, sandboxed memory namespace
-//! (`flow_<flow_id>` — see [`flow_namespace`]).
+//! Agent tools giving a running flow a private, tag-scoped slice of memory,
+//! plus the flow-memory helpers every flow memory caller shares.
+//!
+//! Memory v2 has no namespaces: a flow's items are the items carrying its
+//! [`flow_tag`] (`flow:<flow_id>`). Every flow write also carries
+//! [`FLOWS_TAG`] (`flows`), which is what the read-only cross-flow
+//! `scope: "flows"` recall filters on. A keyed write additionally carries
+//! [`flow_key_tag`] (`flow:<flow_id>:key:<key>`) so it can be replaced and
+//! forgotten by key.
 //!
 //! Motivating use case: a newsletter-digest flow that runs on a schedule
 //! needs to remember which items it already sent so it doesn't re-send them
-//! on the next run. Without a durable, flow-scoped place to note "already
-//! sent: <item id>", the agent node inside the flow has no way to dedupe
-//! across runs other than re-deriving state from the target service itself
-//! (which is often lossy or rate-limited).
+//! on the next run.
 //!
 //! **Security invariant (non-negotiable):** there is no code path here by
-//! which a flow can write to — or even name — a namespace other than its
-//! own. [`FlowMemoryRememberTool`] derives the namespace internally via
-//! [`flow_namespace`] from the caller-supplied `flow_id`; there is no
-//! `namespace` parameter a caller could override. Every write is tainted
-//! [`MemoryTaint::ExternalSync`] (automation output, not user-authored
-//! fact), matching the same taint sync pipelines use for third-party
-//! content, so it is treated exactly as conservatively.
-//! [`FlowMemoryRecallTool`]'s `scope: "flows"` is read-only cross-flow
-//! visibility — it can never be used to write outside a flow's own
-//! namespace either.
-//!
-//! **T-M2 fix:** [`FlowMemoryRememberTool`] only resolves the flow id from
-//! the run's own trusted `TrustedAutomation { Workflow }` turn origin (see
-//! [`trusted_flow_id`]) — it never trusts a model-supplied `flow_id` arg.
-//! Outside a trusted workflow run (every chat/orchestrator turn) the write
-//! is refused outright, not routed to whatever `flow_id` the caller named.
+//! which a flow can write an item tagged for another flow. Every write
+//! derives its tags from the run's trusted `TrustedAutomation { Workflow }`
+//! origin ([`trusted_flow_id`]), never from a model-supplied `flow_id`
+//! argument; outside a trusted workflow run the write is refused outright.
+//! Flow writes are stored as `source.kind = agent` learnings with the flow
+//! tags, so they never pose as user-authored conversation or documents.
+//! [`FlowMemoryRecallTool`] only ever reads with a flow tag filter
+//! (`flow:<id>` or `flows`), so it never reaches the user's own memory.
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::json;
+use tinymemory::{
+    Citation, ForgetTarget, LearningKind, MemoryMeta, MetaFilter, SourceKind, SourceRef,
+};
+use tinytools::{PermissionLevel, Tool, ToolResult};
 
 use crate::agent::turn_origin::{self, AgentTurnOrigin, TrustedAutomationSource};
-use crate::memory::ops::guard::active_memory_guard;
+use crate::config::Config;
+use crate::memory::types::{LearnParams, RecallParams};
+use crate::memory::{MemoryError, MemoryResult};
 use crate::security::policy::ToolOperation;
 use crate::security::SecurityPolicy;
-use tinymemory_api::provider::{MemoryCore, MemoryRecall};
-use tinymemory_api::recall::OwnedRecallOpts;
-use tinymemory_api::types::{MemoryCategory, MemoryEntry, MemoryTaint};
-use tinytools::{PermissionLevel, Tool, ToolResult};
+
+/// Prefix of a flow's own tag (see [`flow_tag`]).
+pub const FLOW_TAG_PREFIX: &str = "flow:";
+
+/// Tag carried by every flow-written item; the cross-flow (`scope: "flows"`)
+/// read filter.
+pub const FLOWS_TAG: &str = "flows";
+
+/// Infix between a flow's tag and a key in [`flow_key_tag`].
+const FLOW_KEY_INFIX: &str = ":key:";
 
 /// Returns the flow id the *run itself* is scoped under, when the current
 /// agent turn is executing inside a saved-flow run
 /// (`AgentTurnOrigin::TrustedAutomation { job_id, source: Workflow { .. } }` —
-/// see `flows::ops::workflow_origin`, scoped around every `flows_run` /
-/// `flows_resume`). `job_id` on that variant IS the running flow's id.
+/// see `flows::ops::workflow_origin`). `job_id` on that variant IS the
+/// running flow's id.
 ///
 /// **Security invariant:** this is the ONLY trustworthy source of "which flow
-/// is calling". A `flow_id` value handed in as an ordinary tool argument is
-/// model-supplied and can be forged by a prompt-injected caller (or another
-/// agent invoking the tool directly) to name a DIFFERENT flow's namespace.
-/// When this returns `Some`, callers MUST use it — and ignore any
-/// caller-supplied `flow_id` arg — for the `scope: "flow"` / write case.
-///
-/// **T-M2 fix:** callers running outside a flow run (e.g. a chat/orchestrator
-/// turn with the tool wired in some other context) get `None` here. For the
-/// write path ([`FlowMemoryRememberTool`]) that used to fall back to trusting
-/// the model-supplied `flow_id` arg — which let a prompt-injected chat turn
-/// poison an unrelated flow's private dedup namespace, since the tool has no
-/// `external_effect` and therefore never parks for approval. `None` now means
-/// [`FlowMemoryRememberTool`] REFUSES the write outright; there is no
-/// legitimate chat-side use case for writing another flow's namespace, and
-/// refusing is the only fail-closed option that doesn't require inventing an
-/// ownership proof. [`FlowMemoryRecallTool`] is unaffected — it stays
-/// read-only and its `scope: "flows"` already exposes every flow's namespace
-/// by design, so an arg-supplied `flow_id` grants no new read privilege.
+/// is calling". A `flow_id` tool argument is model-supplied and can be forged
+/// by a prompt-injected caller. Writes refuse when this is `None`; the
+/// read-only recall falls back to the argument (cross-flow reads are already
+/// open by design, so an argument grants no new read privilege).
 fn trusted_flow_id() -> Option<String> {
     match turn_origin::current() {
         Some(AgentTurnOrigin::TrustedAutomation {
@@ -75,128 +69,153 @@ fn trusted_flow_id() -> Option<String> {
     }
 }
 
-/// Prefix for a flow's private, sandboxed memory namespace (see
-/// [`flow_namespace`]).
+/// The tag marking an item as `flow_id`'s own.
 ///
-/// **Deviates from the originally specced `"flow:"` (colon) separator —
-/// deliberately.** The `Memory` trait's `UnifiedMemory` backend
-/// (`crates/openhuman-core/src/memory/store/`) is internally inconsistent about
-/// namespace sanitization: `store_with_taint`/`recall`/`list`/
-/// `MemoryClient::clear_namespace` all route through
-/// `UnifiedMemory::sanitize_namespace`
-/// (`memory_store/namespace_store/init.rs`), which collapses any character
-/// outside `[A-Za-z0-9_/-]` — including `:` — to `_` before touching SQLite.
-/// But `Memory::forget` (`memory_store/memory_trait.rs`) queries
-/// `WHERE namespace = ?1` against the **raw, unsanitized** argument. With a
-/// `"flow:"` prefix, `forget("flow:<id>", key)` would therefore silently
-/// never match the row `store_with_taint` actually persisted as
-/// `"flow_<id>"` — the post-run digest subscriber's retention sweep
-/// (`bus::FlowRunDigestSubscriber`) would then never evict old entries, and
-/// `namespace_summaries()`-based cross-flow listing (`scope: "flows"` in
-/// [`FlowMemoryRecallTool`]) would have to match the sanitized form anyway
-/// since `namespace_summaries` reads the persisted (sanitized) column back
-/// verbatim. Using `"flow_"` (already a fixed point of `sanitize_namespace`,
-/// since flow ids are hyphenated UUIDs — no character in either the prefix
-/// or a flow id ever needs sanitizing) makes every `Memory` method agree
-/// with every other one on the exact namespace string, with no silent
-/// mismatch anywhere. The namespace is still shared-root and
-/// profile-independent exactly as specified — only the separator character
-/// changed.
-///
-/// Re-exported from `flows::mod` as `flows::FLOW_MEMORY_NAMESPACE_PREFIX` —
-/// see that module for why this lives here rather than in `mod.rs` itself.
-pub const FLOW_MEMORY_NAMESPACE_PREFIX: &str = "flow_";
-
-/// Builds a flow's private, profile-independent memory namespace from a
-/// `flow_id`.
-///
-/// **Security invariant:** this is the *only* place in the codebase that may
-/// construct this namespace string. Every caller — the `flow_memory_recall`
-/// / `flow_memory_remember` agent tools below, the post-run digest
-/// subscriber (`bus::FlowRunDigestSubscriber`), and the `flows_delete`
-/// cleanup hook (`ops::flows_delete`) — goes through this function with a
-/// `flow_id`, never with a caller-supplied raw namespace. A flow can
-/// therefore never write to, or be told the name of, any memory namespace
-/// but its own.
-///
-/// Re-exported from `flows::mod` as `flows::flow_namespace`.
-pub fn flow_namespace(flow_id: &str) -> String {
-    format!("{FLOW_MEMORY_NAMESPACE_PREFIX}{flow_id}")
+/// **Security invariant:** the only constructor of flow tags. Every caller —
+/// the agent tools below, the tinyflows `memory` node adapter, the post-run
+/// digest subscriber and `flows_delete` — passes a trusted flow id.
+#[must_use]
+pub fn flow_tag(flow_id: &str) -> String {
+    format!("{FLOW_TAG_PREFIX}{flow_id}")
 }
 
-/// The persisted-namespace prefix matching every flow's memory namespace, as
-/// [`Memory::namespace_summaries`] returns it.
-///
-/// This is intentionally the *same* string as [`FLOW_MEMORY_NAMESPACE_PREFIX`]
-/// — kept as a separate, explicitly-named constant here so the "match against
-/// what recall/list see" intent stays self-evident at each call site,
-/// independent of whether the two ever need to diverge in the future.
-const FLOW_MEMORY_NAMESPACE_LISTED_PREFIX: &str = FLOW_MEMORY_NAMESPACE_PREFIX;
+/// The tag marking an item as `flow_id`'s value for `key`.
+#[must_use]
+pub fn flow_key_tag(flow_id: &str, key: &str) -> String {
+    format!("{FLOW_TAG_PREFIX}{flow_id}{FLOW_KEY_INFIX}{key}")
+}
 
-/// Read-only recall merged across **every** flow's own `flow_<id>` memory
-/// namespace — never the user's personal/global memory, and never any
-/// namespace outside the `flow_*` prefix.
-///
-/// Shared by [`FlowMemoryRecallTool`]'s `scope: "flows"` arm and the
-/// tinyflows `memory` node's `scope: "flows"` (`OpenHumanMemory::recall` in
-/// `crate::flows::tinyflows::memory_adapter`) — both surfaces must see
-/// identical cross-flow results, so this is the one place that walks
-/// [`Memory::namespace_summaries`] and filters to `flow_*`. A per-namespace
-/// recall failure is logged and skipped rather than failing the whole call,
-/// so one corrupt/unavailable flow namespace can't blank out every other
-/// flow's results.
-pub async fn cross_flow_recall(
-    memory: &Arc<crate::memory::guard::MemoryGuard>,
-    query: &str,
-    limit: usize,
-    min_score: Option<f64>,
-) -> anyhow::Result<Vec<MemoryEntry>> {
-    use tinymemory_api::provider::{MemoryCore, MemoryRecall};
-    // `namespaces()` is the contract's name for what the engine trait called
-    // `namespace_summaries()` — identical signature and return type.
-    let summaries = memory.namespaces().await?;
-    let mut merged: Vec<MemoryEntry> = Vec::new();
-    for summary in summaries
-        .iter()
-        .filter(|s| s.namespace.starts_with(FLOW_MEMORY_NAMESPACE_LISTED_PREFIX))
-    {
-        let opts = tinymemory_api::recall::OwnedRecallOpts {
-            namespace: Some(summary.namespace.clone()),
-            min_score,
-            ..Default::default()
-        };
-        // `None` scope: the guard intersects it with the ambient per-turn
-        // allowlist, so this can only narrow.
-        match memory.recall(query, limit, &opts, None).await {
-            Ok(entries) => merged.extend(entries),
-            Err(e) => {
-                log::warn!(
-                    "[flows:memory] cross_flow_recall failed for namespace={}: {e}",
-                    summary.namespace
-                );
-            }
-        }
+/// The key a flow item was written under, recovered from its tags.
+#[must_use]
+pub fn flow_key_of(meta: &MemoryMeta) -> Option<&str> {
+    meta.tags.iter().find_map(|tag| {
+        tag.strip_prefix(FLOW_TAG_PREFIX)
+            .and_then(|rest| rest.split_once(FLOW_KEY_INFIX))
+            .map(|(_, key)| key)
+    })
+}
+
+/// The filter matching every item `flow_id` wrote.
+#[must_use]
+pub fn flow_filter(flow_id: &str) -> MetaFilter {
+    MetaFilter {
+        tags_any: vec![flow_tag(flow_id)],
+        ..MetaFilter::default()
     }
-    merged.sort_by(|a, b| {
-        b.score
-            .unwrap_or(0.0)
-            .partial_cmp(&a.score.unwrap_or(0.0))
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    merged.truncate(limit);
-    Ok(merged)
 }
 
-/// Read-only recall over a flow's own memory namespace, or (with
-/// `scope: "flows"`) across every flow's namespace.
-///
-/// `scope: "flows"` is intentionally still read-only and still confined to
-/// `flow_*` namespaces — it can never see the user's personal/global memory,
-/// only other flows' own automation output.
+/// The filter matching every flow-written item, of any flow.
+#[must_use]
+pub fn cross_flow_filter() -> MetaFilter {
+    MetaFilter {
+        tags_any: vec![FLOWS_TAG.to_string()],
+        ..MetaFilter::default()
+    }
+}
+
+/// Host metadata for an item `flow_id` writes: `source.kind = agent` with the
+/// flow tag as its source id, tagged [`flow_tag`], [`FLOWS_TAG`] and `extra`.
+#[must_use]
+pub fn flow_meta(flow_id: &str, extra: &[String]) -> MemoryMeta {
+    let tag = flow_tag(flow_id);
+    let mut tags = vec![tag.clone(), FLOWS_TAG.to_string()];
+    tags.extend(extra.iter().cloned());
+    MemoryMeta {
+        source: SourceRef {
+            kind: SourceKind::Agent,
+            id: Some(tag),
+        },
+        tags,
+        ..MemoryMeta::default()
+    }
+}
+
+/// Forgets every item matching `filter` (which must be non-empty). Memory
+/// off forgets nothing.
+pub async fn forget_matching(config: &Config, filter: MetaFilter) -> MemoryResult<usize> {
+    if filter.is_empty() {
+        return Err(MemoryError::invalid(
+            "refusing to forget with an empty filter",
+        ));
+    }
+    let bound = match crate::memory::engine::resolve(config).engine() {
+        Ok(bound) => bound,
+        Err(MemoryError::Off(_)) => {
+            tracing::debug!("[flows:memory] forget skipped: memory is off");
+            return Ok(0);
+        }
+        Err(error) => return Err(error),
+    };
+    let report = bound.engine.forget(ForgetTarget::Filter(filter)).await?;
+    tracing::debug!(
+        engine = %bound.id,
+        forgotten = report.forgotten,
+        "[flows:memory] forgot items by tag filter"
+    );
+    Ok(report.forgotten)
+}
+
+/// Stores `content` as `flow_id`'s value for `key`, replacing an earlier
+/// value under the same key. Returns the stored item's id.
+pub async fn remember_keyed(
+    config: &Config,
+    flow_id: &str,
+    key: &str,
+    content: &str,
+    kind: LearningKind,
+) -> MemoryResult<String> {
+    // Fail with MEMORY_OFF before touching anything.
+    crate::memory::engine::resolve(config).engine()?;
+    let key_tag = flow_key_tag(flow_id, key);
+    let replaced = forget_matching(
+        config,
+        MetaFilter {
+            tags_any: vec![key_tag.clone()],
+            ..MetaFilter::default()
+        },
+    )
+    .await?;
+    let view = crate::memory::ops::learn(
+        config,
+        LearnParams {
+            text: content.to_string(),
+            kind: Some(kind),
+            confidence: None,
+            meta: None,
+        },
+        Some(flow_meta(flow_id, &[key_tag])),
+    )
+    .await?;
+    tracing::debug!(
+        flow_id = %flow_id,
+        key_chars = key.chars().count(),
+        content_chars = content.chars().count(),
+        replaced,
+        "[flows:memory] keyed flow memory stored"
+    );
+    Ok(view.id)
+}
+
+/// Maps the tool's `category` argument onto a learning kind.
+fn learning_kind_for(category: Option<&str>) -> LearningKind {
+    match category.map(|c| c.trim().to_ascii_lowercase()) {
+        None => LearningKind::Fact,
+        Some(c) => match c.as_str() {
+            "" | "fact" | "core" => LearningKind::Fact,
+            "preference" => LearningKind::Preference,
+            "procedure" => LearningKind::Procedure,
+            "correction" => LearningKind::Correction,
+            _ => LearningKind::Other,
+        },
+    }
+}
+
+/// Read-only recall over a flow's own items, or (with `scope: "flows"`)
+/// across every flow's items — never the user's own memory.
 pub struct FlowMemoryRecallTool;
 
 impl FlowMemoryRecallTool {
-    /// Holds no memory handle — the guarded driver is resolved per call.
+    /// Holds no memory handle — config and engine are resolved per call.
     #[must_use]
     pub fn new() -> Self {
         Self
@@ -209,25 +228,17 @@ impl Default for FlowMemoryRecallTool {
     }
 }
 
-/// Renders recall hits the same way [`crate::memory::tools::recall`]
-/// does, with the flow's memory namespace context in each line so a
-/// cross-flow `scope: "flows"` result is attributable.
-fn render_entries(entries: &[MemoryEntry]) -> String {
-    if entries.is_empty() {
-        return "No memories found matching that query.".to_string();
+/// Renders a recall answer and its citations, each attributed to its flow
+/// key when it has one.
+fn render_recall(answer: &str, citations: &[Citation]) -> String {
+    if citations.is_empty() {
+        return "No flow memories found matching that query.".to_string();
     }
     use std::fmt::Write;
-    let mut output = format!("Found {} memories:\n", entries.len());
-    for entry in entries {
-        let score = entry
-            .score
-            .map_or_else(String::new, |s| format!(" [{s:.0}%]"));
-        let namespace = entry.namespace.as_deref().unwrap_or("?");
-        let _ = writeln!(
-            output,
-            "- [{namespace}] [{}] {}: {}{score}",
-            entry.category, entry.key, entry.content
-        );
+    let mut output = format!("{answer}\n\nSources ({}):\n", citations.len());
+    for citation in citations {
+        let key = flow_key_of(&citation.meta).unwrap_or("-");
+        let _ = writeln!(output, "- [{}] [{key}] {}", citation.id.0, citation.snippet);
     }
     output
 }
@@ -239,12 +250,12 @@ impl Tool for FlowMemoryRecallTool {
     }
 
     fn description(&self) -> &str {
-        "Search a flow's own private memory namespace for relevant facts — e.g. so a scheduled \
+        "Search a flow's own private memory for relevant facts — e.g. so a scheduled \
          digest flow can check what it already sent before, to avoid duplicates. `scope: \"flow\"` \
-         (the default) searches only the calling flow's own namespace. `scope: \"flows\"` searches \
-         read-only across every flow's private namespace (useful when related flows should dedupe \
-         against each other), merged and re-ranked by relevance. This tool never reads the user's \
-         personal or global memory — only memory flows have written about their own runs."
+         (the default) searches only the calling flow's own memory. `scope: \"flows\"` searches \
+         read-only across every flow's memory (useful when related flows should dedupe \
+         against each other). This tool never reads the user's personal memory — only memory \
+         flows have written about their own runs."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -265,7 +276,7 @@ impl Tool for FlowMemoryRecallTool {
                 "scope": {
                     "type": "string",
                     "enum": ["flow", "flows"],
-                    "description": "\"flow\" (default) searches only this flow's own memory namespace; \"flows\" searches read-only across every flow's namespace."
+                    "description": "\"flow\" (default) searches only this flow's own memory; \"flows\" searches read-only across every flow's memory."
                 },
                 "limit": {
                     "type": "integer",
@@ -277,12 +288,6 @@ impl Tool for FlowMemoryRecallTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        // T-m5: input-validation problems report via `ToolResult::error`
-        // uniformly (never `Err(anyhow!)`) — matching every other tool on
-        // this belt (recall's own scope-error arms below, remember's
-        // flow_id/key checks). An `Err` return surfaces to the model as a
-        // hard tool-invocation failure rather than a normal tool result the
-        // agent can read and react to in-turn.
         let query = match args.get("query").and_then(|v| v.as_str()) {
             Some(q) => q.trim(),
             None => return Ok(ToolResult::error("Missing 'query' parameter".to_string())),
@@ -290,73 +295,88 @@ impl Tool for FlowMemoryRecallTool {
         if query.is_empty() {
             return Ok(ToolResult::error("query cannot be empty".to_string()));
         }
-
         let flow_id_arg = args.get("flow_id").and_then(|v| v.as_str()).map(str::trim);
 
-        // SECURITY: inside a running flow, the run's own trusted origin is
-        // the ONLY authoritative source for "which flow is calling" — never
-        // the model-supplied `flow_id` arg. Without this, a prompt-injected
-        // caller could pass a different flow's id and read across the
-        // sandbox boundary the module doc promises. See `trusted_flow_id`.
-        let trusted = trusted_flow_id();
-        let flow_id: String = match &trusted {
+        // SECURITY: inside a running flow the trusted origin wins over the
+        // model-supplied `flow_id` argument.
+        let flow_id = match trusted_flow_id() {
             Some(trusted_id) => {
                 tracing::debug!(
                     target: "flows",
                     flow_id = %trusted_id,
-                    "[flows:memory] flow_memory_recall: flow id resolved from the trusted Workflow \
-                     run origin (any model-supplied flow_id arg is ignored)"
+                    "[flows:memory] flow_memory_recall: flow id from the trusted Workflow origin"
                 );
-                trusted_id.clone()
+                trusted_id
             }
-            None => {
-                let Some(arg) = flow_id_arg else {
-                    return Ok(ToolResult::error("Missing 'flow_id' parameter".to_string()));
-                };
-                if arg.is_empty() {
-                    return Ok(ToolResult::error("flow_id cannot be empty".to_string()));
-                }
-                arg.to_string()
+            None => match flow_id_arg {
+                None => return Ok(ToolResult::error("Missing 'flow_id' parameter".to_string())),
+                Some("") => return Ok(ToolResult::error("flow_id cannot be empty".to_string())),
+                Some(arg) => arg.to_string(),
+            },
+        };
+        let scope = args.get("scope").and_then(|v| v.as_str()).unwrap_or("flow");
+        let filter = match scope {
+            "flow" => flow_filter(&flow_id),
+            "flows" => cross_flow_filter(),
+            other => {
+                return Ok(ToolResult::error(format!(
+                    "Unknown scope '{other}': expected 'flow' or 'flows'"
+                )))
             }
         };
-        let flow_id = flow_id.as_str();
-        let scope = args.get("scope").and_then(|v| v.as_str()).unwrap_or("flow");
-
         #[allow(clippy::cast_possible_truncation)]
         let limit = args
             .get("limit")
             .and_then(serde_json::Value::as_u64)
             .map_or(5, |v| v as usize);
 
-        match scope {
-            "flow" => {
-                let namespace = flow_namespace(flow_id);
-                let opts = OwnedRecallOpts {
-                    namespace: Some(namespace.clone()),
-                    ..Default::default()
-                };
-                let guard = active_memory_guard()
-                    .await
-                    .map_err(|e| anyhow::anyhow!("flow_memory_recall: {e}"))?;
-                match guard.recall(query, limit, &opts, None).await {
-                    Ok(entries) => Ok(ToolResult::success(render_entries(&entries))),
-                    Err(e) => Ok(ToolResult::error(format!("Flow memory recall failed: {e}"))),
-                }
+        let config = match crate::config::rpc::load_config_with_timeout().await {
+            Ok(config) => config,
+            Err(error) => {
+                return Ok(ToolResult::error(format!(
+                    "Flow memory recall failed: {error}"
+                )))
             }
-            "flows" => {
-                let guard = active_memory_guard()
-                    .await
-                    .map_err(|e| anyhow::anyhow!("flow_memory_recall: {e}"))?;
-                match cross_flow_recall(&guard, query, limit, None).await {
-                    Ok(merged) => Ok(ToolResult::success(render_entries(&merged))),
-                    Err(e) => Ok(ToolResult::error(format!(
-                        "Failed to list flow memory namespaces: {e}"
-                    ))),
-                }
+        };
+        tracing::debug!(
+            target: "flows",
+            scope,
+            query_chars = query.chars().count(),
+            limit,
+            "[flows:memory] flow_memory_recall: querying"
+        );
+        match crate::memory::ops::recall(
+            &config,
+            RecallParams {
+                question: query.to_string(),
+                filter: Some(filter),
+                limit: Some(limit),
+            },
+        )
+        .await
+        {
+            Ok(view) => {
+                tracing::debug!(
+                    target: "flows",
+                    scope,
+                    citations = view.citations.len(),
+                    "[flows:memory] flow_memory_recall: answered"
+                );
+                Ok(ToolResult::success(render_recall(
+                    &view.answer,
+                    &view.citations,
+                )))
             }
-            other => Ok(ToolResult::error(format!(
-                "Unknown scope '{other}': expected 'flow' or 'flows'"
-            ))),
+            Err(error) => {
+                tracing::debug!(
+                    target: "flows",
+                    code = error.code(),
+                    "[flows:memory] flow_memory_recall: failed"
+                );
+                Ok(ToolResult::error(format!(
+                    "Flow memory recall failed: {error}"
+                )))
+            }
         }
     }
 
@@ -365,15 +385,14 @@ impl Tool for FlowMemoryRecallTool {
     }
 }
 
-/// Write access to a flow's own private memory namespace — and *only* its
-/// own. See the module doc for the security invariant this tool exists to
-/// preserve.
+/// Write access to a flow's own memory — and *only* its own. See the module
+/// doc for the security invariant this tool exists to preserve.
 pub struct FlowMemoryRememberTool {
     security: Arc<SecurityPolicy>,
 }
 
 impl FlowMemoryRememberTool {
-    /// Holds no memory handle — the guarded driver is resolved per call.
+    /// Holds no memory handle — config and engine are resolved per call.
     #[must_use]
     pub fn new(security: Arc<SecurityPolicy>) -> Self {
         Self { security }
@@ -387,11 +406,11 @@ impl Tool for FlowMemoryRememberTool {
     }
 
     fn description(&self) -> &str {
-        "Store a fact in THIS flow's own private memory namespace — e.g. so a scheduled digest \
+        "Store a fact in THIS flow's own private memory — e.g. so a scheduled digest \
          flow can remember which items it already sent, to avoid re-sending them on the next run. \
-         The namespace is derived internally from `flow_id`; there is no way to target the user's \
-         personal memory or another flow's namespace from this tool. Stored content is tainted as \
-         externally-sourced automation output, never treated as a user-authored fact."
+         Writing the same `key` again replaces the earlier value. The flow is taken from the run \
+         itself; there is no way to target the user's personal memory or another flow's memory \
+         from this tool."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -407,7 +426,7 @@ impl Tool for FlowMemoryRememberTool {
                 },
                 "key": {
                     "type": "string",
-                    "description": "Unique key for this memory within the flow's own namespace"
+                    "description": "Unique key for this memory within the flow's own memory"
                 },
                 "content": {
                     "type": "string",
@@ -415,7 +434,7 @@ impl Tool for FlowMemoryRememberTool {
                 },
                 "category": {
                     "type": "string",
-                    "description": "Memory category: 'core' (permanent), 'daily' (session), 'conversation' (chat), or a custom category name. Defaults to 'core'."
+                    "description": "What kind of statement this is: 'fact' (default), 'preference', 'procedure', 'correction', or anything else (stored as 'other')."
                 }
             },
             "required": ["flow_id", "key", "content"]
@@ -427,8 +446,6 @@ impl Tool for FlowMemoryRememberTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        // T-m5: uniform `ToolResult::error` for input-validation problems —
-        // see the matching note on `FlowMemoryRecallTool::execute`.
         let flow_id_arg = args.get("flow_id").and_then(|v| v.as_str());
         let Some(key) = args.get("key").and_then(|v| v.as_str()) else {
             return Ok(ToolResult::error("Missing 'key' parameter".to_string()));
@@ -436,18 +453,7 @@ impl Tool for FlowMemoryRememberTool {
         let Some(content) = args.get("content").and_then(|v| v.as_str()) else {
             return Ok(ToolResult::error("Missing 'content' parameter".to_string()));
         };
-
-        let category = match args.get("category").and_then(|v| v.as_str()) {
-            Some("core") | None => MemoryCategory::Core,
-            Some("daily") => MemoryCategory::Daily,
-            Some("conversation") => MemoryCategory::Conversation,
-            // Route custom categories through `FromStr` so a `custom:<name>`
-            // wire value resolves back to `Custom("<name>")` rather than
-            // double-prefixing — mirrors `memory_store::MemoryStoreTool`.
-            Some(other) => other
-                .parse()
-                .unwrap_or_else(|_| MemoryCategory::Custom(other.to_string())),
-        };
+        let kind = learning_kind_for(args.get("category").and_then(|v| v.as_str()));
 
         if let Err(error) = self
             .security
@@ -456,88 +462,54 @@ impl Tool for FlowMemoryRememberTool {
             return Ok(ToolResult::error(error));
         }
 
-        // SECURITY (T-M2 fix): resolve the namespace-governing flow id from
-        // the run's trusted origin ONLY — never from the model-supplied
-        // `flow_id` arg. Without this, a prompt-injected caller (or another
-        // agent invoking this tool directly) could pass a DIFFERENT flow's
-        // id here and poison that flow's private namespace, and — because
-        // this tool has no `external_effect` — the write would never park
-        // for approval. There is no legitimate chat-side caller of this
-        // write path (see `trusted_flow_id`'s doc comment): outside a
-        // trusted workflow run, refuse outright rather than trusting an
-        // arg that cannot be distinguished from an attacker's.
-        let trusted = trusted_flow_id();
-        let flow_id: String = match &trusted {
-            Some(trusted_id) => {
-                tracing::debug!(
-                    target: "flows",
-                    flow_id = %trusted_id,
-                    "[flows:memory] flow_memory_remember: flow id resolved from the trusted Workflow \
-                     run origin (any model-supplied flow_id arg is ignored)"
-                );
-                trusted_id.clone()
-            }
-            None => {
-                // T-M2 supersedes the arg validation that used to live here: the
-                // model-supplied `flow_id` is never trusted outside a run, so
-                // there is nothing to validate — refuse instead.
-                log::warn!(
-                    "[flows:memory:security] flow_memory_remember refused: no trusted Workflow run \
-                     origin (requested flow_id_chars={})",
-                    flow_id_arg.map_or(0, str::len)
-                );
-                return Ok(ToolResult::error(
-                    "flow memory writes are only available inside a workflow run".to_string(),
-                ));
-            }
+        // SECURITY (T-M2): the flow comes from the trusted run origin only;
+        // outside a workflow run the write is refused.
+        let Some(flow_id) = trusted_flow_id() else {
+            tracing::warn!(
+                target: "flows",
+                requested_flow_id_chars = flow_id_arg.map_or(0, str::len),
+                "[flows:memory:security] flow_memory_remember refused: no trusted Workflow run origin"
+            );
+            return Ok(ToolResult::error(
+                "flow memory writes are only available inside a workflow run".to_string(),
+            ));
         };
-        let flow_id = flow_id.as_str();
         let key = key.trim();
         if key.is_empty() {
             return Ok(ToolResult::error("key cannot be empty".to_string()));
         }
-
-        if crate::memory::safety::has_likely_secret(content) {
-            log::warn!(
-                "[flows:memory:safety] flow_memory_remember rejected secret-like content flow_id_chars={} key_chars={} content_chars={}",
-                flow_id.chars().count(),
-                key.chars().count(),
-                content.chars().count()
+        if crate::security::scrub::has_likely_secret(content) {
+            tracing::warn!(
+                target: "flows",
+                key_chars = key.chars().count(),
+                content_chars = content.chars().count(),
+                "[flows:memory:safety] flow_memory_remember rejected secret-like content"
             );
             return Ok(ToolResult::error(
                 "Refusing to store content that looks like a secret. Remove credentials or tokens and try again.".to_string(),
             ));
         }
 
-        // SECURITY: the namespace is derived internally from `flow_id` —
-        // this tool has no `namespace` parameter, so a flow can only ever
-        // write into its own `flow_<id>` sandbox, never user/global memory
-        // or another flow's namespace.
-        let namespace = flow_namespace(flow_id);
-        let display_key = format!("{namespace}/{key}");
-        let guard = active_memory_guard()
-            .await
-            .map_err(|e| anyhow::anyhow!("flow_memory_remember: {e}"))?;
-        // `store` carries the taint on the contract, so the engine trait's
-        // separate `store_with_taint` door is unnecessary. `ExternalSync` is
-        // the honest request: a flow wrote this, not the user.
-        match guard
-            .store(
-                &namespace,
-                key,
-                content,
-                category,
-                None,
-                MemoryTaint::ExternalSync,
-            )
-            .await
-        {
-            Ok(()) => Ok(ToolResult::success(format!(
-                "Stored flow memory: {display_key}"
-            ))),
-            Err(e) => Ok(ToolResult::error(format!(
-                "Failed to store flow memory: {e}"
-            ))),
+        let config = match crate::config::rpc::load_config_with_timeout().await {
+            Ok(config) => config,
+            Err(error) => {
+                return Ok(ToolResult::error(format!(
+                    "Failed to store flow memory: {error}"
+                )))
+            }
+        };
+        match remember_keyed(&config, &flow_id, key, content, kind).await {
+            Ok(_) => Ok(ToolResult::success(format!("Stored flow memory: {key}"))),
+            Err(error) => {
+                tracing::debug!(
+                    target: "flows",
+                    code = error.code(),
+                    "[flows:memory] flow_memory_remember: store failed"
+                );
+                Ok(ToolResult::error(format!(
+                    "Failed to store flow memory: {error}"
+                )))
+            }
         }
     }
 }

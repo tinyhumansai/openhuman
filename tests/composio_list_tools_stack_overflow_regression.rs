@@ -107,14 +107,12 @@
 // trip CI's linker with SIGBUS before the regression can run.
 #![cfg(not(coverage))]
 
-use anyhow::Result;
 use async_trait::async_trait;
 use openhuman_core::agent::harness::definition::{AgentDefinitionRegistry, ModelSpec};
 use openhuman_core::agent::harness::{with_parent_context, ParentExecutionContext};
 use openhuman_core::agent::prompts::ToolCallFormat;
 use openhuman_core::agent::subagent_host::{run_subagent, SubagentRunOptions};
 use openhuman_core::config::AgentConfig;
-use openhuman_core::memory::{Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts};
 use parking_lot::Mutex;
 use serde_json::json;
 use std::sync::Arc;
@@ -247,53 +245,6 @@ impl ChatModel<()> for StubModel {
     }
 }
 
-// ── stub memory ──────────────────────────────────────────────────────
-
-struct StubMemory;
-
-#[async_trait]
-impl Memory for StubMemory {
-    async fn store(
-        &self,
-        _: &str,
-        _: &str,
-        _: &str,
-        _: MemoryCategory,
-        _: Option<&str>,
-    ) -> Result<()> {
-        Ok(())
-    }
-    async fn recall(&self, _: &str, _: usize, _: RecallOpts<'_>) -> Result<Vec<MemoryEntry>> {
-        Ok(vec![])
-    }
-    async fn get(&self, _: &str, _: &str) -> Result<Option<MemoryEntry>> {
-        Ok(None)
-    }
-    async fn list(
-        &self,
-        _: Option<&str>,
-        _: Option<&MemoryCategory>,
-        _: Option<&str>,
-    ) -> Result<Vec<MemoryEntry>> {
-        Ok(vec![])
-    }
-    async fn forget(&self, _: &str, _: &str) -> Result<bool> {
-        Ok(true)
-    }
-    async fn namespace_summaries(&self) -> Result<Vec<NamespaceSummary>> {
-        Ok(vec![])
-    }
-    async fn count(&self) -> Result<usize> {
-        Ok(0)
-    }
-    async fn health_check(&self) -> bool {
-        true
-    }
-    fn name(&self) -> &str {
-        "stub"
-    }
-}
-
 // ── the regression itself ────────────────────────────────────────────
 
 /// Structural regression for the path that crashed in `crahs.log`.
@@ -370,7 +321,6 @@ async fn drive_subagent() {
         temperature: 0.4,
         workspace_dir: std::env::temp_dir(),
         workspace_descriptor: None,
-        memory: Arc::new(StubMemory),
         agent_config: AgentConfig::default(),
         workflows: Arc::new(vec![]),
         memory_context: Arc::new(None),

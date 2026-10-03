@@ -3,18 +3,14 @@
  *
  * A small, quiet FAB in the **bottom-right** corner with a count badge,
  * opening a panel of everything currently worth telling them: classified
- * runtime errors, the memory-embedding budget, plan usage limits. Sources are
+ * runtime errors and plan usage limits. Sources are
  * merged by {@link useAppNotices}; this file is presentation only.
  *
  * It replaces the full-width banners that used to be pushed above every route
- * (`GlobalUpsellBanner`, `MemoryEmbeddingBudgetBanner`). Those displaced page
+ * (`GlobalUpsellBanner`). Those displaced page
  * content for something the user frequently cannot act on at that moment, and
  * up to three could stack. Nothing is lost by moving them here: the copy, the
- * CTA and the dismissal rules are carried over intact, including the OS-level
- * notification for an exhausted memory budget, which fires from
- * {@link useEmbeddingBudgetNativeNotice} independently of whether this panel
- * is open — the point of that notification is to reach someone who is *not*
- * looking at the app.
+ * CTA and the dismissal rules are carried over intact.
  *
  * Privacy: only translated copy and privacy-safe metadata are rendered — never
  * raw provider responses, tokens, prompts, or PII.
@@ -26,7 +22,6 @@ import { cn } from '../../lib/cn';
 import { useT } from '../../lib/i18n/I18nContext';
 import { Button } from '../ui';
 import { type AppNotice, type NoticeSeverity, peakSeverity, useAppNotices } from './useAppNotices';
-import { useEmbeddingBudgetNativeNotice } from './useEmbeddingBudgetNativeNotice';
 
 /** Accent per severity — the badge fill and the row's leading icon. */
 const SEVERITY_STYLE: Record<NoticeSeverity, { badge: string; icon: string }> = {
@@ -99,10 +94,6 @@ export default function NoticeCenter() {
   const { t } = useT();
   const notices = useAppNotices();
   const [open, setOpen] = useState(false);
-  // Reaches a user who is not looking at the app; deliberately independent of
-  // whether this panel is open, or even rendered (the hook runs before the
-  // empty-list early return below).
-  useEmbeddingBudgetNativeNotice();
   const panelRef = useRef<HTMLDivElement | null>(null);
 
   // Close on Escape while the panel is open. A fixed overlay with no dismissal

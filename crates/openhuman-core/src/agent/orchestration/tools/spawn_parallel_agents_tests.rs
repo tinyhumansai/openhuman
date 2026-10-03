@@ -12,8 +12,6 @@ use crate::agent::prompts::ToolCallFormat;
 use crate::agent::tinyagents::host::OpenHumanRunContext;
 use crate::agent::OpenHumanSessionHost;
 use crate::config::AgentConfig;
-use crate::memory::test_support::NoopMemory;
-use crate::memory::Memory;
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use serde_json::json;
@@ -71,7 +69,6 @@ fn parent_context(max_parallel_tools: usize) -> ParentExecutionContext {
         model_name: "test-model".into(),
         temperature: 0.2,
         workspace_dir: std::env::temp_dir(),
-        memory: Arc::new(NoopMemory),
         agent_config,
         workflows: Arc::new(Vec::new()),
         memory_context: Arc::new(None),
@@ -154,8 +151,6 @@ fn definition_with_tool_scope(
         omit_identity: true,
         omit_memory_context: true,
         omit_safety_preamble: true,
-        omit_profile: true,
-        omit_memory_md: true,
         model: ModelSpec::Inherit,
         temperature: 0.0,
         tools,
@@ -170,7 +165,6 @@ fn definition_with_tool_scope(
         timeout_secs: None,
         sandbox_mode,
         background: false,
-        trigger_memory_agent: Default::default(),
         tokenjuice_compression: Default::default(),
         subagents: Vec::new(),
         delegate_name: None,
@@ -490,12 +484,6 @@ async fn agent_turn_runs_long_parallel_subagent_flow_with_many_nested_tool_calls
     let provider = ParallelHarnessProvider::default();
     let fixture_state = Arc::new(FixtureStepState::default());
 
-    let _memory_cfg = crate::config::MemoryConfig {
-        backend: "none".into(),
-        ..crate::config::MemoryConfig::default()
-    };
-    let mem: Arc<dyn Memory> = crate::memory::test_support::noop_memory();
-
     let tools: Vec<Box<dyn Tool>> = vec![
         Box::new(SpawnParallelAgentsTool::new()),
         Box::new(FixtureStepTool {
@@ -506,7 +494,6 @@ async fn agent_turn_runs_long_parallel_subagent_flow_with_many_nested_tool_calls
     let mut agent = OpenHumanSessionHost::builder()
         .chat_model(Arc::new(provider.clone()))
         .tools(tools)
-        .memory(mem)
         .tool_dispatcher(Box::new(NativeDialect))
         .workspace_dir(workspace_path)
         .build()

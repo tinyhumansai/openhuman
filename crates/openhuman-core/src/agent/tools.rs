@@ -1,7 +1,7 @@
 //! Agent-owned dialogue and control tools.
 //!
-//! These tools act on the agent loop, its todo list, or the user's stored
-//! preferences rather than on files, memory, or the network. Wire names are
+//! These tools act on the agent loop or its todo list rather than on files,
+//! memory, or the network. Wire names are
 //! given in parentheses where they differ from the type name:
 //!
 //! - `AskClarificationTool` (`ask_user_clarification`, from `tinyagents_harness::tools`) — returns the
@@ -12,10 +12,6 @@
 //! - [`PlanExitTool`] — ends a plan-mode pass by returning the plan plus
 //!   [`PLAN_EXIT_MARKER`]. The mode switch itself lives outside the tool;
 //!   nothing in this crate consumes the marker yet.
-//! - [`RememberPreferenceTool`] — pins an explicit `(class, key, value)`
-//!   preference into the `user_profile` memory namespace.
-//!   [`SavePreferenceTool`] stores a free-form preference in either the
-//!   `general` or `situational` lane.
 //! - `RunWorkflowTool` / `AwaitWorkflowTool` — spawn a
 //!   `crate::skills::runtime` workflow run and wait on its outcome. Compiled
 //!   in only with the `skills` feature, so builds without it omit both tools
@@ -27,23 +23,19 @@
 //! tools into the catalog.
 mod delegate;
 mod plan_exit;
-pub mod remember_preference;
 // Pure `skill_runtime` client (spawn + await a workflow run) — compiled out
 // with the `skills` gate so the tool list OMITS these rather than degrading
 // them to a disabled-error.
 #[cfg(feature = "skills")]
 mod run_workflow;
-pub mod save_preference;
 mod todo;
 
 pub use delegate::DelegateTool;
 pub(crate) use delegate::DelegateToolDispatch;
 pub use plan_exit::{PlanExitTool, PLAN_EXIT_MARKER};
-pub use remember_preference::RememberPreferenceTool;
 #[cfg(feature = "skills")]
 pub use run_workflow::{
     AwaitWorkflowTool, RunWorkflowTool, AWAIT_WORKFLOW_TOOL_NAME, RUN_WORKFLOW_TOOL_NAME,
 };
-pub use save_preference::SavePreferenceTool;
 pub use todo::TodoTool;
 pub(crate) use todo::TodoToolDispatch;

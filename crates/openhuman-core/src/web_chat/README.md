@@ -188,7 +188,7 @@ Namespace `channel`, registered via
   `spawn_progress_bridge` and `presentation::deliver_response*` so they render
   on the same socket surface.
 - `publish_web_channel_event` is also called from `cron`, `voice`,
-  `memory/tree/health`, and `channels/proactive.rs` for surface-level
+  and `channels/proactive.rs` for surface-level
   notifications.
 
 ## Tests

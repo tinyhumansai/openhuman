@@ -24,8 +24,8 @@ import { startMockServer, stopMockServer } from '../mock-server';
  * (`json_rpc_agent_team_live_member_run_roundtrip`); this spec focuses on the
  * UI surface.
  *
- * Mac2 skipped — the Intelligence pane is not mapped to Appium helpers
- * (mirrors `insights-dashboard.spec.ts`); runs under tauri-driver on Linux CI.
+ * Mac2 skipped — the Intelligence pane is not mapped to Appium helpers; runs
+ * under tauri-driver on Linux CI.
  */
 function stepLog(message: string, context?: unknown): void {
   const stamp = new Date().toISOString();

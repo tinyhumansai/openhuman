@@ -75,7 +75,15 @@ pub const EVENTS_INTERFACE: &str = "ai.tinyhumans.openhuman.Events";
 /// `1.6.0` retired `SubconsciousTriggerProcessed`, which nothing published
 /// after the background-reasoning engine was removed.
 /// `1.7.0` added `MemoryDriverChanged` (memory-engine switch, additive).
-pub const EVENTS_VERSION: Version = Version::new(1, 7, 0);
+/// `1.8.0` is memory v2: it retires the v1 memory, memory-diff, memory-tree,
+/// tree-summarizer and learning variants (`MemoryDriverBindFailed`,
+/// `MemoryDriverChanged`, `MemoryGuardDenied`, `MemorySyncRequested`,
+/// `MemorySyncStageChanged`, `MemoryIngestionStarted`/`Completed`,
+/// `MemoryDiff*`, `DocumentCanonicalized`, `TreeSummarizer*`,
+/// `MemoryTreeBuildProgress`, `CacheRebuilt`) — nothing publishes them any
+/// more — and adds `ConversationTurnCommitted` (memory's conversation
+/// ingestion) and `CronSystemJobDue` (host-owned cron jobs).
+pub const EVENTS_VERSION: Version = Version::new(1, 8, 0);
 
 /// The bus. Initialised once by [`init`]; safe to touch before that.
 pub static BUS: OnceBus<DomainEvent> = OnceBus::new();

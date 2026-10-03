@@ -23,7 +23,6 @@ You do not need to read these in order, and you do not need to be technical. Pic
 | Understand what leaves my computer and what doesn't | [Keep sensitive data private](privacy-sensitive-data.md)             |
 | Fix an install that won't start or finish           | [Recover from a failed installation](recover-failed-installation.md) |
 | Move everything to a new computer                   | [Move OpenHuman to a new PC](move-to-new-pc.md)                      |
-| Read and edit memory in Obsidian                    | [Connect OpenHuman to Obsidian](connect-obsidian.md)                 |
 | Let the agent tidy a folder of files                | [Organize my project folders](organize-project-folders.md)           |
 | Build a role-specific assistant (e.g. clinical)     | [Create a doctor-specific assistant](doctor-assistant.md)            |
 | Set up a locked-down assistant for a child          | [Create a safe companion for a child](child-safe-companion.md)       |

@@ -95,24 +95,16 @@ pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
                 optional_string("agentic_provider", "Provider string for sub-agent / tool-loop workloads."),
                 optional_string("coding_provider", "Provider string for code-generation workloads."),
                 optional_string("vision_provider", "Provider string for the vision / multimodal workload (managed default: the default model)."),
-                optional_string("memory_provider", "Provider string for memory-tree extract + summarise."),
+                optional_string("memory_provider", "Provider string for summarisation."),
                 optional_string("embeddings_provider", "Provider string for embedding generation."),
-                optional_string("learning_provider", "Provider string for learning / reflection passes."),
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         }),
 "update_memory_settings" => Some( ControllerSchema {
             namespace: "config",
             function: "update_memory_settings",
-            description: "Update memory backend and embedding settings.",
+            description: "Update the embedding settings and the agent's memory-context window.",
             inputs: vec![
-                optional_string("backend", "Memory backend identifier."),
-                FieldSchema {
-                    name: "auto_save",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::Bool)),
-                    comment: "Enable auto-save.",
-                    required: false,
-                },
                 optional_string("embedding_provider", "Embedding provider identifier."),
                 optional_string("embedding_model", "Embedding model identifier."),
                 FieldSchema {
@@ -121,10 +113,6 @@ pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
                     comment: "Embedding dimensions.",
                     required: false,
                 },
-                optional_string(
-                    "memory_window",
-                    "Stepped long-term memory window preset: minimal | balanced | extended | maximum.",
-                ),
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         }),
@@ -175,10 +163,6 @@ pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
                 optional_bool(
                     "usage_embeddings",
                     "Use the local model for embedding generation (when runtime_enabled).",
-                ),
-                optional_bool(
-                    "usage_learning_reflection",
-                    "Use the local model for learning/reflection passes (when runtime_enabled).",
                 ),
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],

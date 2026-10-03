@@ -1,6 +1,6 @@
 //! Scheduler gate — gates background AI work on host conditions.
 //!
-//! Background AI tasks (memory-tree digests, embeddings, summarisation) used
+//! Background AI tasks (embeddings, summarisation, connection syncs) used
 //! to run flat-out and made the host visibly lag, especially on battery.
 //! This module exposes a single decision point — [`current_policy`] — that
 //! background workers consult before spending CPU/GPU on LLM-bound work.
@@ -21,7 +21,10 @@
 //! Aggressive/Normal, sleeps in Throttled, and re-polls in Paused so the
 //! caller resumes the moment the user toggles the gate back on.
 
+mod decide;
 pub mod gate;
+mod signals;
+mod throttle;
 
 pub use gate::{
     current_policy, init_global, is_signed_out, set_signed_out, wait_for_capacity, LlmPermit,

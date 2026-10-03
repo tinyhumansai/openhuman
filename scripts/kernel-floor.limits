@@ -13,6 +13,9 @@
 # Simulate with: scripts/dep-sim.py --cut <crates>
 #
 # History
+#   323/302/2  2026-10-03  The updated TinyAgents and TinyMemory pins resolve
+#                      323 packages / 302 names / 2 native builds in the
+#                      flows profile. Ratchet to the measured graph.
 #   325/304/2  2026-10-02  Merge upstream/main at 708f677cca. CI measures the
 #                      refreshed flows graph at 325 packages / 304 names / 2
 #                      native builds. This release merge adds no Cargo or
@@ -638,4 +641,4 @@
 #                      into the required host runtime. The migration adds five
 #                      resolved packages and four unique crate names; it does
 #                      not add a native build dependency.
-flows:325:304:2
+flows:323:302:2

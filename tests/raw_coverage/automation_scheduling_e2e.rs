@@ -103,15 +103,7 @@ enabled = false
 [runtime_python]
 enabled = false
 
-[memory]
-provider = "none"
-embedding_provider = "none"
-embedding_model = "none"
-embedding_dimensions = 0
 
-[memory_tree]
-embedding_strict = false
-spacy_enabled = false
 "#;
 
 /// Prove the disable switches actually bound to the fields harness-init reads,
@@ -126,10 +118,6 @@ fn assert_provisioning_is_disabled() -> openhuman_core::config::Config {
     assert!(
         !parsed.runtime_python.enabled,
         "[runtime_python] enabled=false must bind — otherwise harness_init downloads CPython"
-    );
-    assert!(
-        !parsed.memory_tree.spacy_enabled,
-        "[memory_tree] spacy_enabled=false must bind — otherwise harness_init provisions spaCy"
     );
     parsed
 }
@@ -869,7 +857,6 @@ async fn harness_init_run_completes_offline_and_force_bypasses_the_probes() {
     let step_ids: Vec<&str> = steps.iter().map(|step| str_at(step, "/id")).collect();
     for expected in [
         "python_runtime",
-        "spacy",
         "kompress",
         "runtime_python_server",
     ] {

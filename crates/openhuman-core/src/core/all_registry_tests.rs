@@ -20,7 +20,7 @@ async fn full_registration_is_byte_identical() {
     // Tests in this binary may have initialized the process default context,
     // whose DomainSet can be narrower than full(). Scope the assertion
     // explicitly so parallel test order cannot change the registry surface.
-    let ctx = CoreContext::for_test(DomainSet::full(), None, None);
+    let ctx = CoreContext::for_test(DomainSet::full(), None);
     let (filtered_methods, raw_methods) = CoreContext::scope(ctx, async {
         let filtered = all_registered_controllers()
             .iter()

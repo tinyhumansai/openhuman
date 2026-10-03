@@ -4022,6 +4022,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "starship-battery",
  "sysinfo",
  "tar",
  "tempfile",
@@ -4062,16 +4063,6 @@ dependencies = [
  "tinymcp",
  "tinymcp-bus",
  "tinymemory",
- "tinymemory-api",
- "tinymemory-bus",
- "tinymemory-conformance",
- "tinymemory-conversations",
- "tinymemory-gate",
- "tinymemory-guard",
- "tinymemory-import",
- "tinymemory-safety",
- "tinymemory-sources",
- "tinymemory-tools",
  "tinyruntime-bus",
  "tinyruntime-pyserver",
  "tinysearch-bus",
@@ -4150,7 +4141,6 @@ dependencies = [
  "tinyjevclient",
  "tinymcp",
  "tinymcp-bus",
- "tinymemory-api",
  "tinytools",
  "tinytools-agent",
  "tinytools-jev",
@@ -6517,6 +6507,7 @@ dependencies = [
  "tinytools-agent",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -7041,113 +7032,83 @@ dependencies = [
 name = "tinymemory"
 version = "1.22.4"
 dependencies = [
- "anyhow",
- "async-trait",
  "serde",
- "serde_json",
  "tinymemory-api",
- "tinymemory-remote",
+ "tinymemory-conformance",
+ "tinymemory-context",
+ "tinymemory-cortex",
+ "tinymemory-documents",
+ "tinymemory-import",
+ "tinymemory-safety",
+ "tinymemory-sources",
 ]
 
 [[package]]
 name = "tinymemory-api"
-version = "0.1.1"
+version = "2.0.0"
 dependencies = [
- "anyhow",
  "async-trait",
- "log",
- "schemars",
- "serde",
- "serde_json",
- "tinymemory-bus",
-]
-
-[[package]]
-name = "tinymemory-bus"
-version = "0.1.0"
-dependencies = [
- "anyhow",
  "chrono",
  "serde",
  "serde_json",
- "sha2 0.11.0",
+ "sha2 0.10.9",
  "thiserror 2.0.20",
- "uuid",
 ]
 
 [[package]]
 name = "tinymemory-conformance"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
- "anyhow",
  "async-trait",
- "serde_json",
+ "thiserror 2.0.20",
  "tinymemory-api",
 ]
 
 [[package]]
-name = "tinymemory-conversations"
-version = "0.1.0"
+name = "tinymemory-context"
+version = "2.0.0"
 dependencies = [
- "async-trait",
  "chrono",
- "parking_lot",
+ "log",
  "serde",
- "serde_json",
- "sha2 0.10.9",
- "uuid",
+ "thiserror 2.0.20",
+ "tinymemory-api",
 ]
 
 [[package]]
-name = "tinymemory-gate"
-version = "0.1.0"
+name = "tinymemory-cortex"
+version = "2.0.0"
 dependencies = [
- "log",
- "parking_lot",
- "starship-battery",
- "sysinfo",
+ "async-trait",
+ "futures",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
  "tinymemory-api",
  "tokio",
 ]
 
 [[package]]
-name = "tinymemory-guard"
+name = "tinymemory-documents"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "chrono",
- "log",
+ "serde",
  "serde_json",
+ "thiserror 2.0.20",
  "tinymemory-api",
- "tracing",
 ]
 
 [[package]]
 name = "tinymemory-import"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "directories",
- "log",
  "rusqlite",
  "serde",
- "tinymemory-api",
-]
-
-[[package]]
-name = "tinymemory-remote"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "futures",
- "reqwest",
- "serde",
  "serde_json",
- "sha2 0.11.0",
+ "thiserror 2.0.20",
  "tinymemory-api",
- "tokio",
 ]
 
 [[package]]
@@ -7157,13 +7118,13 @@ dependencies = [
  "log",
  "regex",
  "serde_json",
+ "tinymemory-api",
 ]
 
 [[package]]
 name = "tinymemory-sources"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "chrono",
  "futures",
@@ -7173,27 +7134,14 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "thiserror 2.0.20",
  "tinymemory-api",
+ "tinymemory-documents",
  "tokio",
  "toml",
  "tracing",
  "uuid",
  "walkdir",
-]
-
-[[package]]
-name = "tinymemory-tools"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "log",
- "serde",
- "serde_json",
- "tinyinference-embeddings",
- "tinymemory-api",
- "tinytools",
 ]
 
 [[package]]

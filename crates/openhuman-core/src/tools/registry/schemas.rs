@@ -49,7 +49,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
             inputs: vec![FieldSchema {
                 name: "tool_id",
                 ty: TypeSchema::String,
-                comment: "Stable registry id, for example `memory.search` or `tools.web_search`.",
+                comment: "Stable registry id, for example `memory.recall` or `tools.web_search`.",
                 required: true,
             }],
             outputs: vec![FieldSchema {

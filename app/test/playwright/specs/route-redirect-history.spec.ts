@@ -59,15 +59,15 @@ const EXPECTED_TOP_LEVEL_REDIRECTS = 9;
 
 test.describe('Retired routes redirect without trapping the Back button', () => {
   test.beforeEach(async ({ page }) => {
-    await bootAuthenticatedPage(page, 'pw-redirect-history-user', '/brain');
+    await bootAuthenticatedPage(page, 'pw-redirect-history-user', '/chat');
   });
 
   for (const [retired, live] of REDIRECTS) {
     test(`${retired} → ${live}, and Back leaves rather than re-entering`, async ({ page }) => {
       // Establish a known previous page so "Back" has somewhere real to go.
-      await page.goto('/#/brain');
+      await page.goto('/#/chat');
       await waitForAppReady(page);
-      await expect.poll(() => hash(page)).toMatch(/^#\/brain/);
+      await expect.poll(() => hash(page)).toMatch(/^#\/chat/);
 
       await page.goto(`/#${retired}`);
       await waitForAppReady(page);
@@ -83,7 +83,7 @@ test.describe('Retired routes redirect without trapping the Back button', () => 
         .not.toMatch(new RegExp(`^#${retired.replace(/\//g, '\\/')}`));
 
       // And we should be back where we came from.
-      await expect.poll(() => hash(page), { timeout: 10_000 }).toMatch(/^#\/brain/);
+      await expect.poll(() => hash(page), { timeout: 10_000 }).toMatch(/^#\/chat/);
     });
   }
 
@@ -94,7 +94,7 @@ test.describe('Retired routes redirect without trapping the Back button', () => 
 
 test.describe('The /channels redirect carries its tab selector through a real navigation', () => {
   test.beforeEach(async ({ page }) => {
-    await bootAuthenticatedPage(page, 'pw-redirect-tab-user', '/brain');
+    await bootAuthenticatedPage(page, 'pw-redirect-tab-user', '/chat');
   });
 
   test('/channels lands on the Connections messaging tab, not the default tab', async ({

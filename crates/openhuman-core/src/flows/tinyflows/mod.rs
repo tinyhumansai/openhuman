@@ -18,11 +18,6 @@
 pub mod caps;
 pub mod langfuse_export;
 pub mod memory_adapter;
-/// End-to-end coverage for the `memory` node through the REAL engine + real
-/// `OpenHumanMemory` adapter + real store — see the module doc there for why
-/// this lives apart from `tests.rs`'s general capability-seam smoke tests.
-#[cfg(test)]
-mod memory_node_e2e_tests;
 pub mod observability;
 #[cfg(test)]
 #[path = "tinyflows_tests.rs"]

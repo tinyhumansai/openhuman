@@ -62,14 +62,14 @@ This is the part that bites people. A model that only does text will still **acc
 | `moondream:1.8b-v2-q4_K_S` | 1.7 GB   | Minimal | **Yes** | No                                 |
 | `llava:7b`                 | 4.7 GB   | Minimal | **Yes** | No                                 |
 | `bge-m3`                   | 1.2 GB   | No      | No      | **Yes**, 1024 dim                  |
-| `all-minilm:latest`        | 0.05 GB  | No      | No      | 384 dim, too small for Memory Tree |
+| `all-minilm:latest`        | 0.05 GB  | No      | No      | 384 dim                            |
 
 Two traps worth calling out:
 
 - **Gemma 3 is split by size.** The 270M and 1B builds are text-only. Vision starts at 4B. Picking `gemma3:1b-it-qat` for vision gets you a text-only model.
 - **`gemma3n` is not `gemma3`.** Despite the name, Gemma 3n is a separate, text-only model on Ollama. It is a fine chat model and a bad vision model.
 
-For embeddings, prefer **`bge-m3`**. The Memory Tree stores vectors in a fixed 1024-dimension on-disk format, so a 384-dimension model such as `all-minilm` or a 768-dimension model such as `nomic-embed-text` will fail the dimension check at embed time.
+For embeddings, prefer **`bge-m3`** (1024 dimensions). Memory v2 does not use local embeddings; the memory engine embeds on its own side.
 
 ### 3. Point OpenHuman at it
 
@@ -169,8 +169,6 @@ reasoning_provider = "anthropic:claude-sonnet-4"
 **The model you want is not offered, or a request says the model is missing.** The runtime does not have it. Run `ollama pull <model>` (or load it in LM Studio), then retry. OpenHuman does not pull models.
 
 **Vision answers look plausible but describe the wrong image.** You are almost certainly on a chat-only model. Check `vision_model_id` against the capability table above. Current builds refuse this routing and fall back to a vision-capable model, so this points at an older build or a provider outside the local path.
-
-**Embeddings fail with a dimension error.** The Memory Tree needs 1024-dimension vectors. Use `bge-m3`.
 
 ## See also
 

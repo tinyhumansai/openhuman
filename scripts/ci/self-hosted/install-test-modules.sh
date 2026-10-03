@@ -73,7 +73,6 @@ mkdir -p "${dest}/tinyconnectors"
 cp "${conn_cached}" "${dest}/tinyconnectors/libtinyconnectors.so"
 
 {
-  echo "TINYMEMORY_TEST_MODULE=${dest}/tinymemory/libtinymemory_module.so"
   echo "TINYJUICE_TEST_MODULE=${dest}/tinyjuice/libtinyjuice_module.so"
   echo "TINYSEARCH_TEST_MODULE=${dest}/tinysearch/libtinysearch.so"
   echo "TINYCONNECTORS_TEST_MODULE=${dest}/tinyconnectors/libtinyconnectors.so"

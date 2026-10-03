@@ -155,7 +155,7 @@ impl Agent {
         &self.inner.config.workspace_dir
     }
 
-    /// `<workspace>/agents/<id>/` — the agent's home (SOUL.md, MEMORY.md).
+    /// `<workspace>/agents/<id>/` — the agent's home (SOUL.md, skills/).
     pub fn home_dir(&self) -> &Path {
         &self.inner.layout.home
     }

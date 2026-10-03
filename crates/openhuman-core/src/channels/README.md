@@ -37,7 +37,7 @@ Flat files: `bus.rs` (`ChannelInboundSubscriber`, handles `DomainEvent::ChannelI
 - `crates/openhuman-core/src/security/credentials/` — `AuthService` lookups for connect/disconnect and for secret hydration at startup (email password, Yuanbao app secret).
 - `crates/openhuman-core/src/security/approval/` — `ApprovalGate` for the approval-reply intercept and `ApprovalChatContext` scoping of turns on every provider with the `chat_approvals` capability.
 - `crates/openhuman-core/src/config/` — `Config` / `ChannelsConfig` (schema types come from `tinychannels_bus::config` via `config/schema/channels.rs`).
-- `crates/openhuman-core/src/memory/conversations/` and `memory/guard` — conversation history persistence and the active memory guard.
+- `crates/openhuman-core/src/memory/conversations/` — memory v2 conversation ingestion (from the session host's `ConversationTurnCommitted` event; channel turns do no per-turn recall or autosave) and `forget_channel`, which `disconnect_channel` with `clear_memory` uses to forget a channel's `channel:<name>`-tagged conversations.
 - `crates/openhuman-core/src/backend/client.rs` — `BackendClient` for controller messaging ops and Telegram/Discord link flows.
 - `crates/openhuman-core/src/web_chat/` — web-channel event publishing, session invalidation (`/new`), and the web surface subscribers registered at startup.
 - `crates/openhuman-core/src/voice/` — STT/TTS behind the `host/` adapters.
@@ -55,7 +55,7 @@ Flat files: `bus.rs` (`ChannelInboundSubscriber`, handles `DomainEvent::ChannelI
 ## Tests
 
 - Unit, flat files: `bus_tests.rs`, `bus_inbound_thread_id_tests_tests.rs`, `commands_tests.rs`, `context_tests.rs`, `proactive_tests.rs`, `routes_tests.rs`, `traits_tests.rs` (`bus/`'s `delivery.rs`, `subscriber.rs` and `thread_id.rs` are source submodules, not tests; `bus_test_support_tests.rs` is a debug-build helper module). Progressive delivery, remote control, approvals, relay registry, health checks, the CLI channel and connect-form parsing are tested upstream in `vendor/tinychannels`.
-- Cross-channel integration suite (`tests/`, see its module doc): `common.rs` fixtures plus `discord_integration`, `health`, `identity`, `memory`, `prompt`, `runtime_dispatch`, `runtime_tool_calls`, `telegram_integration`.
+- Cross-channel integration suite (`tests/`, see its module doc): `common.rs` fixtures plus `discord_integration`, `health`, `identity`, `prompt`, `runtime_dispatch`, `runtime_tool_calls`, `telegram_integration`.
 - Host adapters: `host/host_tests.rs`, `host/channel_events_tests.rs`.
 - Controllers: `controllers/{backend_tests,ops_tests,schemas_tests}.rs` (+ `ops_connect_status_tests.rs`/`ops_yuanbao_email_tests.rs`).
 - Runtime: `runtime/{startup_tests,startup_email_secret_tests_tests,startup_yuanbao_secret_tests_tests,supervision_tests,dispatch_tests}.rs`, `runtime/dispatch/{mod_scoping_tests_tests,mod_approval_surface_gating_tests_tests,routing_connected_fallback_tests_tests}.rs`.

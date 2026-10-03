@@ -26,7 +26,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tinyagents_session::transcript::TranscriptMessage;
 use tinyinference_llm::model::{ChatModel, ModelRequest, ModelResponse};
-use tinymemory_api::types::{MemoryCategory, MemoryEntry};
 use tinytools::{Tool, ToolResult};
 
 #[derive(Debug, Clone)]
@@ -42,7 +41,6 @@ pub struct DispatchHarnessOptions {
     pub handler_delay_ms: u64,
     pub timeout_secs: u64,
     pub seed_history_len: usize,
-    pub memory_entries: Vec<TestMemoryEntry>,
     /// Workspace the runtime context reports; `None` falls back to the OS temp dir.
     ///
     /// `pub`, like every other field here, and it has to be: integration tests
@@ -114,18 +112,10 @@ impl Default for DispatchHarnessOptions {
             handler_delay_ms: 0,
             timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
             seed_history_len: 0,
-            memory_entries: Vec::new(),
             workspace_dir: None,
             system_prompt: HarnessSystemPrompt::default(),
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct TestMemoryEntry {
-    pub key: String,
-    pub content: String,
-    pub score: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -257,122 +247,6 @@ impl ChatModel<()> for HarnessModel {
     }
 }
 
-/// A provider whose `recall` answers with a fixed entry list regardless of
-/// query.
-///
-/// Deliberately not [`InMemoryProvider`](crate::memory::guard::in_memory::InMemoryProvider):
-/// that one substring-matches, and these harness entries are scripted to come
-/// back for whatever the test sends. The point here is the channel pipeline
-/// downstream of recall, not recall itself.
-struct HarnessMemory {
-    entries: Vec<MemoryEntry>,
-}
-
-#[async_trait]
-impl tinymemory_api::provider::MemoryCore for HarnessMemory {
-    async fn store(
-        &self,
-        _namespace: &str,
-        _key: &str,
-        _content: &str,
-        _category: MemoryCategory,
-        _session_id: Option<&str>,
-        _taint: tinymemory_api::types::MemoryTaint,
-    ) -> std::result::Result<(), tinymemory_api::error::MemoryError> {
-        Ok(())
-    }
-
-    async fn get(
-        &self,
-        _namespace: &str,
-        _key: &str,
-    ) -> std::result::Result<Option<MemoryEntry>, tinymemory_api::error::MemoryError> {
-        Ok(None)
-    }
-
-    async fn forget(
-        &self,
-        _namespace: &str,
-        _key: &str,
-    ) -> std::result::Result<bool, tinymemory_api::error::MemoryError> {
-        Ok(false)
-    }
-
-    async fn list(
-        &self,
-        _namespace: Option<&str>,
-        _category: Option<&MemoryCategory>,
-        _session_id: Option<&str>,
-    ) -> std::result::Result<Vec<MemoryEntry>, tinymemory_api::error::MemoryError> {
-        Ok(Vec::new())
-    }
-
-    async fn namespaces(
-        &self,
-    ) -> std::result::Result<
-        Vec<tinymemory_api::types::NamespaceSummary>,
-        tinymemory_api::error::MemoryError,
-    > {
-        Ok(Vec::new())
-    }
-}
-
-#[async_trait]
-impl tinymemory_api::provider::MemoryRecall for HarnessMemory {
-    async fn recall(
-        &self,
-        _query: &str,
-        _limit: usize,
-        _opts: &tinymemory_api::recall::OwnedRecallOpts,
-        _scope: Option<&tinymemory_api::provider::types::SourceScope>,
-    ) -> std::result::Result<Vec<MemoryEntry>, tinymemory_api::error::MemoryError> {
-        Ok(self.entries.clone())
-    }
-}
-
-#[async_trait]
-impl tinymemory_api::provider::MemoryPortability for HarnessMemory {
-    async fn export_page(
-        &self,
-        _cursor: Option<&str>,
-        _limit: usize,
-    ) -> std::result::Result<
-        tinymemory_api::provider::types::ExportPage,
-        tinymemory_api::error::MemoryError,
-    > {
-        Err(tinymemory_api::error::MemoryError::Other(anyhow::anyhow!(
-            "harness memory does not export"
-        )))
-    }
-
-    async fn import_records(
-        &self,
-        _records: Vec<tinymemory_api::provider::types::ExportRecord>,
-    ) -> std::result::Result<
-        tinymemory_api::provider::types::ImportOutcome,
-        tinymemory_api::error::MemoryError,
-    > {
-        Err(tinymemory_api::error::MemoryError::Other(anyhow::anyhow!(
-            "harness memory does not import"
-        )))
-    }
-}
-
-#[async_trait]
-impl tinymemory_api::provider::MemoryProvider for HarnessMemory {
-    fn driver_id(&self) -> &str {
-        "harness-memory"
-    }
-
-    fn capabilities(&self) -> tinymemory_api::capabilities::Capabilities {
-        tinymemory_api::capabilities::Capabilities::mandatory()
-    }
-
-    async fn health(&self) -> tinymemory_api::health::MemoryHealth {
-        tinymemory_api::health::MemoryHealth::Ready
-    }
-}
-
 struct HarnessTool;
 
 #[async_trait]
@@ -391,20 +265,6 @@ impl Tool for HarnessTool {
 
     async fn execute(&self, _args: serde_json::Value) -> Result<ToolResult> {
         Ok(ToolResult::success("ok"))
-    }
-}
-
-fn memory_entry(input: TestMemoryEntry) -> MemoryEntry {
-    MemoryEntry {
-        id: input.key.clone(),
-        key: input.key,
-        content: input.content,
-        namespace: None,
-        category: MemoryCategory::Conversation,
-        timestamp: "now".to_string(),
-        session_id: None,
-        score: input.score,
-        taint: tinymemory_api::types::MemoryTaint::Internal,
     }
 }
 
@@ -556,20 +416,11 @@ pub async fn run_dispatch_harness(options: DispatchHarnessOptions) -> DispatchHa
         channels_by_name: Arc::new(channels_by_name),
         turn_model_source: Some(crate::agent::tinyagents::TurnModelSource::from_model(model)),
         default_provider: Arc::new("harness-provider".to_string()),
-        memory: crate::memory::guard::in_memory::guard_over(Arc::new(HarnessMemory {
-            entries: options
-                .memory_entries
-                .into_iter()
-                .map(memory_entry)
-                .collect(),
-        })),
         tools_registry: Arc::new(vec![Box::new(HarnessTool) as Box<dyn Tool>]),
         system_prompt: harness_system_prompt,
         model: Arc::new("harness-model".to_string()),
         temperature: 0.0,
-        auto_save_memory: true,
         max_tool_iterations: 3,
-        min_relevance_score: 0.2,
         conversation_histories: Arc::clone(&conversation_histories),
         turn_model_source_cache: Arc::new(Mutex::new(provider_cache)),
         route_overrides: Arc::new(Mutex::new(HashMap::new())),

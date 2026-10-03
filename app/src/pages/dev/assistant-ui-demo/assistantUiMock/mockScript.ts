@@ -13,8 +13,8 @@
  */
 import type { CoreCommand } from '../../../../features/conversations/aui/useSlashCommandSource';
 import type { ContextBreakdown } from '../../../../services/api/agentContextApi';
+import type { FetchPage } from '../../../../services/api/memoryApi';
 import type { ChatSuggestionsEvent } from '../../../../services/chatService';
-import type { RecallResponse } from '../../../../utils/tauriCommands/memoryTree';
 
 /**
  * JSON-safe argument payload. Tool-call parts require their `args` to be plain
@@ -387,37 +387,26 @@ export const MOCK_COMMANDS_LIST: CoreCommand[] = [
 ];
 
 /**
- * A `openhuman.memory_tree_recall` response for the composer's `@` picker
+ * An `openhuman.memory_fetch` response for the composer's `@` picker
  * (Memory category), plus the thread files it lists beside it.
  */
-export const MOCK_MEMORY_RECALL: RecallResponse = {
-  chunks: [
+export const MOCK_MEMORY_FETCH: FetchPage = {
+  hits: [
     {
-      id: 'mock-chunk-1',
-      source_kind: 'email',
-      source_id: 'mock-thread-1',
-      owner: 'me',
-      timestamp_ms: 1_767_225_600_000,
-      token_count: 120,
-      lifecycle_status: 'admitted',
-      content_preview: 'Quarterly planning notes: ship the composer pickers first',
-      has_embedding: true,
-      tags: [],
+      id: 'mock-hit-1',
+      kind: 'conversation',
+      text: 'Quarterly planning notes: ship the composer pickers first',
+      meta: { thread_id: 'mock-thread-1', source: { kind: 'conversation' } },
+      score: 0.91,
     },
     {
-      id: 'mock-chunk-2',
-      source_kind: 'doc',
-      source_id: 'roadmap.md',
-      owner: 'me',
-      timestamp_ms: 1_767_312_000_000,
-      token_count: 80,
-      lifecycle_status: 'admitted',
-      content_preview: 'Roadmap review with design',
-      has_embedding: true,
-      tags: [],
+      id: 'mock-hit-2',
+      kind: 'document',
+      text: 'Roadmap review with design',
+      meta: { file_path: 'roadmap.md', source: { kind: 'folder' } },
+      score: 0.74,
     },
   ],
-  scores: [0.91, 0.74],
 };
 
 export const MOCK_THREAD_FILES = [

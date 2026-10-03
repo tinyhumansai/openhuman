@@ -83,7 +83,7 @@ fn every_dispatch_site_scopes_an_origin() {
     const KNOWN_SITES: &[(&str, &str)] = &[
         // Remote payloads — park and audit.
         (
-            "crates/openhuman-core/src/memory/sync/composio/bus/trigger_subscriber.rs",
+            "crates/openhuman-core/src/integrations/composio/bus/trigger_subscriber.rs",
             "remote",
         ),
         (

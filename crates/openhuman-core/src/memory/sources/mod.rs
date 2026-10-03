@@ -1,119 +1,199 @@
-//! Memory sources: the registry of connectors this workspace ingests from, the
-//! readers that pull items out of them, and the JSON-RPC surface over both.
+//! Document sources: the registry persisted in `[[memory.sources]]`, and sync.
 //!
-//! # This module no longer globs the engine (#5560)
-//!
-//! It used to be `pub use tinymemory_core::sources::*;`, which made every
-//! source read in the host a compile-time link to the memory engine. The
-//! previous revision of these docs listed three things standing in the way, and
-//! two of them are now done:
-//!
-//! 1. **The types had a home this crate did not depend on.** They are
-//!    `tinymemory-sources`', an engine-neutral crate. It is a direct dependency
-//!    now — it costs no crate this manifest did not already have (no
-//!    `rusqlite`, no `tinycortex`), so the unlock really was the one
-//!    `Cargo.toml` line the note predicted.
-//! 2. **Two of the seven readers had no upstream twin.** `composio` and
-//!    `twitter` were implemented in the engine crate but named nothing
-//!    engine-shaped, so they came home unchanged. See [`readers`].
-//! 3. **`sync` and `status` are wired into pieces that have not moved.** This
-//!    one is settled too — see below. `reconcile` was on this line as well and
-//!    came home first.
-//!
-//! ## How `sync` and `status` were resolved
-//!
-//! Neither was ported wholesale; each was split along the line between what the
-//! host knows and what only a driver can answer.
-//!
-//! - [`sync`] reached `engine::run_source_pipeline`, `engine::{needs_rebuild,
-//!   rebuild_tree_from_raw}`, `queue::store::retry_all_failed`,
-//!   `sync::composio` and `sync::audit`. All of that stayed upstream, and none
-//!   of it was reached from production here: `sync_source` has had no caller
-//!   left in `src/` since the sync the product runs went over the bus through
-//!   `MemorySourceSync`. The single live item, `derive_scopes`, is registry
-//!   fields plus a scan of a directory this host owns, so it came home.
-//! - [`status`] reached `store::chunks::store::with_connection`, the raw SQLite
-//!   chunk door. That half is `MemoryChunks::source_ingest_status` now — the
-//!   upstream ask this file used to record, a **pending** count per configured
-//!   source, which `source_totals` still cannot answer (`SourceTotal` has no
-//!   pending column and omits a source with zero chunks entirely). What stayed
-//!   host-side is the half that was always the host's: the chunk-key prefix,
-//!   derived from the registry entry, and the freshness label, which is
-//!   arithmetic over a timestamp and this process's clock.
-//!
-//! What was *not* done in either case is porting the pipeline or the raw chunk
-//! door into the host, which would be the opposite of what #5560 is for: a
-//! second unpoliced door spelled differently is still a second unpoliced door.
-//!
-//! ## What came home, and why it was different
-//!
-//! [`reconcile`] was on the blocked list and no longer is. Both of its halves
-//! read the `[[memory_sources]]` table in **this host's own config file** and
-//! nothing below it: the scan came home when tinymemory v1.13.4 deleted the
-//! in-process Composio pipeline it used to call, and
-//! `apply_composio_source_caps_migration` followed in #5560. That is the line
-//! between the two lists — a config rewrite is host work that happened to live
-//! upstream, where an ingest pipeline and a SQLite cursor are not.
-//!
-//! `MemorySourceSink` is not the answer for the registry either — it is
-//! `accept_source_items` + `forget_source` + `forget_matching`, an *ingest*
-//! door with no listing or CRUD member for a configured connector, and it is
-//! the whole of `Capability::Sources`. A listing member would be an upstream
-//! ask; the registry did not need one, because the file it reads is this
-//! host's own.
+//! A source names something to read — a folder, a file, a web page, a GitHub
+//! repository, an RSS feed or a connected Composio toolkit — and how often.
+//! Sync reads it through `tinymemory-sources` (or, for Composio, the connector
+//! module) and stores each item as a `Document` whose `meta.source` is
+//! `{kind, id: <source id>}`, so removing a source can forget exactly its
+//! items. Sync runs on demand ([`start_sync`]) and from the
+//! `memory_sources_sync` cron job ([`sync_due`]).
 
-pub mod readers;
-pub mod registry;
-pub mod rpc;
-pub mod schemas;
+pub mod composio;
+pub mod state;
+mod sync;
 
-/// The source vocabulary, from the crate that defines it.
-pub mod types {
-    pub use tinymemory_sources::types::{
-        ContentType, MemorySourceEntry, SourceContent, SourceItem, SourceKind,
-    };
+use chrono::{DateTime, Utc};
+use tinymemory::{ForgetTarget, MetaFilter};
+
+use crate::config::schema::{MemorySourceConfig, MemorySourceKind};
+use crate::config::Config;
+
+use super::engine;
+use super::error::{MemoryError, MemoryResult};
+use super::types::{SourceStatus, SourceView, SourcesAddParams};
+
+pub use sync::{start_sync, sync_due, sync_one};
+
+/// Fewest minutes between scheduled syncs of one source.
+pub const MIN_SCHEDULE_MINS: u32 = 15;
+
+/// The view of `source` with its sync state.
+#[must_use]
+pub fn view(source: &MemorySourceConfig, state: Option<&state::SourceState>) -> SourceView {
+    let state = state.cloned().unwrap_or_default();
+    SourceView {
+        id: source.id.clone(),
+        kind: source.kind,
+        target: source.target.clone(),
+        label: source.label.clone(),
+        schedule_mins: source.schedule_mins,
+        last_sync_at: state.last_sync_at,
+        status: state.status,
+        error: state.error,
+        items: state.items,
+    }
 }
 
-pub use registry::{
-    apply_kind_defaults, list_sources, memory_sync_defaults_for_toolkit, upsert_composio_source,
-    ComposioUpsertTarget, MemorySourcePatch,
-};
-pub use types::{ContentType, MemorySourceEntry, SourceContent, SourceItem, SourceKind};
+/// `memory_sources_list`.
+#[must_use]
+pub fn list(config: &Config) -> Vec<SourceView> {
+    let states = state::load(&config.workspace_dir);
+    config
+        .memory
+        .sources
+        .iter()
+        .map(|source| view(source, states.get(&source.id)))
+        .collect()
+}
 
-// `status` and `sync` were the last two names this domain reached out of the
-// engine crate for, and both are home now — see each module's own docs for
-// which half moved and which half stayed upstream. The paths are unchanged
-// (`sources::status::status_list`, `sources::sync::derive_scopes`), so no call
-// site moved with them.
-pub mod status;
-pub mod sync;
+/// Normalises a target for `kind`: GitHub accepts `owner/repo` or a URL;
+/// network kinds must be http(s) URLs; a Composio target is a toolkit slug.
+pub fn normalize_target(kind: MemorySourceKind, target: &str) -> MemoryResult<String> {
+    let target = target.trim();
+    if target.is_empty() {
+        return Err(MemoryError::invalid("target must not be empty"));
+    }
+    match kind {
+        MemorySourceKind::Folder | MemorySourceKind::File => Ok(target.to_string()),
+        MemorySourceKind::Github => {
+            if target.starts_with("http://") || target.starts_with("https://") {
+                return http_url(target);
+            }
+            let mut parts = target.split('/');
+            match (parts.next(), parts.next(), parts.next()) {
+                (Some(owner), Some(repo), None) if !owner.is_empty() && !repo.is_empty() => {
+                    Ok(format!("https://github.com/{owner}/{repo}"))
+                }
+                _ => Err(MemoryError::invalid(
+                    "a GitHub target is `owner/repo` or a repository URL",
+                )),
+            }
+        }
+        MemorySourceKind::Link | MemorySourceKind::Rss => http_url(target),
+        MemorySourceKind::Composio => {
+            if target
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            {
+                Ok(target.to_ascii_lowercase())
+            } else {
+                Err(MemoryError::invalid("a Composio target is a toolkit slug"))
+            }
+        }
+    }
+}
 
-// `reconcile` used to be entirely the engine's. tinymemory v1.13.4 deleted
-// `ensure_composio_sources` along with the rest of the in-process Composio
-// pipeline it scanned (`sync::composio::scan_active_sync_targets`), so this
-// host carries its own — built on
-// `memory::sync::composio::scan_active_sync_targets`, the tinyconnectors
-// replacement. `apply_composio_source_caps_migration` followed it home in
-// #5560: it never touched the deleted pipeline, only this host's config file,
-// and reaching it through the engine bought a compile-time link to the engine
-// for a `config.toml` rewrite.
-pub mod reconcile;
+fn http_url(target: &str) -> MemoryResult<String> {
+    let url = url::Url::parse(target).map_err(|_| MemoryError::invalid("target is not a URL"))?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return Err(MemoryError::invalid("target must be an http(s) URL"));
+    }
+    Ok(url.to_string())
+}
 
-// The host's record of the sync runs it drives — the Sync button, Apply all and
-// every Composio run, none of which the driver's audit log sees — read beside
-// the driver's log by the history RPCs (openhuman#6257).
-pub(crate) mod run_history;
+/// Builds a new source from `memory_sources_add` params and appends it to
+/// `config`; the caller persists `config`.
+pub fn apply_add(
+    config: &mut Config,
+    params: &SourcesAddParams,
+) -> MemoryResult<MemorySourceConfig> {
+    let kind = MemorySourceKind::parse(&params.kind).ok_or_else(|| {
+        MemoryError::invalid(format!(
+            "unknown source kind `{}` (folder, file, link, github, rss, composio)",
+            params.kind.trim()
+        ))
+    })?;
+    let target = normalize_target(kind, &params.target)?;
+    if let Some(mins) = params.schedule_mins {
+        if mins < MIN_SCHEDULE_MINS {
+            return Err(MemoryError::invalid(format!(
+                "schedule_mins must be at least {MIN_SCHEDULE_MINS}"
+            )));
+        }
+    }
+    if config
+        .memory
+        .sources
+        .iter()
+        .any(|source| source.kind == kind && source.target == target)
+    {
+        return Err(MemoryError::invalid("that source is already added"));
+    }
+    let label = params
+        .label
+        .as_deref()
+        .map(str::trim)
+        .filter(|label| !label.is_empty())
+        .map_or_else(|| target.clone(), str::to_string);
+    let source = MemorySourceConfig {
+        id: format!("src-{}", uuid::Uuid::new_v4().simple()),
+        kind,
+        target,
+        label,
+        schedule_mins: params.schedule_mins,
+    };
+    sync::reader_entry(&source)?;
+    config.memory.sources.push(source.clone());
+    tracing::info!(id = %source.id, kind = kind.as_str(), "[memory:sources] source added");
+    Ok(source)
+}
 
-// Local sources the host reads and sends through a driver's source sink, for a
-// driver that runs no source pipeline of its own (hosted memory), and the loop
-// that schedules them.
-pub(crate) mod hosted_periodic;
-pub(crate) mod hosted_sync;
-pub use hosted_periodic::start_hosted_periodic_sync;
+/// Removes source `id` from `config`; the caller persists `config`. Returns
+/// the removed source.
+pub fn apply_remove(config: &mut Config, id: &str) -> Option<MemorySourceConfig> {
+    let index = config.memory.sources.iter().position(|s| s.id == id)?;
+    let removed = config.memory.sources.remove(index);
+    tracing::info!(id = %removed.id, "[memory:sources] source removed");
+    Some(removed)
+}
 
-// The controller aggregators this domain's RPC surface defines. Aliased
-// exactly as the pre-extraction module exported them.
-pub use schemas::{
-    all_controller_schemas as all_memory_sources_controller_schemas,
-    all_registered_controllers as all_memory_sources_registered_controllers,
-};
+/// Forgets every item source `id` stored. Memory off is not an error here:
+/// there is nothing reachable to forget.
+pub async fn forget_items(config: &Config, id: &str) -> MemoryResult<usize> {
+    let bound = match engine::resolve(config).engine() {
+        Ok(bound) => bound,
+        Err(MemoryError::Off(_)) => return Ok(0),
+        Err(error) => return Err(error),
+    };
+    let filter = MetaFilter {
+        source_id: Some(id.to_string()),
+        ..MetaFilter::default()
+    };
+    let report = bound.engine.forget(ForgetTarget::Filter(filter)).await?;
+    tracing::debug!(id = %id, forgotten = report.forgotten, "[memory:sources] items forgotten");
+    Ok(report.forgotten)
+}
+
+/// Whether `source` is due for a scheduled sync at `now`.
+#[must_use]
+pub fn is_due(
+    source: &MemorySourceConfig,
+    last: Option<&state::SourceState>,
+    now: DateTime<Utc>,
+) -> bool {
+    let Some(mins) = source.schedule_mins else {
+        return false;
+    };
+    match last {
+        Some(state) if state.status == SourceStatus::Syncing => false,
+        Some(state) => state.last_sync_at.is_none_or(|at| {
+            now.signed_duration_since(at)
+                >= chrono::Duration::minutes(i64::from(mins.max(MIN_SCHEDULE_MINS)))
+        }),
+        None => true,
+    }
+}
+
+#[cfg(test)]
+#[path = "mod_tests.rs"]
+mod tests;

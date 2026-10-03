@@ -11,7 +11,7 @@ use crate::config::{
     default_root_openhuman_dir, pre_login_user_dir, read_active_user_id, user_openhuman_dir,
     write_active_user_id, Config,
 };
-use crate::memory::conversations;
+use crate::threads::store as conversations;
 
 use super::gated_services::is_embedder_host;
 
@@ -68,7 +68,7 @@ pub(super) fn activate_user_scope(user_id: &str) -> Result<Vec<String>, String> 
     tracing::info!(user_id = %user_id, user_dir = %user_dir.display(), "{LOG_PREFIX} user-scoped directory activated");
 
     if previous_active.is_none() {
-        // Shares `memory::conversations`' process-wide mutex with
+        // Shares `threads::store`' process-wide mutex with
         // `list_threads` / `purge_threads` on any workspace, so purge and
         // concurrent thread RPC in this process cannot interleave.
         let pre_ws = pre_login_user_dir(&root_dir).join("workspace");
@@ -116,9 +116,8 @@ pub(super) async fn reload_config_or(_fallback: &Config) -> Result<Config, Strin
 }
 
 /// Point every process-global store at `config`'s workspace after a
-/// credential change: cron seeds, the core context (which carries the memory
-/// binding — see `CoreContext::memory_binding`, #5560), conversation
-/// persistence, and the process-global cost tracker. Returns log lines for
+/// credential change: cron seeds (including memory's cron jobs), the core
+/// context, conversation persistence, and the process-global cost tracker. Returns log lines for
 /// the RPC outcome.
 pub(super) fn rebind_after_credential_change(
     config: &Config,
@@ -126,11 +125,11 @@ pub(super) fn rebind_after_credential_change(
 ) -> Result<Vec<String>, String> {
     let mut logs = Vec::new();
     crate::cron::seed::prune_retired_jobs(config).map_err(|error| error.to_string())?;
-    crate::core::runtime::context::CoreContext::rebind_default_workspace(
-        &config.workspace_dir,
-        config.subsystems.memory.clone(),
-    )
-    .map_err(|error| error.to_string())?;
+    crate::core::runtime::context::CoreContext::rebind_default_workspace(&config.workspace_dir)
+        .map_err(|error| error.to_string())?;
+    if let Err(error) = crate::cron::system_jobs::ensure_memory_jobs(config) {
+        logs.push(format!("memory cron jobs not seeded: {error}"));
+    }
     logs.push(format!(
         "core context bound to workspace {}",
         config.workspace_dir.display()

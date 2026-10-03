@@ -40,48 +40,6 @@ fn resolve_api_key_returns_stored_embeddings_credential() {
     assert_eq!(resolve_api_key(&config, "voyage"), "");
 }
 
-/// `get_settings` must report the embedder ingestion will **actually** use
-/// alongside the picker's own setting (#5402). The two disagree whenever
-/// the user enabled local embeddings through Local AI Settings: that path
-/// never rewrites `memory.embedding_provider`, so `provider` still reads
-/// `"cloud"` while nothing bills the managed budget. A consumer that gated
-/// a "your memory has stopped growing" banner on `provider` would fire it
-/// at a user whose memory is growing fine.
-#[tokio::test]
-async fn get_settings_reports_effective_provider_separately_from_the_setting() {
-    let tmp = TempDir::new().unwrap();
-    let mut config = Config::default();
-    config.config_path = tmp.path().join("config.toml");
-    config.workspace_dir = tmp.path().to_path_buf();
-    config.memory.embedding_provider = "cloud".to_string();
-    // A managed session exists, so the ladder would resolve to cloud …
-    std::fs::write(tmp.path().join("auth-profiles.json"), "{}").unwrap();
-    // … except a local Ollama route wins. As of tinymemory v1.0.1 the
-    // effective-embedder ladder no longer treats the `embeddings_provider`
-    // string alone as authoritative for local routing — local Ollama is
-    // resolved from an explicit `memory_tree.embedding_endpoint` override or
-    // the unified `workload_local_model` setting. Drive the explicit
-    // endpoint rung here: it resolves deterministically without an installed
-    // embedding host, and still exercises the point of the test — that
-    // `provider` (the picker) stays `cloud` while `effective_provider`
-    // reports the local route that bills nothing (#5402).
-    config.embeddings_provider = Some("ollama:all-minilm:latest".into());
-    config.memory_tree.embedding_endpoint = Some("http://localhost:11434".into());
-    config.memory_tree.embedding_model = Some("all-minilm".into());
-
-    let out = get_settings(&config)
-        .await
-        .expect("get_settings must succeed");
-    assert_eq!(
-        out.value["provider"], "cloud",
-        "the picker setting is unchanged"
-    );
-    assert_eq!(
-        out.value["effective_provider"], "ollama",
-        "the effective embedder is local, so nothing bills the managed budget"
-    );
-}
-
 #[tokio::test]
 async fn custom_profile_is_retained_and_returned_while_embeddings_are_disabled() {
     let mut config = Config::default();

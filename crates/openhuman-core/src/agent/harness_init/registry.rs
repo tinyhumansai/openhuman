@@ -9,16 +9,11 @@
 //!      Python backend is actually enabled (`enabled_backends` non-empty);
 //!      otherwise it is a no-op and lazy consumers (Python tools / skills)
 //!      resolve the interpreter on first use (#5056).
-//!   2. `spacy`          — spaCy venv + `en_core_web_sm` model. Opt-in
-//!      (`memory_tree.spacy_enabled`, default OFF) so a fresh install does not
-//!      provision it — nor spawn the runtime Python server — on launch.
-//!   3. `kompress`       — dedicated torch venv for the TokenJuice ML
-//!      compressor. Only when `tokenjuice.ml_compression_enabled` and spaCy is
-//!      off; with spaCy on, the server launch step installs torch into the
-//!      shared spaCy venv instead.
-//!   4. `runtime_python_server` — long-running Python backend host. Derived:
+//!   2. `kompress`       — dedicated torch venv for the TokenJuice ML
+//!      compressor. Only when `tokenjuice.ml_compression_enabled`.
+//!   3. `runtime_python_server` — long-running Python backend host. Derived:
 //!      launches only when `enabled_backends` is non-empty.
-//!   5. `node_runtime`   — managed Node.js (skills / MCP); absent when the
+//!   4. `node_runtime`   — managed Node.js (skills / MCP); absent when the
 //!      `runtime-node` feature is compiled out.
 //!
 //! Voice models (Piper) and Ollama stay lazy/opt-in and are
@@ -64,7 +59,6 @@ pub struct HarnessInitStep {
 pub fn all_steps() -> Vec<HarnessInitStep> {
     vec![
         python_runtime_step(),
-        spacy_step(),
         kompress_step(),
         runtime_python_server_step(),
         // Registration-site gate: no managed toolchain to provision when
@@ -88,7 +82,7 @@ fn python_runtime_step() -> HarnessInitStep {
 }
 
 /// Whether the managed interpreter must be provisioned **eagerly at boot**.
-/// True only when Python is enabled AND a Python backend (spaCy / Kompress)
+/// True only when Python is enabled AND a Python backend (Kompress)
 /// actually needs it. When no backend is enabled we skip the speculative
 /// managed-CPython download entirely (#5056) — lazy consumers (Python tools /
 /// skills, Python MCP servers) still resolve the interpreter on first use.
@@ -131,8 +125,6 @@ async fn python_run(config: &Config) -> Result<(), String> {
         .map_err(|e| format!("{e:#}"))
 }
 
-// ── spacy ─────────────────────────────────────────────────────────────────
-
 fn runtime_python_server_step() -> HarnessInitStep {
     HarnessInitStep {
         id: "runtime_python_server",
@@ -140,7 +132,7 @@ fn runtime_python_server_step() -> HarnessInitStep {
         required: false,
         // Routine service startup, not an install: launching an already
         // provisioned server must stay silent (its venv is provisioned by the
-        // `spacy` / `kompress` steps, which are the ones that surface progress).
+        // `kompress` step, which is the one that surfaces progress).
         provisioning: false,
         is_done: |config| Box::pin(runtime_python_server_is_done(config)),
         run: |config| Box::pin(runtime_python_server_run(config)),
@@ -167,36 +159,6 @@ async fn runtime_python_server_run(config: &Config) -> Result<(), String> {
         .map_err(|e| format!("{e:#}"))
 }
 
-fn spacy_step() -> HarnessInitStep {
-    HarnessInitStep {
-        id: "spacy",
-        label: "spaCy language model",
-        required: false,
-        provisioning: true,
-        is_done: |config| Box::pin(spacy_is_done(config)),
-        run: |config| Box::pin(spacy_run(config)),
-    }
-}
-
-async fn spacy_is_done(config: &Config) -> bool {
-    if !config.runtime_python.enabled || !config.memory_tree.spacy_enabled {
-        return true;
-    }
-    crate::runtime::python_server::spacy_provisioned(config)
-}
-
-async fn spacy_run(config: &Config) -> Result<(), String> {
-    if !config.runtime_python.enabled || !config.memory_tree.spacy_enabled {
-        return Ok(());
-    }
-    crate::runtime::python_server::ensure_spacy(config)
-        .await
-        .map(|_| {
-            log::info!("[harness_init] spaCy provisioned");
-        })
-        .map_err(|e| format!("{e:#}"))
-}
-
 // ── node_runtime ────────────────────────────────────────────────────────────
 
 fn kompress_step() -> HarnessInitStep {
@@ -210,14 +172,9 @@ fn kompress_step() -> HarnessInitStep {
     }
 }
 
-/// Whether this step should provision a *dedicated* Kompress venv. When spaCy is
-/// also enabled, the single runtime-python server must share one interpreter, so
-/// `runtime_python_server_step` installs torch into the spaCy venv instead — a
-/// dedicated venv here would be unused and double the (heavy) provisioning work.
+/// Whether this step should provision the Kompress venv.
 fn kompress_needs_dedicated_venv(config: &Config) -> bool {
-    config.runtime_python.enabled
-        && config.tokenjuice.ml_compression_enabled
-        && !config.memory_tree.spacy_enabled
+    config.runtime_python.enabled && config.tokenjuice.ml_compression_enabled
 }
 
 async fn kompress_is_done(config: &Config) -> bool {
@@ -229,7 +186,6 @@ async fn kompress_is_done(config: &Config) -> bool {
 
 async fn kompress_run(config: &Config) -> Result<(), String> {
     if !kompress_needs_dedicated_venv(config) {
-        // Shared-venv case (spaCy on) is provisioned by the server launch step.
         return Ok(());
     }
     crate::runtime::python_server::ensure_kompress(config)

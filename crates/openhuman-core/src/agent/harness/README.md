@@ -29,8 +29,6 @@ used here (not defined here) by `agent_graph.rs` and `fork_context.rs`.
   `spawn_depth_context.rs`, `task_recency_context.rs`, `OpenHumanRunContext`).
 - Run the channel/CLI turn graph (`graph.rs`) and let a built-in agent select
   a bespoke sub-agent turn graph (`agent_graph.rs`).
-- Extract lessons and episodic memory after each turn as a `PostTurnHook`
-  (`archivist/`).
 - Offload oversized worker artifacts to the filesystem, and persist oversized
   tool results as action-workspace artifacts (`artifact_offload/`,
   `tool_result_artifacts/`).
@@ -43,7 +41,6 @@ used here (not defined here) by `agent_graph.rs` and `fork_context.rs`.
 | `fork_context.rs`, `sandbox_context.rs`, `spawn_depth_context.rs`, `task_recency_context.rs` | Task-locals that let a spawned tool see its parent's runtime context: parent handle, sandbox mode, spawn depth, and task-recency window. `fork_context.rs` also carries the `RunQueue` handle (from `tinyagents_harness::run_queue`) down to a forked turn. |
 | `graph.rs` | `run_channel_turn_via_graph` (`pub(crate)`): the channel/CLI turn graph, thin over `run_turn_via_tinyagents_shared`; called by the `agent.run_turn` native-bus handler in `agent/bus.rs`. |
 | `agent_graph.rs` | `AgentGraph` (`Default`/`Custom`), `AgentTurnRequest`, `AgentTurnResult`, `AgentTurnUsage`: per-agent sub-agent turn-graph selection consumed by `../subagent_host/`. Every built-in agent currently selects `Default`. |
-| `archivist/` | `ArchivistHook` (`types.rs`, `PostTurnHook` impl in `hook_impl.rs`): post-turn episodic insert, segment boundary detection and lifecycle, LLM recap with heuristic fallback, lesson extraction from tool failures, and raw-prose ingestion into the memory tree when `config.learning.chat_to_tree_enabled` (`boundary.rs`, `lifecycle.rs`, `recap.rs`, `resummarise.rs`, `store.rs`, `tree_ingest.rs`, `events_heuristic.rs`). |
 | `artifact_offload/` | The `outputs/` / `workspace/` convention under `action_dir`: prompt half (`contract.rs`) and host policy half (`policy.rs`); mechanics (thresholds, path resolution, pointer rendering, the writer) live in `tinyagents_harness::artifacts` and are re-exported here. |
 | `tool_result_artifacts/` | Wiring only: `new_tool_result_store` hands `tinyagents_harness::artifacts::tool_results` OpenHuman's redactor (`SanitizingRedactor`), `file_read`/`use_skill` names and `FileReadTool::MAX_FILE_SIZE_BYTES`. The store, `[tool_result_preview]` envelope, budgets and paged reads live in the crate. |
 | `memory_context_safety.rs` | Trust-tier wrapping of recalled entries that came from connectors (`wrap_untrusted_for_agent`). The read-index, dedupe, write, update-index enforcement state machine for memory-mutating tools (issue #4116) now lives in `tinyagents_harness::middleware` (`MemoryProtocolTracker`). |
@@ -55,8 +52,8 @@ used here (not defined here) by `agent_graph.rs` and `fork_context.rs`.
 What `harness/mod.rs` actually re-exports:
 
 - `AgentDefinition`, `AgentDefinitionRegistry`, `DefinitionSource`,
-  `ModelSpec`, `PromptSource`, `SandboxMode`, `ToolScope`,
-  `TriggerMemoryAgent`: the sub-agent archetype data model.
+  `ModelSpec`, `PromptSource`, `SandboxMode`, `ToolScope`: the sub-agent
+  archetype data model.
 - `ParentExecutionContext` and its accessors (`current_parent`,
   `with_parent_context`, `AgentContextPreparedSource`):
   parent runtime context for spawned tools.
@@ -112,8 +109,7 @@ turn lifecycle are in `../session_host/`; `run_subagent`,
 
 - Unit: `harness_tool_call_parsing_edge_case_tests.rs`, plus `*_tests.rs` files
   beside each sub-module (`tool_result_artifacts/mod_tests.rs`,
-  `artifact_offload/artifact_offload_tests.rs`,
-  `archivist/{lifecycle,recap,resummarise}_tests.rs`).
+  `artifact_offload/artifact_offload_tests.rs`).
 - Integration: `tests/in_process/agent_harness_public.rs`, `tests/agent_harness_e2e.rs`.
 
 ## Notes / gotchas

@@ -4,7 +4,7 @@ use serde_json::Value;
 /// Serialized discovery metadata for one OpenHuman tool surface.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ToolRegistryEntry {
-    /// Stable unique registry id, such as `memory.search` or `tools.web_search`.
+    /// Stable unique registry id, such as `memory.recall` or `tools.web_search`.
     pub tool_id: String,
     /// Machine-readable tool name exposed by the source surface.
     pub name: String,

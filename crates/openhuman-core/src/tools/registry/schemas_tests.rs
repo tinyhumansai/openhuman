@@ -55,12 +55,12 @@ async fn handle_list_returns_registry_object() {
         .and_then(Value::as_array)
         .expect("tools array");
 
-    // `memory.search` is an MCP-transport entry, absent when the `mcp`
+    // `memory.recall` is an MCP-transport entry, absent when the `mcp`
     // feature is compiled out. The behaviour under test is that `list`
     // returns a populated registry object, so assert against an entry that
     // exists in the build at hand rather than gating the test away.
     #[cfg(feature = "mcp")]
-    let expected = "memory.search";
+    let expected = "memory.recall";
     #[cfg(not(feature = "mcp"))]
     let expected = "tools.web_search";
 

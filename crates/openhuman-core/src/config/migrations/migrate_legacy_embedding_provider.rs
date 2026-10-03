@@ -33,8 +33,7 @@
 //! - `prefer_local = false` → `"managed"` cloud backend + cloud defaults (the
 //!   fresh-install default), used when no local Ollama is reachable.
 //!
-//! Both targets are 1024-dim — matching the memory tree's fixed on-disk
-//! `EMBEDDING_DIM=1024`. This step only ever rewrites `fastembed`, so cloud-only
+//! Both targets are 1024-dim. This step only ever rewrites `fastembed`, so cloud-only
 //! users (never on `fastembed`) are untouched.
 //!
 //! Stored vectors written at the old signature are left in place: they are
@@ -120,7 +119,7 @@ pub fn run(config: &mut Config, prefer_local: bool) -> anyhow::Result<MigrationS
         return Ok(stats);
     }
 
-    // Both targets are 1024-dim (the memory tree's fixed on-disk EMBEDDING_DIM);
+    // Both targets are 1024-dim;
     // the legacy 384-dim BGE values are incompatible with either, so stored
     // vectors re-embed lazily via backfill regardless of which target we pick.
     let (provider, model, dimensions) = if prefer_local {

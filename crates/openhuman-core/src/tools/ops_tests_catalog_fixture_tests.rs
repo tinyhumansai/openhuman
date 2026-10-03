@@ -38,10 +38,8 @@ fn full_product_features_enabled() -> bool {
         ("http-server", cfg!(feature = "http-server")),
         ("scheduler-gate", cfg!(feature = "scheduler-gate")),
         ("file-logging", cfg!(feature = "file-logging")),
-        ("contacts", cfg!(feature = "contacts")),
         ("runtime-node", cfg!(feature = "runtime-node")),
         ("hosting", cfg!(feature = "hosting")),
-        ("memory-remote", cfg!(feature = "memory-remote")),
     ];
     let declared: std::collections::BTreeSet<_> = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -106,6 +104,10 @@ fn full_tool_catalog_names() -> Vec<String> {
         );
         cfg.search.credentials_mut(provider).unwrap().api_key = Some(key.into());
     }
+    // Memory registers its `memory` tool only while an engine is usable (a
+    // signed-in user, or a CortexDB key). Bind the reference engine so the
+    // catalog is the one a signed-in user sees.
+    crate::memory::test_fixtures::bind_reference(&cfg);
     let browser = cfg.browser.clone();
     let http = cfg.http_request.clone();
 

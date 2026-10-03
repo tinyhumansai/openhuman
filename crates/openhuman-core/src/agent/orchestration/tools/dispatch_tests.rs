@@ -476,7 +476,7 @@ fn a_pretty_printed_tool_call_payload_is_still_a_stub() {
 
 #[test]
 fn prose_naming_a_protocol_field_is_not_a_stub() {
-    // "tool_use" alone is enough for the archivist to attempt a strip, but
+    // "tool_use" alone is enough for a stub-stripper to attempt a strip, but
     // never enough to decide a sub-agent produced no answer.
     assert!(!super::is_unexecuted_tool_call_stub(
         "The \"tool_use\" field is how the provider reports a call."

@@ -16,7 +16,7 @@ use crate::agent::progress::AgentProgress;
 use crate::agent::subagent_host::{
     run_subagent_with_parent, SubagentRunOptions, SubagentRunStatus,
 };
-use crate::memory::conversations::{self as conversations, ConversationMessage};
+use crate::threads::store::{self as conversations, ConversationMessage};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
@@ -176,7 +176,7 @@ impl Tool for SpawnAsyncSubagentTool {
         let agent_id_schema = if agent_ids.is_empty() {
             json!({
                 "type": "string",
-                "description": "Sub-agent id (e.g. archivist, planner, tools_agent)."
+                "description": "Sub-agent id (e.g. planner, critic, summarizer)."
             })
         } else {
             json!({

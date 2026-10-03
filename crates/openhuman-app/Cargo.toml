@@ -222,7 +222,6 @@ openhuman_core = { path = "../openhuman-core", package = "openhuman", default-fe
     # The packaged app's only durable log. Without this, a support request
     # comes back with nothing to attach — and the absence is silent.
     "file-logging",
-    "contacts",
     "runtime-node",
     # Declared "Default-OFF, product-ON" by its own gate comment in the root
     # Cargo.toml, but it reached neither the product set nor this list, so the
@@ -230,8 +229,6 @@ openhuman_core = { path = "../openhuman-core", package = "openhuman", default-fe
     # credential-gated in tools/ops.rs, so a host with no hosting credential
     # sees no new tools.
     "hosting",
-    # Remote memory engines (TinyHumans-hosted CortexDB, Supermemory, Mem0, ...).
-    "memory-remote",
 ] }
 
 [target.'cfg(unix)'.dependencies]
@@ -310,17 +307,6 @@ custom-protocol = ["tauri/custom-protocol"]
 # e2e-test-support`. See app/scripts/e2e-build.sh.
 e2e-test-support = ["openhuman_core/e2e-test-support"]
 
-# The root world's tinycortex takes `tinymemory-api` by git (it re-exports
-# the TinyMemory contract instead of duplicating it, tinymemory#18 §A1).
-# Without this entry cargo resolves that git copy *and* the path copy under
-# vendor/tinymemory as two distinct crates, and `tinymemory_api::MemoryCategory`
-# from one is not the same type as from the other — the exact duplication §A1
-# deleted, reintroduced by dependency resolution. Same entry tinymemory's own
-# workspace carries; the key has no `.git` suffix, matching the dep URL.
-[patch."https://github.com/tinyhumansai/tinymemory"]
-tinymemory-api = { path = "../../vendor/tinymemory/crates/tinymemory-api" }
-tinymemory-safety = { path = "../../vendor/tinymemory/crates/tinymemory-safety" }
-
 [patch."https://github.com/tinyhumansai/tinytools"]
 # tinymcp's `tools` feature names tinytools by git rev so it can be built on its
 # own. Redirect it to the copy tinyagents vendors — the one the harness and
@@ -360,11 +346,6 @@ tinyinference-voice = { path = "../../vendor/tinyagents/vendor/tinyinference/cra
 # TinyFlows and TinyChannels are vendored beside TinyAgents so integration
 # work can test crate changes against OpenHuman before publishing.
 tinyflows = { path = "../../vendor/tinyflows/crates/tinyflows" }
-# No `tinycortex` / `tinycortex-api` patch here. Since openhuman#5560 the
-# engine is a [dev-dependencies] and `rss-bench`-only concern of the core
-# crate, and neither reaches this world — `Cargo.lock` carried both entries
-# under `[[patch.unused]]`. The shipped app reaches memory through the prebuilt
-# `tinymemory` module over `tinymemory-api`.
 tinychannels = { path = "../../vendor/tinychannels" }
 
 

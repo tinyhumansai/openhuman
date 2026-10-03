@@ -94,7 +94,7 @@ This is the part that distinguishes "OpenHuman has a Gmail integration" from "Op
   - Pull up the relevant Notion / Linear / Drive context for an inbound issue and write a structured comment.
   - Update three connected systems based on a single inbound event ("this customer's plan changed in Stripe, update HubSpot, post in #revenue, and add a note to their Notion file").
 
-In both cases the action runs on your machine, against your local Memory Tree, with the same model-routing and tool surface the rest of the agent uses.
+In both cases the action runs on your machine, against your configured memory engine, with the same model-routing and tool surface the rest of the agent uses.
 
 ## Why a triage step at all
 
@@ -118,8 +118,8 @@ Triggers follow the same boundary as the rest of the product (see [Privacy & Sec
 
 - The third-party token lives on the backend, never on your laptop.
 - The webhook is HMAC-verified by the backend before it reaches your machine.
-- The trigger payload is processed by your local core; classification and any reaction run on your machine, against your local Memory Tree.
-- Memory notes written by `acknowledge` / `react` / `escalate` paths are stored in your local SQLite memory tree and Markdown vault, the same as any other source.
+- The trigger payload is processed by your local core; classification and any reaction run on your machine, against your configured memory engine.
+- Memory notes written by `acknowledge` / `react` / `escalate` paths are stored as learnings in your memory engine when memory is on.
 
 ## Implementation pointers (for developers)
 
@@ -133,4 +133,4 @@ Triggers follow the same boundary as the rest of the product (see [Privacy & Sec
 ## See also
 
 - [Third-party Integrations](README.md), the catalog of services triggers come from.
-- [Auto-fetch from Integrations](../obsidian-wiki/auto-fetch.md), the polling counterpart, periodic ingest of source data into the Memory Tree.
+- [Memory sources](../memory.md), the polling counterpart, periodic ingest of source data into memory.

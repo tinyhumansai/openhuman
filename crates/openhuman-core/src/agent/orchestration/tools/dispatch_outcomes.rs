@@ -30,9 +30,7 @@ pub(super) fn format_subagent_failure(tool_name: &str, message: &str) -> String 
 }
 
 pub(crate) fn is_unexecuted_tool_call_stub(output: &str) -> bool {
-    use crate::agent::harness::archivist::helpers::{
-        contains_tool_call_payload, strip_tool_calls_from_response,
-    };
+    use super::tool_call_text::{contains_tool_call_payload, strip_tool_calls_from_response};
     if !contains_tool_call_payload(output) {
         return false;
     }

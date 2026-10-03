@@ -3,9 +3,9 @@
 //!
 //! "Fully encapsulated" here means: the runtime dispatch pipeline can be
 //! exercised end-to-end for `channel = "discord"` with every cross-module
-//! boundary (agent runtime, memory backend, LLM provider) substituted with a
-//! stub/noop. These tests do NOT spin up a real Discord gateway, a real LLM
-//! provider, or a real memory store — they only exercise the channels module
+//! boundary (agent runtime, LLM provider) substituted with a stub/noop. These
+//! tests do NOT spin up a real Discord gateway or a real LLM provider — they
+//! only exercise the channels module
 //! itself.
 //!
 //! Coverage:
@@ -108,14 +108,11 @@ fn make_discord_ctx(
         channels_by_name: Arc::new(channels),
         turn_model_source: Some(crate::agent::tinyagents::TurnModelSource::from_model(model)),
         default_provider: Arc::new("test-provider".to_string()),
-        memory: crate::memory::guard::in_memory::guarded_fixed_recall(Vec::new()),
         tools_registry: Arc::new(vec![]),
         system_prompt: crate::channels::ChannelSystemPrompt::fixed("test-system-prompt"),
         model: Arc::new("test-model".to_string()),
         temperature: 0.0,
-        auto_save_memory: false,
         max_tool_iterations: 1,
-        min_relevance_score: 0.0,
         conversation_histories: Arc::new(Mutex::new(HashMap::new())),
         turn_model_source_cache: Arc::new(Mutex::new(HashMap::new())),
         route_overrides: Arc::new(Mutex::new(HashMap::new())),
@@ -134,7 +131,7 @@ fn make_discord_ctx(
 // ── 1. Full-pipeline smoke test ─────────────────────────────────────────────
 
 /// A Discord inbound message must flow through the full runtime dispatch
-/// pipeline — memory lookup, history update, `agent.run_turn` bus call,
+/// pipeline — history update, `agent.run_turn` bus call,
 /// channel send — without requiring any external services. The response text
 /// from the stubbed provider must reach the channel's `send()` with the
 /// recipient matching `reply_target`.

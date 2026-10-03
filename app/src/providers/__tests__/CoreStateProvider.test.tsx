@@ -916,8 +916,6 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
     listTeams.mockResolvedValue([]);
     vi.mocked(tauriCommands.storeSession).mockReset();
     vi.mocked(tauriCommands.storeSession).mockResolvedValue(undefined as never);
-    vi.mocked(tauriCommands.syncMemoryClientToken).mockReset();
-    vi.mocked(tauriCommands.syncMemoryClientToken).mockResolvedValue(undefined as never);
 
     let ctx: CoreStateContextValue | undefined;
     render(

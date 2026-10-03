@@ -28,16 +28,16 @@ Reply speech routes through a hosted TTS model. The agent's responses can be spo
 OpenHuman's flagship voice integration:
 
 - Joins a Google Meet via the embedded webview.
-- Streams audio out to STT in real time, transcribes everyone in the call, and writes structured notes into the [Memory Tree](../obsidian-wiki/memory-tree.md) as the meeting progresses.
+- Streams audio out to STT in real time, transcribes everyone in the call, and writes structured notes into the [Memory](../memory.md) as the meeting progresses.
 - When you ask it to speak (or it decides it has something useful to add), it generates audio through the TTS model and **plays it back into the meeting as an outbound camera/mic stream**, so other participants actually hear it.
 
 ## Privacy
 
 - Audio capture is local. Streaming STT goes through the OpenHuman backend; no recording is retained beyond the live transcript.
 - TTS audio is streamed and discarded - nothing stored.
-- Meeting transcripts land in your local memory tree, like any other source.
+- Meeting transcripts are stored as conversations in your memory engine, when memory is on.
 
 ## See also
 
-- [Memory Tree](../obsidian-wiki/memory-tree.md) - where Meet transcripts and notes live.
+- [Memory](../memory.md) - where Meet transcripts and notes live.
 - [Automatic Model Routing](../model-routing/) - Meet's brain uses `hint:fast` for low-latency conversational turns.

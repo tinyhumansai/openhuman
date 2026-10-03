@@ -222,40 +222,6 @@ fn errors_never_leak_a_path_or_a_url() {
     }
 }
 
-#[test]
-fn module_config_hands_the_module_the_hosts_cloud_embedding_defaults() {
-    // `cloud_embedding_model` is what the module's engine falls back to when
-    // the opted-in local model is unreachable, so it must be the host's
-    // managed-cloud default, never the user's intended (usually local) model.
-    // Sending `config.memory.embedding_model` here made the fallback ask the
-    // managed embedder for `nomic-embed-text` (#5820).
-    let mut config = offline_config();
-    config.memory.embedding_model = "nomic-embed-text:latest".to_string();
-    config.memory.embedding_dimensions = 768;
-
-    let sent = ops::module_config(&config, crate::modules::memory::MODULE_ID);
-
-    assert_eq!(
-        sent["cloud_embedding_model"],
-        tinyinference_embeddings::DEFAULT_CLOUD_MODEL
-    );
-    assert_eq!(
-        sent["cloud_embedding_dimensions"],
-        tinyinference_embeddings::DEFAULT_CLOUD_DIMENSIONS
-    );
-    let supports = sent["models_supporting_dimensions"]
-        .as_array()
-        .expect("a list of model ids");
-    assert!(
-        supports
-            .iter()
-            .any(|model| model == "text-embedding-3-large"),
-        "the dimension-aware family is named: {supports:?}"
-    );
-    // The user's own model still travels, just not as the cloud fallback.
-    assert_eq!(sent["memory"]["embedding_model"], "nomic-embed-text:latest");
-}
-
 #[tokio::test]
 async fn a_bounded_wait_with_nothing_cached_and_downloads_off_fails_rather_than_loading() {
     // An isolated install directory: this machine's real cache may hold the

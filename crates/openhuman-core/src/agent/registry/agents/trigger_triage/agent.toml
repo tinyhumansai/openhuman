@@ -5,19 +5,13 @@ temperature = 0.2
 max_iterations = 2
 sandbox_mode = "read_only"
 
-# Strip everything except the global memory/context sections — the
-# classifier needs app state to make good decisions but does not
+# Strip everything except the memory context — the classifier needs to
+# know who the user is and what they decided before (the same inbound
+# trigger can be urgent for one user and noise for another) but does not
 # need the identity preamble, safety scaffolding, or skills catalog.
 omit_identity = true
 omit_memory_context = false
 omit_safety_preamble = true
-# Classification quality depends on who the user is — same inbound
-# trigger can be urgent for one user profile and noise for another.
-omit_profile = false
-# Same reasoning: MEMORY.md surfaces past user decisions ("this sender
-# was marked spam last time") so the classifier can replicate them.
-# Frozen per session — see KV-cache contract on `omit_memory_md`.
-omit_memory_md = false
 
 [model]
 # This hint is consumed by `agent::triage::routing::resolve_provider`,

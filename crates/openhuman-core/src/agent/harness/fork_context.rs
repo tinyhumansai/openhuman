@@ -13,7 +13,6 @@
 use crate::agent::progress::AgentProgress;
 use crate::agent::tinyagents::TurnModelSource;
 use crate::config::AgentConfig;
-use crate::memory::Memory;
 use crate::skills::Workflow;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -92,12 +91,7 @@ pub struct ParentExecutionContext {
     /// through this task-local.
     pub workspace_descriptor: Option<WorkspaceDescriptor>,
 
-    /// Parent's memory backing store. Sub-agents share it for read access
-    /// but skip the per-turn context injection to save tokens — the
-    /// parent has already recalled and injected the relevant context.
-    pub memory: Arc<dyn Memory>,
-
-    /// Parent's agent config (for `max_tool_iterations`, `max_memory_context_chars`,
+    /// Parent's agent config (for `max_tool_iterations`,
     /// dispatcher choice, …).
     pub agent_config: AgentConfig,
 
@@ -105,9 +99,8 @@ pub struct ParentExecutionContext {
     /// workflows catalog inherit this list.
     pub workflows: Arc<Vec<Workflow>>,
 
-    /// Memory context loaded for the current turn. Auto-injected into
-    /// subagent prompts so they have access to conversation history and
-    /// skill sync data without running their own memory queries.
+    /// The per-turn context block built for the current turn (active goal,
+    /// running sub-agents). Auto-injected into subagent prompts.
     /// Wrapped in `Arc` so cloning into sub-agents is O(1) — a reference
     /// count bump rather than a full string copy per spawn.
     pub memory_context: Arc<Option<String>>,

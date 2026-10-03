@@ -68,24 +68,6 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         prompt_fn: super::orchestrator::prompt::build,
         graph_fn: None,
     },
-    // General-purpose read-only context/memory retrieval specialist for
-    // automation flows. A flow `agent` node routes here via `config.agent_ref`
-    // for ANY context/style/history/people need — not a fixed list of
-    // cases — looping across several retrievals in one turn when the step
-    // needs it. Strictly read-only (see agent.toml).
-    // `#[cfg(feature = "flows")]`: this agent exists only to be routed to from
-    // a flow `agent` node's `config.agent_ref`. With flows compiled out there
-    // is no engine, no `workflow_builder`, and no agent_ref path — it would be
-    // dead registry surface — so gate it like the other flow agents
-    // (`workflow_builder`, `flow_discovery`) and let a slim build drop the
-    // whole flow-specific surface (AGENTS.md compile-time-gate convention).
-    #[cfg(feature = "flows")]
-    BuiltinAgent {
-        id: "flow_memory_agent",
-        toml: include_str!("flow_memory_agent/agent.toml"),
-        prompt_fn: super::flow_memory_agent::prompt::build,
-        graph_fn: None,
-    },
     // `planner` and `critic` are not delegable from chat (the orchestrator does
     // not list them): they exist for the `parallel_research_cross_check`
     // workflow-run template (`orchestration/workflow_runs/ops.rs`), whose
@@ -111,12 +93,6 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         graph_fn: None,
     },
     BuiltinAgent {
-        id: "profile_memory_agent",
-        toml: include_str!("profile_memory_agent/agent.toml"),
-        prompt_fn: super::profile_memory_agent::prompt::build,
-        graph_fn: None,
-    },
-    BuiltinAgent {
         id: "presentation_agent",
         toml: include_str!("presentation_agent/agent.toml"),
         prompt_fn: super::presentation_agent::prompt::build,
@@ -138,18 +114,6 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         id: "video_agent",
         toml: include_str!("video_agent/agent.toml"),
         prompt_fn: super::video_agent::prompt::build,
-        graph_fn: None,
-    },
-    BuiltinAgent {
-        id: "archivist",
-        toml: include_str!("archivist/agent.toml"),
-        prompt_fn: super::archivist::prompt::build,
-        graph_fn: None,
-    },
-    BuiltinAgent {
-        id: "goals_agent",
-        toml: include_str!("goals_agent/agent.toml"),
-        prompt_fn: super::goals_agent::prompt::build,
         graph_fn: None,
     },
     BuiltinAgent {
@@ -184,12 +148,6 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         id: "skill_setup",
         toml: include_str!("../../../skills/catalog/agent/skill_setup/agent.toml"),
         prompt_fn: crate::skills::catalog::agent::skill_setup::prompt::build,
-        graph_fn: None,
-    },
-    BuiltinAgent {
-        id: "agent_memory",
-        toml: include_str!("../../../memory/agent/agent/agent.toml"),
-        prompt_fn: crate::memory::agent::agent::prompt::build,
         graph_fn: None,
     },
     // Workflow-authoring specialist (Phase 5a): builds tinyflows automation

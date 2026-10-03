@@ -18,7 +18,6 @@ use crate::agent::harness::definition::AgentDefinitionRegistry;
 use crate::agent::harness::ParentExecutionContext;
 use crate::agent::prompts::ToolCallFormat;
 use crate::agent::tinyagents::tools::CanonicalSharedToolAdapter;
-use crate::memory::test_support::NoopMemory;
 use async_trait::async_trait;
 use serde_json::json;
 use std::path::Path;
@@ -98,7 +97,6 @@ fn parent_execution_context(workspace_dir: &Path) -> ParentExecutionContext {
         model_name: "test-model".into(),
         temperature: 0.2,
         workspace_dir: workspace_dir.to_path_buf(),
-        memory: Arc::new(NoopMemory),
         agent_config: Default::default(),
         workflows: Arc::new(Vec::new()),
         memory_context: Arc::new(None),

@@ -161,7 +161,7 @@ fn closing_a_goal_is_never_packed() {
         "`goal_complete` was packed; see the carve-out note on the `goals` pack"
     );
     // And the rest of the family is, or the carve-out saved nothing.
-    for held in ["goals", "goal_get", "goal_set"] {
+    for held in ["goal_get", "goal_set"] {
         assert!(
             all_packed_tool_names().contains(&held),
             "`{held}` should be reachable through the `goals` pack, not on the wire"
@@ -409,14 +409,6 @@ fn every_pack_declares_the_tools_it_is_named_for() {
         ),
         ("scheduling", &["cron"]),
         (
-            "profile",
-            &[
-                "save_preference",
-                "remember_preference",
-                "manage_profile_memory",
-            ],
-        ),
-        (
             "media",
             &[
                 "create_image",
@@ -428,7 +420,7 @@ fn every_pack_declares_the_tools_it_is_named_for() {
             ],
         ),
         ("tasks", &["manage_tasks"]),
-        ("goals", &["goals", "goal_get", "goal_set"]),
+        ("goals", &["goal_get", "goal_set"]),
         ("docs", &["gitbooks_search", "gitbooks_get_page"]),
     ];
 

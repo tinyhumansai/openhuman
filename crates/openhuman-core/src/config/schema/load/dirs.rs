@@ -33,11 +33,6 @@ pub const PROJECTS_DIR_ENV_VAR: &str = "OPENHUMAN_PROJECTS_DIR";
 /// Environment override for the agent action sandbox directory.
 pub const ACTION_DIR_ENV_VAR: &str = "OPENHUMAN_ACTION_DIR";
 
-/// Environment override for the global memory-sync cadence (seconds).
-/// `0` means "Manual only". See issue #3302 and
-/// [`Config::memory_sync_interval_secs`].
-pub const MEMORY_SYNC_INTERVAL_SECS_ENV_VAR: &str = "OPENHUMAN_MEMORY_SYNC_INTERVAL_SECS";
-
 fn default_root_dir_name() -> &'static str {
     if crate::config::app_env::is_staging_app_env(
         crate::config::app_env::app_env_from_env().as_deref(),

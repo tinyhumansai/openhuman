@@ -14,28 +14,23 @@
 //! |-------------------|--------------------------------------------------------------------|
 //! | `error_utils`     | `OpResult`, `report_composio_op_error`, helpers |
 //! | `toolkits`        | `composio_list_toolkits`, `composio_list_capabilities`, ...        |
-//! | `connections`     | `composio_list_connections`, `composio_authorize`, `_delete_...`  |
-//! | `memory_cleanup`  | Memory-cleanup helpers for connection deletion                     |
+//! | `connections`     | `composio_list_connections`, `composio_authorize`, `_delete_...`, `active_connection_ids` |
 //! | `tools_ops`       | `composio_list_tools`                                              |
 //! | `execute`         | `composio_execute`                                                 |
 //! | `triggers`        | GitHub repos + trigger CRUD + trigger history                      |
-//! | `providers_ops`   | `composio_get_user_profile`, `_refresh_...`, `composio_sync`       |
+//! | `providers_ops`   | `composio_get_user_profile`, `composio_refresh_all_identities`     |
+//! | `sync`            | `composio_sync`, `run_sync_pass` (connector records → memory)      |
 //! | `direct_mode`     | `composio_get_mode`, `composio_set_api_key`, `_clear_...`          |
-//! | `user_scopes`     | per-toolkit agent scope prefs, over the bound memory driver         |
-//! | `connector_runs`  | Sync History rows for Composio runs (openhuman#6257)                |
-//! | `source_rows`     | which memory-sources row a Composio connection belongs to           |
-//! | `pass_failure`    | when a connector pass failed; the Sources-row retry schedule (openhuman#6255) |
+//! | `user_scopes`     | per-toolkit agent scope prefs, in a workspace JSON file            |
+//! | `pass_failure`    | when a connector pass failed; the sync retry schedule (openhuman#6255) |
 
 mod connections;
-mod connector_runs;
 mod direct_mode;
 mod error_utils;
 mod execute;
-mod memory_cleanup;
-mod pass_budget;
 mod pass_failure;
 mod providers_ops;
-mod source_rows;
+mod sync;
 mod toolkits;
 mod tools_ops;
 mod triggers;
@@ -43,25 +38,17 @@ mod user_scopes;
 
 // ── Public re-exports (match original ops.rs public surface) ───────────────
 
-#[cfg(test)]
-pub(crate) use crate::memory::sources::run_history::completed_sync_detail;
-pub use connections::{composio_authorize, composio_delete_connection, composio_list_connections};
+pub use connections::{
+    active_connection_ids, composio_authorize, composio_delete_connection,
+    composio_list_connections,
+};
 pub use direct_mode::{composio_clear_api_key, composio_get_mode, composio_set_api_key};
 pub(crate) use error_utils::{report_composio_op_error, should_forward_tags};
 pub use execute::composio_execute;
-#[cfg(test)]
-pub(crate) use providers_ops::{completed_sync_detail_for_test, next_pass_budget};
 pub use providers_ops::{
-    composio_get_user_profile, composio_refresh_all_identities, composio_sync,
-    composio_sync_budgeted, composio_sync_for_source, RefreshIdentitiesReport, SYNC_PASS_MAX_ITEMS,
+    composio_get_user_profile, composio_refresh_all_identities, RefreshIdentitiesReport,
 };
-#[cfg(test)]
-pub(crate) use source_rows::pick_source_sync_depth_days;
-// The tinyconnectors-mediated sync pass, repeated within one call's item
-// budget for the entry points that sync once per invocation (periodic tick,
-// manual provider sync, `connection_created`, the Slack ingest RPC) — see
-// `pass_budget`'s doc comment.
-pub(crate) use pass_budget::run_sync_within_budget;
+pub use sync::{composio_sync, run_sync_pass, SyncPassOutcome, SYNC_PASS_MAX_ITEMS};
 pub use toolkits::{
     composio_list_agent_ready_toolkits, composio_list_capabilities, composio_list_toolkits,
 };
@@ -71,9 +58,7 @@ pub use triggers::{
     composio_list_available_triggers, composio_list_github_repos, composio_list_trigger_history,
     composio_list_triggers,
 };
-// The `composio.{get,set}_user_scopes` handlers' storage half. Host code now —
-// it was `tinymemory_core::sync::composio::providers::user_scopes` reached
-// through the in-process engine handle until openhuman#5560; see the module.
+// The `composio.{get,set}_user_scopes` handlers' storage half.
 pub(crate) use user_scopes::{
     load_or_default as load_user_scope_pref, save as save_user_scope_pref,
 };
@@ -117,7 +102,7 @@ pub(crate) use error_utils::{
     extract_backend_returned_status,
 };
 #[cfg(test)]
-pub(crate) use providers_ops::parse_sync_reason;
+pub(crate) use sync::parse_sync_reason;
 
 #[cfg(test)]
 #[path = "../ops_tests.rs"]

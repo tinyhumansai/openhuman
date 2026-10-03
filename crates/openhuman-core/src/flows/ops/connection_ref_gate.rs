@@ -91,7 +91,7 @@ pub(super) fn validate_connection_refs_against(
     graph: &WorkflowGraph,
     connections: Option<&[FlowConnection]>,
 ) -> Vec<String> {
-    use tinymemory_api::composio::toolkit_from_slug;
+    use crate::integrations::composio::contract::toolkit_from_slug;
 
     let mut errors = Vec::new();
     for node in &graph.nodes {

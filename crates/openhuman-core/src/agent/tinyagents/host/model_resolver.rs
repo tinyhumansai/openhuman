@@ -91,7 +91,6 @@ const CHAT_WORKLOAD_ROLES: &[&str] = &[
     "vision",
     "memory",
     "summarization",
-    "learning",
 ];
 
 /// The role a team lead takes when the caller supplied none.

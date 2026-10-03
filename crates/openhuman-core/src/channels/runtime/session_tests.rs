@@ -84,12 +84,6 @@ async fn clear_session_invalidates_old_channels_and_opens_a_fresh_generation() {
         config_path: tmp.path().join("config.toml"),
         ..Default::default()
     };
-    crate::memory::binding::install_diagnostics_for_test(
-        &config.workspace_dir,
-        &config.subsystems.memory,
-        Default::default(),
-        Default::default(),
-    );
     let _signed_out = crate::cron::scheduler_gate::SignedOutTestGuard::set(false);
     let old_session = channel_session();
     crate::security::credentials::ops::clear_session(&config)

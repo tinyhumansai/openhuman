@@ -19,7 +19,7 @@ pub fn is_backend_auth_failure(provider: &str, status: reqwest::StatusCode) -> b
 ///
 /// This is deterministic **user-config** state (the user pasted a bad or empty
 /// key into a custom OpenAI-compatible provider), not a product bug. Sentry has
-/// no remediation path, yet retry loops (memory-tree extraction, memory jobs,
+/// no remediation path, yet retry loops (background jobs,
 /// cron) hammer the known-bad credential and flood Sentry with thousands of
 /// identical events from a single user — TAURI-RUST-DHM (5,636 events from a
 /// `kiro` custom provider with no key), the same class as the Cohere

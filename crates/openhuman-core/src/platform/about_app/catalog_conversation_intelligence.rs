@@ -235,17 +235,87 @@ Capability {
         description: "After the assistant replies, a small local/summarization-role model call proposes 2-3 short follow-up prompts the user might ask next, shown as tappable chips below the reply. Skipped for background delivery and parallel sub-agent turns; disabled entirely via `web_chat.suggestions_enabled = false` in config.toml.",
         how_to: "Automatic after any main chat reply; tap a suggestion chip to send it, or ignore it",
         status: CapabilityStatus::Beta,
-        privacy: CODING_SESSION_TO_BACKEND,
+        privacy: RAW_TO_INFERENCE_PROVIDER,
     },
 Capability {
         id: "intelligence.memory_activity_indicator",
         name: "Memory Activity Indicator",
         domain: "conversation",
         category: CapabilityCategory::Intelligence,
-        description: "Chat surfaces a brief indicator whenever the assistant stores or recalls a memory during the turn (`memory_store` / `memory_recall`). Never shows the stored content or the full recall query — only the category/namespace, or a short clipped preview of the query, plus a result count.",
+        description: "Chat surfaces a brief indicator whenever the assistant stores or recalls a memory during the turn (the `memory` tool's `learn` / `recall` / `fetch` / `forget` actions). Never shows the stored content or the full recall query — only the key/category/namespace, or a short clipped preview of the query, plus a result count.",
         how_to: "Automatic whenever the assistant remembers or looks something up during a chat turn",
         status: CapabilityStatus::Beta,
         privacy: None,
+    },
+Capability {
+        id: "memory.engine",
+        name: "Memory Engine",
+        domain: "memory",
+        category: CapabilityCategory::Intelligence,
+        description: "Choose which engine stores and answers the assistant's memory: CortexDB hosted by TinyHumans (uses your signed-in session) or your own CortexDB (endpoint plus API key, kept in the OS keychain). With no usable engine memory is off: the memory tool is not registered, ingestion does nothing and memory RPCs answer MEMORY_OFF.",
+        how_to: "Connections > Memory (/connections?tab=brain&brain=engine). Programmatic: openhuman.memory_engines_list, memory_engine_get, memory_engine_set (RPC).",
+        status: CapabilityStatus::Beta,
+        privacy: MEMORY_TO_REMOTE_ENGINE,
+    },
+Capability {
+        id: "memory.ask",
+        name: "Ask Memory",
+        domain: "memory",
+        category: CapabilityCategory::Intelligence,
+        description: "Ask a question and get an answer synthesised by the memory engine with citations to the documents, conversations and learnings it came from, or switch to raw search to see the ranked hits (keyword, vector or hybrid, with metadata filters). The agent does the same through the `memory` tool's `recall` and `fetch` actions.",
+        how_to: "Connections > Memory > Ask (/connections?tab=brain&brain=ask), or ask in chat. Programmatic: openhuman.memory_recall and openhuman.memory_fetch (RPC).",
+        status: CapabilityStatus::Beta,
+        privacy: MEMORY_TO_REMOTE_ENGINE,
+    },
+Capability {
+        id: "memory.learnings",
+        name: "Learnings",
+        domain: "memory",
+        category: CapabilityCategory::Intelligence,
+        description: "Short durable facts, preferences and decisions the assistant keeps about you and your work. The agent stores one with the `memory` tool's `learn` action (tagged with the workspace, thread and agent it came from) and can `forget` it again; you can browse, add and delete them yourself.",
+        how_to: "Connections > Memory > Learnings (/connections?tab=brain&brain=learnings), or tell the assistant to remember something. Programmatic: openhuman.memory_learn, memory_forget, memory_items_list (RPC).",
+        status: CapabilityStatus::Beta,
+        privacy: MEMORY_TO_REMOTE_ENGINE,
+    },
+Capability {
+        id: "memory.conversations",
+        name: "Automatic Conversation Memory",
+        domain: "memory",
+        category: CapabilityCategory::Intelligence,
+        description: "Chats are stored as memory automatically: after a number of committed turns in a thread, or once the thread has been idle for a while, one conversation item is sent to the engine (thread, agent, workspace and tool names only; tool arguments are never stored). Can be turned off or tuned.",
+        how_to: "Connections > Memory > Conversations (/connections?tab=brain&brain=conversations). Programmatic: openhuman.memory_conversations_get and memory_conversations_set (RPC).",
+        status: CapabilityStatus::Beta,
+        privacy: MEMORY_TO_REMOTE_ENGINE,
+    },
+Capability {
+        id: "memory.documents",
+        name: "Document Sources",
+        domain: "memory",
+        category: CapabilityCategory::Intelligence,
+        description: "Sync documents into memory from a folder, a single file, a link, a GitHub repository, an RSS feed or a connected Composio toolkit. Each source syncs on demand and on its own schedule, and removing a source can optionally forget the items it brought in.",
+        how_to: "Connections > Memory > Documents (/connections?tab=brain&brain=documents). Programmatic: openhuman.memory_sources_list, memory_sources_add, memory_sources_remove, memory_sources_sync (RPC).",
+        status: CapabilityStatus::Beta,
+        privacy: MEMORY_TO_REMOTE_ENGINE,
+    },
+Capability {
+        id: "memory.context",
+        name: "Memory Context Brief",
+        domain: "memory",
+        category: CapabilityCategory::Intelligence,
+        description: "A periodically compiled brief of what memory knows (context.md in the workspace memory folder) is placed at the start of each new chat, inside <memory-context>, so the assistant begins informed. It refreshes on a schedule or on demand; resumed chats keep their original start. Interval and token budget are adjustable.",
+        how_to: "Connections > Memory > Context (/connections?tab=brain&brain=context). Programmatic: openhuman.memory_context_get, memory_context_refresh, memory_context_set (RPC).",
+        status: CapabilityStatus::Beta,
+        privacy: MEMORY_TO_REMOTE_ENGINE,
+    },
+Capability {
+        id: "memory.import",
+        name: "Import Previous Memory",
+        domain: "memory",
+        category: CapabilityCategory::Intelligence,
+        description: "Bring memory kept by an earlier OpenHuman version (documents, conversations and learnings) into the selected engine. The scan is local and read-only; the import uploads that data to the engine and only starts after explicit consent.",
+        how_to: "Connections > Memory: the import banner appears when earlier memory is found. Programmatic: openhuman.memory_import_scan, memory_import_start (requires consent: true), memory_import_status (RPC).",
+        status: CapabilityStatus::Beta,
+        privacy: MEMORY_TO_REMOTE_ENGINE,
     },
 Capability {
         id: "intelligence.context_breakdown",
@@ -338,41 +408,6 @@ Capability {
         privacy: None,
     },
 Capability {
-        id: "intelligence.agentmemory_backend",
-        name: "agentmemory Memory Backend",
-        domain: "intelligence",
-        category: CapabilityCategory::Intelligence,
-        description: "Opt-in Memory trait backend that delegates every store/recall/get/list/forget \
-            call to a locally-running agentmemory REST server. Selected via \
-            `memory.backend = \"agentmemory\"` in config.toml. Allows users who self-host \
-            agentmemory across Claude Code, Cursor, Codex, and OpenCode to share a single durable \
-            memory store. Default backend remains sqlite; selecting agentmemory is non-breaking.",
-        how_to: "Set `memory.backend = \"agentmemory\"` in config.toml. \
-            See gitbooks/features/obsidian-wiki/agentmemory-backend.md for setup and config keys.",
-        status: CapabilityStatus::Beta,
-        privacy: LOCAL_RAW,
-    },
-Capability {
-        id: "intelligence.memory_engine",
-        name: "Memory Engine",
-        domain: "intelligence",
-        category: CapabilityCategory::Intelligence,
-        description: "Choose which engine stores and recalls the assistant's memory: the built-in local TinyCortex (default), CortexDB hosted by TinyHumans (billed in credits, uses your signed-in session), or your own Supermemory, Mem0, Cognee, CortexDB or AgentMemory service. Switching applies immediately without a restart, and existing memories can be copied to the new engine first, with their document titles and tags, goals, the learned profile and conversation history; synced content can be re-sent so the new engine rebuilds its summaries (hosted memory bills for what it reads again). Keys live in the OS keychain, never in config. Hosted memory also keeps documents, goals, tool rules, the learned profile and episodic memory, takes connector and local-folder syncs, and draws the Brain graph from what the server understood; the local chunk store and its tools (vault, pipeline status, tree rebuild) are only available on the local engine, and other remote engines keep the core memory only.",
-        how_to: "Settings > Memory Engine. Pick an engine, enter its endpoint and key if it needs them, then switch or migrate.",
-        status: CapabilityStatus::Beta,
-        privacy: MEMORY_TO_REMOTE_ENGINE,
-    },
-Capability {
-        id: "intelligence.memory_workspace",
-        name: "Memory Workspace",
-        domain: "intelligence",
-        category: CapabilityCategory::Intelligence,
-        description: "Inspect or debug the app's memory workspace and stored knowledge.",
-        how_to: "Settings > Memory Debug",
-        status: CapabilityStatus::Beta,
-        privacy: None,
-    },
-Capability {
         id: "intelligence.agents_md_instructions",
         name: "AGENTS.md Project Instructions",
         domain: "intelligence",
@@ -390,127 +425,6 @@ Capability {
             directory. Toggle off with `agent.agents_md_enabled = false` in config.toml.",
         status: CapabilityStatus::Stable,
         privacy: AGENTS_MD_TO_INFERENCE_PROVIDER,
-    },
-Capability {
-        id: "intelligence.tool_scoped_memory",
-        name: "Tool-Scoped Memory Rules",
-        domain: "intelligence",
-        category: CapabilityCategory::Intelligence,
-        description: "Store durable, tool-specific rules and corrections that survive context \
-            compression. Critical-priority rules (e.g. 'never email Sarah') are pinned into the \
-            system prompt at session start. Captured automatically from user edicts and repeated \
-            tool failures; also writable programmatically via the memory.tool_rule_* RPC surface.",
-        how_to: "Automatic — user edicts are captured after every turn. Manage via \
-            memory.tool_rule_put / memory.tool_rule_list / memory.tool_rule_delete (RPC).",
-        status: CapabilityStatus::Beta,
-        privacy: LOCAL_RAW,
-    },
-Capability {
-        id: "intelligence.long_term_goals",
-        name: "Long-term Goals",
-        domain: "intelligence",
-        category: CapabilityCategory::Intelligence,
-        description: "An editable list of the assistant's durable long-term goals for working with \
-            you, stored locally in MEMORY_GOALS.md (capped ~500 tokens). A background goals agent \
-            keeps the list fresh: it runs when the conversation context is summarized, and on first \
-            run populates initial goals from context. Items can be added/edited/deleted explicitly \
-            via RPC or agent tools.",
-        how_to: "Automatic — refreshed on context summarization. Manage via \
-            memory_goals.list / memory_goals.add / memory_goals.edit / memory_goals.delete / \
-            memory_goals.reflect (RPC), or the goals_* agent tools.",
-        status: CapabilityStatus::Beta,
-        // Enrichment runs a cloud agentic model, so goal/context text can leave
-        // the device during a reflect pass (CRUD/storage stays local).
-        privacy: DERIVED_TO_BACKEND,
-    },
-Capability {
-        id: "intelligence.memory_tree_retrieval",
-        name: "Memory Tree Retrieval (chat)",
-        domain: "intelligence",
-        category: CapabilityCategory::Intelligence,
-        description: "Ask questions about your ingested email/chat/document memory in chat. The orchestrator can resolve names to canonical ids, query summaries by source/topic/global window, drill into details, and cite raw chunks.",
-        how_to: "Chat > ask the assistant about people, conversations, or windows",
-        status: CapabilityStatus::Beta,
-        privacy: LOCAL_RAW,
-    },
-Capability {
-        id: "intelligence.memory_pipeline_doctor",
-        name: "Memory Pipeline Doctor",
-        domain: "intelligence",
-        category: CapabilityCategory::Intelligence,
-        description: "Diagnose why the memory tree / wiki is empty or stalled. Walks each pipeline stage (embeddings config, scheduler gate, job queue, extraction/recall degradation, summary-tree precondition) and reports the single first blocking cause with an actionable fix, plus counters and extraction coverage. The agent can run it on itself; a typed 'first blocking cause' is surfaced in the Memory status panel, and jobs that failed under a now-fixed config can be requeued on demand via the `memory_tree_retry_failed` RPC.",
-        how_to: "Memory status panel shows the cause + fix; or ask the agent to diagnose memory; or `openhuman-core` RPC `memory_tree_doctor`",
-        status: CapabilityStatus::Beta,
-        privacy: LOCAL_RAW,
-    },
-Capability {
-        id: "intelligence.github_repo_memory_source",
-        name: "GitHub Repo Memory Source",
-        domain: "memory_sources",
-        category: CapabilityCategory::Intelligence,
-        description: "Sync a GitHub repository's project activity — commits, issues, and \
-            pull requests (not source code) — into your memory. Items are archived verbatim \
-            under a browsable, repo-grouped vault layout \
-            (raw/github-com-<owner>-<repo>/{commits,issues,prs}/) and ingested into the \
-            memory tree for recall. Contributors are surfaced as @handle entities, and \
-            commit messages plus closed/merged issues & PRs get a priority boost so \
-            high-signal history leads at summary time. Pulls up to 2000 items of each type \
-            per sync by default, overridable per source via max_commits / max_issues / \
-            max_prs.",
-        how_to: "Settings > Memory & Data > Memory Sources — add a GitHub repository URL. \
-            Programmatic: openhuman.memory_sources_add (RPC).",
-        status: CapabilityStatus::Beta,
-        privacy: GITHUB_REPO_SOURCE,
-    },
-Capability {
-        id: "intelligence.memory_source_sync_controls",
-        name: "Memory Source Sync Defaults & Controls",
-        domain: "memory_sources",
-        category: CapabilityCategory::Intelligence,
-        description: "Connected memory sources are enabled by default with conservative, \
-            per-kind sync caps so the first sync stays cheap (e.g. Gmail ~100 recent emails, \
-            GitHub repo 10 PRs / 10 issues / 50 commits, RSS 20 items). Each source row exposes \
-            an inline settings panel to adjust the limit fields that apply to its kind \
-            (max_items, sync_depth_days, max_prs/issues/commits, since_days). \
-            An \"All In\" action enables every source and removes the caps to build the richest \
-            memory graph, then triggers a full sync. Already-connected sources are migrated to \
-            the new defaults once. Brain > Sync lists every sync run with its item count and \
-            outcome (Sync button, All In, first syncs, and background runs that found something \
-            new), which sources are syncing right now, and how many memory jobs are queued.",
-        how_to: "Intelligence > Memory Sources — toggle a source, open its gear for per-source \
-            limits, or use \"All In\". Programmatic: openhuman.memory_sources_update and \
-            openhuman.memory_sources_apply_all_in (RPC).",
-        status: CapabilityStatus::Beta,
-        privacy: LOCAL_RAW,
-    },
-Capability {
-        id: "intelligence.coding_session_memory",
-        name: "Coding-Agent Session Memory",
-        domain: "memory_sources",
-        category: CapabilityCategory::Intelligence,
-        description: "Discover local Codex and Claude Code session histories, retain only human-authored decisions and corrections, and distill them into a durable TinyCortex persona memory pack. Tool output, reasoning, developer prompts, and subagent traffic are excluded before inference.",
-        how_to: "Brain > Sources > Coding-agent sessions > Ingest new sessions. Programmatic: openhuman.memory_sources_coding_session_status and openhuman.memory_sources_ingest_coding_sessions (RPC).",
-        status: CapabilityStatus::Beta,
-        privacy: CODING_SESSION_TO_BACKEND,
-    },
-Capability {
-        id: "intelligence.memory_sync_schedule",
-        name: "Memory Sync Schedule",
-        domain: "config",
-        category: CapabilityCategory::Intelligence,
-        description: "Pick a single global cadence for how often all opted-in memory sources \
-            auto-sync, presented like a backup schedule (\"Last synced … · Sync every …\"). \
-            Presets are every 4h / 12h / 24h, plus \"Manual only\" which disables background \
-            auto-sync entirely (you can still sync on demand). The chosen interval overrides each \
-            provider's built-in cadence but is floored at it, so syncs never run more often than \
-            the provider intends — handy for keeping credit spend predictable. Unset defaults to \
-            every 24h.",
-        how_to: "Intelligence > Memory Sources — choose a Sync every… preset or Manual only. \
-            Programmatic: openhuman.config_get_memory_sync_settings / \
-            openhuman.config_update_memory_sync_settings (RPC); ops override via the \
-            OPENHUMAN_MEMORY_SYNC_INTERVAL_SECS env var (0 = manual).",
-        status: CapabilityStatus::Beta,
-        privacy: LOCAL_RAW,
     },
 Capability {
         id: "intelligence.embedding_provider_config",
@@ -582,7 +496,7 @@ Capability {
         domain: "intelligence",
         category: CapabilityCategory::Intelligence,
         description: "Discover OpenHuman's MCP stdio tools and controller-backed tools from one local registry, including versions, routes, input/output schemas, allowed agents, and health state.",
-        how_to: "Call openhuman.tool_registry_list over core JSON-RPC, or openhuman.tool_registry_get with a tool_id such as memory.search.",
+        how_to: "Call openhuman.tool_registry_list over core JSON-RPC, or openhuman.tool_registry_get with a tool_id such as memory.recall.",
         status: CapabilityStatus::Beta,
         privacy: LOCAL_RAW,
     },
@@ -627,26 +541,6 @@ Capability {
         privacy: None,
     },
 Capability {
-        id: "intelligence.slack_memory_ingest",
-        name: "Slack Memory Ingestion",
-        domain: "intelligence",
-        category: CapabilityCategory::Intelligence,
-        description: "Backfill the last 6 days of Slack history into the memory tree and keep it up to date by flushing each closed 6-hour UTC bucket. Driven by an authenticated Slack connection (OAuth via Composio).",
-        how_to: "Connections > OAuth > Slack",
-        status: CapabilityStatus::Beta,
-        privacy: LOCAL_RAW,
-    },
-Capability {
-        id: "intelligence.clickup_memory_ingest",
-        name: "ClickUp Memory Ingestion",
-        domain: "intelligence",
-        category: CapabilityCategory::Intelligence,
-        description: "Incrementally sync ClickUp tasks assigned to the authenticated user into the Memory Tree on a 30-minute cadence, with an initial backfill on first connect. Only tasks the user is directly assigned to are ingested. Driven by an authenticated ClickUp connection (OAuth via Composio).",
-        how_to: "Connections > OAuth > ClickUp",
-        status: CapabilityStatus::Beta,
-        privacy: LOCAL_RAW,
-    },
-Capability {
         id: "intelligence.notifications_dismiss",
         name: "Dismiss Notifications",
         domain: "intelligence",
@@ -675,18 +569,5 @@ Capability {
         how_to: "Notifications > Summary cards",
         status: CapabilityStatus::Beta,
         privacy: None,
-    },
-Capability {
-        id: "intelligence.remember_preferences",
-        name: "Remember Preferences",
-        domain: "memory",
-        category: CapabilityCategory::Intelligence,
-        description: "Remember preferences you state in chat and apply them automatically — \
-                      general preferences shape every reply (tone, language, standing habits); \
-                      situational ones surface only when relevant to your current message.",
-        how_to: "State a preference in chat, e.g. \"always reply in British English\" or \
-                 \"when writing Rust, prefer Result over unwrap\".",
-        status: CapabilityStatus::Stable,
-        privacy: LOCAL_RAW,
     },
 ];

@@ -37,7 +37,7 @@ contents inside `mod.rs` behind the feature of the same name. See the
 | `integrations` | Agent integration tools | [README](src/integrations/README.md) |
 | `mcp` | Host half of Model Context Protocol support | [README](src/mcp/README.md) |
 | `media`* | Media generation and image tool contracts | [README](src/media/README.md) |
-| `memory` | Memory orchestration: the host layer over `tinymemory-core` | [README](src/memory/README.md) |
+| `memory` | Memory v2: engine binding, the `memory` tool, conversations, sources, `context.md`, import | [README](src/memory/README.md) |
 | `modules`* | Loadable native modules: capabilities that live outside this binary | [README](src/modules/README.md) |
 | `platform` | Host-platform services: process lifecycle, self-update, diagnostics, local transport surfaces | |
 | `runtime` | Code-execution runtimes, client side (toolchain download/warm workers live in the `tinyruntime` module) | |

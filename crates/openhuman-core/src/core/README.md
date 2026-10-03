@@ -56,7 +56,7 @@ logic. Every controller it exposes is implemented by a domain module under
 | `http_server_status.rs` | `HTTP_SERVER_COMPILED_IN`: ungated compile-time marker so a listener-less core fails the build instead of shipping silently. |
 | `bus_testing.rs` | `isolated_bus()`: a private bus for tests that must observe events without racing the process-global singleton. |
 | `runtime/` | `CoreBuilder` → `CoreRuntime` composition API: see [runtime/README.md](runtime/README.md). |
-| `subsystem/` | The subsystem driver registry (`SubsystemRegistry`, `DriverClass`, `DriverHealth`) and the `subsystems` RPC namespace. |
+| `subsystem/` | The `subsystems` status namespace (`SubsystemStatus` row, RPC and CLI table); memory fills its row. |
 
 ## Controller registration and `DomainGroup`
 
@@ -196,15 +196,11 @@ and delegating to a sub-agent nests another one, which overflows tokio's
 default 2 MiB worker stack; every multi-thread runtime that can host a turn
 (the desktop shell, `openhuman-core run`, `agent_cli`) sets both constants.
 
-`subsystem/` is the generic half of the subsystem-driver model: `DriverClass`
-and `DriverHealth` describe a bound driver's shape and health without naming
-any specific subsystem's contract crate, and `SubsystemRegistry` holds one
-bound driver per capability slot. The memory adapter
-(`crate::memory::binding`) is the first consumer, converting
-`tinymemory_api::MemoryHealth` into `DriverHealth`; the read-only `status`
-projection backs the `subsystems` RPC namespace and the `openhuman
-subsystems` CLI table. Later subsystems (inference, channels, sandbox) are
-expected to reuse the same registry rather than invent their own.
+`subsystem/` owns the generic `SubsystemStatus` wire row behind the `subsystems`
+RPC namespace and the `openhuman subsystems` CLI table. Memory is the only
+occupant: `crate::memory::status` projects the bound Memory v2 engine into its
+row, and a later subsystem appends its own adapter call in
+`subsystem::schemas::subsystems_status`.
 
 ## The controller contract
 

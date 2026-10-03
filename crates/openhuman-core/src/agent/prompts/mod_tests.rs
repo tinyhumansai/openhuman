@@ -7,24 +7,6 @@ use tinytools::Tool;
 
 static NO_FILTER: LazyLock<HashSet<String>> = LazyLock::new(HashSet::new);
 
-/// Build a `NamespaceSummary` with a fixed `updated_at` (#2944), so
-/// freshness-label assertions are deterministic.
-fn ns_summary_at(namespace: &str, body: &str, rfc3339: &str) -> NamespaceSummary {
-    NamespaceSummary {
-        namespace: namespace.into(),
-        body: body.into(),
-        updated_at: chrono::DateTime::parse_from_rfc3339(rfc3339)
-            .unwrap()
-            .with_timezone(&chrono::Utc),
-    }
-}
-
-/// `NamespaceSummary` with an arbitrary fixed date, for tests that don't
-/// assert on the freshness stamp itself.
-fn ns_summary(namespace: &str, body: &str) -> NamespaceSummary {
-    ns_summary_at(namespace, body, "2026-01-01T00:00:00Z")
-}
-
 struct TestTool;
 
 #[async_trait]
@@ -59,71 +41,11 @@ fn ctx_with_identity(identity: Option<UserIdentity>) -> PromptContext<'static> {
         tools: EMPTY_TOOLS,
         workflows: &[],
         dispatcher_instructions: "",
-        learned: LearnedContextData::default(),
         visible_tool_names: visible,
         tool_call_format: ToolCallFormat::PFormat,
         connected_integrations: EMPTY_INTEGRATIONS,
         connected_identities_md: String::new(),
-        include_profile: false,
-        include_memory_md: false,
-        curated_snapshot: None,
         user_identity: identity,
-        personality_roster: vec![],
-        agents_md_global: None,
-        agents_md_local: None,
-    }
-}
-
-/// Shared `PromptContext` for the MEMORY.md-framing tests below. Both
-/// exercise `UserFilesSection` with memory injection enabled and differ
-/// only in workspace contents, so they build an identical 19-field
-/// context — factor it out so the two can't drift when `PromptContext`
-/// gains fields. Borrows the caller's `workspace` and pre-built
-/// `prompt_tools` so the returned context outlives neither.
-fn memory_framing_ctx<'a>(
-    workspace: &'a std::path::Path,
-    prompt_tools: &'a [PromptTool<'a>],
-) -> PromptContext<'a> {
-    PromptContext {
-        workspace_dir: workspace,
-        model_name: "test-model",
-        agent_id: "",
-        tools: prompt_tools,
-        workflows: &[],
-        dispatcher_instructions: "",
-        learned: LearnedContextData::default(),
-        visible_tool_names: &NO_FILTER,
-        tool_call_format: ToolCallFormat::PFormat,
-        connected_integrations: &[],
-        connected_identities_md: String::new(),
-        include_profile: false,
-        include_memory_md: true,
-        curated_snapshot: None,
-        user_identity: None,
-        personality_roster: vec![],
-        agents_md_global: None,
-        agents_md_local: None,
-    }
-}
-
-fn ctx_with_learned(learned: LearnedContextData) -> PromptContext<'static> {
-    let prompt_tools: &'static [PromptTool<'static>] = &[];
-    PromptContext {
-        workspace_dir: Path::new("/tmp"),
-        model_name: "test-model",
-        agent_id: "",
-        tools: prompt_tools,
-        workflows: &[],
-        dispatcher_instructions: "",
-        learned,
-        visible_tool_names: &NO_FILTER,
-        tool_call_format: ToolCallFormat::PFormat,
-        connected_integrations: &[],
-        connected_identities_md: String::new(),
-        include_profile: false,
-        include_memory_md: false,
-        curated_snapshot: None,
-        user_identity: None,
         personality_roster: vec![],
         agents_md_global: None,
         agents_md_local: None,
@@ -144,14 +66,10 @@ fn agents_md_ctx(global: Option<String>, local: Option<String>) -> PromptContext
         tools: &[],
         workflows: &[],
         dispatcher_instructions: "",
-        learned: LearnedContextData::default(),
         visible_tool_names: &NO_FILTER,
         tool_call_format: ToolCallFormat::PFormat,
         connected_integrations: &[],
         connected_identities_md: String::new(),
-        include_profile: false,
-        include_memory_md: false,
-        curated_snapshot: None,
         user_identity: None,
         personality_roster: vec![],
         agents_md_global: global,
@@ -165,8 +83,8 @@ mod agents_md_registration_tests;
 mod builder_sections_tests;
 #[path = "mod_tests_subagent_render_tests.rs"]
 mod subagent_render_tests;
-#[path = "mod_tests_user_files_reflections_tests.rs"]
-mod user_files_reflections_tests;
+#[path = "mod_tests_tools_sections_tests.rs"]
+mod tools_sections_tests;
 
 #[test]
 fn tool_call_format_maps_to_the_dialect_and_harness_vocabulary() {

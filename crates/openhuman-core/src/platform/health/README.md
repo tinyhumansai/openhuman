@@ -7,7 +7,7 @@ In-process health registry for the OpenHuman core. Tracks per-component liveness
 - Maintain a process-global registry of named components, each with `status`, `updated_at`, `last_ok`, `last_error`, `restart_count`.
 - Provide mutators: `mark_component_ok`, `mark_component_error`, `bump_component_restart`.
 - Produce a point-in-time `HealthSnapshot` (PID, uptime seconds, components map) and its JSON form.
-- Classify a snapshot into a `HealthVerdict` (`verdict()`): a single degraded *non-critical* component no longer makes the container unhealthy: `/health` returns 503 only when a *critical* component (`CRITICAL_COMPONENTS` = `core`, `memory_tree_db`) is unhealthy; non-critical components (scheduler, channels, update_checker, …) return 200 + a `degraded` flag (#3312).
+- Classify a snapshot into a `HealthVerdict` (`verdict()`): a single degraded *non-critical* component no longer makes the container unhealthy: `/health` returns 503 only when a *critical* component (`CRITICAL_COMPONENTS` = `core`) is unhealthy; non-critical components (scheduler, channels, update_checker, …) return 200 + a `degraded` flag (#3312).
 - Drive component state automatically from `DomainEvent`s via an event-bus subscriber.
 - Expose `health.snapshot` and `health.system_info` RPC/CLI controllers.
 

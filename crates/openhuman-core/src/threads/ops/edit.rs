@@ -12,9 +12,9 @@
 //! `TranscriptMessage::request_id`. The one place these two id spaces
 //! provably correlate is an **assistant reply**: its store id is minted
 //! deterministically as `agent:<request_id>`
-//! ([`crate::memory::conversations::run_reply_message_id`], written by
+//! ([`crate::threads::store::run_reply_message_id`], written by
 //! `web_chat::reply_persistence` before the `chat_done` that announces it),
-//! so [`crate::memory::conversations::reply_run_id`] recovers the exact turn
+//! so [`crate::threads::store::reply_run_id`] recovers the exact turn
 //! id the transcript recorded on every row of that turn.
 //!
 //! - `regenerate { message_id: Some(id) }` — `id` must be that deterministic
@@ -47,7 +47,7 @@ use tinyagents_session::transcript::{
 };
 
 use crate::core::Outcome;
-use crate::memory::conversations::{self, reply_run_id, run_reply_message_id};
+use crate::threads::store::{self as conversations, reply_run_id, run_reply_message_id};
 use crate::threads::ThreadsError;
 
 use super::support::workspace_dir;

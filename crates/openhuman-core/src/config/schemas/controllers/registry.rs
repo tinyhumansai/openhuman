@@ -5,11 +5,10 @@ use crate::core::ControllerSchema;
 
 use super::super::schema_defs::schemas;
 use super::agent::{
-    handle_get_agent_settings, handle_get_autonomy_settings, handle_get_memory_sync_settings,
-    handle_get_privacy_mode, handle_get_sandbox_settings, handle_set_browser_allow_all,
-    handle_set_privacy_mode, handle_update_agent_settings, handle_update_autonomy_settings,
-    handle_update_browser_settings, handle_update_computer_settings,
-    handle_update_memory_sync_settings, handle_update_sandbox_settings,
+    handle_get_agent_settings, handle_get_autonomy_settings, handle_get_privacy_mode,
+    handle_get_sandbox_settings, handle_set_browser_allow_all, handle_set_privacy_mode,
+    handle_update_agent_settings, handle_update_autonomy_settings, handle_update_browser_settings,
+    handle_update_computer_settings, handle_update_sandbox_settings,
 };
 use super::inference::{
     handle_get_client_config, handle_get_config, handle_get_runtime_flags, handle_resolve_api_url,
@@ -71,8 +70,6 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("update_agent_settings"),
         schemas("update_search_settings"),
         schemas("get_search_settings"),
-        schemas("get_memory_sync_settings"),
-        schemas("update_memory_sync_settings"),
         schemas("get_sandbox_settings"),
         schemas("update_sandbox_settings"),
     ]
@@ -227,14 +224,6 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("get_search_settings"),
             handler: handle_get_search_settings,
-        },
-        RegisteredController {
-            schema: schemas("get_memory_sync_settings"),
-            handler: handle_get_memory_sync_settings,
-        },
-        RegisteredController {
-            schema: schemas("update_memory_sync_settings"),
-            handler: handle_update_memory_sync_settings,
         },
         RegisteredController {
             schema: schemas("get_sandbox_settings"),

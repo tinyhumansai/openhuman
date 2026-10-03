@@ -51,13 +51,12 @@ pub(super) fn enforce_write_policy_for_config(
 /// audit logging.
 pub(super) async fn dispatch_write_tool(
     tool_name: &str,
+    rpc_method: &str,
     params: &Map<String, Value>,
     audit_arguments: &Value,
     client_info: &str,
     config: &Config,
 ) -> Result<Value, ToolCallError> {
-    let rpc_method = "openhuman.memory_doc_put";
-
     tracing::debug!(
         tool = tool_name,
         rpc_method = rpc_method,
@@ -74,7 +73,7 @@ pub(super) async fn dispatch_write_tool(
 
     match all::try_invoke_registered_rpc(rpc_method, params.clone()).await {
         Some(Ok(value)) => {
-            let document_id = extract_document_id(&value);
+            let item_id = extract_item_id(&value);
             audit_write(
                 config,
                 NewMcpWriteRecord {
@@ -82,14 +81,14 @@ pub(super) async fn dispatch_write_tool(
                     client_info: client_info.to_string(),
                     tool_name: tool_name.to_string(),
                     args_summary: summarize_write_args(tool_name, audit_arguments),
-                    resulting_chunk_id: document_id.clone(),
+                    resulting_chunk_id: item_id.clone(),
                     success: true,
                     error_message: None,
                 },
             );
             tracing::debug!(
                 tool = tool_name,
-                chunk_id = document_id.as_deref().unwrap_or("<unknown>"),
+                chunk_id = item_id.as_deref().unwrap_or("<unknown>"),
                 client = client_info,
                 "[mcp_server] write success"
             );
@@ -234,7 +233,7 @@ pub(super) fn audit_write_rejection_without_config(
 }
 
 pub(super) fn is_write_tool(tool_name: &str) -> bool {
-    matches!(tool_name, "memory.store" | "memory.note" | "tree.tag")
+    matches!(tool_name, "memory.learn" | "memory.forget")
 }
 
 fn summarize_rejected_write_args(
@@ -258,14 +257,12 @@ fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
-fn extract_document_id(value: &Value) -> Option<String> {
+/// The id a write answered with (`memory_learn` returns `{id}`), through the
+/// RPC outcome envelope when present.
+fn extract_item_id(value: &Value) -> Option<String> {
     value
-        .get("document_id")
-        .or_else(|| {
-            value
-                .get("result")
-                .and_then(|result| result.get("document_id"))
-        })
+        .get("id")
+        .or_else(|| value.get("result").and_then(|result| result.get("id")))
         .and_then(Value::as_str)
         .map(str::to_string)
 }
@@ -274,56 +271,28 @@ fn summarize_write_args(tool_name: &str, arguments: &Value) -> Value {
     let Some(args) = arguments.as_object() else {
         return json!({});
     };
+    // Never record the learned text or ids' content: lengths and counts only.
     match tool_name {
-        "memory.store" => json!({
-            "title": args
-                .get("title")
+        "memory.learn" => json!({
+            "text_length": args
+                .get("text")
                 .and_then(Value::as_str)
-                .map(|title| first_chars(title, 128))
-                .unwrap_or_default(),
-            "namespace": args
-                .get("namespace")
-                .and_then(Value::as_str)
-                .unwrap_or("mcp"),
-            "tag_count": args
-                .get("tags")
-                .and_then(Value::as_array)
-                .map(|tags| tags.len())
+                .map(|text| text.chars().count())
                 .unwrap_or(0),
+            "kind": args
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or("fact"),
         }),
-        "memory.note" => json!({
-            "chunk_id": args
-                .get("chunk_id")
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-            "note_text_length": args
-                .get("note_text")
-                .and_then(Value::as_str)
-                .map(|note| note.chars().count())
-                .unwrap_or(0),
-        }),
-        "tree.tag" => json!({
-            "chunk_id": args
-                .get("chunk_id")
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-            "tags": args
-                .get("tags")
+        "memory.forget" => json!({
+            "id_count": args
+                .get("ids")
                 .and_then(Value::as_array)
-                .map(|tags| {
-                    tags.iter()
-                        .filter_map(Value::as_str)
-                        .map(str::to_string)
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default(),
+                .map(|ids| ids.len())
+                .unwrap_or(0),
         }),
         _ => json!({}),
     }
-}
-
-fn first_chars(value: &str, max_chars: usize) -> String {
-    value.chars().take(max_chars).collect()
 }
 
 #[cfg(test)]

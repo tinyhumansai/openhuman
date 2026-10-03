@@ -106,7 +106,6 @@ pub(crate) async fn build_root_parent(
         temperature: agent.temperature(),
         workspace_dir: agent.workspace_dir().to_path_buf(),
         workspace_descriptor: None,
-        memory: agent.memory_arc(),
         agent_config: agent.agent_config().clone(),
         workflows: Arc::new(agent.workflows().to_vec()),
         memory_context: Arc::new(None),

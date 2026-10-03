@@ -27,7 +27,7 @@ pub struct RuntimePythonConfig {
     /// (incl. pre-release lines like 3.15.x betas, whose `bN` suffix the
     /// version parser drops — so they look like a stable `3.15.0`). Capping
     /// selection below this keeps us on a stable line with prebuilt wheels for
-    /// dependencies such as spaCy. Empty string disables the cap. Default
+    /// dependencies such as torch. Empty string disables the cap. Default
     /// `3.14.0` → selects the latest `3.13.x`.
     #[serde(default = "default_maximum_version")]
     pub maximum_version: String,

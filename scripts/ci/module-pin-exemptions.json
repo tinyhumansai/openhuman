@@ -9,13 +9,18 @@
     "is a deliberate edit to this file, which is a reviewable diff.",
     "",
     "Delete an entry the moment the pins are reconciled. An exemption that has",
-    "stopped being true fails the gate too \u2014 `expect` must still match."
+    "stopped being true fails the gate too — `expect` must still match."
   ],
   "exemptions": [
     {
+      "id": "tinymemory",
+      "expect": "v1.22.4-189-g0aa4a863",
+      "reason": "Memory v2 compiles against the newer TinyMemory host APIs while the downloadable module remains the verified v1.22.4 artifact. Keep the artifact version and digest pinned until a module release is published; review bus compatibility before removing this exemption."
+    },
+    {
       "id": "tinywallet",
-      "expect": "v0.7.3-2-gb539177",
-      "reason": "Pin carries the legacy test-file rename commits (#6903) past the release tag; re-pin to the next release of this module once its rename PR is released."
+      "expect": "v0.7.3-2-gb5391776",
+      "reason": "Pin carries the test-file rename commits after the v0.7.3 release; re-pin to the next tinywallet release containing them."
     },
     {
       "id": "tinymcp",

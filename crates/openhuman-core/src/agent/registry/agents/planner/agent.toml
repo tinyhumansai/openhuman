@@ -10,11 +10,11 @@ sandbox_mode = "read_only"
 omit_identity = true
 omit_memory_context = false
 omit_safety_preamble = true
-# Memory is no longer pre-fetched eagerly before every turn. The planner
-# keeps `omit_memory_context = false`, so it still receives the cheap
-# per-turn memory recall; deep memory-tree walks are the orchestrator's
-# on-demand concern (`delegate_retrieve_memory`), and the orchestrator
-# hands the planner grounded context in the delegation prompt.
+# The planner keeps `omit_memory_context = false`, so it receives the
+# compiled memory context at session start. It has no `memory` tool: the
+# tool reports `Write` permission without arguments, which a read-only
+# sandbox cannot admit, so deeper memory lookups are the caller's concern
+# and arrive in the delegation prompt.
 
 # Spawn hierarchy: this is the deep-thinking tier (reasoning model hint).
 # The planner produces a DAG of leaf tasks for downstream workers; it
@@ -38,7 +38,6 @@ hint = "reasoning"
 # even though `composio_execute` is on this list. Only `Read`-scoped
 # actions slip past the gate.
 named = [
-    "memory_recall",
     "file_read",
     # Read-only nav primitives from #1208. `edit`, `apply_patch`, `lsp`
     # are intentionally NOT included — sandbox_mode = "read_only" above

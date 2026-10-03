@@ -9,7 +9,7 @@ async fn thread_update_title_persists_new_title() {
     let thread_id = "t-title";
     create_thread_with_title(&workspace, thread_id, "Original title").await;
 
-    let outcome = thread_update_title(crate::memory::UpdateConversationThreadTitleRequest {
+    let outcome = thread_update_title(crate::threads::UpdateConversationThreadTitleRequest {
         thread_id: thread_id.to_string(),
         title: "  Invoice follow-up  ".to_string(),
     })
@@ -30,7 +30,7 @@ async fn thread_update_title_returns_error_for_missing_thread() {
     let workspace = tempfile::tempdir().expect("workspace");
     let _workspace_guard = EnvVarGuard::set("OPENHUMAN_WORKSPACE", workspace.path());
 
-    let err = thread_update_title(crate::memory::UpdateConversationThreadTitleRequest {
+    let err = thread_update_title(crate::threads::UpdateConversationThreadTitleRequest {
         thread_id: "nonexistent-thread".to_string(),
         title: "New title".to_string(),
     })

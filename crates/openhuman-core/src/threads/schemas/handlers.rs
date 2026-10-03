@@ -4,14 +4,14 @@ use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
 use crate::core::all::ControllerFuture;
-use crate::memory::{
+use crate::threads::turn_state::{
+    ClearTurnStateRequest, GetTurnStateForRequestRequest, GetTurnStateRequest,
+};
+use crate::threads::{
     AppendConversationMessageRequest, ConversationMessagesRequest, CreateConversationThreadRequest,
     DeleteConversationThreadRequest, EmptyRequest, GenerateConversationThreadTitleRequest,
     UpdateConversationMessageRequest, UpdateConversationThreadLabelsRequest,
     UpdateConversationThreadTitleRequest, UpsertConversationThreadRequest,
-};
-use crate::threads::turn_state::{
-    ClearTurnStateRequest, GetTurnStateForRequestRequest, GetTurnStateRequest,
 };
 
 use super::super::ops;

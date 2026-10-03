@@ -29,11 +29,6 @@ async fn registry_extension_is_visible_to_every_lookup_and_dispatches() {
         rpc_method_from_parts("ext_probe", "ping").as_deref(),
         Some("openhuman.ext_probe_ping")
     );
-    assert_eq!(capability_for_parts("ext_probe", "ping"), Some(None));
-    assert_eq!(
-        capability_for_rpc_method("openhuman.ext_probe_ping"),
-        Some(None)
-    );
     assert!(schema_for_rpc_method("openhuman.ext_probe_ping").is_some());
     assert!(all_controller_schemas()
         .iter()
@@ -98,7 +93,7 @@ async fn registry_extension_is_gated_by_its_domain_group() {
 
     let mut domains = DomainSet::full();
     domains.hosted = false;
-    let ctx = CoreContext::for_test(domains, None, None);
+    let ctx = CoreContext::for_test(domains, None);
     let hidden = CoreContext::scope(ctx, async {
         (
             try_invoke_registered_rpc("openhuman.ext_gate_ping", Map::new())

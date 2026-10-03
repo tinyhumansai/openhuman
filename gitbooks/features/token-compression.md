@@ -165,12 +165,12 @@ Everything lives under the `[tokenjuice]` config block (`crates/openhuman-core/s
 
 Agents live or die by their context budget. A single working session can fan out across dozens of tool calls: greps, builds, test runs, `git` output, and large [web-fetch / scrape](native-tools/web-scraper.md) results the agent pulls down. TokenJuice sits on that tool-execution path and compacts each result before it lands in context, so an agent can sweep a noisy repo or a long web page without each step ballooning the window. The savings compound across a session and are metered in real dollars (see [Billing, Cost & Usage](billing-and-usage.md)).
 
-> **Scope note.** TokenJuice runs on the agent's **tool results**, not on the background [auto-fetch](obsidian-wiki/auto-fetch.md) ingestion pipeline. The 20-minute sync that builds the [Memory Tree](obsidian-wiki/memory-tree.md) has its own canonicalization and chunking and does not route payloads through TokenJuice today.
+> **Scope note.** TokenJuice runs on the agent's **tool results**, not on [memory](memory.md) ingestion. Source sync converts documents itself and does not route payloads through TokenJuice.
 
 ---
 
 ## See also
 
 - [Available Tools](native-tools/README.md): most heavy tool output flows through TokenJuice.
-- [Memory Tree](obsidian-wiki/memory-tree.md): the downstream consumer of compressed output.
+- [Memory](memory.md): ingestion has its own document conversion and scrubbing.
 - [Billing, Cost & Usage](billing-and-usage.md): where token savings show up as real money.

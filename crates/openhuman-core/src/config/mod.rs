@@ -9,7 +9,6 @@
 
 pub mod app_env;
 pub mod daemon;
-pub mod migration_helpers;
 pub mod migrations;
 pub mod ops;
 pub mod schema;

@@ -3,8 +3,7 @@
 //!
 //! Mirrors the OpenCompany embedding contract: a bare [`OpenHumanSessionHost`] built directly
 //! via [`OpenHumanSessionHost::builder`] (no `CoreBuilder`, no RPC, no background services)
-//! with an injected mock model, an in-process `"none"` memory backend, and a
-//! per-agent temp workspace. Builds a 1-agent and an 8-agent roster, runs one
+//! with an injected mock model and a per-agent temp workspace. Builds a 1-agent and an 8-agent roster, runs one
 //! deterministic warm-up turn per agent to fault in lazy allocations, settles,
 //! then samples `/proc/self/{status,smaps_rollup}`.
 //!
@@ -27,7 +26,6 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use openhuman_core::agent::OpenHumanSessionHost;
-use openhuman_core::memory::{Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts};
 use openhuman_core::platform::proc_metrics::{
     self, BenchReport, ProcSample, RosterResult, REPORT_SCHEMA_VERSION, RSS_BUDGET_KIB,
     RSS_HARD_CAP_KIB,
@@ -91,65 +89,6 @@ impl Tool for EchoTool {
     }
 }
 
-/// Zero-allocation no-op `Memory` for the fixture.
-///
-/// The benchmark measures a bare agent under the OpenCompany embedding contract
-/// (host supplies its own `Memory` over its context store), *not* a memory
-/// store. `create_memory(MemoryConfig{ backend: "none", .. })` does **not**
-/// select a no-op backend — it always builds a `UnifiedMemory` (SQLite + the
-/// default cloud embedder), which would inflate the measured RSS with
-/// memory-store setup. Injecting a real no-op keeps the reading on the agent
-/// harness itself.
-struct NoopMemory;
-
-#[async_trait]
-impl Memory for NoopMemory {
-    fn name(&self) -> &str {
-        "noop"
-    }
-    async fn store(
-        &self,
-        _namespace: &str,
-        _key: &str,
-        _content: &str,
-        _category: MemoryCategory,
-        _session_id: Option<&str>,
-    ) -> Result<()> {
-        Ok(())
-    }
-    async fn recall(
-        &self,
-        _query: &str,
-        _limit: usize,
-        _opts: RecallOpts<'_>,
-    ) -> Result<Vec<MemoryEntry>> {
-        Ok(Vec::new())
-    }
-    async fn get(&self, _namespace: &str, _key: &str) -> Result<Option<MemoryEntry>> {
-        Ok(None)
-    }
-    async fn list(
-        &self,
-        _namespace: Option<&str>,
-        _category: Option<&MemoryCategory>,
-        _session_id: Option<&str>,
-    ) -> Result<Vec<MemoryEntry>> {
-        Ok(Vec::new())
-    }
-    async fn forget(&self, _namespace: &str, _key: &str) -> Result<bool> {
-        Ok(false)
-    }
-    async fn namespace_summaries(&self) -> Result<Vec<NamespaceSummary>> {
-        Ok(Vec::new())
-    }
-    async fn count(&self) -> Result<usize> {
-        Ok(0)
-    }
-    async fn health_check(&self) -> bool {
-        true
-    }
-}
-
 /// A built roster plus the temp workspaces that must outlive it — dropping the
 /// `TempDir`s would delete the agents' workspaces mid-measurement.
 struct Roster {
@@ -172,12 +111,9 @@ fn build_roster(n: usize) -> Result<Roster> {
         let workspace = TempDir::new().context("create temp workspace")?;
         let path = workspace.path().to_path_buf();
 
-        let memory: Arc<dyn Memory> = Arc::new(NoopMemory);
-
         let agent = OpenHumanSessionHost::builder()
             .chat_model(Arc::new(MockModel))
             .tools(vec![Box::new(EchoTool)])
-            .memory(memory)
             .tool_dispatcher(Box::new(NativeDialect))
             .model_name("bench-mock".into())
             // Use a real built-in id because the hosted invocation resolves
@@ -185,7 +121,6 @@ fn build_roster(n: usize) -> Result<Roster> {
             .agent_definition_name("orchestrator")
             .workspace_dir(path.clone())
             .action_dir(path)
-            .auto_save(false)
             .build()
             .context("build bench agent")?;
         agents.push(agent);

@@ -26,25 +26,6 @@ use std::sync::{Arc, Mutex};
 use tinychannels::runtime::compute_max_in_flight_messages;
 use tokio_util::task::AbortOnDropHandle;
 
-/// What the channel-server banner prints on its `🧠 Memory:` line.
-///
-/// This used to call `tinymemory_core::store::effective_memory_backend_name(
-/// &config.memory.backend, Some(&config.storage.provider.config))`, which is
-/// how it reads in `git log` — as if the label were derived from those two
-/// settings. It never was: that function ignores **both** arguments and
-/// returns the literal `"namespace"` unconditionally (`tinymemory-core`
-/// `store/factories.rs`, and its own doc says so — "Currently, this always
-/// returns 'namespace' as the unified memory system is the standard"). Its
-/// engine-side test is named `effective_memory_backend_name_always_returns_
-/// namespace`.
-///
-/// So this is a display constant, not a capability, and it came home rather
-/// than crossing the bus (openhuman#5560): "which label does the banner show"
-/// is not something a second memory driver would answer differently, and
-/// widening the contract for a fixed string would be the worst of both. The
-/// printed line is byte-identical to before.
-const EFFECTIVE_MEMORY_BACKEND_LABEL: &str = "namespace";
-
 pub async fn start_channels(config: Config) -> Result<()> {
     start_channels_with_session(config, super::super::session::channel_session()).await
 }
@@ -63,10 +44,9 @@ async fn start_channels_inner(mut config: Config) -> Result<()> {
     let bus = crate::core::bus::BUS.get().expect("bus initialised");
     let _tracing_handle = bus.subscribe(Arc::new(crate::core::bus::TracingSubscriber));
     crate::platform::health::bus::register_health_subscriber();
-    crate::memory::conversations::register_conversation_persistence_subscriber(
+    crate::threads::store::register_conversation_persistence_subscriber(
         config.workspace_dir.clone(),
     );
-    crate::memory::sync_events_bridge::register_sync_stage_bridge(&config);
     crate::integrations::composio::register_composio_trigger_subscriber();
     // Surface parked ApprovalGate requests as chat messages so the user can
     // answer yes/no in the thread (chat-native approval, issue #1339).
@@ -90,18 +70,6 @@ async fn start_channels_inner(mut config: Config) -> Result<()> {
     // thread/client only (C5) — never carries memory content or the raw
     // recall query, only a short clipped preview.
     crate::web_chat::register_memory_activity_surface_subscriber();
-    // Spawn the per-toolkit provider periodic sync scheduler. This is
-    // a thin tokio task that ticks every minute and dispatches into
-    // any provider whose `sync_interval_secs` has elapsed for an
-    // active Composio connection. Safe to call here even though
-    // `bootstrap_core_runtime` may also start it — `start_periodic_sync`
-    // is intentionally cheap and the loop body no-ops when there are
-    // no connections.
-    crate::integrations::composio::start_periodic_sync();
-    // The folder, GitHub, RSS and web sources a driver without a source
-    // pipeline of its own (hosted memory) needs refreshed; each tick checks the
-    // driver bound at that moment.
-    crate::memory::sources::start_hosted_periodic_sync();
     // Task-sources: subscribe to Composio connection-created events for
     // one-shot fetches, and spawn the periodic poll that pulls work from
     // configured external sources onto the agent's todo board.
@@ -368,9 +336,12 @@ async fn start_channels_inner(mut config: Config) -> Result<()> {
     println!("🦀 OpenHuman Channel Server");
     println!("  🤖 Model:    {model}");
     println!(
-        "  🧠 Memory:   {} (auto-save: {})",
-        EFFECTIVE_MEMORY_BACKEND_LABEL,
-        if config.memory.auto_save { "on" } else { "off" }
+        "  🧠 Memory:   {}",
+        if crate::memory::memory_is_on(&config) {
+            config.memory.engine.as_str()
+        } else {
+            "off"
+        }
     );
     println!(
         "  📡 Channels: {}",
@@ -482,10 +453,6 @@ async fn start_channels_inner(mut config: Config) -> Result<()> {
         crate::channels::host::ChannelApprovalSurfaceSubscriber::new(Arc::clone(&channels_by_name)),
     ));
     tracing::debug!("[channels] registered turn-state and approval-surface subscribers");
-    // Register the tree summarizer event subscriber for observability logging.
-    let _tree_summarizer_handle = bus.subscribe(Arc::new(
-        crate::memory::tree::tree_runtime::bus::TreeSummarizerEventSubscriber::new(),
-    ));
 
     let listener_count = channels.len() + relay_config.as_ref().map(|_| 1).unwrap_or_default();
     let max_in_flight_messages = compute_max_in_flight_messages(listener_count);
@@ -499,16 +466,11 @@ async fn start_channels_inner(mut config: Config) -> Result<()> {
         channels_by_name,
         turn_model_source: None,
         default_provider: Arc::new(provider_name),
-        memory: crate::memory::ops::guard::active_memory_guard()
-            .await
-            .map_err(|e| anyhow::anyhow!("channels startup: memory unavailable: {e}"))?,
         tools_registry: Arc::clone(&tools_registry),
         system_prompt,
         model: Arc::new(model.clone()),
         temperature,
-        auto_save_memory: config.memory.auto_save,
         max_tool_iterations: config.agent.max_tool_iterations,
-        min_relevance_score: config.memory.min_relevance_score,
         conversation_histories: Arc::new(Mutex::new(HashMap::new())),
         turn_model_source_cache: Arc::new(Mutex::new(HashMap::new())),
         route_overrides: Arc::new(Mutex::new(HashMap::new())),

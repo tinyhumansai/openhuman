@@ -51,12 +51,12 @@ impl Tool for ListConnectableToolkitsTool {
         // The contract crate, not `memory::sync::composio::providers` (#5560).
         // That host shim is `pub use tinymemory_core::sync::composio::providers::*`
         // and the engine's `providers` module in turn re-exports this function
-        // verbatim from `tinymemory_api::composio::scopes` — so the two paths
+        // verbatim from `crate::integrations::composio::contract::scopes` — so the two paths
         // name the SAME item and this is a path change with no behaviour delta.
         // Naming the contract directly is what lets the shim's caller list
         // shrink to the sites that genuinely need the engine's registry and
         // curated catalogs.
-        use tinymemory_api::composio::agent_ready_toolkits;
+        use crate::integrations::composio::contract::agent_ready_toolkits;
         tracing::debug!(target: "flows", "[flows] list_connectable_toolkits: listing toolkits + connected state (read-only) via the memory contract");
         let connected = ops::connected_toolkits(&self.config).await;
         let toolkits: Vec<Value> = agent_ready_toolkits()

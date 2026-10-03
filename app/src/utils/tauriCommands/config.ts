@@ -115,31 +115,6 @@ export interface ModelSettingsUpdate {
   vision_provider?: string | null;
   memory_provider?: string | null;
   embeddings_provider?: string | null;
-  learning_provider?: string | null;
-}
-
-/**
- * Stepped user-facing memory-context window preset. Mirrors the core
- * `MemoryContextWindow` enum (`crates/openhuman-core/src/config/schema/agent.rs`)
- * — the actual char budgets are owned by the core, this is the label.
- */
-export type MemoryContextWindow = 'minimal' | 'balanced' | 'extended' | 'maximum';
-
-export const MEMORY_CONTEXT_WINDOWS: MemoryContextWindow[] = [
-  'minimal',
-  'balanced',
-  'extended',
-  'maximum',
-];
-
-export interface MemorySettingsUpdate {
-  backend?: string | null;
-  auto_save?: boolean | null;
-  embedding_provider?: string | null;
-  embedding_model?: string | null;
-  embedding_dimensions?: number | null;
-  /** One of `MEMORY_CONTEXT_WINDOWS`. */
-  memory_window?: MemoryContextWindow | null;
 }
 
 export interface RuntimeSettingsUpdate {
@@ -184,7 +159,6 @@ export interface LocalAiSettingsUpdate {
   model_id?: string | null;
   chat_model_id?: string | null;
   usage_embeddings?: boolean | null;
-  usage_learning_reflection?: boolean | null;
 }
 
 export interface RuntimeFlags {
@@ -269,7 +243,6 @@ export interface ClientConfig {
   vision_provider: string | null;
   memory_provider: string | null;
   embeddings_provider: string | null;
-  learning_provider: string | null;
 }
 
 export async function openhumanGetClientConfig(): Promise<CommandResponse<ClientConfig>> {
@@ -395,15 +368,6 @@ export async function openhumanUpdateModelSettings(
 ): Promise<CommandResponse<ConfigSnapshot>> {
   return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
     method: 'openhuman.inference_update_model_settings',
-    params: update,
-  });
-}
-
-export async function openhumanUpdateMemorySettings(
-  update: MemorySettingsUpdate
-): Promise<CommandResponse<ConfigSnapshot>> {
-  return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
-    method: CORE_RPC_METHODS.configUpdateMemorySettings,
     params: update,
   });
 }
@@ -606,47 +570,6 @@ export async function openhumanUpdateSandboxSettings(
 ): Promise<CommandResponse<ConfigSnapshot>> {
   return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
     method: CORE_RPC_METHODS.configUpdateSandboxSettings,
-    params: update,
-  });
-}
-
-// ── Memory sync schedule (#3302) ─────────────────────────────────────────────
-
-/** Global memory-sync schedule returned by config_get_memory_sync_settings. */
-export interface MemorySyncSettings {
-  /** Stored value: null = use the default cadence, 0 = Manual only, n>0 = seconds. */
-  sync_interval_secs: number | null;
-  /** Resolved cadence to highlight in the UI (the default when unset; 0 for manual). */
-  selected_secs: number;
-  /** True when the user picked "Manual only" (stored value is 0). */
-  is_manual: boolean;
-  /** True when no explicit choice is stored (falls back to `default_secs`). */
-  is_default: boolean;
-  /** The effective default cadence (seconds) applied when unset (24h). */
-  default_secs: number;
-  /** Preset cadences (seconds) offered in the UI: 4h / 12h / 24h. */
-  presets: number[];
-}
-
-/** Partial update — set `sync_interval_secs` to `null` to reset to default. */
-export interface MemorySyncSettingsUpdate {
-  /** null = default, 0 = Manual only, n>0 = sync every n seconds. */
-  sync_interval_secs?: number | null;
-}
-
-export async function openhumanGetMemorySyncSettings(): Promise<
-  CommandResponse<MemorySyncSettings>
-> {
-  return await callCoreRpc<CommandResponse<MemorySyncSettings>>({
-    method: CORE_RPC_METHODS.configGetMemorySyncSettings,
-  });
-}
-
-export async function openhumanUpdateMemorySyncSettings(
-  update: MemorySyncSettingsUpdate
-): Promise<CommandResponse<MemorySyncSettings>> {
-  return await callCoreRpc<CommandResponse<MemorySyncSettings>>({
-    method: CORE_RPC_METHODS.configUpdateMemorySyncSettings,
     params: update,
   });
 }

@@ -47,98 +47,6 @@ impl TeamModelConfig {
     }
 }
 
-/// User-facing memory-context window preset.
-///
-/// Each preset maps deterministically (via [`MemoryContextWindow::limits`])
-/// to the actual character budgets used by the agent harness when
-/// injecting recalled memory and the long-term memory summary tree into
-/// new agent / orchestrator sessions. The mapping is the single source
-/// of truth — the frontend never decides budgets directly. Presets are
-/// bounded (`Maximum` ≈ 8 000 chars of recall + ≈ 128 000 chars of root
-/// summary, ≈ 32k tokens) so users cannot accidentally blow up prompts.
-///
-/// See `gitbooks/developing/memory-context-window.md` for the user-facing tradeoff
-/// guidance and the per-preset numbers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum MemoryContextWindow {
-    /// Cheapest, lightest. Tight recall + tree-summary budget.
-    Minimal,
-    /// Sensible default — current behaviour.
-    #[default]
-    Balanced,
-    /// More continuity at the cost of more tokens per run.
-    Extended,
-    /// Maximum allowed continuity — meaningfully larger token bill.
-    Maximum,
-}
-
-/// Concrete character budgets resolved from a [`MemoryContextWindow`]
-/// preset. All three caps are bounded to keep prompt growth safe.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MemoryWindowLimits {
-    /// Cap for `[Memory context]` + `[User working memory]` injection
-    /// produced by `DefaultMemoryLoader`.
-    pub max_memory_context_chars: usize,
-    /// Per-namespace cap when collecting tree-summarizer root summaries
-    /// for the system prompt (first turn only).
-    pub per_namespace_max_chars: usize,
-    /// Hard ceiling across all namespaces for the tree-summary block.
-    pub total_tree_max_chars: usize,
-}
-
-impl MemoryContextWindow {
-    /// Return the canonical budgets for this preset. The mapping is
-    /// intentionally stepped (no continuous slider) so the UI and core
-    /// stay aligned and impact is predictable.
-    pub fn limits(self) -> MemoryWindowLimits {
-        match self {
-            MemoryContextWindow::Minimal => MemoryWindowLimits {
-                max_memory_context_chars: 800,
-                per_namespace_max_chars: 2_000,
-                total_tree_max_chars: 8_000,
-            },
-            MemoryContextWindow::Balanced => MemoryWindowLimits {
-                max_memory_context_chars: 2_000,
-                per_namespace_max_chars: 8_000,
-                total_tree_max_chars: 32_000,
-            },
-            MemoryContextWindow::Extended => MemoryWindowLimits {
-                max_memory_context_chars: 4_000,
-                per_namespace_max_chars: 16_000,
-                total_tree_max_chars: 64_000,
-            },
-            MemoryContextWindow::Maximum => MemoryWindowLimits {
-                max_memory_context_chars: 8_000,
-                per_namespace_max_chars: 32_000,
-                total_tree_max_chars: 128_000,
-            },
-        }
-    }
-
-    /// Stable lowercase label for serialization across CLI / RPC / UI.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            MemoryContextWindow::Minimal => "minimal",
-            MemoryContextWindow::Balanced => "balanced",
-            MemoryContextWindow::Extended => "extended",
-            MemoryContextWindow::Maximum => "maximum",
-        }
-    }
-
-    /// Parse from the lowercase label produced by [`Self::as_str`].
-    /// Returns `None` for unknown inputs so callers can fall back.
-    pub fn from_str_opt(s: &str) -> Option<Self> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "minimal" => Some(Self::Minimal),
-            "balanced" => Some(Self::Balanced),
-            "extended" => Some(Self::Extended),
-            "maximum" => Some(Self::Maximum),
-            _ => None,
-        }
-    }
-}
-
 /// Configuration for a delegate sub-agent used by the `delegate` tool.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DelegateAgentConfig {
@@ -278,25 +186,6 @@ pub struct AgentConfig {
     /// field for one launch.
     #[serde(default = "default_agent_tool_dispatcher")]
     pub tool_dispatcher: String,
-    /// **Legacy** — maximum characters of memory context to inject per
-    /// turn. Prefer [`AgentConfig::memory_window`]; this field is only
-    /// honoured for unmigrated configs (those that have never set the
-    /// preset). Once a preset is explicitly chosen, the preset is
-    /// authoritative and this value is ignored.
-    #[serde(default = "default_max_memory_context_chars")]
-    pub max_memory_context_chars: usize,
-    /// Stepped user-facing preset that maps to the actual memory
-    /// injection budgets. See [`MemoryContextWindow`].
-    ///
-    /// `None` means "no preset has been chosen yet" (e.g. a config
-    /// upgraded from a build that predates this setting). In that
-    /// case [`AgentConfig::resolved_memory_limits`] honours the legacy
-    /// raw `max_memory_context_chars` field for backward compatibility.
-    /// Once the user picks a preset (or any caller writes one) it
-    /// becomes authoritative — the raw field is then ignored, so the
-    /// UI control is the single source of truth from that point on.
-    #[serde(default)]
-    pub memory_window: Option<MemoryContextWindow>,
     /// Per-channel maximum permission level for tool execution.
     /// Keys are channel names (e.g., "telegram", "discord", "web", "cli").
     /// Values are permission levels: "none", "readonly" (or "read_only"),
@@ -516,10 +405,6 @@ fn default_agent_tool_dispatcher() -> String {
     "auto".into()
 }
 
-fn default_max_memory_context_chars() -> usize {
-    2000
-}
-
 impl AgentConfig {
     /// Seed legacy installs whose channel-permissions map is empty and
     /// that already have at least one non-web channel configured,
@@ -574,37 +459,6 @@ impl AgentConfig {
         );
         true
     }
-
-    /// Resolve the active memory-context budgets for this agent config.
-    ///
-    /// Two cases:
-    ///
-    /// 1. **Preset chosen** (`memory_window = Some(_)`) — the preset is
-    ///    authoritative. The legacy raw `max_memory_context_chars`
-    ///    field is ignored entirely. This is the steady-state path: the
-    ///    UI control is the single source of truth.
-    ///
-    /// 2. **Unmigrated config** (`memory_window = None`) — fall back to
-    ///    the legacy raw `max_memory_context_chars` for the recall cap
-    ///    so a config upgraded from an older build keeps its previous
-    ///    recall behaviour. The raw value is still bounded by the
-    ///    `Maximum` preset's recall cap so safety limits are preserved.
-    ///    Tree-summary caps come from the `Balanced` baseline because
-    ///    older builds had no notion of a per-namespace tree cap on
-    ///    this code path.
-    pub fn resolved_memory_limits(&self) -> MemoryWindowLimits {
-        match self.memory_window {
-            Some(window) => window.limits(),
-            None => {
-                let mut limits = MemoryContextWindow::Balanced.limits();
-                let hard_cap = MemoryContextWindow::Maximum
-                    .limits()
-                    .max_memory_context_chars;
-                limits.max_memory_context_chars = self.max_memory_context_chars.min(hard_cap);
-                limits
-            }
-        }
-    }
 }
 
 impl Default for AgentConfig {
@@ -617,8 +471,6 @@ impl Default for AgentConfig {
             parallel_tools: false,
             max_parallel_tools: default_max_parallel_tools(),
             tool_dispatcher: default_agent_tool_dispatcher(),
-            max_memory_context_chars: default_max_memory_context_chars(),
-            memory_window: None,
             channel_permissions: std::collections::HashMap::new(),
             tool_result_budget_bytes: default_tool_result_budget_bytes(),
             agent_timeout_secs: default_agent_timeout_secs(),
@@ -630,7 +482,3 @@ impl Default for AgentConfig {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "agent_memory_window_tests_tests.rs"]
-mod memory_window_tests;

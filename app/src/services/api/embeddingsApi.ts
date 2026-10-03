@@ -30,11 +30,10 @@ export interface EmbeddingsSettings {
   /** The picker's own setting (`config.memory.embedding_provider`). */
   provider: string;
   /**
-   * The embedder ingestion will **actually** use, resolved core-side by the
-   * memory-tree provider ladder (#5402). Ask this — not `provider` — when the
+   * The embedder the core will **actually** use, resolved core-side (#5402). Ask this — not `provider` — when the
    * question is "do these embeddings bill against the managed budget?": the
-   * Local AI "Memory embeddings" toggle and the `memory_tree.embedding_endpoint`
-   * override both route to local Ollama without rewriting `provider`.
+   * Local AI "Memory embeddings" toggle routes to local Ollama without
+   * rewriting `provider`.
    *
    * One of `ollama` | `custom` | `cloud` | `none` | `unconfigured` | `unknown`.
    * Optional so an older core (or a stubbed test payload) degrades to `provider`

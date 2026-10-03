@@ -4,8 +4,8 @@
 //! (`ContextCompressionMiddleware` + `tinyagents::summarize::ModelSummarizer`),
 //! so the old `reduce_before_call` / `Summarizer` / `ReductionOutcome` suite is
 //! gone. `ContextManager` is now a pure state-tracking handle: utilisation
-//! stats, tool-result budget config, microcompact knobs, and session-memory
-//! bookkeeping. These tests cover that surviving surface.
+//! stats, tool-result budget config and microcompact knobs. These tests cover
+//! that surviving surface.
 
 use super::*;
 use crate::inference::provider::BilledUsage;
@@ -22,17 +22,12 @@ fn default_manager() -> ContextManager {
 fn stats_reports_snapshot() {
     let mut manager = default_manager();
     manager.record_usage(&BilledUsage::from_counts(10_000, 2_000).with_context_window(100_000));
-    manager.tick_turn();
-    manager.record_tool_calls(3);
 
     let s = manager.stats();
     assert_eq!(s.input_tokens, 10_000);
     assert_eq!(s.output_tokens, 2_000);
     assert_eq!(s.context_window, 100_000);
     assert_eq!(s.utilisation_pct, Some(12));
-    assert_eq!(s.session_memory_total_tokens, 12_000);
-    assert_eq!(s.session_memory_current_turn, 1);
-    assert_eq!(s.session_memory_total_tool_calls, 3);
 }
 
 #[test]
@@ -72,43 +67,4 @@ fn autocompact_enabled_requires_both_master_and_autocompact_flags() {
     let mut no_autocompact = ContextConfig::default();
     no_autocompact.autocompact_enabled = false;
     assert!(!manager_with_config(&no_autocompact).autocompact_enabled());
-}
-
-#[test]
-fn session_memory_lifecycle_changes_should_extract_state() {
-    let mut manager = default_manager();
-    manager.record_usage(&BilledUsage::from_counts(20_000, 0).with_context_window(100_000));
-    for _ in 0..5 {
-        manager.tick_turn();
-    }
-    manager.record_tool_calls(9);
-    assert!(manager.should_extract_session_memory());
-
-    manager.mark_session_memory_started();
-    assert!(!manager.should_extract_session_memory());
-
-    manager.mark_session_memory_failed();
-    assert!(manager.should_extract_session_memory());
-
-    manager.mark_session_memory_started();
-    manager.mark_session_memory_complete();
-    assert!(!manager.should_extract_session_memory());
-}
-
-#[test]
-fn session_memory_handle_mutations_are_reflected_in_manager_stats() {
-    let manager = default_manager();
-    let handle = manager.session_memory_handle();
-    {
-        let mut state = handle.lock().unwrap();
-        state.current_turn = 7;
-        state.total_tool_calls = 9;
-        state.total_tokens = 222;
-        state.tokens_at_last_extract = 111;
-    }
-
-    let stats = manager.stats();
-    assert_eq!(stats.session_memory_current_turn, 7);
-    assert_eq!(stats.session_memory_total_tool_calls, 9);
-    assert_eq!(stats.session_memory_total_tokens, 222);
 }

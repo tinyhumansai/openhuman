@@ -18,15 +18,11 @@ fn list_tools_exposes_base_mcp_surface_when_searxng_disabled() {
             "core.tool_instructions",
             "agent.list_subagents",
             "agent.run_subagent",
-            "memory.search",
             "memory.recall",
-            "tree.read_chunk",
-            "tree.browse",
-            "tree.top_entities",
-            "tree.list_sources",
-            "memory.store",
-            "memory.note",
-            "tree.tag",
+            "memory.fetch",
+            "memory.list",
+            "memory.learn",
+            "memory.forget",
         ]
     );
 }
@@ -53,19 +49,14 @@ fn list_tools_emits_annotations_for_every_tool() {
 #[test]
 fn read_only_tools_are_marked_read_only_and_closed_world() {
     // Every tool except the act-capable ones reads local OpenHuman state
-    // (memory tree / agent registry) or queries an external read-only
+    // (memory / agent registry) or queries an external read-only
     // search engine. Per MCP spec defaults these would be
     // `readOnlyHint: false` and `openWorldHint: true`, so we MUST set
     // `readOnlyHint` explicitly to communicate accurate safety affordances
     // to clients. (`searxng_search` is read-only but openWorld, so it
     // verifies the read-only axis here and is exempt from the
     // openWorld=false check below.)
-    let act_tool_names = [
-        "agent.run_subagent",
-        "memory.store",
-        "memory.note",
-        "tree.tag",
-    ];
+    let act_tool_names = ["agent.run_subagent", "memory.learn", "memory.forget"];
     let open_world_read_only = ["searxng_search", "web_search", "web_answer"];
     for spec in tool_specs() {
         if act_tool_names.contains(&spec.name) {
@@ -204,20 +195,6 @@ fn build_rpc_params_rejects_extra_run_subagent_fields() {
 }
 
 #[test]
-fn memory_search_params_trim_query_and_use_default_k() {
-    let params = build_rpc_params(
-        "memory.search",
-        json!({
-            "query": " phoenix migration ",
-        }),
-    )
-    .expect("params");
-
-    assert_eq!(params["query"], "phoenix migration");
-    assert_eq!(params["k"], DEFAULT_LIMIT);
-}
-
-#[test]
 fn searxng_search_params_accept_optional_fields() {
     let params = build_rpc_params(
         "searxng_search",
@@ -297,361 +274,274 @@ fn searxng_search_rejects_max_results_above_max() {
     assert!(err.message().contains("must not exceed"));
 }
 
+// ── memory v2 tools ───────────────────────────────────────────────
+
+fn spec_named(name: &str) -> McpToolSpec {
+    tool_specs()
+        .into_iter()
+        .find(|spec| spec.name == name)
+        .unwrap_or_else(|| panic!("{name} must be registered"))
+}
+
 #[test]
-fn memory_search_rejects_k_above_max() {
-    // Reject (don't silent-clamp) so the LLM can self-correct on the next
-    // call. Silent clamping makes the model believe it got the page size
-    // it asked for and prevents the corrective feedback loop.
-    let err = build_rpc_params(
+fn memory_tools_map_to_v2_rpc_methods() {
+    for (tool, rpc) in [
+        ("memory.recall", "openhuman.memory_recall"),
+        ("memory.fetch", "openhuman.memory_fetch"),
+        ("memory.list", "openhuman.memory_items_list"),
+        ("memory.learn", "openhuman.memory_learn"),
+        ("memory.forget", "openhuman.memory_forget"),
+    ] {
+        assert_eq!(spec_named(tool).rpc_method, Some(rpc), "{tool}");
+    }
+}
+
+#[test]
+fn v1_memory_tools_are_gone() {
+    let names = tool_specs().into_iter().map(|s| s.name).collect::<Vec<_>>();
+    for removed in [
         "memory.search",
+        "memory.store",
+        "memory.note",
+        "tree.tag",
+        "tree.read_chunk",
+        "tree.browse",
+        "tree.top_entities",
+        "tree.list_sources",
+    ] {
+        assert!(!names.contains(&removed), "{removed} must be removed");
+        assert!(build_rpc_params(removed, json!({})).is_err());
+    }
+}
+
+#[test]
+fn memory_tool_schemas_are_closed_and_describe_the_filter() {
+    for name in [
+        "memory.recall",
+        "memory.fetch",
+        "memory.list",
+        "memory.learn",
+        "memory.forget",
+    ] {
+        assert_eq!(
+            spec_named(name).input_schema["additionalProperties"],
+            json!(false),
+            "{name}"
+        );
+    }
+    let filter = &spec_named("memory.fetch").input_schema["properties"]["filter"];
+    assert_eq!(filter["additionalProperties"], json!(false));
+    for field in [
+        "workspace",
+        "folder",
+        "file_path",
+        "language",
+        "repo",
+        "commit",
+        "url",
+        "thread_id",
+        "agent_id",
+        "kinds",
+        "sources",
+        "tags_any",
+        "observed_after",
+        "observed_before",
+    ] {
+        assert!(filter["properties"].get(field).is_some(), "filter.{field}");
+    }
+    assert_eq!(
+        filter["properties"]["kinds"]["items"]["enum"],
+        json!(["document", "conversation", "learning"])
+    );
+    let fetch = spec_named("memory.fetch");
+    assert!(fetch.description.contains("only `hybrid`"));
+    assert!(fetch.input_schema["properties"]["mode"]["description"]
+        .as_str()
+        .unwrap()
+        .contains("only `hybrid`"));
+}
+
+#[test]
+fn memory_annotations_match_their_effect() {
+    for name in ["memory.recall", "memory.fetch", "memory.list"] {
+        let a = spec_named(name).annotations;
+        assert_eq!(a["readOnlyHint"], json!(true), "{name}");
+        assert_eq!(a["openWorldHint"], json!(false), "{name}");
+    }
+    let learn = spec_named("memory.learn").annotations;
+    assert_eq!(learn["readOnlyHint"], json!(false));
+    assert_eq!(learn["destructiveHint"], json!(false));
+    let forget = spec_named("memory.forget").annotations;
+    assert_eq!(forget["readOnlyHint"], json!(false));
+    assert_eq!(forget["destructiveHint"], json!(true));
+    assert_eq!(forget["idempotentHint"], json!(true));
+}
+
+#[test]
+fn memory_recall_maps_question_filter_and_limit() {
+    let params = build_rpc_params(
+        "memory.recall",
         json!({
-            "query": "phoenix",
-            "k": MAX_LIMIT + 1
+            "question": " what is phoenix? ",
+            "filter": {
+                "repo": "acme/phoenix",
+                "kinds": ["document", "learning"],
+                "observed_after": "2026-01-01T00:00:00Z"
+            },
+            "limit": 5
         }),
     )
-    .expect_err("must reject k > MAX_LIMIT");
-
-    let message = err.message();
-    assert!(
-        message.contains("must not exceed"),
-        "error should mention the cap, got: {message}"
-    );
-    assert!(
-        message.contains(&MAX_LIMIT.to_string()),
-        "error should mention the limit value, got: {message}"
-    );
+    .expect("params");
+    assert_eq!(params["question"], "what is phoenix?");
+    assert_eq!(params["limit"], 5);
+    assert_eq!(params["filter"]["repo"], "acme/phoenix");
+    assert_eq!(params["filter"]["kinds"], json!(["document", "learning"]));
+    assert_eq!(params["filter"]["observed_after"], "2026-01-01T00:00:00Z");
 }
 
 #[test]
-fn memory_search_accepts_k_at_max() {
-    let params = build_rpc_params(
-        "memory.search",
-        json!({ "query": "phoenix", "k": MAX_LIMIT }),
-    )
-    .expect("k = MAX_LIMIT must be accepted (boundary inclusive)");
-    assert_eq!(params["k"], MAX_LIMIT);
-}
-
-#[test]
-fn memory_recall_requires_query() {
+fn memory_recall_requires_question_and_omits_unset_fields() {
     let err = build_rpc_params("memory.recall", json!({})).expect_err("must reject");
+    assert!(err
+        .message()
+        .contains("missing required argument `question`"));
+    let params = build_rpc_params("memory.recall", json!({"question": "q"})).expect("params");
+    assert_eq!(params.len(), 1);
+}
+
+#[test]
+fn memory_limit_above_max_is_rejected() {
+    for tool in ["memory.recall", "memory.fetch", "memory.list"] {
+        let mut args = json!({ "limit": MEMORY_MAX_LIMIT + 1 });
+        args["question"] = json!("q");
+        args["query"] = json!("q");
+        args.as_object_mut().unwrap().retain(|k, _| {
+            k == "limit"
+                || (tool == "memory.recall" && k == "question")
+                || (tool == "memory.fetch" && k == "query")
+        });
+        let err = build_rpc_params(tool, args).expect_err("limit above cap");
+        assert!(
+            err.message().contains("must not exceed"),
+            "{tool}: {}",
+            err.message()
+        );
+    }
+    let ok = build_rpc_params("memory.list", json!({ "limit": MEMORY_MAX_LIMIT })).expect("at cap");
+    assert_eq!(ok["limit"], MEMORY_MAX_LIMIT);
+}
+
+#[test]
+fn memory_fetch_maps_query_mode_cursor() {
+    let params = build_rpc_params(
+        "memory.fetch",
+        json!({"query": "phoenix", "mode": "hybrid", "cursor": "abc", "limit": 3}),
+    )
+    .expect("params");
+    assert_eq!(params["query"], "phoenix");
+    assert_eq!(params["mode"], "hybrid");
+    assert_eq!(params["cursor"], "abc");
+    assert_eq!(params["limit"], 3);
+}
+
+#[test]
+fn memory_fetch_rejects_unknown_mode_and_missing_query() {
+    let err = build_rpc_params("memory.fetch", json!({"query": "q", "mode": "fuzzy"}))
+        .expect_err("bad mode");
+    assert!(err.message().contains("`mode` must be one of"));
+    let err = build_rpc_params("memory.fetch", json!({})).expect_err("missing query");
     assert!(err.message().contains("missing required argument `query`"));
 }
 
 #[test]
-fn memory_search_rejects_undocumented_limit_alias() {
-    let err = build_rpc_params(
-        "memory.search",
-        json!({
-            "query": "phoenix",
-            "limit": 5
-        }),
-    )
-    .expect_err("must reject");
-
-    assert!(err.message().contains("unexpected argument `limit`"));
+fn memory_list_accepts_no_arguments_and_rejects_unknown_ones() {
+    let params = build_rpc_params("memory.list", json!({})).expect("params");
+    assert!(params.is_empty());
+    let err = build_rpc_params("memory.list", json!({"k": 5})).expect_err("v1 alias");
+    assert!(err.message().contains("unexpected argument `k`"));
 }
 
 #[test]
-fn tree_read_chunk_maps_chunk_id_to_controller_id() {
-    let params = build_rpc_params("tree.read_chunk", json!({"chunk_id": "abc"})).expect("params");
-    assert_eq!(params["id"], "abc");
-    assert!(!params.contains_key("chunk_id"));
+fn memory_filter_rejects_bad_shapes() {
+    for (filter, needle) in [
+        (json!("repo"), "`filter` must be an object"),
+        (json!({"bogus": 1}), "unexpected filter field `bogus`"),
+        (json!({"repo": ""}), "`repo` must be a non-empty string"),
+        (json!({"repo": 3}), "`repo` must be a non-empty string"),
+        (json!({"kinds": ["note"]}), "`kinds` entries must be one of"),
+        (json!({"sources": "agent"}), "`sources` must be an array"),
+        (json!({"tags_any": [""]}), "`tags_any` entries"),
+        (json!({"observed_before": "yesterday"}), "RFC 3339"),
+    ] {
+        let err = build_rpc_params("memory.list", json!({ "filter": filter.clone() }))
+            .expect_err("bad filter");
+        assert!(
+            err.message().contains(needle),
+            "{filter}: {}",
+            err.message()
+        );
+    }
 }
 
 #[test]
-fn tree_read_chunk_rejects_unknown_arguments() {
-    let err = build_rpc_params(
-        "tree.read_chunk",
-        json!({
-            "chunk_id": "abc",
-            "unused": true
-        }),
+fn memory_filter_ignores_null_fields() {
+    let params = build_rpc_params(
+        "memory.list",
+        json!({"filter": {"repo": null, "language": "rust"}}),
     )
-    .expect_err("must reject");
+    .expect("params");
+    assert_eq!(params["filter"], json!({"language": "rust"}));
+}
 
-    assert!(err.message().contains("unexpected argument `unused`"));
+#[test]
+fn memory_learn_maps_text_kind_confidence() {
+    let params = build_rpc_params(
+        "memory.learn",
+        json!({"text": " prefers tabs ", "kind": "preference", "confidence": 0.9}),
+    )
+    .expect("params");
+    assert_eq!(params["text"], "prefers tabs");
+    assert_eq!(params["kind"], "preference");
+    assert_eq!(params["confidence"], 0.9);
+    let minimal = build_rpc_params("memory.learn", json!({"text": "t"})).expect("params");
+    assert_eq!(minimal.len(), 1);
+}
+
+#[test]
+fn memory_learn_rejects_bad_arguments() {
+    let err = build_rpc_params("memory.learn", json!({})).expect_err("missing text");
+    assert!(err.message().contains("missing required argument `text`"));
+    let err = build_rpc_params("memory.learn", json!({"text": "t", "kind": "rumor"}))
+        .expect_err("bad kind");
+    assert!(err.message().contains("`kind` must be one of"));
+    let err = build_rpc_params("memory.learn", json!({"text": "t", "confidence": 1.5}))
+        .expect_err("confidence above 1");
+    assert!(err.message().contains("between 0 and 1"));
+    let err = build_rpc_params("memory.learn", json!({"text": "t", "confidence": "high"}))
+        .expect_err("non-number");
+    assert!(err.message().contains("must be a number"));
+    let err = build_rpc_params("memory.learn", json!({"text": "t", "meta": {}}))
+        .expect_err("meta is host-filled");
+    assert!(err.message().contains("unexpected argument `meta`"));
+}
+
+#[test]
+fn memory_forget_maps_ids_and_bounds_them() {
+    let params = build_rpc_params("memory.forget", json!({"ids": ["a", "b"]})).expect("params");
+    assert_eq!(params["ids"], json!(["a", "b"]));
+    let err = build_rpc_params("memory.forget", json!({"ids": []})).expect_err("empty ids");
+    assert!(err.message().contains("`ids`"));
+    let err = build_rpc_params("memory.forget", json!({})).expect_err("missing ids");
+    assert!(err.message().contains("`ids`"));
+    let too_many = (0..=MEMORY_FORGET_MAX_IDS)
+        .map(|i| i.to_string())
+        .collect::<Vec<_>>();
+    let err = build_rpc_params("memory.forget", json!({ "ids": too_many })).expect_err("cap");
+    assert!(err.message().contains("at most"));
 }
 
 #[test]
 fn non_object_arguments_are_invalid() {
-    let err = build_rpc_params("memory.search", json!("query")).expect_err("must reject");
+    let err = build_rpc_params("memory.recall", json!("question")).expect_err("must reject");
     assert!(err.message().contains("arguments must be an object"));
-}
-
-// ── tree.browse ────────────────────────────────────────────────────
-
-#[test]
-fn tree_browse_no_args_sends_default_limit_only() {
-    // Empty filter is a valid request — the controller treats unset filters
-    // as "no constraint" — and the MCP layer still applies its own DEFAULT_LIMIT
-    // so the LLM doesn't accidentally pull the controller's 50-row default
-    // when it asked for nothing.
-    let params = build_rpc_params("tree.browse", json!({})).expect("empty args are valid");
-    assert_eq!(params.len(), 1);
-    assert_eq!(params["limit"], DEFAULT_LIMIT);
-}
-
-#[test]
-fn tree_browse_passes_through_filters_and_renames_k_to_limit() {
-    let params = build_rpc_params(
-        "tree.browse",
-        json!({
-            "source_kinds": ["email", "chat"],
-            "source_ids": ["acme-thread-1"],
-            "entity_ids": ["person:Alice"],
-            "since_ms": 1_700_000_000_000_i64,
-            "until_ms": 1_710_000_000_000_i64,
-            "query": "Q3 plan",
-            "k": 20,
-            "offset": 10
-        }),
-    )
-    .expect("params");
-
-    assert_eq!(params["limit"], 20);
-    assert!(!params.contains_key("k"));
-    assert_eq!(params["source_kinds"], json!(["email", "chat"]));
-    assert_eq!(params["source_ids"], json!(["acme-thread-1"]));
-    assert_eq!(params["entity_ids"], json!(["person:Alice"]));
-    assert_eq!(params["since_ms"], 1_700_000_000_000_i64);
-    assert_eq!(params["until_ms"], 1_710_000_000_000_i64);
-    assert_eq!(params["query"], "Q3 plan");
-    assert_eq!(params["offset"], 10);
-}
-
-#[test]
-fn tree_browse_rejects_k_above_max() {
-    // Same reject-don't-clamp policy as memory.search / memory.recall so the
-    // LLM gets corrective feedback instead of silently receiving fewer rows
-    // than it asked for.
-    let err = build_rpc_params("tree.browse", json!({ "k": MAX_LIMIT + 1 }))
-        .expect_err("must reject k > MAX_LIMIT");
-    assert!(err.message().contains("must not exceed"));
-}
-
-#[test]
-fn tree_browse_rejects_unknown_argument() {
-    let err = build_rpc_params("tree.browse", json!({ "limit": 10 }))
-        .expect_err("must reject the controller's `limit` alias");
-    assert!(err.message().contains("unexpected argument `limit`"));
-}
-
-#[test]
-fn tree_browse_rejects_non_array_source_kinds() {
-    let err = build_rpc_params("tree.browse", json!({ "source_kinds": "email" }))
-        .expect_err("must reject scalar where array is required");
-    assert!(err.message().contains("must be an array of strings"));
-}
-
-#[test]
-fn tree_browse_rejects_non_integer_since_ms() {
-    let err = build_rpc_params("tree.browse", json!({ "since_ms": "yesterday" }))
-        .expect_err("must reject ISO-style date for ms field");
-    assert!(err.message().contains("must be an integer"));
-}
-
-#[test]
-fn tree_browse_drops_blank_array_entries_silently() {
-    // Empty / whitespace strings inside an array are tolerated — clients
-    // sometimes send `["", "email"]` after a partial UI selection and the
-    // intent ("filter to email") is unambiguous. A fully-blank array is OK
-    // too and produces an empty filter (same as omitting the field).
-    let params = build_rpc_params(
-        "tree.browse",
-        json!({ "source_kinds": ["", "email", "  "] }),
-    )
-    .expect("blank entries don't fail the whole call");
-    assert_eq!(params["source_kinds"], json!(["email"]));
-}
-
-// ── tree.top_entities ──────────────────────────────────────────────
-
-#[test]
-fn tree_top_entities_defaults_limit_and_omits_kind() {
-    let params = build_rpc_params("tree.top_entities", json!({})).expect("empty args are valid");
-    assert_eq!(params["limit"], DEFAULT_LIMIT);
-    assert!(!params.contains_key("kind"));
-}
-
-#[test]
-fn tree_top_entities_passes_kind_through_and_caps_limit_at_max() {
-    let params = build_rpc_params(
-        "tree.top_entities",
-        json!({ "kind": "person", "k": MAX_LIMIT }),
-    )
-    .expect("k = MAX_LIMIT is the boundary, inclusive");
-    assert_eq!(params["kind"], "person");
-    assert_eq!(params["limit"], MAX_LIMIT);
-}
-
-#[test]
-fn tree_top_entities_rejects_empty_kind() {
-    // Blank kind is a client bug — the controller would happily run it as
-    // "no filter" but that's exactly what *omitting* the field already
-    // means. Rejecting nudges the LLM to drop the field instead.
-    let err = build_rpc_params("tree.top_entities", json!({ "kind": "   " }))
-        .expect_err("must reject blank-only kind");
-    assert!(err.message().contains("must not be empty"));
-}
-
-// ── tree.list_sources ──────────────────────────────────────────────
-
-#[test]
-fn tree_list_sources_accepts_empty_args() {
-    let params =
-        build_rpc_params("tree.list_sources", json!({})).expect("no args is the common case");
-    assert!(params.is_empty());
-}
-
-#[test]
-fn tree_list_sources_passes_user_email_hint() {
-    let params = build_rpc_params(
-        "tree.list_sources",
-        json!({ "user_email_hint": "me@example.com" }),
-    )
-    .expect("params");
-    assert_eq!(params["user_email_hint"], "me@example.com");
-}
-
-#[test]
-fn tree_list_sources_rejects_unknown_argument() {
-    let err = build_rpc_params("tree.list_sources", json!({ "limit": 5 }))
-        .expect_err("list_sources takes no pagination");
-    assert!(err.message().contains("unexpected argument `limit`"));
-}
-
-// ── memory.store ──────────────────────────────────────────────────
-
-#[test]
-fn memory_store_requires_title_and_content() {
-    let err = build_rpc_params("memory.store", json!({})).expect_err("must reject");
-    assert!(err.message().contains("missing required argument `title`"));
-
-    let err = build_rpc_params("memory.store", json!({ "title": "T" })).expect_err("must reject");
-    assert!(err
-        .message()
-        .contains("missing required argument `content`"));
-}
-
-#[test]
-fn memory_store_defaults_namespace_to_mcp() {
-    let params = build_rpc_params(
-        "memory.store",
-        json!({ "title": "My note", "content": "Hello world" }),
-    )
-    .expect("params");
-
-    assert_eq!(params["namespace"], "mcp");
-    assert_eq!(params["title"], "My note");
-    assert_eq!(params["content"], "Hello world");
-    assert_eq!(params["source_type"], "mcp");
-    assert!(params["key"].as_str().unwrap().starts_with("mcp-store-"));
-}
-
-#[test]
-fn memory_store_accepts_custom_namespace_and_tags() {
-    let params = build_rpc_params(
-        "memory.store",
-        json!({
-            "title": "Project Plan",
-            "content": "Q3 milestones",
-            "namespace": "work",
-            "tags": ["project", "planning"]
-        }),
-    )
-    .expect("params");
-
-    assert_eq!(params["namespace"], "work");
-    assert_eq!(params["tags"], json!(["project", "planning"]));
-}
-
-#[test]
-fn memory_store_rejects_unknown_argument() {
-    let err = build_rpc_params(
-        "memory.store",
-        json!({ "title": "T", "content": "C", "priority": "high" }),
-    )
-    .expect_err("must reject");
-    assert!(err.message().contains("unexpected argument `priority`"));
-}
-
-// ── memory.note ───────────────────────────────────────────────────
-
-#[test]
-fn memory_note_requires_chunk_id_and_note_text() {
-    let err = build_rpc_params("memory.note", json!({})).expect_err("must reject");
-    assert!(err
-        .message()
-        .contains("missing required argument `chunk_id`"));
-
-    let err =
-        build_rpc_params("memory.note", json!({ "chunk_id": "abc" })).expect_err("must reject");
-    assert!(err
-        .message()
-        .contains("missing required argument `note_text`"));
-}
-
-#[test]
-fn memory_note_builds_annotation_document() {
-    let params = build_rpc_params(
-        "memory.note",
-        json!({ "chunk_id": "chunk-42", "note_text": "Important context" }),
-    )
-    .expect("params");
-
-    assert_eq!(params["namespace"], "mcp");
-    assert_eq!(params["key"], "mcp-note-chunk-42");
-    assert!(params["title"].as_str().unwrap().contains("chunk-42"));
-    assert!(params["content"]
-        .as_str()
-        .unwrap()
-        .contains("Important context"));
-    assert!(params["content"]
-        .as_str()
-        .unwrap()
-        .contains("chunk_id=chunk-42"));
-    assert_eq!(params["metadata"]["annotates_chunk_id"], "chunk-42");
-    assert_eq!(params["source_type"], "mcp");
-}
-
-#[test]
-fn memory_note_rejects_unknown_argument() {
-    let err = build_rpc_params(
-        "memory.note",
-        json!({ "chunk_id": "abc", "note_text": "N", "extra": true }),
-    )
-    .expect_err("must reject");
-    assert!(err.message().contains("unexpected argument `extra`"));
-}
-
-// ── tree.tag ──────────────────────────────────────────────────────
-
-#[test]
-fn tree_tag_requires_chunk_id_and_tags() {
-    let err = build_rpc_params("tree.tag", json!({})).expect_err("must reject");
-    assert!(
-        err.message()
-            .contains("missing required argument `chunk_id`"),
-        "got: {}",
-        err.message()
-    );
-
-    let err = build_rpc_params("tree.tag", json!({ "chunk_id": "abc" })).expect_err("must reject");
-    assert!(
-        err.message().contains("missing required argument `tags`"),
-        "got: {}",
-        err.message()
-    );
-}
-
-#[test]
-fn tree_tag_rejects_empty_tags_array() {
-    let err = build_rpc_params("tree.tag", json!({ "chunk_id": "abc", "tags": [] }))
-        .expect_err("must reject");
-    assert!(
-        err.message().contains("at least one non-empty string"),
-        "got: {}",
-        err.message()
-    );
 }

@@ -15,20 +15,11 @@
 
 /**
  * Stable discriminator the UI branches on. Extend as new states are added.
- *
- * `memory_budget_exhausted` (#5324) is deliberately separate from
- * `budget_exceeded` even though both originate in the same managed cycle
- * budget: the consequence and the fix differ. Chat being gated is immediately
- * visible and is fixed by adding credits; memory silently stopping is
- * invisible and is fixed by pointing embeddings at local Ollama or a BYO key.
- * Collapsing them would send memory users to the billing screen, which does
- * not solve their problem.
  */
 export type UserErrorKind =
   | 'insufficient_credits'
   | 'budget_exceeded'
   | 'api_key_missing'
-  | 'memory_budget_exhausted'
   /**
    * The local model runtime a workload depends on is not usable — Ollama is
    * not running, or the configured model was never pulled (#5354). Mirrors the
@@ -44,14 +35,6 @@ export type UserErrorKind =
    * connections have stopped working.
    */
   | 'integration_degraded'
-  /**
-   * The memory-tree store was corrupt and has been quarantined + rebuilt
-   * empty (openhuman#5820). Mirrors the core-side `STORE_CORRUPT_KIND`
-   * token. The damaged file is preserved on disk beside the store; the
-   * rebuilt tree repopulates by re-syncing sources, which is why the action
-   * deep-links to Brain's sync tab rather than any settings screen.
-   */
-  | 'memory_store_corrupt'
   /**
    * A reply the agent finished could not be shown: neither the core's write
    * nor the client's append left a row, and re-reading the thread did not
@@ -76,11 +59,8 @@ export type UserErrorScope =
 export type UserErrorAction =
   | 'open_billing'
   | 'open_provider_settings'
-  | 'open_embeddings_settings'
   /** The connections screen — where integration health is polled and re-read. */
   | 'open_connections'
-  /** Brain's sync tab — where memory sources are re-synced after a store rebuild. */
-  | 'open_memory_sync'
   | 'dismiss';
 
 export type UserErrorSeverity = 'warning' | 'error';

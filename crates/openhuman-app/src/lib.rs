@@ -3511,7 +3511,6 @@ pub fn run() {
             workspace_paths::open_workspace_path,
             workspace_paths::reveal_workspace_path,
             workspace_paths::preview_workspace_text,
-            workspace_paths::resolve_workspace_absolute_path,
             mcp_commands::mcp_resolve_binary_path,
             mcp_commands::mcp_open_client_config,
             loopback_oauth::start_loopback_oauth_listener,

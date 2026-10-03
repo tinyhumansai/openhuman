@@ -62,7 +62,7 @@ vi.mock('./pages/WebCallbackPage', () => {
 vi.mock('./AppRoutesIOS', () => ({ default: () => <div /> }));
 vi.mock('./features/human/HumanPage', () => ({ default: () => <div /> }));
 vi.mock('./pages/Accounts', () => ({ default: () => <div /> }));
-vi.mock('./pages/Brain', () => ({ default: () => <div /> }));
+vi.mock('./pages/Memory', () => ({ default: () => <div /> }));
 vi.mock('./pages/dev/AgentInsightsPreview', () => ({ default: () => <div /> }));
 vi.mock('./pages/dev/UiGallery', () => ({ default: () => <div data-testid="page-ui-gallery" /> }));
 vi.mock('./pages/dev/ToolCallGallery', () => ({
@@ -182,7 +182,7 @@ describe('AppRoutes — the whole route table stays classified', () => {
     '/onboarding/*': 'protected',
     '/home': 'redirect',
     '/human': 'protected',
-    '/brain': 'protected',
+    '/brain': 'redirect',
     '/flows': 'protected',
     '/flows/draft': 'protected',
     '/flows/:id': 'protected',
@@ -226,7 +226,8 @@ describe('AppRoutes — the whole route table stays classified', () => {
       // `<Navigate>` internally after copying the query string and hash, so the
       // route body never contains the literal `<Navigate`. Matching only that
       // classified `/skills` as 'none' and silently dropped it from this table.
-      if (/<(?:Navigate|ForwardSearch)\b/.test(body)) out[match[1]] = 'redirect';
+      // `BrainRedirect` wraps a `<Navigate>` the same way.
+      if (/<(?:Navigate|ForwardSearch|BrainRedirect)\b/.test(body)) out[match[1]] = 'redirect';
       else if (/<ProtectedRoute\b[^>]*requireAuth=\{false\}/.test(body))
         out[match[1]] = 'protected-but-open';
       else if (/<ProtectedRoute\b/.test(body)) out[match[1]] = 'protected';

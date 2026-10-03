@@ -21,7 +21,6 @@
 //! `crate::agent::tinyagents`); there is no in-house interrupt fence.
 
 pub mod agent_graph;
-pub mod archivist;
 pub mod artifact_offload;
 pub(crate) mod builtin_definitions;
 pub mod definition;
@@ -40,7 +39,7 @@ pub use agent_graph::{AgentGraph, AgentTurnRequest, AgentTurnResult, AgentTurnUs
 // glob-importing this module; callers use the `artifact_offload::` path.
 pub use definition::{
     AgentDefinition, AgentDefinitionRegistry, DefinitionSource, ModelSpec, PromptSource,
-    SandboxMode, ToolScope, TriggerMemoryAgent,
+    SandboxMode, ToolScope,
 };
 pub use fork_context::{
     current_parent, with_parent_context, AgentContextPreparedSource, ParentExecutionContext,

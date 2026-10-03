@@ -132,7 +132,7 @@ fn is_backend_auth_failure_only_matches_openhuman_backend_401_403() {
 /// `is_byo_provider_auth_failure_http` demotes a non-backend provider's
 /// 401/403 from Sentry when the body looks like a missing/invalid BYO API
 /// key (TAURI-RUST-DHM: a `kiro` custom provider with no key flooded Sentry
-/// with 5,636 identical events from one user via the memory-tree retry loop).
+/// with 5,636 identical events from one user via a background retry loop).
 /// The gate is provider-scoped (backend keeps its SessionExpired branch) and
 /// body-shape-anchored (a non-auth 401, e.g. quota / geo-block, still reports).
 #[test]

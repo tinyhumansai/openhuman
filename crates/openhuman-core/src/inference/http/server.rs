@@ -341,7 +341,6 @@ async fn models_handler(State(_state): State<AppState>) -> Response {
         config.vision_provider.as_deref(),
         config.memory_provider.as_deref(),
         config.embeddings_provider.as_deref(),
-        config.learning_provider.as_deref(),
     ]
     .into_iter()
     .flatten()

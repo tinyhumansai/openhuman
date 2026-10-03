@@ -43,8 +43,7 @@ is mounted as a submodule of `load/dirs.rs` via `#[path]`.
 | `[runtime_pool]` | `runtime_pool.rs` | `RuntimePoolConfig`, `RuntimePoolLangConfig` |
 | `[runtime_python]` | `runtime_python.rs` | `RuntimePythonConfig` |
 | `[scheduler_gate]` | `scheduler_gate.rs` | `SchedulerGateConfig`, `SchedulerGateMode` |
-| `[memory]`, `[memory_tree]`, `[storage]` | `storage_memory.rs` | `MemoryConfig`, `MemoryTreeConfig`, `StorageConfig`, `StorageProviderConfig`, `LlmBackend` |
-| `[subsystems]` | `subsystems.rs` | `SubsystemsConfig`, `MemorySubsystemConfig` |
+| `[memory]` (engine, `engines.<id>`, `conversations`, `context`, `sources`, embedding settings) | `memory.rs` | `MemoryConfig`, `MemoryEngineSettings`, `MemoryConversationsConfig`, `MemoryContextConfig`, `MemorySourceConfig` (see `docs/specs/memory-v2.md`) |
 | `[task_sources]` | `task_sources.rs` | `TaskSourcesConfig` |
 | `[tokenjuice]` | `tokenjuice.rs` | `TokenjuiceConfig` |
 | tool-related sections (see below) | `tools/` | (multiple structs) |
@@ -83,20 +82,12 @@ keys that select an implementation, rather than tune one:
   `SEARCH_ENGINE_PARALLEL`, `SEARCH_ENGINE_BRAVE`, `SEARCH_ENGINE_QUERIT`,
   `SEARCH_ENGINE_EXA`, `SEARCH_ENGINE_TAVILY`, `SEARCH_ENGINE_DISABLED`), plus
   SearXNG through the separate toggle described above.
-- `[subsystems.memory]` (`subsystems.rs`): re-exports
-  `MemorySubsystemConfig` / `MemoryDriverConfig` / `SubsystemsConfig` from
-  `tinymemory_api::host::subsystems`, since the driver-binding shape now lives
-  with `tinymemory-core`. `OPENHUMAN_MEMORY_DRIVER` overrides it at the
-  environment layer.
 - `agent.tool_search.ranker` (`ToolSearchConfig`, `agent.rs`): `"jev"` by
   default, with `"auto"`, `"bm25"`, and `"compare"` as the other values. It
   picks which ranker answers a tool search over tools exposed as
   `ToolExposure::Deferred`; `top_k` (default 3) caps how many matches come
   back.
-- `[storage]` / `[memory]` (`storage_memory.rs`): re-exports
-  `MemoryConfig`, `StorageConfig`, `StorageProviderConfig`, and `LlmBackend`
-  from `tinymemory_api::host::storage_memory`, the storage-provider and
-  embedding-model selection for the built-in memory engine.
+- `[memory]` (`memory.rs`): Memory v2 config, including `[[memory.sources]]`. Old `[subsystems.memory]`, `[memory_tree]` and v1 `[memory]` keys still parse and are ignored.
 
 `autonomy.rs` is not an engine selector; it is the config-side half of the
 sandbox policy contract described under Workspace/identity helpers below.
@@ -121,7 +112,7 @@ sandbox policy contract described under Workspace/identity helpers below.
 4. Apply environment-variable overrides through `Config::apply_env_overrides_from`
    in `load/env_overlay.rs`, split into submodules under `load/env_overlay/`
    (`dictation_context.rs`, `learning_memory.rs`, `observability.rs`,
-   `proxy.rs`, `runtime.rs`, `search.rs`, `subsystems_update.rs`);
+   `proxy.rs`, `runtime.rs`, `search.rs`);
    `load/env.rs` is only the `EnvLookup` seam that lets tests supply a fake
    environment.
 5. Run pending schema migrations (`../migrations/`, via

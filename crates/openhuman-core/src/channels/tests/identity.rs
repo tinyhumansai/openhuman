@@ -23,13 +23,15 @@ fn openclaw_loads_workspace_markdown_files() {
         prompt.contains("Name: OpenHuman"),
         "IDENTITY.md content should be inlined"
     );
+    // PROFILE.md and MEMORY.md were v1 memory artefacts. Memory v2 replaces
+    // both with `context.md`, injected as the first user message of a new
+    // session, so they are never inlined even when a workspace still has them.
     assert!(
-        prompt.contains("Name: Test User"),
-        "PROFILE.md content should be inlined"
+        !prompt.contains("Name: Test User"),
+        "PROFILE.md must not be inlined"
     );
-    // MEMORY.md is optional (archivist-written). When present it should inline.
     assert!(
-        prompt.contains("User likes Rust"),
-        "MEMORY.md content should be inlined when present"
+        !prompt.contains("User likes Rust"),
+        "MEMORY.md must not be inlined"
     );
 }

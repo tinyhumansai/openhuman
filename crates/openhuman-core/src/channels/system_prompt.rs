@@ -7,8 +7,8 @@
 //!   workspace-root identity files and did not refresh their contents, so
 //!   channel replies could use stale identity context after an edit.
 //! - **#6028** — the prompt was rendered once in `start_channels` and kept
-//!   for the life of the process, so a `SOUL.md` edit or
-//!   the archivist writing `MEMORY.md` stayed invisible until restart.
+//!   for the life of the process, so a `SOUL.md` edit stayed invisible until
+//!   restart.
 //!
 //! [`ChannelSystemPrompt::refreshing`] keeps the *inputs* of the render (tool
 //! descriptions, skills, model, and the tool-instruction + access-context
@@ -32,7 +32,7 @@ use std::sync::{Arc, Mutex};
 use std::time::UNIX_EPOCH;
 
 /// Workspace-root files `build_system_prompt` inlines.
-const ROOT_IDENTITY_FILES: [&str; 4] = ["SOUL.md", "IDENTITY.md", "PROFILE.md", "MEMORY.md"];
+const ROOT_IDENTITY_FILES: [&str; 2] = ["SOUL.md", "IDENTITY.md"];
 
 /// Everything the channel prompt is rendered from except the identity files.
 /// Fixed for the life of the process, as before: tools, skills, the model
@@ -163,8 +163,8 @@ impl RefreshingInner {
 }
 
 /// A hash of `(mtime, len)` for every file the identity is read from —
-/// missing files hash distinctly from present ones, so a `MEMORY.md` the
-/// archivist writes after boot flips it. Cheap enough to run per message.
+/// missing files hash distinctly from present ones, so a `SOUL.md` created
+/// after boot flips it. Cheap enough to run per message.
 pub(crate) fn identity_fingerprint(workspace_dir: &Path) -> u64 {
     let mut hasher = DefaultHasher::new();
     for name in ROOT_IDENTITY_FILES {
@@ -195,10 +195,7 @@ fn render(inputs: &ChannelPromptInputs, _identity: &ChannelIdentity) -> String {
         .iter()
         .map(|(name, desc)| (name.as_str(), desc.as_str()))
         .collect();
-    let identity_override = PromptIdentityOverride {
-        soul_md: None,
-        memory_md: None,
-    };
+    let identity_override = PromptIdentityOverride { soul_md: None };
     // `channel_name = None`: the runtime wires up several providers at once,
     // so the capability block keeps its platform-agnostic phrasing.
     let mut prompt = build_system_prompt_with_identity(
@@ -240,14 +237,9 @@ fn ensure_blank_line(prompt: &mut String) {
 
 /// Names the profile and which files were inlined — never their contents.
 fn log_render(workspace_dir: &Path, _identity: &ChannelIdentity, rendered: &str, reason: &str) {
-    let memory = if workspace_dir.join("MEMORY.md").is_file() {
-        "root"
-    } else {
-        "none"
-    };
     tracing::info!(
         target: "openhuman::channels",
-        memory,
+        workspace = %workspace_dir.display(),
         chars = rendered.chars().count(),
         reason,
         "[channels][prompt] rendered system prompt"

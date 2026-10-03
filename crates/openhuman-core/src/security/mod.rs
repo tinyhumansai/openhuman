@@ -21,6 +21,7 @@ pub mod pairing;
 pub mod pii;
 pub mod policy;
 pub mod prompt_injection;
+pub mod scrub;
 pub mod secrets;
 
 #[allow(unused_imports)]

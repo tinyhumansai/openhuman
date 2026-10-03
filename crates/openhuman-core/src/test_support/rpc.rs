@@ -4,7 +4,6 @@
 //!   - no authenticated user (active_user.toml removed, api_key cleared)
 //!   - onboarding not yet completed (onboarding_completed=false, chat_onboarding_completed=false)
 //!   - no cron jobs (so the post-onboarding seed re-creates `morning_briefing`)
-//!   - no memory-tree chunks, summaries, content dirs, or sync cursors
 //!
 //! It is intentionally in-process: the sidecar keeps running. Specs reload
 //! the webview after this call so the renderer also starts from a blank slate.
@@ -16,7 +15,6 @@ use crate::config::Config;
 use crate::config::{clear_active_user, default_root_openhuman_dir};
 use crate::core::Outcome;
 use crate::cron;
-use crate::memory::read_rpc;
 
 const E2E_MODE_ENV_VAR: &str = "OPENHUMAN_E2E_MODE";
 
@@ -24,19 +22,9 @@ const E2E_MODE_ENV_VAR: &str = "OPENHUMAN_E2E_MODE";
 #[derive(Debug, Serialize)]
 pub struct ResetSummary {
     pub cron_jobs_removed: usize,
-    pub memory_tree_rows_deleted: u64,
-    pub memory_tree_dirs_removed: Vec<String>,
-    pub memory_tree_sync_state_cleared: u64,
     pub onboarding_was_completed: bool,
     pub api_key_was_set: bool,
     pub active_user_cleared: bool,
-}
-
-#[derive(Debug, Serialize)]
-struct MemoryTreeResetSummary {
-    rows_deleted: u64,
-    dirs_removed: Vec<String>,
-    sync_state_cleared: u64,
 }
 
 fn ensure_e2e_mode_enabled() -> Result<(), String> {
@@ -82,15 +70,6 @@ pub async fn reset() -> Result<Outcome<ResetSummary>, String> {
         .map_err(|e| format!("test_reset: cron wipe failed: {e:#}"))?;
     log::debug!("[test_reset] step=wipe_cron ok removed={cron_jobs_removed}");
 
-    log::debug!("[test_reset] step=wipe_memory_tree start");
-    let memory_tree = wipe_memory_tree(&config).await?;
-    log::debug!(
-        "[test_reset] step=wipe_memory_tree ok rows={} dirs={:?} sync_state={}",
-        memory_tree.rows_deleted,
-        memory_tree.dirs_removed,
-        memory_tree.sync_state_cleared
-    );
-
     log::debug!("[test_reset] step=clear_config_fields start");
     config.onboarding_completed = false;
     config.chat_onboarding_completed = false;
@@ -111,16 +90,8 @@ pub async fn reset() -> Result<Outcome<ResetSummary>, String> {
         root.display()
     );
 
-    let memory_tree_log = format!(
-        "memory_tree wiped rows={} dirs={:?} sync_state={}",
-        memory_tree.rows_deleted, memory_tree.dirs_removed, memory_tree.sync_state_cleared
-    );
-
     let summary = ResetSummary {
         cron_jobs_removed,
-        memory_tree_rows_deleted: memory_tree.rows_deleted,
-        memory_tree_dirs_removed: memory_tree.dirs_removed,
-        memory_tree_sync_state_cleared: memory_tree.sync_state_cleared,
         onboarding_was_completed,
         api_key_was_set,
         active_user_cleared: true,
@@ -135,24 +106,11 @@ pub async fn reset() -> Result<Outcome<ResetSummary>, String> {
         summary,
         vec![
             format!("removed {cron_jobs_removed} cron jobs"),
-            memory_tree_log,
             format!("onboarding_completed + chat_onboarding_completed: {onboarding_was_completed} → false"),
             format!("api_key cleared (was set: {api_key_was_set})"),
             "active_user.toml removed".to_string(),
         ],
     ))
-}
-
-async fn wipe_memory_tree(config: &Config) -> Result<MemoryTreeResetSummary, String> {
-    let outcome = read_rpc::wipe_all_rpc(config)
-        .await
-        .map_err(|e| format!("test_reset: memory_tree wipe failed: {e}"))?;
-    let value = outcome.value;
-    Ok(MemoryTreeResetSummary {
-        rows_deleted: value.rows_deleted,
-        dirs_removed: value.dirs_removed,
-        sync_state_cleared: value.sync_state_cleared,
-    })
 }
 
 #[cfg(test)]

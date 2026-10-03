@@ -48,7 +48,7 @@ Local-only mode is designed to work with [Local AI](model-routing/local-ai.md). 
 
 - Chat and reasoning on a runtime you run (**Ollama, LM Studio, MLX, OMLX**, or another OpenAI-compatible server), with the models you pulled, added as a provider under **Connections → LLM**.
 - **Piper** text-to-speech, if you install the Piper binary and a voice yourself and set `PIPER_BIN`.
-- Local embeddings for [Memory Tree](obsidian-wiki/memory-tree.md) retrieval, for example `embeddings_provider = "ollama:bge-m3"` after `ollama pull bge-m3`.
+- Memory stays on a CortexDB endpoint you run yourself; the hosted TinyHumans engine is a cloud call and is blocked by local-only mode.
 
 With local-only on, a workload routed to a runtime that isn't running, or to a model you haven't pulled, fails instead of falling back to the cloud.
 

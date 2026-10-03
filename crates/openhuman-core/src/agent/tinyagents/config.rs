@@ -4,9 +4,7 @@
 //! This is the host half of `docs/specs/plan-agents.md` Phase 3. The agent
 //! runtime is being made generic over its host, so it cannot read
 //! [`Config`] — instead the crate declares what it needs and this module is the
-//! single place OpenHuman's schema meets it. Mirrors the established
-//! `tinycortex::config::memory_config_from` precedent.
-//!
+//! single place OpenHuman's schema meets it. //!
 //! # Why the mapping is split into three functions
 //!
 //! OpenHuman's model pins are not global. `Config::teams` is keyed by team name
@@ -18,7 +16,7 @@
 //! resolves them: team pins first, then the specific delegate's overrides.
 
 use tinyagents_harness::config::{
-    MemoryLimits, RequiredOutput, SessionConfig, ToolConfig, ToolDispatcher, TurnConfig,
+    RequiredOutput, SessionConfig, ToolConfig, ToolDispatcher, TurnConfig,
 };
 
 use crate::config::{
@@ -86,7 +84,6 @@ pub fn apply_agent_config(session: &mut SessionConfig, agent: &AgentConfig) {
     session.agents_md_enabled = agent.agents_md_enabled;
     session.turn = turn_config_from(agent);
     session.tools = tool_config_from(agent);
-    session.memory = memory_limits_from(agent);
 }
 
 /// Maps the per-turn limits out of an [`AgentConfig`].
@@ -108,20 +105,6 @@ pub fn tool_config_from(agent: &AgentConfig) -> ToolConfig {
     ToolConfig {
         dispatcher: dispatcher_from(&agent.tool_dispatcher),
         channel_permissions: agent.channel_permissions.clone(),
-    }
-}
-
-/// Maps memory character budgets out of an [`AgentConfig`].
-///
-/// Reads through `resolved_memory_limits()` rather than the legacy
-/// `max_memory_context_chars` scalar: that helper is what applies the
-/// `memory_window` preset and the hard ceiling, and bypassing it drops both.
-pub fn memory_limits_from(agent: &AgentConfig) -> MemoryLimits {
-    let limits = agent.resolved_memory_limits();
-    MemoryLimits {
-        max_memory_context_chars: limits.max_memory_context_chars,
-        per_namespace_max_chars: limits.per_namespace_max_chars,
-        total_tree_max_chars: limits.total_tree_max_chars,
     }
 }
 

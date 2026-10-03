@@ -59,17 +59,12 @@ use crate::flows::store;
 use crate::flows::types::{
     FlowConnection, FlowRunStep, FlowRunTrigger, FlowSuggestion, SuggestionStatus,
 };
-use crate::flows::{flow_namespace, Flow, FlowRun};
+use crate::flows::{Flow, FlowRun};
 use crate::security::approval::{
     ApprovalChatContext, FlowRunContext, APPROVAL_CHAT_CONTEXT, APPROVAL_COPILOT_STREAM_CONTEXT,
     APPROVAL_FLOW_RUN_CONTEXT,
 };
 use tinyflows_catalog::build_registry;
-// `MemoryProvider` brings `driver_id()` / `as_documents()` into scope for the
-// `MemoryGuard` this file's delete path clears through. Nothing here names the
-// engine crate any more — `flows_delete_impl`'s test seam took an
-// `Arc<MemoryClient>` until #5560 and takes the guard now.
-use tinymemory_api::provider::MemoryProvider;
 
 /// Overall safety bound on a single `flows_run` / `flows_resume`. Individual
 /// capabilities have their own timeouts (HTTP, sandbox), but a hung LLM/tool

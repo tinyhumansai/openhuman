@@ -98,7 +98,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "delete_connection" => ControllerSchema {
             namespace: "composio",
             function: "delete_connection",
-            description: "Delete a Composio connection and optionally remove source-scoped memory.",
+            description: "Delete a Composio connection and optionally forget the memory synced through it.",
             inputs: vec![
                 FieldSchema {
                     name: "connection_id",
@@ -109,7 +109,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 FieldSchema {
                     name: "clear_memory",
                     ty: TypeSchema::Bool,
-                    comment: "When true, delete memory chunks ingested from this connection.",
+                    comment: "When true, forget the memory items synced through this connection.",
                     required: false,
                 },
             ],
@@ -123,7 +123,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 FieldSchema {
                     name: "memory_chunks_deleted",
                     ty: TypeSchema::U64,
-                    comment: "Number of memory chunks deleted for this connection.",
+                    comment: "Number of memory items forgotten for this connection.",
                     required: true,
                 },
             ],
@@ -266,8 +266,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
             namespace: "composio",
             function: "refresh_all_identities",
             description:
-                "Re-fetch user profile for every active Composio connection and persist as \
-                 IdentityKind-tagged rows in user_profile (#1365). Best-effort per connection \
+                "Re-fetch user profile for every active Composio connection and persist its \
+                 identity fields in the workspace identities file (#1365). Best-effort per connection \
                  — failures don't abort the others.",
             inputs: vec![],
             outputs: vec![FieldSchema {
@@ -283,8 +283,9 @@ pub fn schemas(function: &str) -> ControllerSchema {
             namespace: "composio",
             function: "sync",
             description:
-                "Run a sync pass for a Composio connection by dispatching to the toolkit's \
-                 native provider implementation. Persists results into the memory layer.",
+                "Start a background sync of a Composio connection into memory: the connector \
+                 module reads the account and each record is stored as a memory document. \
+                 Fails up front when memory is off.",
             inputs: vec![
                 FieldSchema {
                     name: "connection_id",

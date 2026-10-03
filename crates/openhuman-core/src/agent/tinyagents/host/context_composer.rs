@@ -5,7 +5,7 @@
 //!
 //! * [`crate::agent::prompts`] (re-exported as
 //!   `crate::agent::prompts`) — `SystemPromptBuilder`,
-//!   `PromptContext`, `LearnedContextData`, `ConnectedIntegration`,
+//!   `PromptContext`, `ConnectedIntegration`,
 //!   `ToolCallFormat`, `load_agents_md_layers`, `render_connected_identities`.
 //!   The `SOUL.md` / `IDENTITY.md` / `ROLE.md` bootstrap files under
 //!   `crates/openhuman-core/src/agent/prompts/` are loaded (and synced to the workspace)
@@ -34,24 +34,19 @@
 //!    states the rendered bytes are "intended to be **frozen for the whole
 //!    session**" so the inference backend's prefix cache hits. Both are
 //!    honoured by construction — every input this adapter feeds the builder is
-//!    a snapshot captured at *construction* time (config, learned context,
-//!    connected integrations), so recomposing per turn yields byte-identical
+//!    a snapshot captured at *construction* time (config, connected
+//!    integrations), so recomposing per turn yields byte-identical
 //!    output unless the host deliberately builds a new composer. The two
 //!    genuinely time-varying sections in the default chain
 //!    (`DateTimeSection`, and the on-disk files `IdentitySection` reads) are
 //!    OpenHuman's pre-existing behaviour on the main-agent path, not something
 //!    this seam introduces.
 //! 2. **`thread_id` and `user_text` are unused inputs.** `PromptContext` has no
-//!    thread field and no turn-text field: OpenHuman scopes learned context
-//!    *outside* the prompt layer and pre-fetches it (see every existing
-//!    `PromptContext { learned: … }` call site). Rather than invent a
-//!    thread-keyed fetch, this adapter takes a caller-supplied
-//!    [`LearnedContextData`] snapshot — exactly the established pattern — and
-//!    logs the thread id for correlation. See the TODO on
-//!    [`OpenHumanContextComposer::learned`].
+//!    thread field and no turn-text field; this adapter only logs the thread
+//!    id for correlation.
 //! 3. **`preamble` returns an empty `Vec`, always.** OpenHuman has no separate
-//!    preamble concept: goals, pinned context, and memory blocks are all
-//!    rendered *into* the system prompt as `PromptSection`s. Per the trait's
+//!    preamble concept here: everything the system prompt needs is rendered
+//!    *into* it as `PromptSection`s. Per the trait's
 //!    "Empty is not failure" note this is the normal, correct answer, not a
 //!    gap — synthesising extra messages here would duplicate content the
 //!    system prompt already carries.
@@ -75,7 +70,7 @@ use tinyinference_llm::message::Message;
 
 use crate::agent::prompts::{
     load_agents_md_layers, render_connected_identities, AgentsMdContent, ConnectedIntegration,
-    LearnedContextData, PromptContext, PromptTool, SystemPromptBuilder, ToolCallFormat,
+    PromptContext, PromptTool, SystemPromptBuilder, ToolCallFormat,
 };
 use crate::config::{Config, DEFAULT_MODEL};
 use crate::skills::Workflow;
@@ -88,8 +83,7 @@ use crate::skills::Workflow;
 /// byte-stable, which is the KV-cache contract described in the module doc.
 ///
 /// The struct is cheap to clone-construct and holds no locks, so a caller that
-/// genuinely needs mid-session refresh (new integration connected, learning
-/// subsystem produced new reflections) rebuilds the composer rather than
+/// genuinely needs mid-session refresh (new integration connected) rebuilds the composer rather than
 /// mutating it.
 pub struct OpenHumanContextComposer {
     /// Host config — source of the two path roots, the fallback model name,
@@ -110,38 +104,15 @@ pub struct OpenHumanContextComposer {
     /// (nothing connected, or the caller has not fetched yet) and renders as
     /// an absent section rather than an error.
     connected_integrations: Vec<ConnectedIntegration>,
-    /// Pre-fetched learned context.
-    ///
-    // TODO(phase4): this should be resolved per `req.thread_id` rather than
-    // snapshotted at construction. The real fetch lives in
-    // `crate::agent::session_host::turn::context` (see the
-    // `LearnedContextData { … }` assembly around `sanitize_learned_entry` /
-    // `tree_root_summaries`), which reads the learning store and the memory
-    // tree summarizer. It is not a free function and is not thread-keyed
-    // today, so exposing it here would mean inventing an API. Callers pass a
-    // snapshot via `with_learned_context` in the meantime — the same thing
-    // every existing `PromptContext` call site does.
-    learned: LearnedContextData,
-    /// Whether the user's PROFILE.md layer is injected.
-    ///
-    /// The live subagent path derives this from the resolved definition's
-    /// `omit_profile` (`subagent_host/ops/runner.rs`). The crate hands this
-    /// seam an opaque agent id, so the wiring site supplies it explicitly via
-    /// [`Self::with_omissions`]; hardcoding it would inject a file a specialist
-    /// definition deliberately excludes.
-    include_profile: bool,
-    /// Whether the user's MEMORY.md layer is injected. See
-    /// [`Self::include_profile`].
-    include_memory_md: bool,
     /// The section chain. Built once so per-turn composition is just a render.
     builder: SystemPromptBuilder,
 }
 
 impl OpenHumanContextComposer {
-    /// A composer over `config` with no integrations and no learned context.
+    /// A composer over `config` with no integrations.
     ///
     /// This is the honest zero state, not a degraded one: a fresh install with
-    /// nothing connected and no learning history composes exactly this prompt.
+    /// nothing connected composes exactly this prompt.
     pub fn new(config: Arc<Config>) -> Self {
         let model_name = config
             .default_model
@@ -152,22 +123,8 @@ impl OpenHumanContextComposer {
             model_name,
             tool_call_format: ToolCallFormat::default(),
             connected_integrations: Vec::new(),
-            learned: LearnedContextData::default(),
-            include_profile: true,
-            include_memory_md: true,
             builder: SystemPromptBuilder::with_defaults(),
         }
-    }
-
-    /// Applies a definition's user-file omission policy.
-    ///
-    /// Pass `!definition.omit_profile` / `!definition.omit_memory_md`, matching
-    /// `subagent_host/ops/runner.rs`. Without this a specialist composes with
-    /// the main agent's files regardless of what its definition says.
-    pub fn with_omissions(mut self, include_profile: bool, include_memory_md: bool) -> Self {
-        self.include_profile = include_profile;
-        self.include_memory_md = include_memory_md;
-        self
     }
 
     /// Pins the model name rendered into the runtime section.
@@ -243,22 +200,10 @@ impl ContextComposer for OpenHumanContextComposer {
             // The dispatcher's tool-protocol preamble belongs to the runtime's
             // dispatcher, which this seam cannot see. Empty renders nothing.
             dispatcher_instructions: "",
-            learned: self.learned.clone(),
             visible_tool_names: &visible_tool_names,
             tool_call_format: self.tool_call_format,
             connected_integrations: &self.connected_integrations,
             connected_identities_md: render_connected_identities(),
-            // Mirrors `subagent_host/ops/runner.rs`, which derives these from
-            // the resolved definition's `omit_profile` / `omit_memory_md`. The
-            // crate hands this seam a bare agent id, so the wiring site supplies
-            // them via `with_omissions`; the default is the main-agent
-            // behaviour (both included).
-            include_profile: self.include_profile,
-            include_memory_md: self.include_memory_md,
-            // No turn-scoped curated-memory snapshot at this seam; the user
-            // files sections fall back to the workspace files, which is the
-            // documented `None` behaviour.
-            curated_snapshot: None,
             user_identity: crate::security::credentials::identity::peek_credential_user_identity(),
             // TODO(phase4): the master agent's personality roster is built
             // from the profiles domain (`crate::profiles`); the
@@ -278,8 +223,7 @@ impl ContextComposer for OpenHumanContextComposer {
 
     /// Always empty — see mismatch (3) in the module doc.
     ///
-    /// OpenHuman renders goals, pinned context, and memory as prompt
-    /// *sections*, so there is nothing left over to prepend as messages.
+    /// OpenHuman renders everything as prompt *sections*, so there is nothing left over to prepend as messages.
     /// Returning `Ok(vec![])` is the trait's documented normal case.
     async fn preamble(&self, _req: &TurnContextRequest) -> TinyAgentsResult<Vec<Message>> {
         Ok(Vec::new())

@@ -22,7 +22,7 @@ values for a family of related modules:
 - `records_docs_wallet.rs`: `TINYDOCS`, `TINYWALLET`.
 - `records_extra.rs`: `TINYBOX`, `TINYCHANNELS`, `TINYHOSTS`.
 - `records_mcp_connectors.rs`: `TINYCONNECTORS`, `TINYMCP`.
-- `records_memory_juice.rs`: `TINYJUICE`, `TINYMEMORY`.
+- `records_juice.rs`: `TINYJUICE`.
 - `records_runtime.rs`: `TINYRUNTIME`, `TINYRUNTIME_NODEJS`, `TINYRUNTIME_PYTHON`.
 - `records_search.rs`: `TINYSEARCH`.
 - `records_voice.rs`: `TINYVOICE`.

@@ -438,11 +438,11 @@ fn persist_delivery_reply(
     content: String,
     success: bool,
 ) -> Result<(), String> {
-    crate::memory::conversations::append_message(
+    crate::threads::store::append_message(
         workspace_dir,
         thread_id,
-        crate::memory::conversations::ConversationMessage {
-            id: crate::memory::conversations::run_reply_message_id(run_id),
+        crate::threads::store::ConversationMessage {
+            id: crate::threads::store::run_reply_message_id(run_id),
             content,
             message_type: "text".to_string(),
             extra_metadata: json!({

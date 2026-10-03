@@ -40,17 +40,10 @@ import {
 
 // ─── Domain types — what the AIPanel consumes ──────────────────────────────
 
-export type WorkloadId =
-  | 'chat'
-  | 'reasoning'
-  | 'agentic'
-  | 'coding'
-  | 'vision'
-  | 'memory'
-  | 'learning';
+export type WorkloadId = 'chat' | 'reasoning' | 'agentic' | 'coding' | 'vision' | 'memory';
 
 export const CHAT_WORKLOADS: WorkloadId[] = ['chat', 'reasoning', 'agentic', 'coding'];
-const BACKGROUND_WORKLOADS: WorkloadId[] = ['memory', 'learning'];
+const BACKGROUND_WORKLOADS: WorkloadId[] = ['memory'];
 export const ALL_WORKLOADS: WorkloadId[] = [...CHAT_WORKLOADS, ...BACKGROUND_WORKLOADS];
 
 // Workloads that own a `<id>_provider` config field and must round-trip through
@@ -312,7 +305,6 @@ export async function loadAISettings(): Promise<AISettings> {
     coding: parseProviderString(config.coding_provider),
     vision: parseProviderString(config.vision_provider),
     memory: parseProviderString(config.memory_provider),
-    learning: parseProviderString(config.learning_provider),
   };
 
   // Diagnostic: detect partial BYOK routing — some workloads have a BYOK cloud

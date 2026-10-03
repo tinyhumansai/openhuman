@@ -19,22 +19,11 @@ agent_tier = "chat"
 # section run at all — with `omit_identity = true` the builder skips
 # `IdentitySection` wholesale and neither file is read.
 omit_identity = false
-omit_memory_context = true
+# The user-facing agent opens every new session with the compiled memory
+# context (`context.md`) as its first user message. Anything deeper is
+# on-demand through the one direct `memory` tool below.
+omit_memory_context = false
 omit_safety_preamble = true
-# The orchestrator is the user-facing front-line agent — it routes,
-# synthesises, and speaks to the user in their voice. PROFILE.md
-# (onboarding enrichment output) anchors that voice.
-omit_profile = false
-# MEMORY.md — archivist-curated long-term memory — grounds replies in
-# prior conversations and distilled user preferences. Frozen per
-# session (KV-cache contract on `AgentDefinition::omit_memory_md`).
-omit_memory_md = false
-# Memory retrieval is ON-DEMAND, not pre-emptive, and it is one direct `memory`
-# tool (`ask` | `keyword_search` | `learn` | `forget`). The orchestrator used to run
-# `agent_memory` eagerly before every turn, then to offer it as a second
-# `retrieve_memory` delegate beside `memory_recall`: two near-identical ways to
-# search the same store. Now there is one. (The frozen MEMORY.md digest still
-# anchors every turn.)
 
 # Delegation surface. The `collect_orchestrator_tools` helper reads this
 # at agent-build time and synthesises one `delegate_*` tool per entry:
@@ -80,9 +69,7 @@ omit_memory_md = false
 # specialists that own something a guide cannot: a pinned model
 # (vision/image/video), a separate long-running context (workflow_builder),
 # or a curated domain belt.
-#
-# `archivist` is not listed either: memory archiving runs on its own
-# post-commit hook (`runtime_session.rs`), not on request.
+
 # Named tools this agent reaches through `tool_search` instead of its wire:
 # still registered, found by a search, and callable by their own name (the
 # harness admits a deferred tool by name without a prior search, so the
@@ -115,10 +102,6 @@ allowlist = [
     # workflow bundles, or artifacts here instead of letting the generic
     # tools agent see the full family.
     "task_manager_agent",
-    # Persistent profile/memory/persona specialist. Route "remember",
-    # "forget", profile/persona edits, learned facets, and people alias
-    # management here.
-    "profile_memory_agent",
     # Image-understanding specialist. Route anything that hinges on the content
     # of an attached or on-disk user-provided image file here — it is pinned to
     # a dedicated multimodal model (`MODEL_MEDIA_UNDERSTANDING`), so it can
@@ -233,27 +216,14 @@ named = [
     "web_contents_tool",
     "web_fetch",
     "http_request",
-    # Direct memory surface (#4762): ONE `memory` tool, `ask` | `keyword_search` | `forget` |
-    # `learn`. Recall and store are the product's core and must be first-class
-    # DIRECT calls, not a sub-agent spawn: a trivial "what is my Q3 OKR" lookup or
-    # a "remember my Q3 OKR" write should not pay a blocking agentic round-trip
-    # (over-delegation, #4744) that can hang or — as observed — spawn
-    # `manage_profile_memory` which did 0 tool calls and returned a 0-char result,
-    # leaving the write's persistence unconfirmed. `learn` writes the store `ask`
-    # and `keyword_search` read, so the loop closes inline with a real
-    # confirmation. There is deliberately no second "deep recall" delegate beside
-    # it. Reconciliation / people-graph / persona edits still delegate to
-    # `manage_profile_memory` (profile_memory_agent) below. These are memory-store
-    # writes, NOT file/shell mutation — the "no write tools" rule (below) is about
-    # editing files and running commands, which stays out.
+    # Direct memory surface: ONE `memory` tool, `recall` | `fetch` | `learn` |
+    # `forget`. Recall and store are the product's core and must be
+    # first-class DIRECT calls, not a sub-agent spawn: a trivial "what is my Q3
+    # OKR" lookup or a "remember my Q3 OKR" write should not pay a blocking
+    # agentic round-trip (over-delegation, #4744). `learn` writes the store
+    # `recall` and `fetch` read, so the loop closes inline with a real
+    # confirmation. There is deliberately no memory sub-agent beside it.
     "memory",
-    "save_preference",
-    # The long-term goals store (goals doc over the memory binding). The
-    # RPC/tab surface always had these; the agent could not answer "list my
-    # goals" because this allowlist never named the family — capability and
-    # domain gates both pass at runtime (the driver advertises `goals`), so
-    # this list was the only closed layer (#5875 test session).
-    "goals",
     # Managed file-storage transfer surface for passing artifacts/attachments
     # between chat, users, and workers. Storage lifecycle mutators
     # (`storage_set_visibility`, `storage_delete_file`) stay out of the broad
@@ -345,7 +315,7 @@ named = [
     # lands (the orchestrator is authoritative — it always creates or replaces);
     # `goal_get` reads it back (status + token budget); `goal_complete` closes it
     # out only when evidence confirms success. Distinct from `todo` (this
-    # thread's step checklist) and the long-term `goals_*` list (cross-thread). The
+    # thread's step checklist). The
     # harness injects the active goal into context each turn and can auto-continue
     # it when the thread goes idle, so keeping the objective current here is what
     # keeps that loop on-target.

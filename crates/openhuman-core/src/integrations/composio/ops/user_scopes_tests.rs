@@ -1,46 +1,23 @@
-//! Pins the host copy of the scope-pref storage shape.
-//!
-//! These constants were copied out of `tinymemory-core` when the two RPC
-//! handlers stopped reaching the in-process engine (openhuman#5560). The engine
-//! still reads the same rows to gate tool calls by scope, and it now runs
-//! inside the loaded module — so drift between the two spellings does not
-//! fail. It reads as "no preference stored" and hands the agent the permissive
-//! default while the user's saved choice sits one key away: a permission bug
-//! that looks like a working app. Hence a test rather than a comment.
-//!
-//! **What this can and cannot check, stated rather than implied.**
-//! `tinymemory-core`'s own `user_scopes::KV_NAMESPACE` no longer exists —
-//! tinymemory v1.13.4 deleted the whole in-process Composio pipeline, this
-//! constant included — so there is nothing left in that crate to assert
-//! against. What *is* still public and load-bearing is `tinycortex`'s own
-//! `memory::sync::state::STATE_NAMESPACE` (`"composio-sync-state"`), which is
-//! the literal `memory_cleanup.rs` reads and writes under, and the two must
-//! differ so prefs and Composio sync cursors never collide — that is the half
-//! asserted here, and the literal is asserted against itself.
-//!
-//! `tinycortex` resolves because it is an ordinary dependency of this crate
-//! (`Cargo.toml`); production code in `user_scopes.rs` names neither it nor
-//! any engine item.
-
 use super::*;
 
-/// `kv_key` trims and ASCII-lowercases, exactly as the engine's does — the RPC
-/// takes free text from a settings toggle, so `"GitHub"`, `" github "` and
-/// `"github"` have to reach one row.
+fn config_in(dir: &tempfile::TempDir) -> Config {
+    Config {
+        workspace_dir: dir.path().to_path_buf(),
+        ..Config::default()
+    }
+}
+
+/// The RPC takes free text from a settings toggle, so `"GitHub"`,
+/// `" github "` and `"github"` have to reach one row.
 #[test]
-fn kv_key_normalises_the_toolkit_the_same_way_the_engine_does() {
+fn kv_key_normalises_the_toolkit() {
     assert_eq!(kv_key(" GitHub "), "github");
     assert_eq!(kv_key("SLACK"), "slack");
     assert_eq!(kv_key("gmail"), "gmail");
     assert_eq!(kv_key("   "), "", "an all-whitespace toolkit has no row");
 }
 
-/// The stored JSON is the engine's `UserScopePref`, field for field.
-///
-/// A host-side twin with the same three booleans would serialise identically
-/// today and drift on the first field either side adds, so the production code
-/// re-exports the engine's type instead of declaring one. This asserts the
-/// bytes that actually land in the row.
+/// The stored JSON is the three boolean fields.
 #[test]
 fn stored_value_is_the_three_boolean_fields() {
     let value = serde_json::to_value(UserScopePref {
@@ -63,4 +40,46 @@ fn default_pref_is_read_write_without_admin() {
     assert!(pref.read);
     assert!(pref.write);
     assert!(!pref.admin, "admin must stay opt-in");
+}
+
+#[tokio::test]
+async fn save_then_load_round_trips_per_toolkit() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = config_in(&dir);
+    let pref = UserScopePref {
+        read: true,
+        write: false,
+        admin: true,
+    };
+    save(&config, "GitHub", pref).await.unwrap();
+
+    let loaded = load_or_default(&config, " github ").await;
+    assert_eq!(
+        serde_json::to_value(loaded).unwrap(),
+        serde_json::to_value(pref).unwrap()
+    );
+    let other = load_or_default(&config, "slack").await;
+    assert!(other.read && other.write && !other.admin);
+}
+
+#[tokio::test]
+async fn save_rejects_an_empty_toolkit() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = config_in(&dir);
+    assert!(save(&config, "  ", UserScopePref::default()).await.is_err());
+}
+
+#[tokio::test]
+async fn unreadable_store_fails_open_to_the_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = config_in(&dir);
+    let path = file_store::path(&config, USER_SCOPES_FILE);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, b"not json").unwrap();
+
+    let pref = load_or_default(&config, "github").await;
+    assert!(pref.read && pref.write && !pref.admin);
+    assert!(save(&config, "github", UserScopePref::default())
+        .await
+        .is_err());
 }

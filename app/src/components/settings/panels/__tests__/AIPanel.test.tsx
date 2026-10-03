@@ -36,7 +36,7 @@ import AIPanel, {
 vi.mock('../../../../services/api/aiSettingsApi', async importOriginal => {
   const actual = await importOriginal<typeof import('../../../../services/api/aiSettingsApi')>();
   return {
-    ALL_WORKLOADS: ['chat', 'reasoning', 'agentic', 'coding', 'memory', 'embeddings', 'learning'],
+    ALL_WORKLOADS: ['chat', 'reasoning', 'agentic', 'coding', 'memory', 'embeddings'],
     loadAISettings: vi.fn(),
     saveAISettings: vi.fn(),
     loadLocalProviderSnapshot: vi.fn(),
@@ -129,7 +129,6 @@ const baseSettings = {
     vision: { kind: 'openhuman' as const },
     memory: { kind: 'openhuman' as const },
     embeddings: { kind: 'openhuman' as const },
-    learning: { kind: 'openhuman' as const },
   },
   modelRegistry: [],
 };
@@ -371,7 +370,6 @@ describe('AIPanel', () => {
       'Coding',
       'Vision',
       'Memory summarization',
-      /Learning/,
     ]) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
@@ -887,7 +885,6 @@ describe('AIPanel', () => {
         vision: { kind: 'openhuman' as const },
         memory: { kind: 'openhuman' as const },
         embeddings: { kind: 'openhuman' as const },
-        learning: { kind: 'openhuman' as const },
       },
       modelRegistry: [],
     };
@@ -1513,7 +1510,6 @@ describe('AIPanel', () => {
         vision: { kind: 'openhuman' as const },
         memory: { kind: 'openhuman' as const },
         embeddings: { kind: 'openhuman' as const },
-        learning: { kind: 'openhuman' as const },
       },
       modelRegistry: [],
     };
@@ -1568,7 +1564,6 @@ describe('AIPanel', () => {
         vision: { kind: 'openhuman' as const },
         memory: { kind: 'openhuman' as const },
         embeddings: { kind: 'openhuman' as const },
-        learning: { kind: 'openhuman' as const },
       },
       modelRegistry: [],
     };
@@ -2167,20 +2162,12 @@ describe('AIPanel', () => {
 
   it('renders background loop diagnostics with newest spend row and budget math', async () => {
     // BackgroundLoopControls was moved out of AIPanel into standalone panels.
-    renderWithProviders(
-      <BackgroundLoopControls
-        view="all"
-        routing={baseSettings.routing}
-        cloudProviders={baseSettings.cloudProviders}
-      />
-    );
+    renderWithProviders(<BackgroundLoopControls view="all" />);
 
     await waitFor(() => expect(screen.getByText('Background loops')).toBeInTheDocument());
 
     expect(screen.getByText('Recent usage ledger')).toBeInTheDocument();
     expect(screen.getByText('Loop map')).toBeInTheDocument();
-    expect(screen.getByText('Memory tree workers')).toBeInTheDocument();
-    expect(screen.getByText('Reflection rebuild')).toBeInTheDocument();
     expect(screen.getByText('Composio sync')).toBeInTheDocument();
 
     expect(screen.getByText('Week budget')).toBeInTheDocument();
@@ -2198,7 +2185,6 @@ describe('AIPanel', () => {
     expect(screen.getByText('API reads per $ remaining')).toBeInTheDocument();
     expect(screen.getByText('Loop call budget')).toBeInTheDocument();
     expect(screen.getByText('Composio sync scans')).toBeInTheDocument();
-    expect(screen.getByText('Memory worker polls')).toBeInTheDocument();
 
     expect(screen.getByText('MEMORY_SUMMARY')).toBeInTheDocument();
     expect(screen.getByText('SPEND:USAGE_DEDUCTION:USER')).toBeInTheDocument();
@@ -2214,7 +2200,6 @@ describe('buildRoutingDiffSummary', () => {
     coding: { kind: 'default' },
     vision: { kind: 'default' },
     memory: { kind: 'default' },
-    learning: { kind: 'default' },
   });
 
   it('emits one "<label> → <target>" entry per changed workload and skips unchanged ones', () => {

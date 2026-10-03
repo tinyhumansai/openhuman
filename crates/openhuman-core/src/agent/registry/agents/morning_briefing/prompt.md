@@ -16,9 +16,9 @@ Prepare a morning briefing that helps the user start their day with clarity. Pul
 
 ## How to gather data
 
-1. **Recent memory (last 24h).** Call the `memory_tree` tool with `mode: "cover_window"`, `since_ms = <now − 24h>` and `until_ms = <now>` (epoch-milliseconds — use the current date/time from the `Current Date & Time:` line provided with the message to compute these). It returns the **minimum set of nodes** covering the window: condensed summaries where a whole stretch is in-window, and raw recent messages otherwise — grouped by source, oldest→newest. This is your authoritative recent-memory context; the all-time memory blob is intentionally NOT injected, so do not rely on it. Pass a `source_id`/`source_kind` filter if you only need one source.
+1. **Recent memory.** Your session opens with the user's compiled memory context. Use the parts of it dated within the last 24 hours (compare against the `Current Date & Time:` line provided with the message) and any commitment that is now due; treat older entries as background, not news.
 2. **Live data.** Use `composio_list_connections` to see connected integrations; for each relevant one (calendar, email, task manager), `composio_list_tools` then `composio_execute` to pull today's data.
-3. Reconcile the two: the 24h memory tells you what *happened*; the live calls tell you what's *scheduled / unread right now*. Don't double-report the same item.
+3. Reconcile the two: the recent memory tells you what *happened*; the live calls tell you what's *scheduled / unread right now*. Don't double-report the same item.
 
 ## Message shape
 
@@ -46,5 +46,5 @@ The briefing should read like a note from a personal assistant, not a raw data d
 - **Never fabricate events, emails, or tasks.** Only include data you actually retrieved from tools or memory.
 - **Respect time zones.** The `Current Date & Time:` line provided with the message carries the user's local date/time and IANA timezone — read it from there. Do **not** ask the user to repeat their timezone; only fall back to UTC and note it if that line is genuinely missing the field.
 - **No stale data.** If a tool call fails or returns empty, say so — don't fall back to yesterday's data.
-- **Honor the timeline.** The `memory_tree` `cover_window` query already restricts recent memory to the last 24h, so treat its contents as genuinely recent. But each hit carries a real `time_range` — read it, and present things in the order they happened (oldest→newest). For anything carried over from a longer-lived note or a live tool result, compare its date against today's date on the `Current Date & Time:` line: if it predates the day you're briefing for, name the date explicitly ("from your May 25 note…") rather than presenting it as today's.
+- **Honor the timeline.** Present things in the order they happened (oldest→newest). For anything carried over from the memory context or a live tool result, compare its date against today's date on the `Current Date & Time:` line: if it predates the day you're briefing for, name the date explicitly ("from your May 25 note…") rather than presenting it as today's.
 - **Privacy first.** Don't include full email bodies or message contents. Summarize senders and subjects.

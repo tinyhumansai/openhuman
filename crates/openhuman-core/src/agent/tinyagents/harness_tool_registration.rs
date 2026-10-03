@@ -23,7 +23,6 @@ use crate::agent::tinyagents::tools::{CanonicalSharedToolAdapter, EarlyExitHook}
 use crate::agent::tinyagents::turn_policy::is_subagent_spawn_or_delegate_tool;
 use crate::agent::tinyagents::use_skill_dispatch::UseSkillDispatch;
 use crate::agent::tools::{DelegateToolDispatch, TodoToolDispatch};
-use crate::memory::agent::CallMemoryAgentDispatch;
 use tinyagents_harness::tool::packs::USE_SKILL;
 
 /// Typed-dispatch selection shared by the direct per-turn registration below
@@ -57,7 +56,6 @@ pub(crate) fn typed_dispatch_for(
         "delegate_graph" => Arc::new(DelegateGraphDispatch::new(adapter)),
         "delegate" => Arc::new(DelegateToolDispatch::new(adapter)),
         "todo" => Arc::new(TodoToolDispatch::new(adapter)),
-        "call_memory_agent" => Arc::new(CallMemoryAgentDispatch::new(adapter)),
         _ => {
             return DelegationDispatch::for_tool(adapter).map(|dispatch| {
                 Arc::new(dispatch) as Arc<dyn ToolDispatch<(), OpenHumanRunContext>>

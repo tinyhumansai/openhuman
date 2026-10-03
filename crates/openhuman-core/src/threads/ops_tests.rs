@@ -6,7 +6,7 @@ use super::*;
 // Re-imported here rather than through `ops`: `ops` itself no longer names
 // these, so importing them there would be an unused import in a non-test build.
 use crate::config::test_env::EnvVarGuard;
-use crate::memory::conversations as conversations_store;
+use crate::threads::store as conversations_store;
 use crate::threads::turn_state::{ClearTurnStateRequest, GetTurnStateRequest};
 use crate::threads::ThreadsError;
 use serde_json::{json, Value};

@@ -9,26 +9,20 @@
 //!    module; there is no parallel implementation elsewhere in the crate.
 //!
 //! 2. **Mechanical history bookkeeping** — [`stats::ContextStatsState`] records
-//!    provider usage and session-memory triggers. Live reduction runs in the
-//!    TinyAgents middleware stack.
+//!    provider usage. Live reduction runs in the TinyAgents middleware stack.
 //!
 //! Agents hold a single [`ContextManager`] per session. The manager owns
-//! per-conversation state (budget, utilisation, session-memory counters)
-//! while prompt assembly remains centralized here.
+//! per-conversation state (budget, utilisation) while prompt assembly remains
+//! centralized here.
 //!
 //! Submodules are added incrementally as the `agent/` → `context/`
 //! migration lands (see plan `misty-bubbling-bunny.md`).
 
 pub mod channels_prompt;
 pub mod manager;
-pub mod session_memory;
 pub mod stats;
 
 pub use manager::{ContextManager, ContextStats};
-pub use session_memory::{
-    SessionMemoryConfig, SessionMemoryState, ARCHIVIST_EXTRACTION_PROMPT, DEFAULT_MIN_TOKEN_GROWTH,
-    DEFAULT_MIN_TOOL_CALLS, DEFAULT_MIN_TURNS_BETWEEN,
-};
 /// Default per-tool-result budget. The live TinyAgents tool-output middleware
 /// and action-workspace artifact previews enforce this outside the legacy
 /// context reducer modules.

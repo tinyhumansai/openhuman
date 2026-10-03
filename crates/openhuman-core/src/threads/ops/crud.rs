@@ -6,9 +6,10 @@ use super::support::{
     workspace_dir,
 };
 use crate::core::Outcome;
-use crate::memory::conversations;
-use crate::memory::conversations::{ConversationMessagePatch, CrossThreadHit};
-use crate::memory::{
+use crate::threads::store as conversations;
+use crate::threads::store::{ConversationMessagePatch, CrossThreadHit};
+use crate::threads::ThreadsError;
+use crate::threads::{
     ApiEnvelope, AppendConversationMessageRequest, ConversationMessageRecord,
     ConversationMessagesRequest, ConversationMessagesResponse, ConversationThreadSummary,
     ConversationThreadsListResponse, CreateConversationThreadRequest,
@@ -16,7 +17,6 @@ use crate::memory::{
     UpdateConversationMessageRequest, UpdateConversationThreadLabelsRequest,
     UpdateConversationThreadTitleRequest, UpsertConversationThreadRequest,
 };
-use crate::threads::ThreadsError;
 use crate::web_chat as web_channel;
 use std::path::PathBuf;
 use tinyagents_session::turn_state;

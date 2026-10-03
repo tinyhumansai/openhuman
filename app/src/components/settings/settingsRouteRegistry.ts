@@ -494,18 +494,10 @@ export const SETTINGS_ROUTE_REGISTRY: SettingsRegistryEntry[] = [
     devOnly: true,
     searchKeywords: ['developer', 'diagnostics', 'debug'],
   },
-  {
-    // memory-engine: choose the one active memory engine. Reached from the
-    // Brain page ("Memory engine · Change"); not a sidebar entry.
-    id: 'memory-engine',
-    titleKey: 'memoryEngine.title',
-    descriptionKey: 'memoryEngine.description',
-    section: 'features',
-    hiddenDeepLink: true,
-    searchKeywords: ['memory', 'engine', 'cortexdb', 'supermemory', 'mem0', 'cognee'],
-  },
+  // memory-engine / memory-data / memory-debug are redirects to the Memory
+  // page's chips (Connections → Memory); they have no settings panel.
   // Knowledge & Memory group retired entirely — memory surfaces live on the
-  // Brain page (graph / goals / sources / sync).
+  // Memory page (engine / ask / learnings / conversations / documents / context).
   // voice-debug retired from the settings UI.
   {
     id: 'event-log',

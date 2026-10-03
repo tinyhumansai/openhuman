@@ -33,8 +33,10 @@ pub struct DomainSubscriberPlan {
     pub channels: bool,
     /// flows trigger dispatch.
     pub flows: bool,
-    /// memory conversation-persistence + sync-stage bridge.
+    /// memory v2: conversation ingestion, memory cron jobs, idle flusher.
     pub memory: bool,
+    /// chat-thread persistence of channel turns (`threads::store`).
+    pub threads: bool,
     /// agent handlers + background delivery + run-ledger finalizer + orchestration ingest.
     pub agent: bool,
     /// hosted orchestration ingest.
@@ -56,6 +58,7 @@ impl DomainSubscriberPlan {
             channels: domains.allows(DomainGroup::Channels),
             flows: domains.allows(DomainGroup::Flows),
             memory: domains.allows(DomainGroup::Memory),
+            threads: domains.allows(DomainGroup::Threads),
             agent: domains.allows(DomainGroup::Agent),
             hosted: domains.allows(DomainGroup::Hosted),
             mcp: domains.allows(DomainGroup::Mcp),
@@ -89,36 +92,6 @@ fn group_first_time(group: crate::core::all::DomainGroup) -> bool {
     group_first_time_when_bus_ready(
         DONE.get_or_init(|| Mutex::new(HashSet::new())),
         group,
-        crate::core::bus::BUS.get().is_some(),
-    )
-}
-
-/// Consume the learning-subscriber token only when the global event bus is
-/// ready. Learning has a separate token from the Agent group because both
-/// registration blocks must run exactly once.
-fn learning_first_time_when_bus_ready(completed: &std::sync::Mutex<bool>, bus_ready: bool) -> bool {
-    if !bus_ready {
-        log::warn!(
-            "[event_bus] deferred Agent learning subscriber registration - bus not initialized"
-        );
-        return false;
-    }
-
-    let mut completed = completed
-        .lock()
-        .expect("learning-subscriber registry lock poisoned");
-    if *completed {
-        false
-    } else {
-        *completed = true;
-        true
-    }
-}
-
-fn learning_first_time() -> bool {
-    static DONE: std::sync::OnceLock<std::sync::Mutex<bool>> = std::sync::OnceLock::new();
-    learning_first_time_when_bus_ready(
-        DONE.get_or_init(|| std::sync::Mutex::new(false)),
         crate::core::bus::BUS.get().is_some(),
     )
 }
@@ -322,26 +295,6 @@ pub(super) fn register_domain_subscribers(
         log::debug!("[event_bus] device-tunnel subscriber SKIPPED — Security domain disabled");
     }
 
-    if plan.agent {
-        if learning_first_time() {
-            // Always-on learning subscribers (email-signature producer, rebuild
-            // trigger + periodic loop, ProfileMdRenderer). Previously wired only
-            // in `channels::runtime::startup::start_channels`, which is skipped
-            // when no channel is configured — silently dropping ALL learning for
-            // channel-less users (#5003). `agent::learning` is an Agent-family
-            // domain; it sat on the Platform boot path only because `learning`
-            // used to be a top-level directory. Idempotent. The memory block
-            // goes along because this runs before the workspace's context is
-            // installed, and learning must bind the engine the user chose.
-            crate::agent::learning::startup::register_learning_subscribers(
-                workspace_dir.clone(),
-                config.subsystems.memory.clone(),
-            );
-        }
-    } else {
-        log::debug!("[event_bus] learning subscribers SKIPPED — Agent domain disabled");
-    }
-
     // Channels: inbound dispatch + web-only proactive messaging.
     // The `plan.channels` runtime guard cannot stand in for the compile-time
     // gate: the `channels::bus::ChannelInboundSubscriber` +
@@ -440,18 +393,26 @@ pub(super) fn register_domain_subscribers(
         "[event_bus] flows trigger subscriber SKIPPED — flows feature disabled at compile time"
     );
 
-    // Memory: conversation-persistence + sync-stage bridge.
-    if plan.memory {
-        if group_first_time(DomainGroup::Memory) {
-            crate::memory::conversations::register_conversation_persistence_subscriber(
+    // Threads: persist channel turns into the chat-thread store.
+    if plan.threads {
+        if group_first_time(DomainGroup::Threads) {
+            crate::threads::store::register_conversation_persistence_subscriber(
                 workspace_dir.clone(),
             );
-            crate::memory::sync_events_bridge::register_sync_stage_bridge(&config);
         }
     } else {
         log::debug!(
-            "[event_bus] memory conversation-persistence + sync bridge SKIPPED — Memory domain disabled"
+            "[event_bus] conversation-persistence subscriber SKIPPED — Threads domain disabled"
         );
+    }
+
+    // Memory: conversation ingestion, memory cron jobs, idle flusher.
+    if plan.memory {
+        if group_first_time(DomainGroup::Memory) {
+            crate::memory::register_memory_subscribers();
+        }
+    } else {
+        log::debug!("[event_bus] memory subscribers SKIPPED — Memory domain disabled");
     }
 
     // Agent: native agent handlers + background-completion delivery +

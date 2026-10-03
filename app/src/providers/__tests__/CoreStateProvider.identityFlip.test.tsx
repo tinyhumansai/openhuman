@@ -20,7 +20,6 @@ vi.mock('../../utils/tauriCommands', () => ({
   restartApp: vi.fn().mockResolvedValue(undefined),
   setOnboardingCompleted: vi.fn(),
   storeSession: vi.fn().mockResolvedValue(undefined),
-  syncMemoryClientToken: vi.fn().mockResolvedValue(undefined),
   logout: vi.fn().mockResolvedValue(undefined),
 }));
 

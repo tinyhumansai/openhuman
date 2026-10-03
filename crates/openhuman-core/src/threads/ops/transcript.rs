@@ -2,7 +2,7 @@
 
 use super::support::{counts, envelope, workspace_dir};
 use crate::core::Outcome;
-use crate::memory::{ApiEnvelope, PaginationMeta};
+use crate::threads::{ApiEnvelope, PaginationMeta};
 
 /// Request for [`transcript_get`]: the thread to project, plus newest-first
 /// pagination controls. `cursor` is the opaque token from a prior page's

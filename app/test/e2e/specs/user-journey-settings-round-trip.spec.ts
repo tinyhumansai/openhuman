@@ -8,7 +8,7 @@
  * Journey:
  *   1. Login + land on home
  *   2. /settings                 — verify root index loads
- *   3. /settings/memory-data     — verify loads
+ *   3. /settings/memory-data     — verify it redirects to Memory → Documents
  *   4. /settings/developer-options — verify loads
  *   5. /settings/billing         — verify billing panel loads
  *   6. /home                     — verify home loads
@@ -17,7 +17,8 @@
  * Each screen must load within 10s with non-trivial content (no blank/error state).
  */
 import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
-import { textExists } from '../helpers/element-helpers';
+import { textExists, waitForTestId } from '../helpers/element-helpers';
+import { isTauriDriver } from '../helpers/platform';
 import { resetApp } from '../helpers/reset-app';
 import {
   navigateToBilling,
@@ -89,12 +90,16 @@ describe('User journey — settings round-trip', () => {
     expect(found).toBe(true);
   });
 
-  it('/settings/memory-data — loads within 10s', async () => {
+  it('/settings/memory-data — redirects to the Memory page within 10s', async () => {
+    // The v1 memory data panel is gone; the slug redirects to the Memory
+    // page's Documents chip (/connections?tab=brain&brain=documents).
     console.log(`${LOG_PREFIX} Navigating to /settings/memory-data`);
     await navigateViaHash('/settings/memory-data');
     await waitForPanelLoad('/settings/memory-data');
+    // waitForTestId is tauri-driver only; the marker check below covers Mac2.
+    if (isTauriDriver()) await waitForTestId('memory-page', 10_000);
 
-    const dataMarkers = ['Memory', 'Data', 'Storage', 'Export', 'Import', 'Settings'];
+    const dataMarkers = ['Documents', 'Memory', 'Engine'];
     let found = false;
     for (const marker of dataMarkers) {
       if (await textExists(marker)) {

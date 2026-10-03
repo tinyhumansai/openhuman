@@ -2,11 +2,11 @@
 
 use super::support::{counts, envelope, workspace_dir};
 use crate::core::Outcome;
-use crate::memory::{ApiEnvelope, EmptyRequest};
 use crate::threads::turn_state::{
     ClearTurnStateRequest, ClearTurnStateResponse, GetTurnStateForRequestRequest,
     GetTurnStateRequest, GetTurnStateResponse, ListTurnStatesResponse,
 };
+use crate::threads::{ApiEnvelope, EmptyRequest};
 use tinyagents_session::turn_state;
 
 /// Returns the persisted in-flight turn snapshot for a thread, if any.

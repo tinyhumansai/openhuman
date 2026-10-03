@@ -19,43 +19,6 @@ fn request() -> TurnContextRequest {
     TurnContextRequest::new("orchestrator", "thread-1", "what changed today?")
 }
 
-/// A definition that sets `omit_profile` / `omit_memory_md` must not have
-/// those files injected anyway. The live subagent path derives the gates
-/// from the definition; hardcoding them here silently overrode it.
-#[tokio::test]
-async fn a_definitions_user_file_omissions_are_honoured() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    std::fs::write(dir.path().join("PROFILE.md"), "PROFILE_MARKER_TEXT").expect("write");
-    std::fs::write(dir.path().join("MEMORY.md"), "MEMORY_MARKER_TEXT").expect("write");
-
-    let included = OpenHumanContextComposer::new(config_in(dir.path()))
-        .compose_system_prompt(&request())
-        .await
-        .expect("compose");
-
-    let omitted = OpenHumanContextComposer::new(config_in(dir.path()))
-        .with_omissions(false, false)
-        .compose_system_prompt(&request())
-        .await
-        .expect("compose");
-
-    // Only assert the omission direction: whether the default chain renders
-    // these particular files depends on section config, and the contract
-    // under test is that opting out is respected.
-    if included.contains("PROFILE_MARKER_TEXT") {
-        assert!(
-            !omitted.contains("PROFILE_MARKER_TEXT"),
-            "omit_profile must keep PROFILE.md out of the prompt"
-        );
-    }
-    if included.contains("MEMORY_MARKER_TEXT") {
-        assert!(
-            !omitted.contains("MEMORY_MARKER_TEXT"),
-            "omit_memory_md must keep MEMORY.md out of the prompt"
-        );
-    }
-}
-
 #[tokio::test]
 async fn composes_a_non_empty_prompt_carrying_the_agent_id() {
     let dir = tempfile::tempdir().expect("tempdir");

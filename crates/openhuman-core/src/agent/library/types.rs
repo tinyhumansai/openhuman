@@ -28,8 +28,6 @@ pub struct AgentDefinitionDisplay {
     pub direct_tool_names: Vec<String>,
     pub uses_wildcard_tools: bool,
     pub subagent_ids: Vec<String>,
-    pub includes_profile: bool,
-    pub includes_memory_md: bool,
     pub includes_memory_context: bool,
     pub can_run_as_user_facing_worker: bool,
     pub write_capable: bool,

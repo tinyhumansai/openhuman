@@ -28,7 +28,7 @@ use openhuman_core::config::schema::{
 use openhuman_core::config::{
     clear_active_user, default_projects_dir, pre_login_user_dir, read_active_user_id,
     user_openhuman_dir, write_active_user_id, Config, DaemonConfig, DictationActivationMode,
-    LlmBackend, ReflectionSource, UpdateRestartStrategy,
+    UpdateRestartStrategy,
 };
 use openhuman_core::core::events::DomainEvent;
 use openhuman_core::desktop::app_state::app_state_schemas;
@@ -245,14 +245,7 @@ runtime_enabled = false
 opt_in_confirmed = false
 
 [memory]
-provider = "none"
-embedding_provider = "none"
-embedding_model = "none"
-embedding_dimensions = 0
-auto_save = false
-
-[memory_tree]
-embedding_strict = false
+engine = "tinyhumans"
 "#;
     std::fs::write(openhuman_dir.join("config.toml"), cfg).expect("write config.toml");
     let _: openhuman_core::config::Config =
@@ -390,19 +383,10 @@ fn config_schema_defaults_cover_dashboard_capability_memory_and_security_shapes(
         serde_json::from_value(json!({})).expect("model health defaults");
     assert_eq!(model_health.evaluation_window_tasks, 50);
 
-    let memory = MemoryConfig {
-        agentmemory_url: Some("https://memory.example.test".to_string()),
-        agentmemory_secret: Some("secret-token".to_string()),
-        agentmemory_timeout_ms: Some(750),
-        ..MemoryConfig::default()
-    };
-    let debug = format!("{memory:?}");
-    assert!(debug.contains("<redacted>"));
-    assert!(!debug.contains("secret-token"));
-    assert_eq!(LlmBackend::Cloud.as_str(), "cloud");
-    assert_eq!(LlmBackend::Local.as_str(), "local");
-    assert_eq!(LlmBackend::parse(" LOCAL "), Ok(LlmBackend::Local));
-    assert!(LlmBackend::parse("remote").is_err());
+    let memory = MemoryConfig::default();
+    assert_eq!(memory.engine, "tinyhumans");
+    assert!(memory.conversations.enabled);
+    assert!(memory.context.enabled);
 
     let telegram: TelegramConfig = serde_json::from_value(json!({
         "bot_token": "bot-token",
@@ -459,7 +443,6 @@ fn config_schema_defaults_cover_dashboard_capability_memory_and_security_shapes(
         usage: openhuman_core::config::schema::LocalAiUsage {
             embeddings: true,
             heartbeat: true,
-            learning_reflection: true,
             subconscious: true,
         },
         ..Default::default()
@@ -472,7 +455,6 @@ fn config_schema_defaults_cover_dashboard_capability_memory_and_security_shapes(
         assert!(local_ai.is_active());
         assert!(local_ai.use_local_for_embeddings());
         assert!(local_ai.use_local_for_heartbeat());
-        assert!(local_ai.use_local_for_learning());
         assert!(local_ai.use_local_for_subconscious());
     }
 
@@ -1210,38 +1192,6 @@ async fn config_env_overlay_public_loader_applies_runtime_and_tool_overrides() {
         EnvVarGuard::set("OPENHUMAN_RUNTIME_PYTHON_PREFERRED_COMMAND", "python3.13"),
         EnvVarGuard::set("OPENHUMAN_CORE_SENTRY_DSN", "https://dsn.example/1"),
         EnvVarGuard::set("OPENHUMAN_ANALYTICS_ENABLED", "false"),
-        EnvVarGuard::set("OPENHUMAN_LEARNING_ENABLED", "true"),
-        EnvVarGuard::set("OPENHUMAN_LEARNING_REFLECTION_ENABLED", "false"),
-        EnvVarGuard::set("OPENHUMAN_LEARNING_USER_PROFILE_ENABLED", "false"),
-        EnvVarGuard::set("OPENHUMAN_LEARNING_TOOL_TRACKING_ENABLED", "false"),
-        EnvVarGuard::set("OPENHUMAN_LEARNING_TOOL_MEMORY_CAPTURE_ENABLED", "false"),
-        EnvVarGuard::set("OPENHUMAN_LEARNING_EXPLICIT_PREFERENCES_ENABLED", "true"),
-        EnvVarGuard::set("OPENHUMAN_LEARNING_REFLECTION_SOURCE", "cloud"),
-        EnvVarGuard::set("OPENHUMAN_LEARNING_MAX_REFLECTIONS_PER_SESSION", "3"),
-        EnvVarGuard::set("OPENHUMAN_LEARNING_MIN_TURN_COMPLEXITY", "2"),
-        EnvVarGuard::set("OPENHUMAN_LEARNING_EPISODIC_CAPTURE_ENABLED", "false"),
-        EnvVarGuard::set("OPENHUMAN_LEARNING_STM_RECALL_ENABLED", "false"),
-        EnvVarGuard::set("OPENHUMAN_LEARNING_UNIFIED_COMPACTION_ENABLED", "false"),
-        EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_ENDPOINT", "https://embed.example"),
-        EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_MODEL", "embed-env"),
-        EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_TIMEOUT_MS", "1234"),
-        EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_STRICT", "true"),
-        EnvVarGuard::set("OPENHUMAN_MEMORY_EMBED_RATE_LIMIT", "42"),
-        EnvVarGuard::set(
-            "OPENHUMAN_MEMORY_EXTRACT_ENDPOINT",
-            "https://extract.example",
-        ),
-        EnvVarGuard::set("OPENHUMAN_MEMORY_EXTRACT_MODEL", "extract-env"),
-        EnvVarGuard::set("OPENHUMAN_MEMORY_EXTRACT_TIMEOUT_MS", "2345"),
-        EnvVarGuard::set(
-            "OPENHUMAN_MEMORY_SUMMARISE_ENDPOINT",
-            "https://summarise.example",
-        ),
-        EnvVarGuard::set("OPENHUMAN_MEMORY_SUMMARISE_MODEL", "summarise-env"),
-        EnvVarGuard::set("OPENHUMAN_MEMORY_SUMMARISE_TIMEOUT_MS", "3456"),
-        EnvVarGuard::set("OPENHUMAN_MEMORY_TREE_CONTENT_DIR", "/tmp/openhuman-tree"),
-        EnvVarGuard::set("OPENHUMAN_MEMORY_TREE_LLM_BACKEND", "local"),
-        EnvVarGuard::set("OPENHUMAN_MEMORY_TREE_CLOUD_LLM_MODEL", "cloud-tree-model"),
         EnvVarGuard::set("OPENHUMAN_AUTO_UPDATE_ENABLED", "false"),
         EnvVarGuard::set("OPENHUMAN_AUTO_UPDATE_INTERVAL_MINUTES", "1440"),
         EnvVarGuard::set("OPENHUMAN_AUTO_UPDATE_RESTART_STRATEGY", "supervisor"),
@@ -1301,28 +1251,6 @@ async fn config_env_overlay_public_loader_applies_runtime_and_tool_overrides() {
     assert_eq!(
         config.observability.sentry_dsn.as_deref(),
         Some("https://dsn.example/1")
-    );
-    assert!(config.learning.enabled);
-    assert!(!config.learning.reflection_enabled);
-    assert_eq!(config.learning.reflection_source, ReflectionSource::Cloud);
-    assert_eq!(config.learning.max_reflections_per_session, 3);
-    assert_eq!(config.learning.min_turn_complexity, 2);
-    assert!(!config.learning.episodic_capture_enabled);
-    assert_eq!(config.memory.embedding_rate_limit_per_min, 42);
-    assert_eq!(
-        config.memory_tree.embedding_endpoint.as_deref(),
-        Some("https://embed.example")
-    );
-    assert_eq!(
-        config.memory_tree.embedding_model.as_deref(),
-        Some("embed-env")
-    );
-    assert_eq!(config.memory_tree.embedding_timeout_ms, Some(1234));
-    assert!(config.memory_tree.embedding_strict);
-    assert_eq!(config.memory_tree.llm_backend, LlmBackend::Local);
-    assert_eq!(
-        config.memory_tree.content_dir.as_deref(),
-        Some(Path::new("/tmp/openhuman-tree"))
     );
     assert!(!config.update.enabled);
     assert_eq!(config.update.interval_minutes, 1440);
@@ -1881,7 +1809,6 @@ async fn worker_a_controller_schemas_are_fully_exposed() {
                 "openhuman.config_get_dashboard_settings",
                 "openhuman.config_get_data_paths",
                 "openhuman.config_get_dictation_settings",
-                "openhuman.config_get_memory_sync_settings",
                 "openhuman.config_get_onboarding_completed",
                 "openhuman.config_get_privacy_mode",
                 "openhuman.config_get_runtime_flags",
@@ -1903,7 +1830,6 @@ async fn worker_a_controller_schemas_are_fully_exposed() {
                 "openhuman.config_update_dictation_settings",
                 "openhuman.config_update_local_ai_settings",
                 "openhuman.config_update_memory_settings",
-                "openhuman.config_update_memory_sync_settings",
                 "openhuman.config_update_model_settings",
                 "openhuman.config_update_runtime_settings",
                 "openhuman.config_update_sandbox_settings",
@@ -1940,25 +1866,28 @@ async fn worker_a_controller_schemas_are_fully_exposed() {
         ),
         ("connectivity", vec!["openhuman.connectivity_diag"]),
         (
-            "memory_sources",
+            "memory",
             vec![
+                "openhuman.memory_context_get",
+                "openhuman.memory_context_refresh",
+                "openhuman.memory_context_set",
+                "openhuman.memory_conversations_get",
+                "openhuman.memory_conversations_set",
+                "openhuman.memory_engine_get",
+                "openhuman.memory_engine_set",
+                "openhuman.memory_engines_list",
+                "openhuman.memory_fetch",
+                "openhuman.memory_forget",
+                "openhuman.memory_import_scan",
+                "openhuman.memory_import_start",
+                "openhuman.memory_import_status",
+                "openhuman.memory_items_list",
+                "openhuman.memory_learn",
+                "openhuman.memory_recall",
                 "openhuman.memory_sources_add",
-                "openhuman.memory_sources_apply_all_in",
-                "openhuman.memory_sources_coding_session_status",
-                "openhuman.memory_sources_estimate_sync_cost",
-                "openhuman.memory_sources_get",
-                "openhuman.memory_sources_ingest_coding_sessions",
                 "openhuman.memory_sources_list",
-                "openhuman.memory_sources_list_items",
-                "openhuman.memory_sources_monthly_cost_summary",
-                "openhuman.memory_sources_read_item",
-                "openhuman.memory_sources_reconcile",
                 "openhuman.memory_sources_remove",
-                "openhuman.memory_sources_status_list",
-                "openhuman.memory_sources_supported_toolkits",
                 "openhuman.memory_sources_sync",
-                "openhuman.memory_sources_sync_audit_log",
-                "openhuman.memory_sources_update",
             ],
         ),
     ] {
@@ -2067,8 +1996,7 @@ async fn config_controller_mutations_round_trip_over_json_rpc() {
             "agentic_provider": "worker-a-cloud:agent",
             "coding_provider": "worker-a-cloud:code",
             "memory_provider": "worker-a-cloud:memory",
-            "embeddings_provider": "worker-a-cloud:embeddings",
-            "learning_provider": "worker-a-cloud:learning"
+            "embeddings_provider": "worker-a-cloud:embeddings"
         }),
     )
     .await;
@@ -2159,12 +2087,9 @@ async fn config_controller_mutations_round_trip_over_json_rpc() {
         10_004,
         "openhuman.config_update_memory_settings",
         json!({
-            "backend": "sqlite",
-            "auto_save": true,
             "embedding_provider": "none",
             "embedding_model": "none",
-            "embedding_dimensions": 0,
-            "memory_window": "minimal"
+            "embedding_dimensions": 0
         }),
     )
     .await;
@@ -2191,8 +2116,7 @@ async fn config_controller_mutations_round_trip_over_json_rpc() {
                 "base_url": "http://127.0.0.1:11434",
                 "model_id": "llama3",
                 "chat_model_id": "llama3",
-                "usage_embeddings": false,
-                "usage_learning_reflection": false
+                "usage_embeddings": false
             }),
         ),
         (

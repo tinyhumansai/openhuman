@@ -1,11 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { callCoreRpc } from '../../../services/coreRpcClient';
+import { memorySourcesList, type Source } from '../../../services/api/memoryApi';
 import { type CoreCronJob, openhumanCronList } from '../../../utils/tauriCommands/cron';
-import {
-  memorySyncStatusList,
-  type MemorySyncStatusRow,
-} from '../../../utils/tauriCommands/memoryTree';
 
 /**
  * Aggregated, view-only snapshot of the background work the app runs on the
@@ -17,25 +13,27 @@ import {
  * never poll in the background to keep this off the hot path.
  */
 
-/** Memory worker + per-provider freshness rows. */
+/** One synced memory source, reduced to what the activity card shows. */
+export interface MemorySyncRow {
+  provider: string;
+  /** `active` while the source is syncing. */
+  freshness: 'active' | 'idle';
+}
+
+/** Memory sources (Memory v2 Documents registry) and whether any is syncing. */
 export interface MemorySyncSummary {
-  /** True while the ingestion worker is processing a document. */
+  /** True while at least one source is syncing. */
   ingesting: boolean;
   currentTitle?: string;
+  /** How many sources are syncing right now. */
   queueDepth: number;
-  providers: MemorySyncStatusRow[];
+  providers: MemorySyncRow[];
 }
 
 interface BackgroundActivity {
   cronJobs: CoreCronJob[];
   memory: MemorySyncSummary;
   loading: boolean;
-}
-
-interface IngestionStatusEnvelope {
-  running: boolean;
-  current_title?: string;
-  queue_depth: number;
 }
 
 const EMPTY_MEMORY: MemorySyncSummary = { ingesting: false, queueDepth: 0, providers: [] };
@@ -67,10 +65,9 @@ export function useBackgroundActivity(open: boolean): BackgroundActivity {
   const busyRef = useRef(false);
 
   const fetchOnce = useCallback(async () => {
-    const [cronRes, ingestRes, providerRes] = await Promise.allSettled([
+    const [cronRes, sourcesRes] = await Promise.allSettled([
       openhumanCronList(),
-      callCoreRpc<IngestionStatusEnvelope>({ method: 'openhuman.memory_ingestion_status' }),
-      memorySyncStatusList(),
+      memorySourcesList(),
     ]);
     if (cancelledRef.current) return;
 
@@ -80,26 +77,26 @@ export function useBackgroundActivity(open: boolean): BackgroundActivity {
       console.debug('[background-activity] cron_list failed: %o', cronRes.reason);
     }
 
-    const ingest = ingestRes.status === 'fulfilled' ? ingestRes.value : null;
-    const providers = providerRes.status === 'fulfilled' ? providerRes.value : [];
-    if (ingestRes.status === 'rejected') {
-      console.debug('[background-activity] ingestion_status failed: %o', ingestRes.reason);
+    // Memory off (or no sources) answers with an error / empty list; either
+    // way there is no memory activity to show.
+    const sources: Source[] =
+      sourcesRes.status === 'fulfilled' ? (sourcesRes.value.sources ?? []) : [];
+    if (sourcesRes.status === 'rejected') {
+      console.debug('[background-activity] memory_sources_list failed: %o', sourcesRes.reason);
     }
+    const syncing = sources.filter(source => source.status === 'syncing');
     setMemory({
-      ingesting: Boolean(ingest?.running),
-      currentTitle: ingest?.current_title,
-      queueDepth: ingest?.queue_depth ?? 0,
-      providers,
+      ingesting: syncing.length > 0,
+      currentTitle: syncing[0] ? syncing[0].label || syncing[0].target : undefined,
+      queueDepth: syncing.length,
+      providers: sources.map(source => ({
+        provider: source.label || source.target,
+        freshness: source.status === 'syncing' ? 'active' : 'idle',
+      })),
     });
 
-    // Only consider work *genuinely live* for the fast-poll cadence: the
-    // ingestion worker actually running/queued, or a provider with a fresh
-    // chunk (<30s). A stale, un-drained embedding wave (batch_total >
-    // batch_processed but idle freshness) must NOT pin us to fast-poll.
-    busyRef.current =
-      Boolean(ingest?.running) ||
-      (ingest?.queue_depth ?? 0) > 0 ||
-      providers.some(p => p.freshness === 'active');
+    // Fast-poll only while a source is genuinely syncing.
+    busyRef.current = syncing.length > 0;
 
     setLoading(false);
   }, []);

@@ -1,47 +1,19 @@
-//! Interface for embedding providers that convert text into numerical vectors.
+//! The embedding provider seam and its TinyInference adapter.
 //!
-//! [`EmbeddingProvider`] and [`format_embedding_signature`] are **defined in
-//! `tinymemory_api::host`** and re-exported here. The extracted memory subsystem
-//! takes an `Arc<dyn EmbeddingProvider>` from this host, so the trait has to live
-//! somewhere both sides can name — and it has to be *one* trait, not two
-//! structurally identical ones, or the trait objects would not be
-//! interchangeable.
+//! [`EmbeddingProvider`] and [`format_embedding_signature`] are defined in
+//! [`super::embedding_trait`] (they used to live in the v1 memory contract,
+//! which no longer exists). [`TinyInferenceEmbeddingProvider`] adapts a
+//! TinyInference `EmbeddingModel` onto that trait; every construction site
+//! (`factory.rs`, `cloud_adapter.rs`) builds a model and wraps it here.
 //!
-//! Every existing `embeddings::EmbeddingProvider` path in this crate
-//! keeps resolving, and keeps naming the same type.
-//!
-//! # [`TinyInferenceEmbeddingProvider`] is the host's, not the engine's (#5560)
-//!
-//! This adapter used to be `pub use tinymemory_core::embedding_adapter::…`, on
-//! the reasoning that it could not live in the contract crate (which must not
-//! depend on `tinyagents`) and could not live here either, because the memory
-//! tree's embedder factory — engine code — also needed to wrap a `tinyagents`
-//! model. `tinymemory-core` was the one crate that could name both sides.
-//!
-//! Only the first half of that was ever a constraint on *this* crate. The host
-//! already depends on `tinyagents` directly — every construction site
-//! (`factory.rs`, `cloud_adapter.rs`) builds a TinyInference `EmbeddingModel` and
-//! wraps it here — so the adapter is 40 lines of glue between two dependencies
-//! this crate already has, and reaching it through the engine crate was the only
-//! thing keeping `tinymemory-core` linked for it.
-//!
-//! The engine keeps its own copy for its own factory. That is not duplication of
-//! *state*: the adapter is a stateless newtype over a boxed trait object, both
-//! sides wrap the same `tinyinference_embeddings::EmbeddingModel` (one
-//! crate — the root `[patch.crates-io]` points every consumer at
-//! `vendor/tinyagents`), and both produce the same
-//! `tinymemory_api::host::EmbeddingProvider`. Nothing reads the other's output,
-//! which is the same shape the scrubbers, `util::redact` and
-//! `memory::obsidian_registry` took when they came home.
-//!
-//! The signature is load-bearing and is **not** re-derived here:
-//! [`format_embedding_signature`] stays the contract's, so a vector written
-//! before this move and one written after land in the same embedding space.
+//! The signature format is load-bearing: [`format_embedding_signature`] is the
+//! single source of truth, so a vector written before and after a refactor
+//! lands in the same embedding space.
 
 use async_trait::async_trait;
 use tinyinference_embeddings::EmbeddingModel;
 
-pub use tinymemory_api::host::{format_embedding_signature, EmbeddingProvider};
+pub use super::embedding_trait::{format_embedding_signature, EmbeddingProvider};
 
 /// Adapts the canonical TinyInference model to the memory-host contract.
 pub struct TinyInferenceEmbeddingProvider {

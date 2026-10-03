@@ -59,7 +59,7 @@ test.describe('App shell — keyboard traversal', () => {
     // element, so a focus-only check passes against exactly the regression the
     // comment claimed to guard: a row that can be focused by script but can
     // never be reached by Tab. Assert both.
-    for (const id of ['chat', 'brain', 'flows', 'connections'] as const) {
+    for (const id of ['chat', 'flows', 'connections'] as const) {
       await navRow(page, id).focus();
       await expect.poll(() => focused(page)).toBe(`nav:tab-${id}`);
       expect(
@@ -91,9 +91,9 @@ test.describe('App shell — keyboard traversal', () => {
     // unmounts, and focus falls back to <body> — so the next Tab restarts from
     // the top of the document and the user loses their place silently. Nothing
     // in this repo checked it.
-    await navRow(page, 'brain').focus();
+    await navRow(page, 'flows').focus();
     await page.keyboard.press('Enter');
-    await expect.poll(() => hash(page)).toMatch(/^#\/brain/);
+    await expect.poll(() => hash(page)).toMatch(/^#\/flows/);
 
     await expect.poll(() => focused(page)).not.toBe('BODY');
   });

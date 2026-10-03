@@ -12,15 +12,6 @@ sandbox_mode = "none"
 omit_identity = true
 omit_memory_context = false
 omit_safety_preamble = false
-# The reactor personalises small reactive messages (e.g. a follow-up
-# DM on behalf of the user) — PROFILE.md gives it the user's name,
-# role, and voice so replies don't land generic.
-omit_profile = false
-# MEMORY.md carries curated context about the user's ongoing work so
-# reactive follow-ups stay coherent with what came before. Frozen per
-# session (KV-cache contract on `omit_memory_md`).
-omit_memory_md = false
-trigger_memory_agent = "always"
 
 [model]
 # Always remote. Reactive work hits write-path tools and needs
@@ -31,13 +22,12 @@ hint = "agentic"
 
 [tools]
 # Small, deliberately narrow tool surface:
-#   - trigger_memory_agent / memory_store: look up and persist context
+#   - memory: recall prior context and learn a durable note
 #   - read_workspace_state: understand what the user is working on
 # No `spawn_subagent`: as a worker-tier agent with no `[subagents]`
 # allowlist it could never dispatch one. A reaction bigger than one or two
 # calls is the triage agent's escalation to decide, not the reactor's.
 named = [
-    "memory_recall",
-    "memory_store",
+    "memory",
     "read_workspace_state",
 ]

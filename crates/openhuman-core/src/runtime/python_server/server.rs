@@ -50,21 +50,10 @@ async fn prepare_launch(config: &Config) -> Result<ServerLaunch> {
         bail!("no runtime python server backends enabled");
     }
 
-    let want_spacy = backends.contains(&RuntimePythonBackend::Spacy);
-    let want_kompress = backends.contains(&RuntimePythonBackend::Kompress);
-
-    // The server runs ONE interpreter, so the chosen venv must satisfy every
-    // enabled backend. spaCy (if enabled) owns the venv; Kompress then installs
-    // torch+transformers into it. If only Kompress is enabled it owns its venv.
+    // The server runs ONE interpreter. Kompress is the only backend, and it
+    // owns its venv.
     let mut env: Vec<(String, String)> = Vec::new();
-    let python_bin = if want_spacy {
-        let spacy_runtime = super::spacy::ensure_spacy(config).await?;
-        if want_kompress {
-            let hf = super::kompress::install_into(config, &spacy_runtime.python_bin).await?;
-            push_kompress_env(&mut env, config, &hf);
-        }
-        spacy_runtime.python_bin
-    } else if want_kompress {
+    let python_bin = if backends.contains(&RuntimePythonBackend::Kompress) {
         let rt = super::kompress::ensure_kompress(config).await?;
         push_kompress_env(&mut env, config, &rt.hf_home);
         rt.python_bin
@@ -121,18 +110,20 @@ fn push_kompress_env(env: &mut Vec<(String, String)>, config: &Config, hf_home: 
 }
 
 async fn write_server_script(config: &Config) -> Result<PathBuf> {
-    let root = super::spacy::python_server_cache_root(config);
+    let root = python_server_cache_root(config);
     Ok(tinyruntime_pyserver::write_script(&root).await?)
 }
 
-pub async fn request_spacy_extract(
-    config: &Config,
-    text: &str,
-) -> Result<super::spacy::SpacyResponse> {
-    let server = ensure_started(config).await?;
-    Ok(server
-        .request("spacy.extract", json!({ "text": text }))
-        .await?)
+/// Where the runtime Python server keeps its venvs, model caches and script.
+pub(crate) fn python_server_cache_root(config: &Config) -> PathBuf {
+    let configured = config.runtime_python.cache_dir.trim();
+    if !configured.is_empty() {
+        return PathBuf::from(configured).join("runtime-python-server");
+    }
+    if let Some(user_cache) = dirs::cache_dir() {
+        return user_cache.join("openhuman").join("runtime-python-server");
+    }
+    config.workspace_dir.join("runtime_python_server")
 }
 
 pub async fn request_kompress_compress(

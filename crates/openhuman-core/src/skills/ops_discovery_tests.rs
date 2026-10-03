@@ -187,7 +187,7 @@ async fn discovery_home_dir_is_hidden_by_a_context_without_user_skill_roots() {
 
     let mut config = crate::config::Config::default();
     config.workspace_dir = std::path::PathBuf::from("/tmp/discovery-home-dir-test");
-    let parent = CoreContext::for_test(DomainSet::full(), None, None);
+    let parent = CoreContext::for_test(DomainSet::full(), None);
     let hidden = parent.derive_with(
         ContextOverlay::new(config.clone(), DomainSet::full(), Default::default())
             .without_user_skill_roots(),
@@ -221,7 +221,7 @@ async fn load_workflow_metadata_skips_user_roots_under_a_hidden_context() {
 
     let mut config = crate::config::Config::default();
     config.workspace_dir = ws_dir.path().to_path_buf();
-    let hidden = CoreContext::for_test(DomainSet::full(), None, None).derive_with(
+    let hidden = CoreContext::for_test(DomainSet::full(), None).derive_with(
         ContextOverlay::new(config, DomainSet::full(), Default::default())
             .without_user_skill_roots(),
     );

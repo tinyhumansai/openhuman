@@ -2,7 +2,7 @@
 //!
 //! `tinychannels` is `optional = true`; `tinychannels-bus` is not. Every
 //! always-on consumer — `cron::bus`, `security::pairing`,
-//! `memory::conversations::bus`, `config::schema::channels` and the
+//! `threads::store::bus`, `config::schema::channels` and the
 //! `DomainEvent` variant — must therefore name the *contract* crate. Point
 //! one of them back at `tinychannels` and a `channels`-less build stops
 //! resolving, which CI's `cargo check` smoke lane would catch only if it

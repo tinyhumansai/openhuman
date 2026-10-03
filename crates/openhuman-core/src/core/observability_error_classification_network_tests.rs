@@ -1,18 +1,11 @@
 use super::*;
 
 #[test]
-fn does_not_classify_unrelated_breaker_messages() {
-    // Generic "circuit breaker open" without the `[memory_tree]` anchor
-    // must not be silenced — other domains may use the same phrase for
-    // real bugs that need to reach Sentry.
+fn does_not_classify_generic_breaker_messages() {
+    // A generic "circuit breaker open" must not be silenced: other domains
+    // may use the same phrase for real bugs that need to reach Sentry.
     assert_eq!(
         expected_error_kind("provider reliability: circuit breaker open for openai"),
-        None
-    );
-    // The `[memory_tree]` tag alone is not enough — must co-occur with
-    // the `circuit breaker open` substring.
-    assert_eq!(
-        expected_error_kind("[memory_tree] failed to run schema DDL: disk full"),
         None
     );
 }

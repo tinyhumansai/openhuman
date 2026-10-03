@@ -9,8 +9,6 @@ fn make_def(id: &str) -> AgentDefinition {
         omit_identity: true,
         omit_memory_context: true,
         omit_safety_preamble: true,
-        omit_profile: true,
-        omit_memory_md: true,
         model: ModelSpec::Inherit,
         temperature: 0.4,
         tools: ToolScope::Wildcard,
@@ -25,7 +23,6 @@ fn make_def(id: &str) -> AgentDefinition {
         timeout_secs: None,
         sandbox_mode: SandboxMode::None,
         background: false,
-        trigger_memory_agent: Default::default(),
         tokenjuice_compression: crate::inference::tokenjuice::AgentTokenjuiceCompression::Auto,
         subagents: vec![],
         delegate_name: None,
@@ -175,7 +172,7 @@ named = ["query_memory"]
 
 /// `subagents` is optional — omitting it should yield an empty Vec
 /// rather than a deserialization error. Most non-delegating agents
-/// (archivist, code_executor, etc.) will not list any.
+/// (critic, summarizer, etc.) will not list any.
 #[test]
 fn subagents_defaults_to_empty_when_omitted() {
     let toml_src = r#"
@@ -366,16 +363,7 @@ fn all_builtin_agent_definitions_have_expected_effective_max_iterations() {
 
     let expected: &[(&str, usize)] = &[
         // Extended policy (or high `max_iterations`) -> effective cap raised.
-        // Raised from 15 to 50 by 7ad30f7c5 (fix(registry): raise orchestrator
-        // max iterations); the loader registration test moved with it, this
-        // snapshot did not.
         ("orchestrator", 50),
-        // #5204: general-purpose read-only flow context/memory retrieval
-        // agent — `iteration_policy = "extended"` so it can loop across
-        // several retrievals in one turn. `#[cfg(feature = "flows")]`-gated
-        // (like the other flow agents), so this audit entry is too.
-        #[cfg(feature = "flows")]
-        ("flow_memory_agent", 50),
         ("planner", 50),
         ("task_manager_agent", 50),
         // Gated with `flows` (#4797) — absent from a slim build.
@@ -385,13 +373,9 @@ fn all_builtin_agent_definitions_have_expected_effective_max_iterations() {
         ("workflow_builder", 50),
         // Strict policy, declared `max_iterations` below the old global
         // default (10) -> effective cap lowered.
-        ("agent_memory", 6),
-        ("archivist", 3),
         ("critic", 5),
-        ("goals_agent", 5),
         ("image_agent", 8),
         ("morning_briefing", 8),
-        ("profile_memory_agent", 8),
         ("summarizer", 1),
         ("trigger_reactor", 6),
         ("trigger_triage", 2),

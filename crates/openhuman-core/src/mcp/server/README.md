@@ -1,6 +1,6 @@
 # mcp/server
 
-Opt-in **Model Context Protocol (MCP) server** that exposes a curated, security-gated slice of OpenHuman's tool surface (memory-tree reads/writes, core/agent introspection, subagent execution, web search) and bundled prompt assets to external MCP clients (Claude Desktop, Cursor, Windsurf, …). Started via `openhuman-core mcp`: stdio transport by default, or `--transport http` for Streamable HTTP + SSE on a local bind address. It is a JSON-RPC dispatcher, not a registered RPC domain: it has no `schemas.rs`/controllers and is wired only through `crates/openhuman-core/src/core/cli.rs`, translating each MCP `tools/call` into an existing registered core RPC method.
+Opt-in **Model Context Protocol (MCP) server** that exposes a curated, security-gated slice of OpenHuman's tool surface (Memory v2 reads/writes, core/agent introspection, subagent execution, web search) and bundled prompt assets to external MCP clients (Claude Desktop, Cursor, Windsurf, …). Started via `openhuman-core mcp`: stdio transport by default, or `--transport http` for Streamable HTTP + SSE on a local bind address. It is a JSON-RPC dispatcher, not a registered RPC domain: it has no `schemas.rs`/controllers and is wired only through `crates/openhuman-core/src/core/cli.rs`, translating each MCP `tools/call` into an existing registered core RPC method.
 
 The generic server half — JSON-RPC protocol, client-provenance sessions, argument validators, and the stdio and Streamable HTTP transports — lives in `tinymcp::server` (`vendor/tinymcp`). This module is the host half: it implements `tinymcp::McpServerHandler` (`handler.rs`) over OpenHuman's config, security policy, write audit, agent turns, tool catalog, prompt resources and subagent depth.
 
@@ -9,8 +9,8 @@ The generic server half — JSON-RPC protocol, client-provenance sessions, argum
 - Implement the MCP JSON-RPC server lifecycle: `initialize`, `ping`, `tools/list`, `tools/call`, `resources/list`, `resources/templates/list`, `resources/read`, plus notifications (`notifications/initialized`, `notifications/cancelled`).
 - Advertise a fixed catalog of MCP tools (`tool_specs`) with input JSON-schemas and MCP `ToolAnnotations` (`readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint`).
 - Validate/normalize tool arguments at the MCP layer (explicit rejection over silent clamping), map them to registered core RPC params, and dispatch via `all::try_invoke_registered_rpc`.
-- Enforce `SecurityPolicy` per call: read tools require `ToolOperation::Read`; `agent.run_subagent` and the three write tools require `ToolOperation::Act`.
-- Run write tools (`memory.store`, `memory.note`, `tree.tag`) through a dedicated write-dispatch + audit pipeline that records every attempt (success and rejection) to the MCP write-audit log.
+- Enforce `SecurityPolicy` per call: read tools require `ToolOperation::Read`; `agent.run_subagent` and the two write tools (`memory.learn`, `memory.forget`) require `ToolOperation::Act`.
+- Run write tools (`memory.learn`, `memory.forget`) through a dedicated write-dispatch + audit pipeline that records every attempt (success and rejection) to the MCP write-audit log.
 - Serve bundled prompt assets (`IDENTITY.md`, `SOUL.md`, `USER.md`, and each built-in subagent's `prompt.md`) as static MCP resources under the `openhuman://prompts/...` URI scheme.
 - Provide two transports: newline-delimited JSON-RPC over stdio, and Axum-based Streamable HTTP + SSE with session-id and protocol-version handshakes and optional bearer auth.
 - Capture client provenance from `initialize` `clientInfo.name` into a per-session `source_type` (e.g. `mcp:claude-desktop`) used for audit attribution.
@@ -22,7 +22,7 @@ The generic server half — JSON-RPC protocol, client-provenance sessions, argum
 | `crates/openhuman-core/src/mcp/server/mod.rs` | Module docstring + private submodule decls; re-exports `run_http`/`run_http_reporting`/`HttpServerConfig`, `run_stdio_from_cli`, `ensure_local_http`/`LocalMcpEndpoint`, `current_subagent_depth`/`HEADER_SUBAGENT_DEPTH`, `tool_specs`/`McpToolSpec`. |
 | `crates/openhuman-core/src/mcp/server/handler.rs` | `OpenHumanMcpHandler`, the `tinymcp::McpServerHandler` every transport serves: `serverInfo` (`openhuman-core` + instructions), the `mcp` source-type prefix, `tools/list` from the config-gated catalog, `tools/call` through `tools::dispatch` inside the request's subagent-depth scope, and the prompt resources. |
 | `crates/openhuman-core/src/mcp/server/tools/` | Tool catalog and dispatch: `mod.rs` (facade; re-exports `tinymcp::ToolCallError`), `types.rs` (`McpToolSpec` and the limit/tag constants, ungated so `McpToolSpec` is one real type in both builds), `specs.rs` (`tool_specs`/`base_tool_specs`/`tool_specs_for_loaded_config` builders and the `server_tool_spec` conversion), `params.rs` (OpenHuman's per-tool argument policy → RPC params, over `tinymcp::server::args`), `dispatch.rs` (`call_tool`/`list_tool_specs`, policy enforcement, subagent handlers). |
-| `crates/openhuman-core/src/mcp/server/write_dispatch.rs` | Write/audit pipeline for `memory.store`/`memory.note`/`tree.tag`: config load, act-policy enforcement, RPC dispatch to `openhuman.memory_doc_put`, audit-record write (success/rejection) via `crate::mcp::audit::record_write`, PII-redacting arg summaries. |
+| `crates/openhuman-core/src/mcp/server/write_dispatch.rs` | Write/audit pipeline for `memory.learn`/`memory.forget`: config load, act-policy enforcement, RPC dispatch to `openhuman.memory_learn` / `openhuman.memory_forget`, audit-record write (success/rejection) via `crate::mcp::audit::record_write`, PII-redacting arg summaries. |
 | `crates/openhuman-core/src/mcp/server/resources.rs` | Static `RESOURCE_CATALOG` of compile-time-embedded (`include_str!`) prompt markdown, served as `tinymcp::ResourceSpec`s and read by URI (`-32002` when unknown). Test cross-checks catalog vs `agent::agents::BUILTINS`. |
 | `crates/openhuman-core/src/mcp/server/http.rs` | OpenHuman's `run_http`/`run_http_reporting`: `tinymcp::run_http_reporting` bound to the handler. Gated on `all(feature = "mcp", feature = "http-server")`; `http-server` forwards `tinymcp/server-http`. |
 | `crates/openhuman-core/src/mcp/server/local.rs` | Lazily-started, process-wide in-process loopback HTTP MCP server (`ensure_local_http`, `LocalMcpEndpoint`). Lets the sandboxed `claude` subprocess (Claude Code provider) reach OpenHuman's memory/tools over loopback without the MCP server inheriting Claude Code's OS jail; a per-process random bearer token stops any other local process from talking to it. |
@@ -48,13 +48,11 @@ This module exposes **no** registered core RPC methods (no `schemas.rs`, no cont
 
 | MCP tool | Mapped core RPC method |
 | --- | --- |
-| `memory.search` | `openhuman.memory_tree_search` |
-| `memory.recall` | `openhuman.memory_tree_recall` |
-| `tree.read_chunk` | `openhuman.memory_tree_get_chunk` |
-| `tree.browse` | `openhuman.memory_tree_list_chunks` |
-| `tree.top_entities` | `openhuman.memory_tree_top_entities` |
-| `tree.list_sources` | `openhuman.memory_tree_list_sources` |
-| `memory.store` / `memory.note` / `tree.tag` | `openhuman.memory_doc_put` |
+| `memory.recall` | `openhuman.memory_recall` |
+| `memory.fetch` | `openhuman.memory_fetch` |
+| `memory.list` | `openhuman.memory_items_list` |
+| `memory.learn` | `openhuman.memory_learn` |
+| `memory.forget` | `openhuman.memory_forget` |
 | `web_search` | `openhuman.tools_web_search` |
 | `web_answer` | `openhuman.tools_web_answer` |
 | `searxng_search` | `openhuman.tools_searxng_search` |
@@ -64,10 +62,10 @@ This module exposes **no** registered core RPC methods (no `schemas.rs`, no cont
 
 It does **not** own any agent tools in the `tools.rs`/`crates/openhuman-core/src/tools` sense. The "tools" here are **MCP-protocol tools** advertised to external clients:
 
-- Read-only (`ToolOperation::Read`): `core.list_tools`, `core.tool_instructions`, `agent.list_subagents`, `memory.search`, `memory.recall`, `tree.read_chunk`, `tree.browse`, `tree.top_entities`, `tree.list_sources`, `web_search`, `web_answer`, `searxng_search` (listed only when a search provider can serve them; `crate::search::providers`).
-- Act-policy (`ToolOperation::Act`): `agent.run_subagent` (annotated destructive/open-world), and the write tools `memory.store`, `memory.note`, `tree.tag` (annotated destructive/idempotent, local-only).
+- Read-only (`ToolOperation::Read`): `core.list_tools`, `core.tool_instructions`, `agent.list_subagents`, `memory.recall`, `memory.fetch`, `memory.list`, `web_search`, `web_answer`, `searxng_search` (listed only when a search provider can serve them; `crate::search::providers`).
+- Act-policy (`ToolOperation::Act`): `agent.run_subagent` (annotated destructive/open-world), and `memory.learn` (annotated non-destructive, non-idempotent, local-only) and `memory.forget` (annotated destructive/idempotent, local-only).
 
-Argument bounds enforced in-layer: `k`/limits capped at `MAX_LIMIT` (50), default 10; `tree.tag` capped at 50 tags / 128 bytes per tag; `web_search` and `web_answer` `max_results` capped at `SEARCH_MAX_RESULTS` (20). Write tools derive deterministic upsert keys (`mcp-store-<slug>`, `mcp-note-<chunk_id>`, `mcp-tag-<chunk_id>`).
+Argument bounds enforced in-layer: memory `limit` capped at `MEMORY_MAX_LIMIT` (100; rejected, not clamped); `memory.forget` capped at 100 ids; `filter` is validated field by field (MetaFilter of `docs/specs/memory-v2.md`); `memory.fetch` `mode` is one of keyword/vector/hybrid but must be supported by the active engine (both launch engines: `hybrid` only); `web_search` and `web_answer` `max_results` capped at `SEARCH_MAX_RESULTS` (20).
 
 ## Events
 

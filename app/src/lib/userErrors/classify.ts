@@ -35,65 +35,6 @@ export interface RuntimeErrorSignal {
 }
 
 /**
- * The durable form of the corrupt-store notice (openhuman#5820).
- *
- * Same kind, scope and therefore the same descriptor id as the live
- * `memory_store_corrupt` socket broadcast, so the two paths collapse into
- * one NoticeCenter entry: the socket reaches a connected renderer instantly,
- * and the status poll replays it for a renderer that was not connected when
- * the quarantine happened (a boot-time integrity check). `null` once the
- * user has re-synced — the caller resolves the entry then.
- */
-export function classifyMemoryQuarantine(
-  quarantine: { resynced: boolean } | null | undefined
-): UserErrorDescriptor | null {
-  if (!quarantine || quarantine.resynced) return null;
-  return {
-    id: userErrorId('memory_store_corrupt', 'memory'),
-    kind: 'memory_store_corrupt',
-    severity: 'error',
-    scope: 'memory',
-    sourceDomain: 'memory',
-    titleKey: 'userErrors.memoryStoreCorrupt.title',
-    bodyKey: 'userErrors.memoryStoreCorrupt.body',
-    action: 'open_memory_sync',
-  };
-}
-
-/**
- * #5324: the memory pipeline's typed `budget_exhausted` cause, promoted to a
- * first-class user-actionable error.
- *
- * Unlike the classifiers below this takes the core's stable `FailureCode`
- * directly rather than pattern-matching prose — the memory pipeline already
- * emits a typed cause on `first_blocking_cause`, so there is nothing to guess.
- * That is the end state the text matchers below are migrating toward.
- *
- * Scoped to `workspace` (not `chat`) so a memory outage and a chat outage
- * dedupe as separate entries. They have different fixes, and a user can hit
- * both at once off the same exhausted budget.
- *
- * @param failureCode The `first_blocking_cause.code` from
- *   `memory_tree_pipeline_status`.
- * @returns A descriptor when the cause is user-actionable, else `null`.
- */
-export function classifyMemoryPipelineFailure(
-  failureCode: string | null | undefined
-): UserErrorDescriptor | null {
-  if (failureCode !== 'budget_exhausted') return null;
-  return {
-    id: userErrorId('memory_budget_exhausted', 'workspace'),
-    kind: 'memory_budget_exhausted',
-    severity: 'warning',
-    scope: 'workspace',
-    sourceDomain: 'memory_tree',
-    titleKey: 'userErrors.memoryBudgetExhausted.title',
-    bodyKey: 'userErrors.memoryBudgetExhausted.body',
-    action: 'open_embeddings_settings',
-  };
-}
-
-/**
  * A third-party integration is failing, so the connection state on screen is
  * stale (#composio).
  *
@@ -240,28 +181,6 @@ export function classifyUserActionableError(
       titleKey: 'userErrors.apiKeyMissing.title',
       bodyKey: 'userErrors.apiKeyMissing.body',
       action: 'open_provider_settings',
-    };
-  }
-
-  // The memory-tree store was corrupt and has been quarantined + rebuilt
-  // empty (openhuman#5820). Token-only on purpose: the only producer is the
-  // core's `STORE_CORRUPT_KIND` broadcast, and the underlying SQLite prose
-  // ("database disk image is malformed") also appears in raw logs other
-  // domains relay — promoting prose here could turn an unrelated relay into
-  // a "your memory was quarantined" panel entry.
-  if (text.includes('memory_store_corrupt')) {
-    return {
-      id: userErrorId('memory_store_corrupt', scope, signal.provider),
-      kind: 'memory_store_corrupt',
-      severity: 'error',
-      scope,
-      sourceDomain: signal.sourceDomain,
-      provider: signal.provider,
-      titleKey: 'userErrors.memoryStoreCorrupt.title',
-      bodyKey: 'userErrors.memoryStoreCorrupt.body',
-      // Re-syncing sources is the remediation — the rebuilt store is empty
-      // and repopulates from there.
-      action: 'open_memory_sync',
     };
   }
 

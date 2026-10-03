@@ -110,8 +110,8 @@ pub fn inject_workspace_file(prompt: &mut String, workspace_dir: &Path, filename
 }
 
 /// Inject pre-loaded string content into `prompt` under a `### label` heading,
-/// capped at `max_chars`. Mirrors the format of [`inject_snapshot_content`]
-/// and [`inject_workspace_file_capped`] but takes a `&str` instead of a file
+/// capped at `max_chars`. Mirrors the format of
+/// [`inject_workspace_file_capped`] but takes a `&str` instead of a file
 /// path. Used for pre-loaded prompt sections that need the same rendering as
 /// workspace-file content.
 ///
@@ -183,42 +183,9 @@ pub(crate) fn write_agents_md_blocks(out: &mut String, global: Option<&str>, loc
     out.push_str(&body);
 }
 
-/// for the output header and truncation semantics.
-///
-/// Empty/whitespace content is silently skipped, mirroring the file
-/// loader's "no noisy placeholder" behaviour.
-pub fn inject_snapshot_content(prompt: &mut String, label: &str, content: &str, max_chars: usize) {
-    let trimmed = content.trim();
-    if trimmed.is_empty() {
-        return;
-    }
-    let _ = writeln!(prompt, "### {label}\n");
-    let truncated = if trimmed.chars().count() > max_chars {
-        trimmed
-            .char_indices()
-            .nth(max_chars)
-            .map(|(idx, _)| &trimmed[..idx])
-            .unwrap_or(trimmed)
-    } else {
-        trimmed
-    };
-    prompt.push_str(truncated);
-    if truncated.len() < trimmed.len() {
-        let _ = writeln!(
-            prompt,
-            "\n\n[... truncated at {max_chars} chars — use `read` for full file]\n"
-        );
-    } else {
-        prompt.push_str("\n\n");
-    }
-}
-
 /// Inject `filename` into `prompt` with an explicit character budget.
 ///
-/// Used directly by callers that want a tighter cap than
-/// [`BOOTSTRAP_MAX_CHARS`] — notably `PROFILE.md` and `MEMORY.md` which
-/// are user-specific, potentially growing, and do not warrant a full
-/// 20K-char budget (see [`USER_FILE_MAX_CHARS`]).
+/// [`inject_workspace_file`] calls this with [`BOOTSTRAP_MAX_CHARS`].
 ///
 /// Missing / empty files are silently skipped so callers can inject
 /// optional files unconditionally without emitting a noisy placeholder.

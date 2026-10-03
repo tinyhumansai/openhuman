@@ -108,12 +108,12 @@ fn preview_workspace_text_from_root_errors_do_not_expose_workspace_root() {
 }
 
 #[test]
-fn resolve_workspace_path_resolves_memory_tree_content_inside_workspace() {
+fn resolve_workspace_path_resolves_nested_directory_inside_workspace() {
     let workspace = tempdir().unwrap();
-    let docs = workspace.path().join("memory_tree").join("content");
+    let docs = workspace.path().join("notes").join("content");
     fs::create_dir_all(&docs).unwrap();
 
-    let resolved = resolve_workspace_path(workspace.path(), "memory_tree/content").unwrap();
+    let resolved = resolve_workspace_path(workspace.path(), "notes/content").unwrap();
 
     let canonical_root = fs::canonicalize(workspace.path()).unwrap();
     assert!(

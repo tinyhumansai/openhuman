@@ -76,19 +76,6 @@ pub struct AgentPathsPatch {
     pub files_dir: Option<String>,
 }
 
-/// Patch for the global memory-sync cadence (#3302).
-///
-/// `sync_interval_secs` carries the new value to store in
-/// [`Config::memory_sync_interval_secs`]:
-/// - omitted / `null` → reset to "use the default cadence" (`None`)
-/// - `0` → "Manual only" (periodic auto-sync disabled)
-/// - `n > 0` → sync every `n` seconds (applied per source as a floor over the
-///   provider default by the scheduler)
-#[derive(Debug, Default)]
-pub struct MemorySyncSettingsPatch {
-    pub sync_interval_secs: Option<u64>,
-}
-
 /// Updates the `[autonomy]` (agent access mode) settings in the configuration.
 ///
 /// After saving, publishes a `DomainEvent::System(AutonomyConfigChanged)` so that
@@ -690,61 +677,4 @@ pub async fn get_agent_paths() -> Result<Outcome<serde_json::Value>, String> {
             action_dir_source(&config),
         )],
     ))
-}
-
-fn memory_sync_settings_value(stored: Option<u64>) -> serde_json::Value {
-    let is_manual = stored == Some(0);
-    let is_default = stored.is_none();
-    let selected_secs = stored.unwrap_or(crate::config::DEFAULT_MEMORY_SYNC_INTERVAL_SECS);
-    json!({
-        "sync_interval_secs": stored,
-        "selected_secs": selected_secs,
-        "is_manual": is_manual,
-        "is_default": is_default,
-        "default_secs": crate::config::DEFAULT_MEMORY_SYNC_INTERVAL_SECS,
-        "presets": crate::config::MEMORY_SYNC_INTERVAL_PRESETS_SECS,
-    })
-}
-
-/// Returns the current global memory-sync cadence and its derived view.
-pub async fn get_memory_sync_settings() -> Result<Outcome<serde_json::Value>, String> {
-    let config = load_config_with_timeout().await?;
-    let value = memory_sync_settings_value(config.memory_sync_interval_secs);
-    Ok(Outcome::single_log(value, "memory sync settings read"))
-}
-
-/// Updates the global memory-sync cadence and persists it. The running
-/// scheduler reads `config.memory_sync_interval_secs` fresh on each tick, so
-/// the new cadence takes effect from the next tick without a restart.
-pub async fn apply_memory_sync_settings(
-    config: &mut Config,
-    update: MemorySyncSettingsPatch,
-) -> Result<Outcome<serde_json::Value>, String> {
-    config.memory_sync_interval_secs = update.sync_interval_secs;
-    config.save().await.map_err(|e| e.to_string())?;
-
-    tracing::info!(
-        sync_interval_secs = ?config.memory_sync_interval_secs,
-        "[config:memory_sync] memory sync interval updated"
-    );
-
-    let stored = config.memory_sync_interval_secs;
-    let value = memory_sync_settings_value(stored);
-    let msg = match stored {
-        Some(0) => "memory sync set to Manual only".to_string(),
-        Some(n) => format!("memory sync interval set to {n}s"),
-        None => "memory sync interval reset to default".to_string(),
-    };
-    Ok(Outcome::new(
-        value,
-        vec![format!("{msg} — saved to {}", config.config_path.display())],
-    ))
-}
-
-/// Loads the configuration, applies memory-sync settings, and saves it.
-pub async fn load_and_apply_memory_sync_settings(
-    update: MemorySyncSettingsPatch,
-) -> Result<Outcome<serde_json::Value>, String> {
-    let mut config = load_config_with_timeout().await?;
-    apply_memory_sync_settings(&mut config, update).await
 }

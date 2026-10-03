@@ -1,39 +1,30 @@
-//! Persisting and reading Composio-sourced identity facets through the bound
-//! memory driver.
+//! Persisting and reading the identities connected Composio accounts report.
 //!
-//! Ported from the deleted `tinymemory_core::sync::composio::providers::profile`
-//! (tinymemory v1.13.4 removed it along with the rest of the in-process
-//! Composio pipeline — see the module's own docs on why the pipeline went and
-//! what replaced it). The behaviour is unchanged: each identity field a
-//! connected account reports becomes one `FacetType::Workflow` row, keyed
-//! `skill:<toolkit>:<identifier>:<kind>`, written through
-//! `MemoryProfile::upsert_provider_facet`.
-//!
-//! # What did not carry over
-//!
-//! The deleted engine also emitted a `LearningCandidate` for every matchable
-//! field so the stability detector could score provider data alongside other
-//! evidence on the next rebuild (`learning_candidate::global().push(...)`).
-//! That queue is engine-internal state with no bus member — `upsert_provider_facet`
-//! is a store write only — so this host cannot reproduce it. The facet itself
-//! is written identically; only the downstream stability-scoring signal is
-//! missing. Worth knowing if identity facets ever seem slower to stabilise
-//! than they did before v1.13.4.
+//! Each connected account's profile is expanded into canonical
+//! `(IdentityKind, value)` rows (per-toolkit quirks live in
+//! `expand_identity_rows`) and merged into one [`ConnectedIdentity`] per
+//! `(toolkit, connection)`, stored in
+//! `<workspace>/integrations/composio_identities.json` through
+//! [`super::file_store`]. The connection picker labels, the prompt's
+//! connected-identities section and the flows connection list read them back.
 
 use crate::config::Config;
-use crate::memory::api::provider::FacetType;
-use tinymemory_api::composio::{
+use crate::integrations::composio::contract::{
     canonicalize, normalize_connection_identifier, ConnectedIdentity, IdentityKind,
     ProviderUserProfile,
 };
 
-/// Persist one [`ProviderUserProfile`] as identity facets, returning how many
-/// rows were written.
+use super::file_store::{self, IDENTITIES_FILE};
+
+/// Persist one [`ProviderUserProfile`], returning how many identity fields
+/// were written.
+///
+/// Fields merge into the stored identity for the connection: a field the
+/// profile does not report keeps its earlier value.
 ///
 /// # Errors
 ///
-/// Backend failures from the bound driver, or a driver that does not serve
-/// `MemoryProfile`.
+/// The identities file cannot be read or written.
 pub async fn persist_provider_profile(
     config: &Config,
     profile: &ProviderUserProfile,
@@ -51,52 +42,45 @@ pub async fn persist_provider_profile(
         return Ok(0);
     }
 
-    let binding = crate::memory::binding::for_config(config)?;
-    let profile_family = binding.provider().as_profile().ok_or_else(|| {
-        format!(
-            "the bound memory driver '{}' does not serve Profile",
-            binding.driver_id()
-        )
-    })?;
-
-    let now = now_secs();
-    let mut written = 0usize;
-    for (kind, value) in rows {
-        let key = format!("skill:{toolkit}:{identifier}:{}", kind.as_str());
-        let facet_id = format!("skill-{toolkit}-{identifier}-{}", kind.as_str());
-        match profile_family
-            .upsert_provider_facet(
-                &facet_id,
-                FacetType::Workflow,
-                &key,
-                &value,
-                kind.confidence(),
-                None,
-                now,
-            )
-            .await
-        {
-            Ok(()) => written += 1,
-            Err(error) => {
-                tracing::warn!(
-                    toolkit = %toolkit,
-                    identifier = %identifier,
-                    kind = kind.as_str(),
-                    %error,
-                    "[composio:profile] profile_upsert failed (non-fatal)"
-                );
-            }
+    let path = file_store::path(config, IDENTITIES_FILE);
+    let _guard = file_store::lock().await;
+    let mut identities: Vec<ConnectedIdentity> = file_store::load(&path).await?;
+    let index = match identities
+        .iter()
+        .position(|id| id.source == toolkit && id.identifier == identifier)
+    {
+        Some(index) => index,
+        None => {
+            identities.push(ConnectedIdentity {
+                source: toolkit.clone(),
+                identifier: identifier.clone(),
+                ..ConnectedIdentity::default()
+            });
+            identities.len() - 1
         }
+    };
+    let entry = &mut identities[index];
+    let written = rows.len();
+    for (kind, value) in rows {
+        let slot = match kind {
+            IdentityKind::DisplayName => &mut entry.display_name,
+            IdentityKind::Email => &mut entry.email,
+            IdentityKind::Handle => &mut entry.handle,
+            IdentityKind::Phone => &mut entry.phone,
+            IdentityKind::UserId => &mut entry.user_id,
+            IdentityKind::AvatarUrl => &mut entry.avatar_url,
+            IdentityKind::ProfileUrl => &mut entry.profile_url,
+        };
+        *slot = Some(value);
     }
+    identities.sort_by(|a, b| (&a.source, &a.identifier).cmp(&(&b.source, &b.identifier)));
+    file_store::save(&path, &identities).await?;
 
-    if written > 0 {
-        tracing::debug!(
-            toolkit = %toolkit,
-            identifier = %identifier,
-            rows_written = written,
-            "[composio:profile] persisted identity rows"
-        );
-    }
+    tracing::debug!(
+        toolkit = %toolkit,
+        rows_written = written,
+        "[composio:profile] persisted identity rows"
+    );
     Ok(written)
 }
 
@@ -148,61 +132,22 @@ fn json_str<'a>(v: &'a serde_json::Value, key: &str) -> Option<&'a str> {
     v.get(key).and_then(|x| x.as_str())
 }
 
-/// Load all provider-sourced identities, grouped by `(source, connection_id)`.
+/// Load every stored connected-account identity, ordered by
+/// `(source, connection)`.
 ///
 /// # Errors
 ///
-/// Backend failures from the bound driver, or a driver that does not serve
-/// `MemoryProfile`.
+/// The identities file exists but cannot be read or parsed.
 pub async fn load_connected_identities(config: &Config) -> Result<Vec<ConnectedIdentity>, String> {
-    let binding = crate::memory::binding::for_config(config)?;
-    let profile_family = binding.provider().as_profile().ok_or_else(|| {
-        format!(
-            "the bound memory driver '{}' does not serve Profile",
-            binding.driver_id()
-        )
-    })?;
-    let facets = profile_family
-        .facets_by_type(FacetType::Workflow)
-        .await
-        .map_err(|error| error.to_string())?;
-
-    let mut grouped: std::collections::BTreeMap<(String, String), ConnectedIdentity> =
-        std::collections::BTreeMap::new();
-    for facet in facets {
-        let Some((source, identifier, kind_str)) = parse_skill_identity_key(&facet.key) else {
-            continue;
-        };
-        let Some(kind) = IdentityKind::parse(&kind_str) else {
-            continue;
-        };
-        let entry = grouped
-            .entry((source.clone(), identifier.clone()))
-            .or_insert_with(|| ConnectedIdentity {
-                source,
-                identifier,
-                ..Default::default()
-            });
-        match kind {
-            IdentityKind::DisplayName => entry.display_name = Some(facet.value),
-            IdentityKind::Email => entry.email = Some(facet.value),
-            IdentityKind::Handle => entry.handle = Some(facet.value),
-            IdentityKind::Phone => entry.phone = Some(facet.value),
-            IdentityKind::UserId => entry.user_id = Some(facet.value),
-            IdentityKind::AvatarUrl => entry.avatar_url = Some(facet.value),
-            IdentityKind::ProfileUrl => entry.profile_url = Some(facet.value),
-        }
-    }
-    Ok(grouped.into_values().collect())
+    file_store::load(&file_store::path(config, IDENTITIES_FILE)).await
 }
 
-/// Delete every identity row for a `(source, connection_id)` pair — used on
-/// disconnect. Returns how many rows were removed.
+/// Delete the stored identity for a `(source, connection_id)` pair — used on
+/// disconnect. Returns how many identity fields were removed.
 ///
 /// # Errors
 ///
-/// Backend failures from the bound driver, or a driver that does not serve
-/// `MemoryProfile`.
+/// The identities file cannot be read or written.
 pub async fn delete_connected_identity_facets(
     config: &Config,
     source: &str,
@@ -211,55 +156,40 @@ pub async fn delete_connected_identity_facets(
     let source = normalize_connection_identifier(source);
     let identifier = normalize_connection_identifier(identifier);
 
-    let binding = crate::memory::binding::for_config(config)?;
-    let profile_family = binding.provider().as_profile().ok_or_else(|| {
-        format!(
-            "the bound memory driver '{}' does not serve Profile",
-            binding.driver_id()
-        )
-    })?;
-    let facets = profile_family
-        .facets_by_type(FacetType::Workflow)
-        .await
-        .map_err(|error| error.to_string())?;
-
+    let path = file_store::path(config, IDENTITIES_FILE);
+    let _guard = file_store::lock().await;
+    let mut identities: Vec<ConnectedIdentity> = file_store::load(&path).await?;
     let mut deleted = 0usize;
-    for facet in facets {
-        let Some((s, i, _kind)) = parse_skill_identity_key(&facet.key) else {
-            continue;
-        };
-        if s == source && i == identifier {
-            // Same swallow as the deleted engine's own version: a disconnect
-            // must not fail because one row was already gone.
-            match profile_family.delete_facet_by_id(&facet.facet_id).await {
-                Ok(true) => deleted += 1,
-                Ok(false) => {}
-                Err(error) => tracing::debug!(
-                    facet_id = %facet.facet_id,
-                    %error,
-                    "[composio:profile] delete_connected_identity_facets: delete_facet_by_id failed (non-fatal)"
-                ),
-            }
+    identities.retain(|id| {
+        if id.source == source && id.identifier == identifier {
+            deleted += field_count(id);
+            false
+        } else {
+            true
         }
+    });
+    if deleted > 0 {
+        file_store::save(&path, &identities).await?;
     }
     Ok(deleted)
 }
 
-fn parse_skill_identity_key(key: &str) -> Option<(String, String, String)> {
-    let mut parts = key.split(':');
-    let prefix = parts.next()?;
-    let source = parts.next()?;
-    let identifier = parts.next()?;
-    let kind = parts.next()?;
-    if prefix != "skill" || parts.next().is_some() {
-        return None;
-    }
-    Some((source.to_string(), identifier.to_string(), kind.to_string()))
+/// How many identity fields an identity carries.
+fn field_count(identity: &ConnectedIdentity) -> usize {
+    [
+        &identity.display_name,
+        &identity.email,
+        &identity.handle,
+        &identity.phone,
+        &identity.user_id,
+        &identity.avatar_url,
+        &identity.profile_url,
+    ]
+    .iter()
+    .filter(|field| field.is_some())
+    .count()
 }
 
-fn now_secs() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs_f64())
-        .unwrap_or(0.0)
-}
+#[cfg(test)]
+#[path = "identity_store_tests.rs"]
+mod tests;

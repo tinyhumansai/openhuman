@@ -2,7 +2,7 @@
 
 use super::support::{counts, envelope, workspace_dir};
 use crate::core::Outcome;
-use crate::memory::ApiEnvelope;
+use crate::threads::ApiEnvelope;
 use tinyagents_session::transcript::spend::thread_spend;
 
 /// Request for [`token_usage`]: the thread whose persisted usage to total.

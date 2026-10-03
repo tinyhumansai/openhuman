@@ -11,7 +11,7 @@ mod schema_defs;
 pub use registry::{all_controller_schemas, all_registered_controllers};
 
 #[cfg(test)]
-use crate::memory::{
+use crate::threads::{
     AppendConversationMessageRequest, ConversationMessagesRequest, DeleteConversationThreadRequest,
     EmptyRequest, GenerateConversationThreadTitleRequest, UpdateConversationMessageRequest,
     UpsertConversationThreadRequest,

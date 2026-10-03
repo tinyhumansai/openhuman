@@ -28,10 +28,8 @@ import {
   classifyProviderPin,
   expandRustIncludes,
   parseAllList,
-  parseArtifactCapabilitiesPin,
   parseGitlinks,
   parseRecords,
-  parseWorkflowMemoryBlocks,
   rewindDeclared,
   toplevelProvesSubmodule,
 } from "../lib/module-pins.mjs";
@@ -52,14 +50,6 @@ const readRegistry = () => {
   ].map(([, name]) => `${recordsDir}/${name}.rs`);
   return [entry, ...recordModules.map(readRustModule)].join("\n");
 };
-const readMemory = () => {
-  const relativePath = "crates/openhuman-core/src/modules/memory.rs";
-  const entry = readRustModule(relativePath);
-  return /^mod capabilities;$/m.test(entry)
-    ? `${entry}\n${readRustModule("crates/openhuman-core/src/modules/memory/capabilities.rs")}`
-    : entry;
-};
-
 const run = (cli, args = [], env = {}) =>
   spawnSync(process.execPath, [cli, ...args], {
     cwd: REPO_ROOT,
@@ -87,7 +77,6 @@ function submodulesPresent() {
   const paths = [
     "vendor/tinydocs",
     "vendor/tinywallet",
-    "vendor/tinymemory",
     "vendor/tinyjuice",
     "vendor/tinyvoice",
     "vendor/tinyruntime",
@@ -141,16 +130,16 @@ test("parses every record `ALL` lists out of the real registry", () => {
 
 test("parses per-platform assets, digests included", () => {
   const src = readRegistry();
-  const mem = [...parseRecords(src).values()].find(
-    (r) => r.id === "tinymemory",
+  const rec = [...parseRecords(src).values()].find(
+    (r) => r.id === "tinyjuice",
   );
-  assert.ok(mem, "tinymemory record not found");
-  assert.ok(mem.assets.length > 0, "tinymemory publishes no assets?");
-  for (const a of mem.assets) {
+  assert.ok(rec, "tinyjuice record not found");
+  assert.ok(rec.assets.length > 0, "tinyjuice publishes no assets?");
+  for (const a of rec.assets) {
     assert.match(a.sha256, /^[0-9a-f]{64}$/, `bad digest for ${a.hostKey}`);
     assert.ok(
-      a.archive.includes(mem.version),
-      `${a.archive} does not carry version ${mem.version}`,
+      a.archive.includes(rec.version),
+      `${a.archive} does not carry version ${rec.version}`,
     );
   }
 });
@@ -165,25 +154,6 @@ test("parses a crate-visible record definition", () => {
     'pub(crate) const TINYTEST: ModuleRecord = ModuleRecord {\n  id: "tinytest",\n  version: "1.2.3",\n  assets: &[],\n};',
   );
   assert.equal(records.get("TINYTEST")?.id, "tinytest");
-});
-
-test("finds ARTIFACT_CAPABILITIES_PIN and the workflow memory blocks", () => {
-  const memSrc = readMemory();
-  assert.match(parseArtifactCapabilitiesPin(memSrc), /^\d+\.\d+\.\d+$/);
-  const wf = readFileSync(
-    join(REPO_ROOT, ".github/workflows/ci-full.yml"),
-    "utf8",
-  );
-  const blocks = parseWorkflowMemoryBlocks(wf);
-  assert.ok(
-    blocks.versions.length > 0,
-    "ci-full.yml has no memory_version block",
-  );
-  assert.equal(
-    blocks.versions.length,
-    blocks.digests.length,
-    "version/digest blocks must pair",
-  );
 });
 
 // ── Provider records ──────────────────────────────────────────────────────────
@@ -403,19 +373,10 @@ function fixtureRoot(files) {
   return root;
 }
 
-const MINIMAL_WORKFLOW =
-  'jobs:\n  x:\n    steps:\n      - run: |\n          memory_version="9.9.9"\n          memory_sha256="' +
-  "f".repeat(64) +
-  '"\n';
-
 test("an unparseable registry fails the gate instead of passing", () => {
   const root = fixtureRoot({
     "crates/openhuman-core/src/modules/registry.rs":
       "// everything here got deleted\n",
-    "crates/openhuman-core/src/modules/memory.rs":
-      'pub(crate) const ARTIFACT_CAPABILITIES_PIN: &str = "9.9.9";\n',
-    ".github/workflows/ci-full.yml": MINIMAL_WORKFLOW,
-    ".github/workflows/e2e-reusable.yml": MINIMAL_WORKFLOW,
   });
   try {
     const r = run(PINS_CLI, [root]);
@@ -437,7 +398,6 @@ test("an unparseable registry fails the gate instead of passing", () => {
 
 test("a missing registry file fails the gate instead of passing", () => {
   const root = fixtureRoot({
-    ".github/workflows/e2e-reusable.yml": MINIMAL_WORKFLOW,
   });
   try {
     const r = run(PINS_CLI, [root]);
@@ -467,10 +427,6 @@ test("records with no checked-out submodule fail the gate instead of being skipp
   ].join("\n");
   const root = fixtureRoot({
     "crates/openhuman-core/src/modules/registry.rs": registry,
-    "crates/openhuman-core/src/modules/memory.rs":
-      'pub(crate) const ARTIFACT_CAPABILITIES_PIN: &str = "1.12.0";\n',
-    ".github/workflows/ci-full.yml": MINIMAL_WORKFLOW,
-    ".github/workflows/e2e-reusable.yml": MINIMAL_WORKFLOW,
   });
   try {
     const r = run(PINS_CLI, [root]);

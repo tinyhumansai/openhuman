@@ -314,7 +314,6 @@ async fn apply_model_settings_trims_and_clears_optional_provider_fields() {
         vision_provider: Some(" provider-vision ".into()),
         memory_provider: Some(" provider-memory ".into()),
         embeddings_provider: Some(" provider-embed ".into()),
-        learning_provider: Some(" provider-learning ".into()),
         ..Default::default()
     };
     apply_model_settings(&mut cfg, set)
@@ -340,7 +339,6 @@ async fn apply_model_settings_trims_and_clears_optional_provider_fields() {
         vision_provider: Some(" ".into()),
         memory_provider: Some(" ".into()),
         embeddings_provider: Some(" ".into()),
-        learning_provider: Some(" ".into()),
         ..Default::default()
     };
     apply_model_settings(&mut cfg, clear)
@@ -354,7 +352,6 @@ async fn apply_model_settings_trims_and_clears_optional_provider_fields() {
     assert!(cfg.vision_provider.is_none());
     assert!(cfg.memory_provider.is_none());
     assert!(cfg.embeddings_provider.is_none());
-    assert!(cfg.learning_provider.is_none());
 }
 
 // ── apply_autonomy_settings ────────────────────────────────────

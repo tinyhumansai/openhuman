@@ -8,7 +8,7 @@
 //!   config.toml, auth-profiles.json, core.token      runtime-wide
 //!   workspace/
 //!     session_db/sessions.db                         runtime-wide run ledger
-//!     agents/<id>/{SOUL.md, MEMORY.md, skills/}          the agent's home
+//!     agents/<id>/{SOUL.md, skills/}                     the agent's home
 //!     session_raw/<ts>_<id>.jsonl                    its transcripts
 //!   agents/<id>/action/                              its default action_dir
 //! ```

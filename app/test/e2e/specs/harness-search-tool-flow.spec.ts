@@ -10,7 +10,6 @@
  *   - "web_search_tool"     — search the web (NOT "web_search")
  *   - "web_answer_tool"     — grounded answer with citations (search role tools)
  *   - "file_read"           — read a file from the filesystem
- *   - "memory_tree_search_entities" — search the memory tree for entities
  *
  * Mock surface notes:
  *   - memory_recall / web_search_tool / file_read all route to the LLM endpoint.

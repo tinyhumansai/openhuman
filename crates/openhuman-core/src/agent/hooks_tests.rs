@@ -119,7 +119,7 @@ async fn fire_hooks_accepts_empty_hook_list() {
 /// A detached hook task must observe the same ambient [`CoreContext`] as the
 /// dispatch that fired it. A bare `tokio::spawn` loses the `CURRENT_CONTEXT`
 /// task-local — under a scoped multi-tenant dispatch that meant the hook fell
-/// back to the process default context, and the archivist/goals paths behind
+/// back to the process default context, and any context-derived work behind
 /// it read and wrote another tenant's workspace. `fire_hooks` now re-enters
 /// the captured scope inside the spawned task; this pins that.
 #[tokio::test]
@@ -148,7 +148,6 @@ async fn fired_hooks_observe_the_firing_dispatchs_core_context() {
     let tenant_ctx = CoreContext::for_test(
         crate::core::runtime::DomainSet::full(),
         Some(std::path::PathBuf::from("/tmp/tenant-a")),
-        None,
     );
     let (tx, rx) = tokio::sync::oneshot::channel();
     let probe: std::sync::Arc<dyn PostTurnHook> = std::sync::Arc::new(ContextProbe {

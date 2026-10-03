@@ -7,7 +7,7 @@ import {
   toSelectableChatModels,
 } from '../aiRouting';
 
-const WORKLOADS = ['chat', 'reasoning', 'agentic', 'coding', 'memory', 'learning'] as const;
+const WORKLOADS = ['chat', 'reasoning', 'agentic', 'coding', 'memory'] as const;
 
 /** Build a full 8-workload routing map defaulting every slot to managed. */
 function routingOf(

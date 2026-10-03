@@ -50,7 +50,6 @@ async fn resumed_orphaned_tool_head_is_repaired_before_the_request() {
             .tools(Vec::new())
             .workspace_dir(root.path().join("workspace"))
             .action_dir(root.path().to_path_buf())
-            .memory(crate::memory::test_support::noop_memory())
             .tool_dispatcher(Box::new(tinytools_agent::dialect::NativeDialect))
             .build()
             .expect("session build")

@@ -55,7 +55,7 @@ async fn gated_method_is_unknown_at_transport_even_with_malformed_params() {
         .expect("a flows.* method exists in the full registry");
 
     for params in [json!({}), json!({ "obviously_not_a_real_param_xyz": true })] {
-        let ctx = CoreContext::for_test(DomainSet::harness(), None, None);
+        let ctx = CoreContext::for_test(DomainSet::harness(), None);
         let err = CoreContext::scope(
             ctx,
             invoke_method(default_state(), &gated_method, params.clone()),
@@ -120,63 +120,39 @@ async fn invoke_memory_init_accepts_empty_params() {
 }
 
 #[tokio::test]
-async fn invoke_memory_list_namespaces_rejects_unknown_param() {
+async fn invoke_memory_learn_rejects_unknown_param() {
     let err = invoke_method(
         default_state(),
-        "openhuman.memory_list_namespaces",
-        json!({ "extra": true }),
+        "openhuman.memory_learn",
+        json!({ "text": "prefers tea", "extra": true }),
     )
     .await
     .expect_err("unknown param should fail");
-    assert!(err.contains("extra"));
+    assert!(err.contains("extra"), "{err}");
 }
 
 #[tokio::test]
-async fn invoke_memory_query_namespace_missing_namespace_fails() {
+async fn invoke_memory_recall_missing_question_fails() {
     let err = invoke_method(
         default_state(),
-        "openhuman.memory_query_namespace",
-        json!({ "query": "who owns atlas" }),
+        "openhuman.memory_recall",
+        json!({ "limit": 3 }),
     )
     .await
-    .expect_err("missing namespace should fail");
-    assert!(err.contains("namespace"));
+    .expect_err("missing question should fail");
+    assert!(err.contains("question"), "{err}");
 }
 
 #[tokio::test]
-async fn invoke_memory_recall_memories_rejects_unknown_param() {
+async fn invoke_retired_v1_memory_method_is_unknown() {
     let err = invoke_method(
         default_state(),
         "openhuman.memory_recall_memories",
-        json!({ "namespace": "team", "extra": true }),
+        json!({ "namespace": "team" }),
     )
     .await
-    .expect_err("unknown param should fail");
-    assert!(err.contains("extra"));
-}
-
-#[tokio::test]
-async fn invoke_migrate_openclaw_rejects_unknown_param() {
-    let err = invoke_method(
-        default_state(),
-        "openhuman.migrate_openclaw",
-        json!({ "x": 1 }),
-    )
-    .await
-    .expect_err("unknown param should fail");
-    assert!(err.contains("unknown param 'x'"));
-}
-
-#[tokio::test]
-async fn invoke_migrate_hermes_rejects_unknown_param() {
-    let err = invoke_method(
-        default_state(),
-        "openhuman.migrate_hermes",
-        json!({ "x": 1 }),
-    )
-    .await
-    .expect_err("unknown param should fail");
-    assert!(err.contains("unknown param 'x'"));
+    .expect_err("v1 method is gone");
+    assert!(err.contains("memory_recall_memories"), "{err}");
 }
 
 #[test]

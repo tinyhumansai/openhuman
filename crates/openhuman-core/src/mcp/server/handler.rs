@@ -28,7 +28,7 @@ use super::{resources, subagent_depth, tools};
 const SOURCE_TYPE_PREFIX: &str = "mcp";
 
 /// The `instructions` OpenHuman's `initialize` result carries.
-const INSTRUCTIONS: &str = "OpenHuman MCP exposes first-level core integration: inspect the live tool catalog with core.list_tools or core.tool_instructions, inspect subagents with agent.list_subagents, run a standalone subagent with agent.run_subagent, use web_search or web_answer for live web lookups (and searxng_search when self-hosted search is enabled), and use memory.search or memory.recall plus tree.read_chunk for local memory reads.";
+const INSTRUCTIONS: &str = "OpenHuman MCP exposes first-level core integration: inspect the live tool catalog with core.list_tools or core.tool_instructions, inspect subagents with agent.list_subagents, run a standalone subagent with agent.run_subagent, use web_search or web_answer for live web lookups (and searxng_search when self-hosted search is enabled), and use memory.recall (answer with citations), memory.fetch or memory.list for local memory reads, and memory.learn or memory.forget to change it.";
 
 /// The handler every OpenHuman MCP transport serves.
 #[derive(Debug, Clone, Copy, Default)]

@@ -9,7 +9,8 @@ use super::dirs::{default_action_dir, resolve_action_dir, ConfigResolutionSource
 use super::env::EnvLookup;
 use super::impl_load::{parse_config_boxed, read_config_with_recovery_or_default};
 use super::migrate::{
-    migrate_cloud_provider_slugs, migrate_legacy_inference_url, migrate_search_settings,
+    migrate_cloud_provider_slugs, migrate_legacy_inference_url, migrate_legacy_memory_sources,
+    migrate_search_settings,
 };
 use super::secrets::decrypt_config_secrets;
 use anyhow::Result;
@@ -170,6 +171,7 @@ impl Config {
         migrate_legacy_inference_url(&mut config);
         migrate_cloud_provider_slugs(&mut config);
         migrate_search_settings(&mut config);
+        migrate_legacy_memory_sources(&mut config);
         config.apply_env_overrides_from(env);
 
         if config_was_corrupted {

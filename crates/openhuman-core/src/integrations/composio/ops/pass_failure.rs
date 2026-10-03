@@ -1,5 +1,5 @@
-//! When a connector sync pass has failed, and how long a Sources-row run waits
-//! before asking again (openhuman#6255).
+//! When a connector sync pass has failed, and how long a `composio_sync` run
+//! waits before asking again (openhuman#6255).
 //!
 //! The connector module reports a page it could not read as
 //! [`SyncStage::Failed`]: it keeps the pages it had already read, puts the
@@ -19,7 +19,7 @@ use tinyconnectors_bus::records::{ConnectorSyncResponse, SyncStage};
 /// the source row and written to the log, so it is cut rather than kept whole.
 pub(crate) const MAX_REASON_CHARS: usize = 300;
 
-/// Attempts a Sources-row run makes at a pass the connector keeps failing:
+/// Attempts a `composio_sync` run makes at a pass the connector keeps failing:
 /// the first try and two retries.
 pub(crate) const MAX_FAILED_ATTEMPTS: u32 = 3;
 
@@ -104,19 +104,6 @@ pub(crate) fn retry_delay(failed_attempts: u32) -> Option<Duration> {
         return None;
     }
     Some(Duration::from_secs(5 * 2_u64.pow(failed_attempts - 1)))
-}
-
-/// [`retry_delay`], unless the failed pass left no room under the run's item
-/// cap.
-///
-/// A failed pass still writes what it read, and that can fill the cap. Waiting
-/// then only reaches the loop's cap check, which ends the run as completed and
-/// loses the failure; ending it here reports the failure with what was written.
-pub(crate) fn retry_after_failure(failed_attempts: u32, cap_left: bool) -> Option<Duration> {
-    if !cap_left {
-        return None;
-    }
-    retry_delay(failed_attempts)
 }
 
 #[cfg(test)]

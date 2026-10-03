@@ -170,20 +170,6 @@ const TOOL_FAMILIES: &[ToolFamily] = &[
         ],
         default_enabled: false,
     },
-    ToolFamily {
-        id: "learning_manage",
-        rust_names: &[
-            "learning_update_facet",
-            "learning_pin_facet",
-            "learning_unpin_facet",
-            "learning_forget_facet",
-            "learning_rebuild_cache",
-            "learning_reset_cache",
-            "learning_save_profile",
-            "learning_enrich_profile",
-        ],
-        default_enabled: false,
-    },
     // Task & workflow productivity — overextending tools (agent-tool
     // expansion). Only the destructive/persistent-config mutators are listed
     // here so the onboarding toggle surface can default them OFF and let users

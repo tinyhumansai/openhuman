@@ -94,12 +94,11 @@ The `openhuman.inference_claude_code_auth_status` RPC reports the richer state f
 The CLI sees these tools as `mcp__openhuman__<name>`, served over the loopback HTTP MCP endpoint described above (the same tool set the stdio MCP server in [`crates/openhuman-core/src/mcp/server/`](../../../crates/openhuman-core/src/mcp/server/) exposes to other MCP clients):
 
 - `core.list_tools`, `core.tool_instructions`
-- `memory.search`, `memory.recall`
-- `tree.read_chunk`, `tree.browse`, `tree.top_entities`, `tree.list_sources`
+- `memory.recall`, `memory.fetch`, `memory.list`, `memory.learn`, `memory.forget`
 - `agent.list_subagents`, `agent.run_subagent` (write, flagged `destructiveHint` per MCP spec)
 - `searxng_search`
 
-The MCP server enforces `SecurityPolicy::ToolOperation` checks; all tools except `agent.run_subagent` are read-only. The CLI's own `tool_use` blocks (its internal Read/Bash/etc. calls) are never surfaced to OpenHuman as harness tool calls: the CLI has already executed them by the time they appear in the stream, so `event_mapper.rs` only strips their argument JSON out of the visible text.
+The MCP server enforces `SecurityPolicy::ToolOperation` checks; `agent.run_subagent`, `memory.learn` and `memory.forget` act (write); the rest are read-only. The CLI's own `tool_use` blocks (its internal Read/Bash/etc. calls) are never surfaced to OpenHuman as harness tool calls: the CLI has already executed them by the time they appear in the stream, so `event_mapper.rs` only strips their argument JSON out of the visible text.
 
 ## Limitations (v1)
 

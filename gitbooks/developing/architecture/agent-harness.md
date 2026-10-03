@@ -160,7 +160,7 @@ Every turn - whether the user just typed a message, a Telegram webhook just fire
             │      Agent::turn()           │
             │  1. resume transcript        │
             │  2. build system prompt*     │
-            │  3. inject memory context    │
+            │  3. new session: context.md │
             │  4. enter tool-call loop ────┼──► provider call
             │  5. dispatch tool calls  ────┼──► tool exec / sub-agent spawn
             │  6. context guard / compact  │
@@ -170,8 +170,8 @@ Every turn - whether the user just typed a message, a Telegram webhook just fire
                        │ async, after the user sees the reply
                        ▼
               ┌─────────────────┐
-              │  post-turn      │  archivist · learning · cost log ·
-              │  hooks          │  episodic memory indexing
+              │  post-turn      │  cost log · conversation
+              │  hooks          │  buffering for memory
               └─────────────────┘
 
 * system prompt is built only on the first turn - subsequent
@@ -188,7 +188,7 @@ A **session** is the live conversation an `Agent` instance is running. The `Agen
 - The conversation history (system + user + assistant + tool messages).
 - The provider client to call (model resolved by the [model router](../../features/model-routing/)).
 - The tool registry visible to the model.
-- A memory loader that hydrates relevant memories before each user message.
+- The `memory` tool (when a memory engine is on), through which the model recalls, fetches, learns and forgets on demand.
 - Per-turn budgets - max tool iterations, max payload size, max USD cost.
 - Local action budget - a rolling hourly cap for side-effecting tool actions, read from `config.autonomy.max_actions_per_hour`.
 
@@ -196,11 +196,11 @@ A **session** is the live conversation an `Agent` instance is running. The `Agen
 
 1. **Resumes the session transcript** if this is a fresh process - re-loading the exact provider messages from disk so the inference backend's KV-cache prefix still hits.
 2. **Builds the system prompt** (only on the first turn). This pulls in identity, soul, profile, memory, connected integrations, available tools, safety preamble - assembled by the prompt section builder.
-3. **Injects memory context** for the new user message via the memory loader: relevant chunks from the [Memory Tree](../../features/obsidian-wiki/memory-tree.md), with citations attached so the UI can show provenance.
+3. **Prepends the memory brief on a new session.** The session host adds `<workspace>/memory/context.md`, wrapped in `<memory-context>`, as the first user message of a NEW session only; a resumed session keeps its frozen transcript. Per-turn recall is not automatic: the model calls the `memory` tool, which returns an answer with citations (see [Memory architecture](memory.md)).
 4. **Enters the tool-call loop** (next section).
-5. **Spawns post-turn hooks** in the background - the user gets their answer before archivist / learning / cost logging finishes.
+5. **Spawns post-turn hooks** in the background - the user gets their answer before cost logging and conversation buffering finish.
 
-The system prompt is **not** rebuilt on subsequent turns. Even cosmetic byte changes invalidate the KV-cache prefix and force a full re-prefill, so dynamic per-turn context (memory recall, freshly-learned snippets) is appended as user-visible message content rather than spliced into the system prompt.
+The system prompt is **not** rebuilt on subsequent turns. Even cosmetic byte changes invalidate the KV-cache prefix and force a full re-prefill, so dynamic per-turn context (tool results, memory recall answers) is appended as user-visible message content rather than spliced into the system prompt.
 
 #### The cacheable prefix is wider than the system prompt
 
@@ -369,8 +369,6 @@ Each archetype lives under `agents/<name>/` with an `agent.toml` (metadata, tool
 | ---------------------- | ---------------------------------------------------------------------------------------------- |
 | `orchestrator`         | The Master Agent: top-level, direct-capable default. Never spawned by another orchestrator.   |
 | `task_manager_agent`   | Adding, previewing, fetching, updating or removing task sources, workflow bundles, artifacts. |
-| `profile_memory_agent` | "Remember"/"forget", profile and persona edits, preferences, people aliases.                  |
-| `agent_memory`         | On-demand memory retrieval (`delegate_retrieve_memory`).                                      |
 | `vision_agent`         | Anything that depends on the content of an image (describe, OCR, UI elements).                |
 | `image_agent`          | Generating or editing an image.                                                               |
 | `video_agent`          | Generating a video or animating an image.                                                     |
@@ -385,11 +383,8 @@ Other built-ins are never chat delegates:
 | -------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | `planner`, `critic`                    | Only the `parallel_research_cross_check` workflow-run template (decompose and research = `planner`, cross_check = `critic`). |
 | `summarizer`                           | The harness, to compress oversized tool results; also the synthesize phase of that workflow-run template.  |
-| `archivist`                            | Post-commit extraction of lessons from a completed session.                                                 |
-| `goals_agent`                          | Background upkeep of `MEMORY_GOALS.md`.                                                                     |
 | `trigger_triage` / `trigger_reactor`   | Classifying an incoming external event, and the lightweight reaction to one.                               |
 | `morning_briefing`                     | Cron: the daily digest, on a named read-only tool belt.                                                     |
-| `flow_memory_agent`                    | Automation-flow `agent` nodes that name it in `agent_ref`.                                                  |
 
 Work that used to go to single-belt specialists (coding, crypto, settings, scheduling, product docs, MCP servers) is now done by the orchestrator itself through **inline skills**: `use_skill` loads a tool pack's guide and schemas (`coding`, `web3`, `system`, `scheduling`, `docs`, `mcp`), and the same tools are `Deferred` so `tool_search` finds any single one. Running an installed skill is the orchestrator's own `run_workflow`. See [`tools/toolpacks/README.md`](../../../crates/openhuman-core/src/tools/toolpacks/README.md).
 
@@ -440,7 +435,7 @@ Each `AgentDefinition` carries an `agent_tier` field (`chat` / `reasoning` / `wo
 | ----------- | --------------------- | ------------------------------- | ------------------------------------------------------------------------------- |
 | `chat`      | `reasoning`, `worker` | another `chat`                  | `orchestrator`                                                                  |
 | `reasoning` | `worker`              | another `reasoning`, any `chat` | `planner` (today the canonical one)                                             |
-| `worker`    | nothing[^1]           | anything                        | critic, archivist, image_agent, task_manager_agent, …               |
+| `worker`    | nothing[^1]           | anything                        | critic, image_agent, task_manager_agent, …               |
 
 [^1]: Skill-wildcard entries (`{ skills = "*" }`) are exempt because they name no agent: they expand to the connected Composio actions as `Deferred` tools the agent reaches through `tool_search`, not to a spawn.
 
@@ -517,10 +512,10 @@ A hook returning `Stop` aborts the loop with a clear reason the caller can surfa
 
 Post-turn hooks fire **after** the turn completes, in the background. They get a `TurnContext` snapshot - user message, assistant response, every tool call with arguments and outcome, total wall-clock, iteration count, session ID. Built-in consumers:
 
-- **Archivist** - distills which facts from the turn are worth persisting to long-term memory.
-- **Learning** - feeds reflection, tool-tracker, and user-profile updates.
 - **Cost log** - final per-turn cost line.
-- **Episodic memory indexing** - writes the turn into the [Memory Tree](../../features/obsidian-wiki/memory-tree.md) as a chunk for future recall.
+- **Conversation buffering** - the `memory` domain's bus subscriber buffers committed turns per thread and stores one `Conversation` item every `batch_turns` turns or after `idle_secs` of idle (tool call names and ids only, never arguments); see [Memory architecture](memory.md).
+
+Long-term facts are written explicitly: the agent calls the `memory` tool's `learn` action. There is no automatic archivist.
 
 Hooks run via `tokio::spawn`, so the user gets their answer before any of them finish.
 
@@ -530,7 +525,7 @@ Cancellation is the tinyagents **steering channel**. The old in-house `Interrupt
 
 - Every running sub-agent shares the cancellation scope and bails at its next checkpoint.
 - In-flight provider streams are dropped.
-- The archivist still fires with whatever partial context exists, so the conversation isn't lost.
+- Buffered conversation turns are still stored (idle flush, or the exit flush on quit).
 
 Interrupts are user-driven; stop hooks are policy-driven. Both enter the same harness pause/stop plumbing, but from different sides.
 
@@ -589,7 +584,7 @@ workspace from its typed parent `RunContext` through `ToolDispatch`; it never
 reads ambient cancellation state.
 
 `OpenHumanHostBundleFactory` is the B1 host composition point. It constructs
-the context, definition, security, model, memory, budget, progress, learning,
+the context, definition, security, model, memory, budget, progress,
 tool-outcome and experience adapters from the same session/runtime inputs.
 OpenHuman retains all policy decisions; TinyAgents receives only the resulting
 canonical run context today. Wiring the complete host-capability bundle into
@@ -663,7 +658,7 @@ StateGraph::new(name)
 | `hitl/`          | Human-in-the-loop: `approval`/`clarification` interrupt builders + `ApplyResume` (folds the human's answer into state on resume). A node returns `Command::Interrupt` to pause.                                                                                                                                                                                                                                                                                                                               |
 | `observability/` | `EventBusSink` (a `ProgressSink`) emits `tracing` spans + publishes the `GraphRun*`/`GraphNode*` `DomainEvent` family (new `agent_graph` event domain).                                                                                                                                                                                                                                                                                                                                                       |
 | `summarization/` | Node-boundary wrapper over `context::summarize_chat_history`.                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `memory/`        | Pre-node wrapper over `DefaultMemoryLoader::load_context`.                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `memory/`        | Pre-node wrapper for memory context.                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `definitions/`   | Built-in graphs over a shared `ProductState`: `canonical_turn` (the agent turn as a `dispatch → parse → stop_check → tools → compact → loop / finalize` graph) and `plan_execute_review` (composes the `planner` with a worker archetype around a HITL review gate), plus a deterministic `demo_review` twin for tests. A registry (`list_definitions`/`build_definition`) + `runner` (`run_graph`/`resume_graph`) persist runs to the checkpointer and emit bus events.                                 |
 | `blueprint/`     | The per-agent chain type. Every built-in agent declares its LangGraph-compatible chain in a `graph.rs` next to `prompt.rs` (`pub fn graph() -> GraphBlueprint`), wired into `BuiltinAgent.graph_fn`. `GraphBlueprint` is serializable (typed `NodeKind`/`EdgeSpec`), structurally validated, and `compile()`s to a real `CompiledGraph`. Reusable shapes: `canonical_turn` (most agents), `single_shot`, `orchestrator`, `plan_execute_review`. Inspect via `openhuman.agent_graph_{agent_list,agent_graph}`. |
 
@@ -757,6 +752,6 @@ Goals and todos are crate-backed outright, with no shadow: thread goals live in 
 ## See also
 
 - [Architecture overview](README.md) - where the harness sits in the bigger picture.
-- [Memory Tree](../../features/obsidian-wiki/memory-tree.md) - what the memory loader reads from and post-turn hooks write to.
+- [Memory](../../features/memory.md) and [Memory architecture](memory.md) - the `memory` tool, context.md and conversation buffering.
 - [Automatic Model Routing](../../features/model-routing/) - how `model: "hint:reasoning"` resolves to a concrete provider+model.
 - [Native Tools - Agent Coordination](../../features/native-tools/agent-coordination.md) - the user-facing surface for `spawn_subagent`, `delegate_*`, `todo`.

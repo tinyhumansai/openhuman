@@ -367,10 +367,6 @@ fn does_not_classify_unrelated_empty_response_phrases() {
         // channels/bus.rs:185 — channel-inbound graceful fallback (routes
         // through report_error_or_expected; subject is "agent", not "model").
         "[channel-inbound] agent returned empty response — finalizing draft with fallback",
-        // memory/query/walk.rs:292 — debug-level memory walk, not a failure.
-        "[memory_tree_walk] turn=3 LLM gave up (empty response)",
-        // learning/reflection.rs:576 — reflection skip, not a failure.
-        "[learning] reflection skipped (empty response — gate off or local AI unavailable)",
         // agent/session_host/turn.rs:811 — "provider returned an empty
         // final response" uses subject "provider", not "model"; must not match.
         "[agent_loop] provider returned an empty final response (i=2, no text, no tool calls)",
@@ -379,31 +375,6 @@ fn does_not_classify_unrelated_empty_response_phrases() {
             expected_error_kind(raw),
             None,
             "must NOT classify as EmptyProviderResponse: {raw}"
-        );
-    }
-}
-
-#[test]
-fn classifies_memory_store_breaker_open() {
-    // TAURI-RUST-52X (~455 events on self-hosted Sentry): the chunk-store
-    // per-path circuit breaker tripped after consecutive SQLite init
-    // failures. The Windows wire shape is wrapped by
-    // `memory_tree::tree::rpc::pipeline_status_rpc`'s `chunk aggregates: …`
-    // context so the substring matcher must survive that prefix.
-    for raw in [
-        // Canonical wire shape from `get_or_init_connection`.
-        "[memory_tree] circuit breaker open for /home/u/.openhuman/workspace/memory_tree/chunks.db: too many consecutive init failures",
-        // Canonical wire shape wrapped by the RPC handler's
-        // `format!("chunk aggregates: {e:#}")` context.
-        r"chunk aggregates: [memory_tree] circuit breaker open for C:\Users\u\.openhuman\users\6a09\workspace\memory_tree\chunks.db: too many consecutive init failures",
-        // Wrapped further by the JSON-RPC dispatch layer before reaching
-        // `report_error_or_expected`.
-        r"rpc.invoke_method failed: chunk aggregates: [memory_tree] circuit breaker open for /home/u/.openhuman/workspace/memory_tree/chunks.db: too many consecutive init failures",
-    ] {
-        assert_eq!(
-            expected_error_kind(raw),
-            Some(ExpectedErrorKind::MemoryStoreBreakerOpen),
-            "should classify memory-store breaker-open: {raw}"
         );
     }
 }

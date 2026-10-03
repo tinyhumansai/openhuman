@@ -121,7 +121,6 @@ async fn test_orchestrator_has_current_date_context() -> Result<()> {
         .tools(vec![Box::new(MockCalendarTool)])
         .tool_dispatcher(Box::new(NativeDialect))
         .agent_definition_name("orchestrator")
-        .memory(Arc::new(StubMemory))
         .workspace_dir(workspace.path().to_path_buf())
         .build()?;
 
@@ -183,7 +182,6 @@ async fn test_subagent_has_current_date_context() -> Result<()> {
         temperature: 0.4,
         workspace_dir: std::env::temp_dir(),
         workspace_descriptor: None,
-        memory: Arc::new(StubMemory),
         agent_config: openhuman_core::config::AgentConfig::default(),
         workflows: Arc::new(vec![]),
         memory_context: Arc::new(None),
@@ -238,54 +236,4 @@ async fn test_subagent_has_current_date_context() -> Result<()> {
     );
 
     Ok(())
-}
-
-struct StubMemory;
-
-#[async_trait]
-impl openhuman_core::memory::Memory for StubMemory {
-    async fn store(
-        &self,
-        _: &str,
-        _: &str,
-        _: &str,
-        _: openhuman_core::memory::MemoryCategory,
-        _: Option<&str>,
-    ) -> Result<()> {
-        Ok(())
-    }
-    async fn recall(
-        &self,
-        _: &str,
-        _: usize,
-        _: openhuman_core::memory::RecallOpts<'_>,
-    ) -> Result<Vec<openhuman_core::memory::MemoryEntry>> {
-        Ok(vec![])
-    }
-    async fn get(&self, _: &str, _: &str) -> Result<Option<openhuman_core::memory::MemoryEntry>> {
-        Ok(None)
-    }
-    async fn list(
-        &self,
-        _: Option<&str>,
-        _: Option<&openhuman_core::memory::MemoryCategory>,
-        _: Option<&str>,
-    ) -> Result<Vec<openhuman_core::memory::MemoryEntry>> {
-        Ok(vec![])
-    }
-    async fn forget(&self, _: &str, _: &str) -> Result<bool> {
-        Ok(true)
-    }
-    async fn namespace_summaries(&self) -> Result<Vec<openhuman_core::memory::NamespaceSummary>> {
-        Ok(vec![])
-    }
-    async fn count(&self) -> Result<usize> {
-        Ok(0)
-    }
-    async fn health_check(&self) -> bool {
-        true
-    }
-    fn name(&self) -> &str {
-        "stub"
-    }
 }

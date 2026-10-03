@@ -7,8 +7,6 @@ function stepLabel(t: (key: string) => string, step: HarnessInitStep): string {
   switch (step.id) {
     case 'python_runtime':
       return t('harnessInit.stepPython');
-    case 'spacy':
-      return t('harnessInit.stepSpacy');
     case 'node_runtime':
       return t('harnessInit.stepNode');
     default:

@@ -4,12 +4,12 @@ import AppRoutesIOS from './AppRoutesIOS';
 import DefaultRedirect from './components/DefaultRedirect';
 import ProtectedRoute from './components/ProtectedRoute';
 import PublicRoute from './components/PublicRoute';
+import BrainRedirect from './components/routing/BrainRedirect';
 import ForwardSearch from './components/routing/ForwardSearch';
 import HumanPage from './features/human/HumanPage';
 import { getIsMobile } from './lib/platform';
 import Accounts from './pages/Accounts';
 import Activity from './pages/Activity';
-import Brain from './pages/Brain';
 import AgentInsightsPreview from './pages/dev/AgentInsightsPreview';
 import AssistantUiDemoPage from './pages/dev/assistant-ui-demo';
 import ToolCallGallery from './pages/dev/ToolCallGallery';
@@ -88,16 +88,9 @@ const AppRoutes = ({ location }: AppRoutesProps = {}) => {
         }
       />
 
-      {/* Brain — the centerpiece memory knowledge-graph surface, reached from
-          the raised center button in the bottom bar. Full-page, graph-only. */}
-      <Route
-        path="/brain"
-        element={
-          <ProtectedRoute requireAuth={true}>
-            <Brain />
-          </ProtectedRoute>
-        }
-      />
+      {/* Back-compat: Brain moved under Connections → Integrations → Brain.
+          BrainRedirect remaps its old `?tab=` sub-tab to `?brain=`. */}
+      <Route path="/brain" element={<BrainRedirect />} />
 
       {/* Workflows — the `flows::` domain's discoverable list hub (issue
           B5a) plus the read-only Workflow Canvas (issue B5b.1) at

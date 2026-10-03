@@ -14,9 +14,7 @@ use std::path::PathBuf;
 
 use serde_json::json;
 
-use crate::memory::conversations::{
-    self as conversations, ConversationMessage, CreateConversationThread,
-};
+use crate::threads::store::{self as conversations, ConversationMessage, CreateConversationThread};
 
 /// Create a worker sub-thread linked to `parent_thread_id` and seed it with
 /// the delegation `prompt` as the opening user message. Returns the new

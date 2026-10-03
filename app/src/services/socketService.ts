@@ -325,21 +325,6 @@ class SocketService {
         window.dispatchEvent(new CustomEvent('openhuman:memory-sync-stage', { detail: data }));
       }
     });
-    this.socket.on('memory:tree_progress', (data: unknown) => {
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('openhuman:memory-tree-progress', { detail: data }));
-      }
-    });
-    this.socket.on('memory:tree_completed', (data: unknown) => {
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('openhuman:memory-tree-completed', { detail: data }));
-      }
-    });
-    this.socket.on('memory:build_progress', (data: unknown) => {
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('openhuman:memory-build-progress', { detail: data }));
-      }
-    });
 
     this.socket.on('channel:managed-dm-verified', data => {
       const obj = data as Record<string, unknown> | null;

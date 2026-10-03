@@ -165,7 +165,6 @@ pub(crate) fn migrate_cloud_provider_slugs(config: &mut Config) {
     rewrite(&mut config.vision_provider);
     rewrite(&mut config.memory_provider);
     rewrite(&mut config.embeddings_provider);
-    rewrite(&mut config.learning_provider);
 
     fn normalize_provider_endpoint(url: &str) -> String {
         url.trim().trim_end_matches('/').to_ascii_lowercase()
@@ -212,4 +211,25 @@ pub(crate) fn migrate_search_settings(config: &mut Config) {
         tinyfish_api_key: config.integrations.tinyfish.api_key.clone(),
     };
     config.search.migrate_legacy(legacy);
+}
+
+/// Migrates legacy v1 `[[memory_sources]]` into `[[memory.sources]]`, once:
+/// only when no v2 source exists yet. Kinds without a v2 equivalent
+/// (`twitter_query`, `conversation`) and disabled entries are dropped. The
+/// legacy list is cleared either way, so it is never written back.
+pub(crate) fn migrate_legacy_memory_sources(config: &mut Config) {
+    let legacy = std::mem::take(&mut config.legacy_memory_sources);
+    if legacy.is_empty() || !config.memory.sources.is_empty() {
+        return;
+    }
+    let migrated: Vec<_> = legacy
+        .iter()
+        .filter_map(super::super::memory::migrate_legacy_source)
+        .collect();
+    tracing::info!(
+        legacy = legacy.len(),
+        migrated = migrated.len(),
+        "[config] migrated legacy memory sources"
+    );
+    config.memory.sources = migrated;
 }

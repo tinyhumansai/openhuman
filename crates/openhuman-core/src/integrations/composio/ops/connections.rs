@@ -20,8 +20,7 @@ use super::error_utils::{
     backend_mode_without_session, direct_mode_without_key, report_composio_op_error, OpResult,
     COMPOSIO_NO_SESSION,
 };
-use super::memory_cleanup::composio_memory_targets_for_connection;
-use tinymemory_api::composio::normalize_connection_identifier;
+use crate::integrations::composio::contract::normalize_connection_identifier;
 
 pub async fn composio_list_connections(
     config: &Config,
@@ -155,36 +154,15 @@ pub async fn composio_delete_connection(
     clear_memory: bool,
 ) -> OpResult<Outcome<ComposioDeleteResponse>> {
     tracing::debug!(connection_id = %connection_id, "[composio] rpc delete_connection");
-    let toolkit = match resolve_toolkit_for_connection(config, connection_id).await {
-        Ok(toolkit) => Some(toolkit),
-        Err(error) if clear_memory => {
-            return Err(format!(
-                "[composio] delete_connection cannot clear memory without resolving toolkit: {error}"
-            ));
-        }
-        Err(_) => None,
-    };
-    let memory_targets = if clear_memory {
-        // Target discovery takes the config and resolves the bound driver
-        // itself — the notion arm reads sync state through the driver's `Graph`
-        // family. This used to resolve the LIVE in-process client here
-        // (`memory::ops::helpers::active_memory_client`) and hand it down;
-        // openhuman#5560 deleted that engine, and the binding is what replaced
-        // it. Discovery still refuses before the connection is deleted rather
-        // than after, so a memory store this host cannot reach aborts the
-        // delete instead of orphaning the user's synced pages.
-        composio_memory_targets_for_connection(config, toolkit.as_deref(), connection_id)
-            .await
-            .map_err(|error| {
-                format!("[composio] delete_connection cannot enumerate memory targets: {error:#}")
-            })?
-    } else {
-        Vec::new()
-    };
+    // The toolkit names the identity facets to drop;
+    // forgetting memory needs only the connection id (its records carry a
+    // `connection:<id>` tag), so an unresolvable toolkit skips the former only.
+    let toolkit = resolve_toolkit_for_connection(config, connection_id)
+        .await
+        .ok();
     // Only the Composio-side removal crosses the bus. Everything around it —
-    // the memory targets, the identity facets, PROFILE.md, the memory_sources
-    // row — is this host's own bookkeeping about a connection it no longer has,
-    // and the module knows nothing about any of it.
+    // the synced memory and the identity facets — is this host's own
+    // bookkeeping about a connection it no longer has.
     let mut resp = connectors::call::<_, ComposioDeleteResponse>(
         config,
         methods::DELETE_CONNECTION,
@@ -198,22 +176,25 @@ pub async fn composio_delete_connection(
         report_composio_op_error("delete_connection", &anyhow::anyhow!("{error}"));
         format!("[composio] delete_connection failed: {error}")
     })?;
-    let mut memory_chunks_deleted = 0;
-    let mut memory_clear_errors = Vec::new();
-    for target in &memory_targets {
-        match target.delete(config).await {
-            Ok(deleted) => {
-                memory_chunks_deleted += deleted;
+    let mut memory_clear_error = None;
+    if clear_memory {
+        match crate::memory::sources::composio::forget_connection(config, connection_id).await {
+            Ok(forgotten) => {
+                tracing::debug!(
+                    connection_id = %connection_id,
+                    forgotten,
+                    "[composio] forgot memory synced through the deleted connection"
+                );
+                resp.memory_chunks_deleted = forgotten;
             }
             Err(error) => {
-                memory_clear_errors.push(format!(
-                    "[composio] connection deleted, but failed to clear memory chunks for {}: {error:#}",
-                    target.label()
+                memory_clear_error = Some(format!(
+                    "[composio] connection deleted, but failed to clear its memory: {}",
+                    String::from(error)
                 ));
             }
         }
     }
-    resp.memory_chunks_deleted = memory_chunks_deleted;
     if let Some(toolkit) = toolkit.as_deref() {
         let deleted = delete_connected_identity_facets(config, toolkit, connection_id)
             .await
@@ -232,33 +213,6 @@ pub async fn composio_delete_connection(
             facets_deleted = deleted,
             "[composio] deleted connected identity facets after connection removal"
         );
-        if let Err(e) = super::super::profile_md::remove_provider_from_profile_md(
-            &config.workspace_dir,
-            toolkit,
-            connection_id,
-        ) {
-            tracing::warn!(
-                toolkit = %toolkit,
-                connection_id = %connection_id,
-                error = %e,
-                "[composio] PROFILE.md bullet removal failed (non-fatal)"
-            );
-        }
-    }
-    match crate::memory::sources::registry::remove_composio_source_by_connection_id(connection_id)
-        .await
-    {
-        Ok(0) => {}
-        Ok(removed) => tracing::debug!(
-            connection_id = %connection_id,
-            removed,
-            "[composio] pruned memory_sources entry after connection deletion"
-        ),
-        Err(e) => tracing::warn!(
-            connection_id = %connection_id,
-            error = %e,
-            "[composio] failed to prune memory_sources entry after connection deletion (non-fatal)"
-        ),
     }
     crate::core::bus::BUS.publish(
         crate::core::events::DomainEvent::ComposioConnectionDeleted {
@@ -282,13 +236,42 @@ pub async fn composio_delete_connection(
             );
         }
     }
-    if !memory_clear_errors.is_empty() {
-        return Err(memory_clear_errors.join("; "));
+    if let Some(error) = memory_clear_error {
+        return Err(error);
     }
     Ok(Outcome::new(
         resp,
         vec![format!("composio: connection {connection_id} deleted")],
     ))
+}
+
+/// The ids of every active connection of `toolkit` (matched
+/// case-insensitively), through the connector module's `ListConnections`.
+///
+/// # Errors
+///
+/// The connector call fails.
+pub async fn active_connection_ids(config: &Config, toolkit: &str) -> OpResult<Vec<String>> {
+    let toolkit = toolkit.trim().to_ascii_lowercase();
+    let resp =
+        connectors::call_bare::<ComposioConnectionsResponse>(config, methods::LIST_CONNECTIONS)
+            .await
+            .map_err(|error| {
+                report_composio_op_error("active_connection_ids", &anyhow::anyhow!("{error}"));
+                format!("[composio] list_connections failed: {error}")
+            })?;
+    let ids: Vec<String> = resp
+        .connections
+        .into_iter()
+        .filter(|c| c.is_active() && c.normalized_toolkit() == toolkit)
+        .map(|c| c.id)
+        .collect();
+    tracing::debug!(
+        toolkit = %toolkit,
+        active = ids.len(),
+        "[composio] active_connection_ids"
+    );
+    Ok(ids)
 }
 
 /// Look up the toolkit slug for an existing connection.

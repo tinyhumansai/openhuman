@@ -63,9 +63,9 @@ OpenHuman은 대부분의 어시스턴트가 갖지 못한 세 가지입니다: 
 
 ### 🧠 두뇌
 
-- **[메모리 트리(Memory Tree)](https://tinyhumans.gitbook.io/openhuman/features/memory-tree) + [Obsidian 위키](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki)**: 당신의 데이터는 점수가 매겨진 Markdown 트리로 압축되어 당신의 머신에 있는 SQLite에 저장되고, 열어서 직접 편집할 수 있는 [Obsidian 볼트](https://x.com/karpathy/status/2039805659525644595)로 미러링됩니다. 벡터 수프 같은 블랙박스가 아닙니다.
+- **[Memory](../gitbooks/features/memory.md)**: 교체 가능한 엔진(TinyHumans 호스팅 또는 직접 운영하는 CortexDB) 위의 Recall, Fetch, Store. 문서, 대화, 학습 내용을 저장하고 출처와 함께 답하며, 새 채팅마다 `context.md` 요약을 제공합니다.
 - **[100개 이상의 OAuth 통합, 5,000개 이상의 MCP 서버, 90,000개 이상의 Skills](https://tinyhumans.gitbook.io/openhuman/features/integrations)**: Gmail, Notion, GitHub, Slack 등 당신의 스택을 원클릭으로 연결하세요. [자동 가져오기(auto-fetch)](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki/auto-fetch)가 20분마다 두뇌에 데이터를 공급합니다. 덕분에 오늘 아침에 이미 내일의 컨텍스트를 가지고 있습니다.
-- **[목표 및 할 일(Goals & Todos)](https://tinyhumans.gitbook.io/openhuman/features/goals-and-todos)**: 장기 목표, 스레드별 지속 목표, 그리고 채팅에 표시되는 에이전트의 할 일 목록을 제공합니다.
+- **[목표 및 할 일(Goals & Todos)](https://tinyhumans.gitbook.io/openhuman/features/goals-and-todos)**: 스레드별 지속 목표와 채팅에 표시되는 에이전트의 할 일 목록을 제공합니다.
 - **[TokenJuice](https://tinyhumans.gitbook.io/openhuman/features/token-compression)**: 도구 출력은 모델에 닿기 전에 압축되어, 동일한 정보가 최대 80% 적은 토큰으로 전달됩니다. 이것 없이는 이만큼 큰 두뇌를 감당할 수 없을 것입니다.
 
 ### 🕸️ 오케스트레이터
@@ -90,17 +90,11 @@ OpenHuman은 대부분의 어시스턴트가 갖지 못한 세 가지입니다: 
 
 OpenHuman은 몇 분 만에 당신을 알게 되는 최초의 에이전트 하네스입니다. [Karpathy의 LLM 지식 베이스](https://x.com/karpathy/status/2039805659525644595)에서 영감을 받았습니다. 대부분의 에이전트는 아무런 정보 없이 시작합니다. Hermes는 당신의 작업을 지켜보며 학습하고, OpenClaw는 플러그인이 컨텍스트를 가져오기를 기다립니다. 어느 쪽이든 에이전트가 당신의 스택에 대해 충분히 알고 정말 유용해지기까지는 며칠 또는 몇 주가 걸립니다.
 
-<p align="center">
- <img src="../gitbooks/.gitbook/assets/memory.png" alt="OpenHuman 컨텍스트 구축 다이어그램">
-</p>
+> OpenHuman은 문서, 대화, 학습 내용을 메모리 엔진에 저장하고 출처와 함께 질문에 답합니다.
 
-> OpenHuman은 당신의 모든 문서, 이메일 및 채팅을 요약하고 압축합니다. 그리고 에이전트가 당신에 대한 모든 것을 기억할 수 있도록 메모리 그래프를 생성합니다.
-
-OpenHuman은 기다림을 생략합니다. 계정을 연결하고, [자동 가져오기](https://tinyhumans.gitbook.io/openhuman/features/integrations/auto-fetch)가 20분 주기로 데이터를 로컬로 가져오게 한 다음, [메모리 트리](https://tinyhumans.gitbook.io/openhuman/features/memory-tree)가 모든 것을 [Karpathy 스타일의 Obsidian 위키](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki)에 지능적으로 저장된 Markdown 파일로 압축하게 하세요.
+OpenHuman은 기다림을 생략합니다. 소스(폴더, 파일, 링크, GitHub, RSS, 연결된 앱)를 추가하면 일정에 따라 동기화되고, 에이전트는 [Memory](../gitbooks/features/memory.md)에서 바로 답할 수 있습니다.
 
 단 한 번의 동기화 패스만으로 에이전트는 당신의 받은 편지함, 캘린더, 저장소, 문서, 메시지의 전체(압축된) 컨텍스트를 갖게 됩니다. 훈련 기간도, "몇 주를 기다려야 하는" 번거로움도 없습니다. 에이전트는 당신이 되고, 당신에 의해 제어됩니다.
-
-이미 다른 코딩 에이전트에서 [agentmemory](https://github.com/rohitg00/agentmemory)를 자체 호스팅하고 있나요? OpenHuman은 이를 프록시하는 선택적 `Memory` 백엔드를 제공합니다. `config.toml`에서 `memory.backend = "agentmemory"`를 설정하면 동일한 내구성 있는 저장소가 Claude Code, Cursor, Codex, OpenCode와 함께 OpenHuman을 구동합니다. 설정 방법은 [agentmemory 백엔드](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki/agentmemory-backend) 페이지를 참조하세요.
 
 ## 챗봇이 아닌 오케스트레이터
 
@@ -137,9 +131,9 @@ n8n과 Zapier에서 깊은 영감을 받은 [워크플로우](https://tinyhumans
 | **오픈 소스**      | 🚫 독점 소스      | ✅ MIT            | ✅ MIT            | ✅ GNU                                                                                               |
 | **시작하기 쉬움**  | ✅ 데스크톱 + CLI | ⚠️ 터미널 우선    | ⚠️ 터미널 우선    | ✅ 깔끔한 UI, 단 몇 분                                                                               |
 | **비용**           | ⚠️ 구독 + 애드온  | ⚠️ 모델 직접 제공 | ⚠️ 모델 직접 제공 | ✅ 단일 구독 + TokenJuice                                                                            |
-| **메모리**         | ✅ 채팅 범위 한정 | ⚠️ 플러그인 의존  | ✅ 자기 학습      | 🚀 메모리 트리 + Obsidian 볼트, 선택적 [agentmemory](https://github.com/rohitg00/agentmemory) 백엔드 |
+| **메모리**         | ✅ 채팅 범위 한정 | ⚠️ 플러그인 의존  | ✅ 자기 학습      | 🚀 교체 가능한 엔진(TinyHumans 또는 직접 CortexDB), 출처 표시, `context.md` |
 | **통합**           | ⚠️ 적은 커넥터    | ⚠️ 직접 구축      | ⚠️ 직접 구축      | 🚀 100개 이상 OAuth · 5천 개 이상 MCP · 9만 개 이상 Skills                                           |
-| **자동 가져오기**  | 🚫 없음           | 🚫 없음           | 🚫 없음           | ✅ 20분마다 메모리로 동기화                                                                          |
+| **소스 동기화**    | 🚫 없음           | 🚫 없음           | 🚫 없음           | ✅ 일정에 따라 메모리로 동기화 |
 | **오케스트레이션** | ⚠️ 서브 태스크    | ⚠️ 단일 루프      | ⚠️ 단일 루프      | 🚀 에이전트 그래프 + 체크포인트 + E2E 암호화 A2A                                                     |
 | **워크플로우**     | 🚫 없음           | ⚠️ 스크립트       | ⚠️ 스크립트       | 🚀 시각적, 내구성, 에이전트 제안, 승인 게이트                                                        |
 | **회의**           | 🚫 없음           | 🚫 없음           | 🚫 없음           | 🚀 Meet/Zoom/Teams/Webex 참여, 발화, 실시간 자막                                                     |

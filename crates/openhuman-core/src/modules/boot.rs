@@ -24,7 +24,6 @@ use crate::config::Config;
 /// unavailable, and the feature says so at the point of use. Taking the core
 /// down because an optional codec is missing would be a worse trade.
 pub async fn load_declared_modules(config: &Config) {
-    super::memory::set_modules_policy(std::sync::Arc::new(config.clone()));
     if !config.modules.enabled {
         log::debug!("[modules] boot load skipped: modules are disabled in configuration");
         return;
@@ -58,68 +57,14 @@ pub async fn load_declared_modules(config: &Config) {
         if record.load != LoadPolicy::Eager {
             continue;
         }
-        if !should_eager_load(record, config) {
-            log::debug!(
-                "[modules] eager module '{}' skipped: the memory driver is not module-backed",
-                record.id
-            );
-            continue;
-        }
-        // TinyMemory resolves its embedding provider while the library is
-        // admitted, through callbacks this host serves on the module bus. The
-        // lazy path installs them before loading; the eager path must too, or
-        // the module comes up without an embedder and every memory write fails
-        // from then on.
-        if record.id == super::memory::MODULE_ID {
-            if let Err(reason) =
-                super::memory::install_host_callbacks(std::sync::Arc::new(config.clone())).await
-            {
-                log::warn!(
-                    "[modules] eager module '{}' skipped: host callbacks are unavailable: {reason}",
-                    record.id
-                );
-                continue;
-            }
-        }
         log::info!("[modules] eager module '{}' resolving at boot", record.id);
         if let Err(reason) = ops::ensure_loaded(config, record.id).await {
             log::warn!(
                 "[modules] eager module '{}' did not load: {reason}",
                 record.id
             );
-            continue;
-        }
-        // The first retrieval after boot pays the Python server start, the
-        // model load and the embedder's first connection — several seconds the
-        // user's first question would otherwise wait on, or lose its memory
-        // block to. Pay it now, off the request path (#6040).
-        if record.id == super::memory::MODULE_ID {
-            crate::memory::auto_recall::warm::spawn_at_boot(std::sync::Arc::new(config.clone()));
         }
     }
-}
-
-/// Whether `record` should be loaded eagerly at boot, given `config`.
-///
-/// Every `LoadPolicy::Eager` record is eager unconditionally, except
-/// TinyMemory: it is eager only when this host's memory subsystem actually
-/// selected the module-backed driver. Eager-loading it for every
-/// `modules.enabled` host — regardless of which memory driver is bound —
-/// would mean a host on the (default) `Embedded` driver pays a startup
-/// download and native `dlopen` for a module it never binds, breaking the
-/// module driver's opt-in contract.
-///
-/// [`crate::memory::binding::admit`] is the same pure,
-/// side-effect-free check `memory::binding::build` itself uses to decide what
-/// actually gets bound, so this can never disagree with the real binding.
-fn should_eager_load(record: &super::types::ModuleRecord, config: &Config) -> bool {
-    if record.id != super::memory::MODULE_ID {
-        return true;
-    }
-    matches!(
-        crate::memory::binding::admit(&config.subsystems.memory),
-        Ok((_, crate::core::subsystem::DriverClass::Module))
-    )
 }
 
 #[cfg(test)]

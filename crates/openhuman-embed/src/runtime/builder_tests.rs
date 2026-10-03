@@ -31,14 +31,14 @@ fn inherited_workspace_without_a_host_credential_keeps_installed_session_policy(
 
 #[test]
 fn default_services_start_no_background_writers() {
-    // cron, the login-gated services and the memory queue each write to the workspace on their
+    // cron, the login-gated services and memory sync each write to the workspace on their
     // own schedule. A library call that started them would become a background
     // process the caller never asked for.
     let services = default_services();
     assert!(services.harness_init, "the agent harness must be prepared");
     assert!(!services.cron);
     assert!(!services.login_gated);
-    assert!(!services.memory_queue);
+    assert!(!services.memory_sync);
     assert!(!services.rpc_http, "a library call binds no port");
     assert!(!services.socketio);
     assert!(!services.channels);

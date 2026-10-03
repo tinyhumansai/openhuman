@@ -205,9 +205,13 @@ fn catalog_includes_additional_user_facing_surfaces() {
         "intelligence.agent_library",
         "intelligence.embedding_provider_config",
         "intelligence.embedding_provider_test",
-        "intelligence.github_repo_memory_source",
-        "intelligence.memory_source_sync_controls",
-        "intelligence.coding_session_memory",
+        "memory.engine",
+        "memory.ask",
+        "memory.learnings",
+        "memory.conversations",
+        "memory.documents",
+        "memory.context",
+        "memory.import",
         "conversation.subagent_mascots",
     ] {
         assert!(
@@ -237,25 +241,9 @@ fn screen_intelligence_is_not_a_catalog_category_or_capability() {
     );
 }
 
-#[test]
-fn coding_session_memory_discloses_inference_boundary() {
-    let capability = lookup("intelligence.coding_session_memory")
-        .expect("coding-session memory capability registered");
-    assert_eq!(capability.domain, "memory_sources");
-    assert!(capability.description.contains("Codex"));
-    assert!(capability.description.contains("Claude Code"));
-    let privacy = capability.privacy.expect("privacy disclosure");
-    assert!(privacy.leaves_device);
-    assert_eq!(privacy.data_kind, PrivacyDataKind::Raw);
-    assert_eq!(
-        privacy.destinations,
-        &["Configured OpenHuman inference provider"]
-    );
-}
-
 /// The two embeddings entries surface a Settings-side configuration panel.
 /// They share the same domain (`embeddings`) but are listed under the
-/// Intelligence umbrella so they sit next to memory_tree_retrieval / mcp_server
+/// Intelligence umbrella so they sit next to the memory entries / mcp_server
 /// in the in-app feature catalog. Pinning the relationships here defends
 /// against an inadvertent recategorisation that would split them across the
 /// UI's tab grouping.
@@ -363,89 +351,6 @@ fn embedding_provider_test_destinations_cover_all_providers() {
     );
 }
 
-/// The GitHub repo memory source (#3047) is a user-facing capability — it
-/// surfaces a browsable repo-grouped raw archive plus priority/entity
-/// enrichment that the agent should be able to describe when asked "can you
-/// read my GitHub repo?". Pin its catalog shape: it lives under the
-/// `memory_sources` Rust domain but the Intelligence UI umbrella (same split
-/// the embeddings entries use — Rust domain on `domain`, UI grouping on
-/// `category`), and its `how_to` points at the real Settings breadcrumb +
-/// RPC, not a stale path.
-#[test]
-fn github_repo_memory_source_is_registered_with_expected_shape() {
-    let cap =
-        lookup("intelligence.github_repo_memory_source").expect("github memory source registered");
-
-    assert_eq!(
-        cap.domain, "memory_sources",
-        "domain should reflect the Rust `memory_sources` domain"
-    );
-    assert_eq!(cap.category, CapabilityCategory::Intelligence);
-    assert_eq!(cap.status, CapabilityStatus::Beta);
-
-    // how_to must point at the live Settings surface + the programmatic RPC,
-    // so a future nav rename can't silently strand the breadcrumb.
-    assert!(
-        cap.how_to.contains("Memory Sources"),
-        "how_to must name the Memory Sources surface, got: {}",
-        cap.how_to
-    );
-    assert!(
-        cap.how_to.contains("memory_sources_add"),
-        "how_to must cite the programmatic RPC, got: {}",
-        cap.how_to
-    );
-
-    // The description has to make clear this reads project *activity*, not
-    // source code — that distinction is the whole point of the GitHub memory
-    // source and keeps users from expecting code search.
-    let desc = cap.description.to_lowercase();
-    assert!(
-        desc.contains("commits") && desc.contains("issues"),
-        "description must enumerate the synced item types, got: {}",
-        cap.description
-    );
-    assert!(
-        desc.contains("not source code"),
-        "description must clarify it ingests activity, not source code, got: {}",
-        cap.description
-    );
-}
-
-/// Privacy: the GitHub memory source reaches out to the GitHub API directly
-/// (via `gh` / public REST), so it must report `leaves_device = true` with
-/// GitHub as the destination — not the managed OpenHuman backend. Treating it
-/// as local-only or attributing it to the backend would under-report where the
-/// sync request actually goes (the exact under-reporting failure mode #2656's
-/// review flagged for the embeddings probe).
-#[test]
-fn github_repo_memory_source_reports_github_destination() {
-    let cap =
-        lookup("intelligence.github_repo_memory_source").expect("github memory source registered");
-    let privacy = cap
-        .privacy
-        .expect("github memory source is privacy-annotated");
-
-    assert!(
-        privacy.leaves_device,
-        "syncing a repo issues an outbound request to GitHub — must report leaves_device"
-    );
-
-    let haystack = privacy.destinations.join(" | ").to_lowercase();
-    assert!(
-        haystack.contains("github"),
-        "destinations must name GitHub so the Privacy surface attributes the \
-         request to the right third-party host, got: {:?}",
-        privacy.destinations
-    );
-    assert!(
-        !haystack.contains("openhuman backend"),
-        "the reader talks to GitHub directly, not the managed backend — listing \
-         the backend would mis-attribute the destination: {:?}",
-        privacy.destinations
-    );
-}
-
 /// #4884: capability `how_to` breadcrumbs are user-facing and searchable, and
 /// the agent paraphrases them. Guard against the stale navigation paths that
 /// sent users to menus that do not exist (`Settings > Connections`,
@@ -483,10 +388,6 @@ fn catalog_how_to_uses_connections_nav_not_legacy_settings_paths() {
     assert_eq!(
         how_to("channels.connect_platform"),
         "Connections > Channels"
-    );
-    assert_eq!(
-        how_to("intelligence.slack_memory_ingest"),
-        "Connections > OAuth > Slack"
     );
     assert_eq!(how_to("workflows.connect_google"), "Connections > OAuth");
 }
@@ -584,4 +485,71 @@ fn local_ai_domain_is_populated_so_the_breadcrumb_check_is_not_vacuous() {
         "expected the local_ai domain to carry at least the six entries the \
          breadcrumb check exists for, found {count}"
     );
+}
+
+/// Memory v2 capabilities: one per Brain chip, each pointing at the live
+/// `/connections?tab=brain&brain=<chip>` surface and citing real RPC names.
+#[test]
+fn memory_v2_capabilities_cite_live_surface_and_rpcs() {
+    for (id, chip, rpc) in [
+        ("memory.engine", "engine", "memory_engine_set"),
+        ("memory.ask", "ask", "memory_recall"),
+        ("memory.learnings", "learnings", "memory_learn"),
+        (
+            "memory.conversations",
+            "conversations",
+            "memory_conversations_set",
+        ),
+        ("memory.documents", "documents", "memory_sources_add"),
+        ("memory.context", "context", "memory_context_refresh"),
+    ] {
+        let cap = lookup(id).unwrap_or_else(|| panic!("missing `{id}`"));
+        assert!(
+            cap.how_to.contains(&format!("brain={chip}")),
+            "{id} how_to must name its chip, got: {}",
+            cap.how_to
+        );
+        assert!(
+            cap.how_to.contains(rpc),
+            "{id} how_to must cite `{rpc}`, got: {}",
+            cap.how_to
+        );
+    }
+    assert!(lookup("memory.import")
+        .expect("import")
+        .how_to
+        .contains("memory_import_start"));
+}
+
+/// The v1 memory surface is gone; no catalog entry may advertise it.
+#[test]
+fn v1_memory_capabilities_are_not_advertised() {
+    for id in [
+        "intelligence.long_term_goals",
+        "intelligence.memory_tree_retrieval",
+        "intelligence.memory_pipeline_doctor",
+        "intelligence.agentmemory_backend",
+        "intelligence.tool_scoped_memory",
+        "intelligence.memory_sync_schedule",
+        "intelligence.memory_source_sync_controls",
+        "intelligence.coding_session_memory",
+        "intelligence.github_repo_memory_source",
+        "intelligence.slack_memory_ingest",
+        "intelligence.clickup_memory_ingest",
+        "intelligence.remember_preferences",
+    ] {
+        assert!(lookup(id).is_none(), "removed capability `{id}` is back");
+    }
+    for c in all_capabilities() {
+        let text = format!("{} {} {}", c.name, c.description, c.how_to);
+        for dead in [
+            "memory_tree",
+            "MEMORY.md",
+            "PROFILE.md",
+            "memory_goals",
+            "TinyCortex",
+        ] {
+            assert!(!text.contains(dead), "`{}` still mentions `{dead}`", c.id);
+        }
+    }
 }

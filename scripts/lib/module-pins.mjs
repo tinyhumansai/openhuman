@@ -84,29 +84,6 @@ export function parseRecords(src) {
   return records;
 }
 
-/** `ARTIFACT_CAPABILITIES_PIN` from modules/memory.rs. */
-export function parseArtifactCapabilitiesPin(src) {
-  const m = src.match(/ARTIFACT_CAPABILITIES_PIN: &str = "([^"]+)"/);
-  return m ? m[1] : null;
-}
-
-/** The `memory_version` / `memory_sha256` / `memory_archive` literals in a workflow. */
-export function parseWorkflowMemoryBlocks(src) {
-  return {
-    versions: [...src.matchAll(/^\s*memory_version="([^"]+)"/gm)].map(
-      (m) => m[1],
-    ),
-    digests: [...src.matchAll(/^\s*memory_sha256="([^"]+)"/gm)].map(
-      (m) => m[1],
-    ),
-    archives: [
-      ...src.matchAll(
-        /^\s*memory_archive="[^"]*\/(tinymemory-module-[^"]+?)"/gm,
-      ),
-    ].map((m) => m[1]),
-  };
-}
-
 /**
  * Decide what one record's pin state means.
  *

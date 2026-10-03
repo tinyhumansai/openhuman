@@ -6,15 +6,13 @@ module owns the process lifecycle and wire protocol; interpreter resolution
 [`runtime/python`](../python/README.md) client, which this module calls into
 to pick the interpreter it launches.
 
-Two backends currently run inside the one worker process:
+One backend currently runs inside the worker process:
 
-- **spaCy** (`spacy.rs`): NER extraction for the memory tree's query
-  extractor, gated by `config.memory_tree.spacy_enabled`.
 - **Kompress** (`kompress.rs`): TokenJuice's ModernBERT/torch plain-text
   compressor, gated by `config.tokenjuice.ml_compression_enabled`.
 
-Both are gated behind `config.runtime_python.enabled`; `registry::enabled_backends`
-computes the active set from all three flags together.
+It is gated behind `config.runtime_python.enabled`; `registry::enabled_backends`
+computes the active set from that flag and `config.tokenjuice.ml_compression_enabled`.
 
 ## Key files
 
@@ -22,9 +20,8 @@ computes the active set from all three flags together.
 | --- | --- |
 | `mod.rs` | Submodule decls and `pub use` re-exports. |
 | `server.rs` | Host side: maps `Config` and the managed interpreter onto a `ServerLaunch`, holds the process-wide `ServerSlot` (`ensure_started`, `status`). The process lifecycle itself (spawn, handshake, request/response, restart-on-failure, idle expiry, start back-off) is `tinyruntime_pyserver::{PythonServer, ServerSlot}`. |
-| `registry.rs` | `RuntimePythonBackend` enum (`Spacy`, `Kompress`) and `enabled_backends(config)`. |
+| `registry.rs` | `RuntimePythonBackend` enum (`Kompress`) and `enabled_backends(config)`. |
 | `kompress.rs` | Kompress venv provisioning (`ensure_kompress`, `install_into`, `kompress_provisioned`) and the compress request (`request_kompress`). |
-| `spacy.rs` | spaCy venv provisioning (`ensure_spacy`, `spacy_provisioned`), the extract request (`extract`, re-exported as `extract_spacy`), and `python_server_cache_root`. |
 | (`tinyruntime-pyserver`) | Owns the JSONL wire types (`PROTOCOL_VERSION`, request/response/ready-line), the status types (`BackendStatus`, `ServerStatus`, re-exported here as `RuntimePythonServerStatus`) and the worker script itself (`SERVER_SCRIPT`), written to the cache root as `runtime_python_server.py` each time a server is prepared. Library crate in `vendor/tinyruntime`. |
 
 ## Lifecycle
@@ -34,9 +31,8 @@ computes the active set from all three flags together.
 (`Empty` / `Ready` / `Failed { message, retry_after }`):
 
 - If the enabled backend set has changed since the cached server launched
-  (e.g. Kompress toggled on after a spaCy-only start), the cache is discarded
-  and a new server is started: the running process was never provisioned for
-  the new backend.
+  (e.g. Kompress toggled on or off), the cache is discarded and a new server
+  is started: the running process was never provisioned for the new set.
 - If the Kompress backend has been idle longer than
   `config.tokenjuice.ml_sidecar_idle_timeout_secs`, the server is torn down and
   restarted on the next request, freeing the torch process's memory.
@@ -45,12 +41,7 @@ computes the active set from all three flags together.
 - `RuntimePythonServer::request` sends one request, and on failure resets the
   child and retries once before giving up.
 
-`prepare_launch` picks **one** interpreter for the whole worker: if spaCy is
-enabled it owns the venv and Kompress (if also enabled) installs torch +
-transformers into it via `kompress::install_into`; if only Kompress is enabled
-it gets its own dedicated venv via `kompress::ensure_kompress`; if neither
-backend needs a venv the worker still runs under the base interpreter from
-`runtime::python::PythonBootstrap`.
+`prepare_launch` picks the interpreter for the worker: when Kompress is enabled it gets its own dedicated venv via `kompress::ensure_kompress`; otherwise the worker runs under the base interpreter from `runtime::python::PythonBootstrap`.
 
 ## Wire protocol
 
@@ -61,11 +52,66 @@ JSONL over the child's stdin/stdout (`tinyruntime_pyserver::protocol`), one line
   mismatch against `PROTOCOL_VERSION`, `ready: false`, or no line within
   `HANDSHAKE_TIMEOUT` (30s) fails the launch.
 - Requests: `PythonServerRequest { id, method, params }`, methods namespaced by
-  backend (`spacy.extract`, `kompress.compress`).
+  backend (`kompress.compress`).
 - Responses: `PythonServerResponse { id, ok, result, error }`, matched back to
   the request by `id`; the read loop skips lines with a stale/unparseable `id`
   and enforces a 60s per-request timeout (`REQUEST_TIMEOUT`, sized for the
-  slower Kompress backend, not added latency for spaCy).
+  slower Kompress backend).
+
+stderr is drained continuously by a background task and only logged at
+`debug`/`trace`, never surfaced to callers.
+
+## Backends
+
+**Kompress** (`kompress.rs`): TokenJuice's ModernBERT/torch plain-text
+  compressor, gated by `config.tokenjuice.ml_compression_enabled`.
+
+It is gated behind `config.runtime_python.enabled`; `registry::enabled_backends`
+computes the active set from that flag and `config.tokenjuice.ml_compression_enabled`.
+
+## Key files
+
+| File | Role |
+| --- | --- |
+| `mod.rs` | Submodule decls and `pub use` re-exports. |
+| `server.rs` | Host side: maps `Config` and the managed interpreter onto a `ServerLaunch`, holds the process-wide `ServerSlot` (`ensure_started`, `status`). The process lifecycle itself (spawn, handshake, request/response, restart-on-failure, idle expiry, start back-off) is `tinyruntime_pyserver::{PythonServer, ServerSlot}`. |
+| `registry.rs` | `RuntimePythonBackend` enum (`Kompress`) and `enabled_backends(config)`. |
+| `kompress.rs` | Kompress venv provisioning (`ensure_kompress`, `install_into`, `kompress_provisioned`) and the compress request (`request_kompress`). |
+| (`tinyruntime-pyserver`) | Owns the JSONL wire types (`PROTOCOL_VERSION`, request/response/ready-line), the status types (`BackendStatus`, `ServerStatus`, re-exported here as `RuntimePythonServerStatus`) and the worker script itself (`SERVER_SCRIPT`), written to the cache root as `runtime_python_server.py` each time a server is prepared. Library crate in `vendor/tinyruntime`. |
+
+## Lifecycle
+
+`ensure_started(config)` is the single entry point. It caches one
+`Arc<RuntimePythonServer>` behind a process-wide `OnceLock<Mutex<ServerCache>>`
+(`Empty` / `Ready` / `Failed { message, retry_after }`):
+
+- If the enabled backend set has changed since the cached server launched
+  (e.g. Kompress toggled on or off), the cache is discarded and a new server
+  is started: the running process was never provisioned for the new set.
+- If the Kompress backend has been idle longer than
+  `config.tokenjuice.ml_sidecar_idle_timeout_secs`, the server is torn down and
+  restarted on the next request, freeing the torch process's memory.
+- A startup failure caches `Failed` with a five-minute (`START_FAILURE_BACKOFF`)
+  retry window so a broken venv does not retry on every call.
+- `RuntimePythonServer::request` sends one request, and on failure resets the
+  child and retries once before giving up.
+
+`prepare_launch` picks the interpreter for the worker: when Kompress is enabled it gets its own dedicated venv via `kompress::ensure_kompress`; otherwise the worker runs under the base interpreter from `runtime::python::PythonBootstrap`.
+
+## Wire protocol
+
+JSONL over the child's stdin/stdout (`tinyruntime_pyserver::protocol`), one line per message:
+
+- Startup handshake: the worker writes a `ReadyLine` (`ready`, `protocol`,
+  `backends`, optional `error`) before any request is sent; a `protocol`
+  mismatch against `PROTOCOL_VERSION`, `ready: false`, or no line within
+  `HANDSHAKE_TIMEOUT` (30s) fails the launch.
+- Requests: `PythonServerRequest { id, method, params }`, methods namespaced by
+  backend (`kompress.compress`).
+- Responses: `PythonServerResponse { id, ok, result, error }`, matched back to
+  the request by `id`; the read loop skips lines with a stale/unparseable `id`
+  and enforces a 60s per-request timeout (`REQUEST_TIMEOUT`, sized for the
+  slower Kompress backend).
 
 stderr is drained continuously by a background task and only logged at
 `debug`/`trace`, never surfaced to callers.
@@ -82,17 +128,15 @@ returns the shared `tinymemory_api::host::SpacyResponse` type. Called from
 
 **Kompress** (`kompress.rs`): `ensure_kompress` provisions a CPU-only torch +
 transformers venv and pre-downloads `config.tokenjuice.ml_model_id`;
-`install_into` does the same into an existing (spaCy) venv when both backends
-share one interpreter. The worker loads the model fully offline
+The worker loads the model fully offline
 (`HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`) so startup never depends on the
 network once provisioned. `kompress_provisioned` is the network-free marker check the `kompress` init
 step uses. `request_kompress` sends `kompress.compress` with
 `target_ratio` / `max_input_chars` from `config.tokenjuice`. Called from
 `inference::tokenjuice::ml`.
 
-Both provisioning paths are serialized behind their own `tokio::sync::Mutex`
-(`provision_lock` / `spacy_provision_lock`) so concurrent callers don't race
-the same venv build.
+Provisioning is serialized behind a `tokio::sync::Mutex` so concurrent callers
+don't race the same venv build.
 
 ## Status
 
@@ -106,11 +150,10 @@ step is done.
 
 ## Persistence
 
-No domain store. `spacy::python_server_cache_root` picks the root:
+No domain store. `server::python_server_cache_root` picks the root:
 `<runtime_python.cache_dir>/runtime-python-server` when configured, else
 `<OS cache dir>/openhuman/runtime-python-server`, else
-`<workspace_dir>/runtime_python_server`. Under it live `spacy-venv/`,
-`kompress-venv/`, the Kompress HF cache `kompress-hf/`, and the written
+`<workspace_dir>/runtime_python_server`. Under it live `kompress-venv/`, the Kompress HF cache `kompress-hf/`, and the written
 `runtime_python_server.py`.
 
 ## Security
@@ -124,30 +167,18 @@ adds `OPENHUMAN_RPS_BACKENDS` (the enabled backend list) and, for Kompress,
 `HF_HOME`, `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, and
 `HF_HUB_DISABLE_TELEMETRY=1`. `process_util::apply_no_window` is applied to
 the worker spawn and to every provisioning command so Windows shows no
-console flash. Sandbox/approval policy for what reaches this worker (e.g. text
-passed to `spacy.extract`) is decided by the caller before the request is
+console flash. Sandbox/approval policy for what reaches this worker is decided by the caller before the request is
 sent, not here.
 
 ## Used by
 
-- `crates/openhuman-core/src/agent/harness_init/registry.rs`: the `runtime_python_server`,
-  `spacy`, and `kompress` init steps.
-- `crates/openhuman-core/src/modules/memory_host.rs`: `extract_spacy` for the memory
-  tree's query extractor.
+- `crates/openhuman-core/src/agent/harness_init/registry.rs`: the `runtime_python_server`
+  and `kompress` init steps.
 - `crates/openhuman-core/src/inference/tokenjuice/ml/mod.rs`: `request_kompress` for
   plain-text compression.
 
 ## Notes / gotchas
 
-- The server always runs a **single** interpreter: enabling Kompress after
-  spaCy is already running installs torch into the spaCy venv rather than
-  starting a second process.
 - Restart-on-failure in `RuntimePythonServer::request` means a transient
   worker crash is invisible to callers except for added latency on the retried
   call.
-- `ensure_spacy` also looks for a legacy spaCy venv at
-  `<cache_dir>/memory-nlp/spacy-venv` (or `<OS cache dir>/openhuman/memory-nlp/spacy-venv`)
-  and `<workspace_dir>/memory_tree/nlp/spacy-venv`; a ready one is renamed into
-  `runtime-python-server/spacy-venv`, or reused in place if the rename fails,
-  so upgrades don't force re-provisioning. `spacy_provisioned` accepts either
-  location.

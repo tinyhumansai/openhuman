@@ -31,7 +31,7 @@ async fn stdio_client_talks_to_openhuman_mcp_server() {
     assert_eq!(init.protocol_version, LATEST_PROTOCOL_VERSION);
 
     let tools = client.list_tools().await.expect("list_tools");
-    assert!(tools.iter().any(|tool| tool.name == "memory.search"));
+    assert!(tools.iter().any(|tool| tool.name == "memory.recall"));
 
     client.close_session().await.expect("close");
 }

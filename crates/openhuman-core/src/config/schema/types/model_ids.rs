@@ -99,17 +99,3 @@ pub const MANAGED_MULTIMODAL_MODELS: [&str; 3] = [
     MODEL_IMAGE_GENERATION_AGENT,
     MODEL_VIDEO_GENERATION_AGENT,
 ];
-
-/// Effective default global memory-sync cadence (seconds) used when
-/// [`Config::memory_sync_interval_secs`] is `None` — i.e. the user has not
-/// explicitly picked a schedule. 24h, matching the "Sync every 24h" preset
-/// surfaced in the Memory Sources UI. See issue #3302.
-///
-/// Defined in `tinymemory_api::host` and re-exported here: the extracted memory
-/// subsystem applies this fallback too, and two `86_400`s that must agree is a
-/// drift waiting to happen.
-pub use tinymemory_api::host::DEFAULT_MEMORY_SYNC_INTERVAL_SECS;
-
-/// Preset memory-sync cadences (seconds) offered in the UI: 4h / 12h / 24h.
-/// "Manual only" is represented separately by `Some(0)`. See issue #3302.
-pub const MEMORY_SYNC_INTERVAL_PRESETS_SECS: [u64; 3] = [14_400, 43_200, 86_400];

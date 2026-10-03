@@ -37,6 +37,15 @@ pub enum VoiceEvent {
     },
 }
 
+/// A tool call made while answering a committed turn: name and id only.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ConversationToolCall {
+    /// Tool name.
+    pub name: String,
+    /// Provider-assigned call id, when known.
+    pub id: Option<String>,
+}
+
 /// Top-level domain event. Non-exhaustive so new variants can be added
 /// without breaking existing match arms.
 #[non_exhaustive]
@@ -50,6 +59,25 @@ pub enum DomainEvent {
         session_id: String,
         text_chars: usize,
         iterations: usize,
+    },
+    /// A threaded conversation turn was durably committed. Consumed by memory's
+    /// conversation ingestion (`memory::bus`). Carries the turn text, as
+    /// `ChannelMessageProcessed` does; subscribers must never log it. Tool
+    /// calls carry names and ids only — never arguments.
+    ConversationTurnCommitted {
+        thread_id: String,
+        /// The agent definition that answered.
+        agent_id: Option<String>,
+        /// The agent's working folder (`action_dir`).
+        workspace: Option<String>,
+        /// The channel the turn arrived on (`web`, `telegram`, …).
+        channel: Option<String>,
+        user_text: String,
+        assistant_text: String,
+        tool_calls: Vec<ConversationToolCall>,
+        /// Workspace directory active when this event was published.
+        /// Subscribers that persist data load this workspace's config.
+        workspace_dir: std::path::PathBuf,
     },
     /// An error occurred during agent processing.
     AgentError {
@@ -255,125 +283,6 @@ pub enum DomainEvent {
     },
     /// A memory recall query completed.
     MemoryRecalled { query: String, hit_count: usize },
-    /// The configured memory driver could not be bound, and the kernel fell
-    /// back to the placeholder. Never silent — `docs/specs/kernel.md` §3.7.
-    ///
-    /// Carries driver *ids* and an operator-facing reason only: never an
-    /// endpoint, a `credential_ref`, or user memory content. See
-    /// `MemoryDriverConfig`'s manual redacting `Debug` impl for the same rule
-    /// on the config side.
-    MemoryDriverBindFailed {
-        /// The driver id asked for in `[subsystems.memory] driver`.
-        configured_driver: String,
-        /// What was bound instead (today always `"null"`).
-        bound_driver: String,
-        /// Why the configured driver was refused.
-        reason: String,
-    },
-    /// The user switched the memory engine (`memory.engine_set` /
-    /// `memory.engine_migrate`) and the binding was rebound in process.
-    ///
-    /// Carries driver ids only — never an endpoint, credential or reference,
-    /// same rule as [`Self::MemoryDriverBindFailed`].
-    MemoryDriverChanged {
-        /// The driver id that was active before the switch.
-        from: String,
-        /// The driver id that is configured now.
-        to: String,
-    },
-    /// The memory policy guard refused a call before it reached the bound
-    /// driver (`docs/specs/kernel.md` §3.4).
-    ///
-    /// Carries the driver id, the contract method, and an operator-facing
-    /// reason — **never** a namespace key, a recall query, or memory content.
-    /// Same rule as [`Self::MemoryDriverBindFailed`] above, and the reason
-    /// [`Self::MemoryRecalled`] (which carries the raw query) is not reused for
-    /// this: the guard sits on the hot path and must not put user text on the
-    /// bus.
-    ///
-    /// Published on refusals only. A guard that published on success would emit
-    /// one event per memory read.
-    MemoryGuardDenied {
-        /// The bound driver the call was headed for.
-        driver_id: String,
-        /// The contract method that was refused, e.g. `"core.store"` or
-        /// `"tree.query_source"`.
-        method: String,
-        /// Why the guard refused it.
-        reason: String,
-    },
-    /// A memory sync was requested for a specific channel or all channels.
-    ///
-    /// Published by `openhuman.memory_sync_channel` (channel_id = Some(...)) and
-    /// `openhuman.memory_sync_all` (channel_id = None). No consumers exist yet —
-    /// this variant is a hook for future ingestion subscribers to react to pull
-    /// requests. See `crates/openhuman-core/src/memory/ops.rs` for the RPC handlers.
-    MemorySyncRequested { channel_id: Option<String> },
-    /// A high-level memory sync orchestration stage changed.
-    ///
-    /// Emitted by the `memory` domain so the frontend can surface progress
-    /// across request → fetch → store → queue → ingest → complete.
-    ///
-    /// `source_id` is the originating memory-source id (from
-    /// `memory_sources`) when the event can be attributed to a specific
-    /// source row. The frontend prefers this over `connection_id` for
-    /// per-row indicator matching (see RC#2, issue #3295). Set to `None`
-    /// when the event originates from a non-memory-source sync path (e.g. a
-    /// channel-provider ingest) — `connection_id` remains unchanged for
-    /// those callers.
-    MemorySyncStageChanged {
-        trigger: String,
-        stage: String,
-        provider: Option<String>,
-        connection_id: Option<String>,
-        detail: Option<String>,
-        /// Originating memory-source id for frontend per-row indicator
-        /// matching. `None` when the event is not attributable to a
-        /// specific `MemorySourceEntry`.
-        source_id: Option<String>,
-    },
-    /// A memory ingestion job started running on the local extraction LLM.
-    /// Ingestion is singleton — this fires once, then a matching
-    /// [`Self::MemoryIngestionCompleted`] follows when the job finishes.
-    MemoryIngestionStarted {
-        document_id: String,
-        title: String,
-        namespace: String,
-        queue_depth: usize,
-    },
-    /// A memory ingestion job finished (successfully or with an error).
-    MemoryIngestionCompleted {
-        document_id: String,
-        namespace: String,
-        success: bool,
-        elapsed_ms: u64,
-        queue_depth: usize,
-    },
-
-    // ── Memory Diff ─────────────────────────────────────────────────────
-    /// A snapshot of a memory source's chunk state was captured.
-    MemoryDiffSnapshotTaken {
-        snapshot_id: String,
-        source_id: String,
-        source_kind: String,
-        item_count: usize,
-        trigger: String,
-    },
-    /// A diff was computed between two snapshots.
-    MemoryDiffComputed {
-        source_id: String,
-        from_snapshot_id: Option<String>,
-        to_snapshot_id: String,
-        added: usize,
-        removed: usize,
-        modified: usize,
-    },
-    /// Read markers were committed for one or more sources, acknowledging
-    /// their current diffs as consumed.
-    MemoryDiffMarkedRead {
-        source_ids: Vec<String>,
-        snapshot_ids: Vec<String>,
-    },
 
     // ── Channels ────────────────────────────────────────────────────────
     /// An inbound channel message from the transport layer, ready for processing.
@@ -481,6 +390,12 @@ pub enum DomainEvent {
         message: String,
         /// Optional job name for display/threading purposes.
         job_name: Option<String>,
+    },
+    /// A host-owned system cron job came due (a `flow`-type row whose command
+    /// is `system:<job>`, see `cron::system_jobs`). The owning domain runs it.
+    CronSystemJobDue {
+        /// The job name, e.g. `memory_context_refresh`.
+        job: String,
     },
     /// A `flow`-type cron job fired its schedule tick (issue B2,
     /// `my_docs/ohxtf/b2-triggers-trust/01-triggers-and-trust.md` §1).
@@ -1041,40 +956,6 @@ pub enum DomainEvent {
         reason: String,
     },
 
-    // ── Tree Summarizer ──────────────────────────────────────────────────
-    /// An hour leaf was created from buffered data.
-    TreeSummarizerHourCompleted {
-        namespace: String,
-        node_id: String,
-        token_count: u32,
-    },
-    /// A tree node summary was updated during propagation.
-    TreeSummarizerPropagated {
-        namespace: String,
-        node_id: String,
-        level: String,
-        token_count: u32,
-    },
-    /// A full tree rebuild completed.
-    TreeSummarizerRebuildCompleted { namespace: String, total_nodes: u64 },
-
-    /// Fine-grained progress during the memory tree build pipeline.
-    /// Emitted at each sub-phase so the frontend can show detailed status.
-    MemoryTreeBuildProgress {
-        /// Which phase: "extract", "append", "seal", "flush", "embed"
-        phase: String,
-        /// Sub-step within the phase (e.g. "loading", "summarising", "persisting")
-        step: String,
-        /// Tree scope when available (e.g. "github:org/repo")
-        tree_scope: Option<String>,
-        /// Tree level being processed (0 = leaves, 1+ = summaries)
-        level: Option<u32>,
-        /// Number of items being processed in this step
-        item_count: Option<u32>,
-        /// Human-readable detail
-        detail: Option<String>,
-    },
-
     // ── Notification ────────────────────────────────────────────────────
     /// An integration notification was ingested from an embedded webview.
     NotificationIngested {
@@ -1111,54 +992,6 @@ pub enum DomainEvent {
     DeviceTunnelFrame {
         channel_id: String,
         payload_b64: String,
-    },
-    // ── Memory tree ─────────────────────────────────────────────────────
-    /// A document (chat batch, email thread, or standalone document) was
-    /// fully canonicalised and its chunks written to the memory tree.
-    ///
-    /// Emitted by `tinymemory_core::tree::ingest::persist()` after the chunk upsert
-    /// and extract-job enqueue complete. Subscribers (Phase 2 producers such
-    /// as the email-signature parser) react to this to inspect the
-    /// canonicalised content.
-    DocumentCanonicalized {
-        /// The source identifier passed to the ingest call (e.g. `"gmail:abc"`,
-        /// `"conversations:agent"`).
-        source_id: String,
-        /// Kind of content — `"chat"`, `"email"`, `"document"`.
-        source_kind: String,
-        /// Number of chunks written to `vector_chunks` in this ingest.
-        chunks_written: usize,
-        /// IDs of the chunks that were written.
-        chunk_ids: Vec<String>,
-        /// Wall-clock seconds since epoch when canonicalisation completed.
-        canonicalized_at: f64,
-        /// Last ≤ 2 048 characters of the canonicalised markdown body.
-        ///
-        /// Populated for `email` and `document` sources so that lightweight
-        /// subscribers (e.g. the email-signature parser) can inspect trailing
-        /// content without hitting disk. `None` for `chat` sources where the
-        /// content is conversational and doesn't contain signature-style structure.
-        body_preview: Option<String>,
-    },
-
-    // ── Learning ─────────────────────────────────────────────────────────
-    /// The stability detector finished a full cache rebuild cycle.
-    ///
-    /// Emitted by `learning::stability_detector` (Phase 3) after writing
-    /// the new snapshot to `user_profile_facets`. Subscribers (Phase 4
-    /// `profile_md_renderer`) react to re-render the `PROFILE.md` managed
-    /// blocks.
-    CacheRebuilt {
-        /// Number of facets added in this cycle.
-        added: usize,
-        /// Number of facets evicted (below τ_evict threshold) in this cycle.
-        evicted: usize,
-        /// Number of facets unchanged / carried over.
-        kept: usize,
-        /// Total facets in the cache after the rebuild.
-        total_size: usize,
-        /// Wall-clock seconds since epoch when the rebuild completed.
-        rebuilt_at: f64,
     },
 
     // ── MCP Clients ─────────────────────────────────────────────────────
@@ -1520,6 +1353,7 @@ impl DomainEvent {
         match self {
             Self::AgentTurnStarted { .. }
             | Self::AgentTurnCompleted { .. }
+            | Self::ConversationTurnCommitted { .. }
             | Self::AgentError { .. }
             | Self::SubagentSpawned { .. }
             | Self::SubagentCompleted { .. }
@@ -1539,20 +1373,7 @@ impl DomainEvent {
 
             Self::EmbeddingModelUnhealthy { .. }
             | Self::MemoryStored { .. }
-            | Self::MemoryRecalled { .. }
-            | Self::MemoryDriverBindFailed { .. }
-            | Self::MemoryDriverChanged { .. }
-            | Self::MemoryGuardDenied { .. }
-            | Self::MemorySyncRequested { .. }
-            | Self::MemorySyncStageChanged { .. }
-            | Self::MemoryIngestionStarted { .. }
-            | Self::MemoryIngestionCompleted { .. }
-            | Self::DocumentCanonicalized { .. }
-            | Self::MemoryDiffSnapshotTaken { .. }
-            | Self::MemoryDiffComputed { .. }
-            | Self::MemoryDiffMarkedRead { .. } => "memory",
-
-            Self::CacheRebuilt { .. } => "learning",
+            | Self::MemoryRecalled { .. } => "memory",
 
             Self::ChannelInboundMessage { .. }
             | Self::ChannelMessageReceived { .. }
@@ -1567,6 +1388,7 @@ impl DomainEvent {
             | Self::CronDeliveryRequested { .. }
             | Self::ProactiveMessageRequested { .. }
             | Self::FlowScheduleTick { .. }
+            | Self::CronSystemJobDue { .. }
             | Self::FlowRunProgress { .. }
             | Self::FlowRunStarted { .. }
             | Self::FlowRunFinished { .. }
@@ -1600,11 +1422,6 @@ impl DomainEvent {
             Self::TriggerEvaluated { .. }
             | Self::TriggerEscalated { .. }
             | Self::TriggerEscalationFailed { .. } => "triage",
-
-            Self::TreeSummarizerHourCompleted { .. }
-            | Self::TreeSummarizerPropagated { .. }
-            | Self::TreeSummarizerRebuildCompleted { .. }
-            | Self::MemoryTreeBuildProgress { .. } => "tree_summarizer",
 
             Self::NotificationIngested { .. } | Self::NotificationTriaged { .. } => "notification",
 
@@ -1675,6 +1492,7 @@ impl DomainEvent {
         match self {
             Self::AgentTurnStarted { .. } => "AgentTurnStarted",
             Self::AgentTurnCompleted { .. } => "AgentTurnCompleted",
+            Self::ConversationTurnCommitted { .. } => "ConversationTurnCommitted",
             Self::AgentError { .. } => "AgentError",
             Self::SubagentSpawned { .. } => "SubagentSpawned",
             Self::SubagentCompleted { .. } => "SubagentCompleted",
@@ -1693,18 +1511,6 @@ impl DomainEvent {
             Self::MonitorLine { .. } => "MonitorLine",
             Self::MemoryStored { .. } => "MemoryStored",
             Self::MemoryRecalled { .. } => "MemoryRecalled",
-            Self::MemoryDriverBindFailed { .. } => "MemoryDriverBindFailed",
-            Self::MemoryDriverChanged { .. } => "MemoryDriverChanged",
-            Self::MemoryGuardDenied { .. } => "MemoryGuardDenied",
-            Self::MemorySyncRequested { .. } => "MemorySyncRequested",
-            Self::MemorySyncStageChanged { .. } => "MemorySyncStageChanged",
-            Self::MemoryIngestionStarted { .. } => "MemoryIngestionStarted",
-            Self::MemoryIngestionCompleted { .. } => "MemoryIngestionCompleted",
-            Self::DocumentCanonicalized { .. } => "DocumentCanonicalized",
-            Self::MemoryDiffSnapshotTaken { .. } => "MemoryDiffSnapshotTaken",
-            Self::MemoryDiffComputed { .. } => "MemoryDiffComputed",
-            Self::MemoryDiffMarkedRead { .. } => "MemoryDiffMarkedRead",
-            Self::CacheRebuilt { .. } => "CacheRebuilt",
             Self::ChannelInboundMessage { .. } => "ChannelInboundMessage",
             Self::ChannelMessageReceived { .. } => "ChannelMessageReceived",
             Self::ChannelMessageProcessed { .. } => "ChannelMessageProcessed",
@@ -1717,6 +1523,7 @@ impl DomainEvent {
             Self::CronDeliveryRequested { .. } => "CronDeliveryRequested",
             Self::ProactiveMessageRequested { .. } => "ProactiveMessageRequested",
             Self::FlowScheduleTick { .. } => "FlowScheduleTick",
+            Self::CronSystemJobDue { .. } => "CronSystemJobDue",
             Self::FlowRunProgress { .. } => "FlowRunProgress",
             Self::FlowRunStarted { .. } => "FlowRunStarted",
             Self::FlowRunFinished { .. } => "FlowRunFinished",
@@ -1745,10 +1552,6 @@ impl DomainEvent {
             Self::TriggerEvaluated { .. } => "TriggerEvaluated",
             Self::TriggerEscalated { .. } => "TriggerEscalated",
             Self::TriggerEscalationFailed { .. } => "TriggerEscalationFailed",
-            Self::TreeSummarizerHourCompleted { .. } => "TreeSummarizerHourCompleted",
-            Self::TreeSummarizerPropagated { .. } => "TreeSummarizerPropagated",
-            Self::TreeSummarizerRebuildCompleted { .. } => "TreeSummarizerRebuildCompleted",
-            Self::MemoryTreeBuildProgress { .. } => "MemoryTreeBuildProgress",
             Self::NotificationIngested { .. } => "NotificationIngested",
             Self::NotificationTriaged { .. } => "NotificationTriaged",
             Self::DevicePaired { .. } => "DevicePaired",

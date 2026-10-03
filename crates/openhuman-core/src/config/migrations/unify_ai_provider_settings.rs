@@ -9,9 +9,8 @@
 //! - `inference_url` + `model_routes`        — global cloud preset
 //! - `reasoning_provider` / `agentic_provider` / `coding_provider`
 //!                                          — per-role chat (#1710, partial)
-//! - `local_ai.usage.{embeddings,heartbeat,learning_reflection,subconscious}`
+//! - `local_ai.usage.{embeddings,heartbeat,subconscious}`
 //!                                          — local-vs-cloud booleans
-//! - `memory_tree.llm_backend` (+ `cloud_llm_model`) — memory summariser
 //!
 //! After this migration there is one grammar — provider strings parsed by
 //! [`crate::inference::provider::factory`] — addressing every workload
@@ -19,7 +18,7 @@
 //!
 //! ```text
 //! reasoning_provider, agentic_provider, coding_provider,
-//! memory_provider,    embeddings_provider, learning_provider
+//! memory_provider,    embeddings_provider
 //! ```
 //!
 //! The legacy `local_ai.usage.heartbeat` / `local_ai.usage.subconscious`
@@ -201,7 +200,6 @@ fn set_primary_cloud(config: &mut Config, stats: &mut MigrationStats) {
 /// fields that were already set by a previous run or a hand-edit.
 fn derive_workload_providers(config: &mut Config, stats: &mut MigrationStats) {
     let runtime_on = config.local_ai.runtime_enabled;
-    let chat_model = config.local_ai.chat_model_id.clone();
     let embed_model = config.local_ai.embedding_model_id.clone();
 
     let set_field = |field: &mut Option<String>, value: String, stats: &mut MigrationStats| {
@@ -211,14 +209,8 @@ fn derive_workload_providers(config: &mut Config, stats: &mut MigrationStats) {
         }
     };
 
-    // Memory summariser — `memory_tree.llm_backend` is `LlmBackend::Cloud | Local`.
-    let memory_value = match config.memory_tree.llm_backend {
-        crate::config::schema::LlmBackend::Local if runtime_on && !chat_model.is_empty() => {
-            format!("ollama:{}", chat_model)
-        }
-        _ => "cloud".to_string(),
-    };
-    set_field(&mut config.memory_provider, memory_value, stats);
+    // Summarisation workload: defaults to cloud.
+    set_field(&mut config.memory_provider, "cloud".to_string(), stats);
 
     // Embeddings — uses the embedding_model_id, not chat_model_id.
     let embeddings_value =
@@ -228,15 +220,6 @@ fn derive_workload_providers(config: &mut Config, stats: &mut MigrationStats) {
             "cloud".to_string()
         };
     set_field(&mut config.embeddings_provider, embeddings_value, stats);
-
-    // Learning uses the chat model when local.
-    let learning_value =
-        if config.local_ai.usage.learning_reflection && runtime_on && !chat_model.is_empty() {
-            format!("ollama:{}", chat_model)
-        } else {
-            "cloud".to_string()
-        };
-    set_field(&mut config.learning_provider, learning_value, stats);
 
     // The three chat workloads (reasoning/agentic/coding) intentionally
     // stay None — the factory treats unset as "cloud" which routes to

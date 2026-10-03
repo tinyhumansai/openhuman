@@ -248,7 +248,7 @@ const result = await apiClient.post<LoginResponse>("/auth/login", {
 - `agentTeamApi`, `agentWorkApi`, `subagentApi`: agents
 - `skillsApi`, `skillRegistryApi`, `flowsApi`, `workflowRunsApi`: skills & automation
 - `channelConnectionsApi`, `mcpClientsApi`, `mcpSetupApi`, `tunnelsApi`: connections
-- `memoryTimelineApi`, `memoryFreshnessApi`, `graphCentralityApi`, `namespaceOverviewApi`: memory/graph
+- `memoryApi`: Memory v2 RPC wrappers (`openhuman.memory_*`)
 - `billingApi`, `creditsApi`, `referralApi`, `inviteApi`: commerce
 - `voiceSettingsApi`, `aiSettingsApi`, `modelCouncilApi`: AI/voice config
 
@@ -444,10 +444,10 @@ Current desktop routes (read `AppRoutes.tsx` for the authoritative table: the fi
 /callback/:kind[/:status] → WebCallbackPage (generic OAuth/provider callbacks)
 /onboarding/*          → Onboarding stepper (ProtectedRoute)
 /human                 → HumanPage (dedicated mascot stage)
-/brain                 → Brain (memory knowledge-graph)
+/brain                 → redirect to /connections?tab=brain (Memory)
 /flows                 → FlowsPage · /flows/draft → draft canvas · /flows/:id → FlowCanvasPage
 /workflows/run         → WorkflowsRun (single-purpose Skill runner)
-/connections           → Skills page (connections hub)
+/connections           → Skills page (connections hub); `?tab=brain&brain=<engine|ask|learnings|conversations|documents|context>` is Memory (`pages/Memory.tsx`, `components/memory/`); `/settings/memory-engine` redirects to the `engine` chip
 /chat/:threadId?       → Accounts (unified chat: agent + connected web apps)
 /invites               → Invites
 /feedback              → Feedback
@@ -549,7 +549,8 @@ components/
 ├── commands/                # CommandProvider (command palette)
 ├── Announcement/, upsell/, userErrors/, walkthrough/  # Shell-level overlays
 ├── keyring/, InitProgressScreen/                     # Consent + init overlays
-└── intelligence/            # Memory/vault surfaces (ObsidianVaultSection, VaultHealthChecklist, WorkflowsTab, …)
+├── memory/                  # Memory v2 tabs (Engine, Ask, Learnings, Conversations, Documents, Context) and import banner
+└── intelligence/            # Shared intelligence UI (WorkflowsTab, Toast, ConfirmationModal)
 ```
 
 Conventions:

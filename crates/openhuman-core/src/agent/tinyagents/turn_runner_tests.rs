@@ -70,7 +70,6 @@ fn hosted_base() -> Arc<crate::agent::tinyagents::host::OpenHumanHostBase> {
             crate::agent::harness::definition::AgentDefinitionRegistry::builtins_only(),
         ),
         security_policy: Arc::new(crate::security::policy::SecurityPolicy::default()),
-        memory: crate::memory::test_support::noop_memory(),
         post_turn_hooks: Vec::new(),
         session_definition: None,
     })
@@ -569,7 +568,6 @@ async fn session_screens_the_new_input_but_not_a_replayed_tool_results_row() {
             .tools(Vec::new())
             .workspace_dir(root.path().join("workspace"))
             .action_dir(root.path().to_path_buf())
-            .memory(crate::memory::test_support::noop_memory())
             .tool_dispatcher(Box::new(tinytools_agent::dialect::XmlDialect))
             .build()
             .expect("session build")

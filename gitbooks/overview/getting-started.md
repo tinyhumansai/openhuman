@@ -1,7 +1,7 @@
 ---
 description: >-
   Install OpenHuman, walk through the in-app onboarding (sign in, connect Gmail,
-  choose how AI runs), and run your first request against your own Memory Tree.
+  choose how AI runs), and run your first request against your own memory.
 icon: play
 ---
 
@@ -40,12 +40,12 @@ The first screen is **"Sign in! Let's Cook"**. Multiple sign-in options are avai
 {% endhint %}
 
 {% hint style="warning" %}
-**Know what is local and what is managed.** Your Memory Tree database, Markdown vault, workspace config, and local runtime state live on your machine. The default setup still uses OpenHuman-hosted services for sign-in, model routing, managed integration OAuth/tool calls, and web search proxying. Use the custom setup paths if you want to bring your own model, search, or Composio credentials. Some hosted features and real-time integration triggers still require the managed backend.
+**Know what is local and what is managed.** Your workspace config, and local runtime state live on your machine. The default setup still uses OpenHuman-hosted services for sign-in, model routing, managed integration OAuth/tool calls, and web search proxying. Use the custom setup paths if you want to bring your own model, search, or Composio credentials. Some hosted features and real-time integration triggers still require the managed backend.
 {% endhint %}
 
 ## 3. Run your first request
 
-Once Gmail has been ingested (the first auto-fetch tick happens within twenty minutes), try prompts like:
+Once Gmail is connected and a memory source has synced, try prompts like:
 
 **Briefings**
 
@@ -63,9 +63,9 @@ OpenHuman picks the right model for each task automatically. See [Automatic Mode
 
 ---
 
-## 4. Open the Obsidian vault
+## 4. Set up memory
 
-The Memory tab has a **View vault in Obsidian** button. Click it to open `<workspace>/wiki/` in [Obsidian](https://obsidian.md). You can browse the agent's summaries, drop in your own notes, and even build manual links - the agent will pick up your edits on the next ingest. See [Obsidian-Style Memory](../features/obsidian-wiki/).
+Open **Connections → Memory**. On the **Engine** tab choose TinyHumans (signed in) or your own CortexDB, then add a folder, link or GitHub repo on the **Documents** tab. The agent can then answer questions about it, with citations. See [Memory](../features/memory.md).
 
 ---
 
@@ -73,7 +73,7 @@ The Memory tab has a **View vault in Obsidian** button. Click it to open `<works
 
 Now that the agent has memory and a model, the rest of the product is about giving it more surfaces:
 
-- [**Auto-fetch from Integrations**](../features/obsidian-wiki/auto-fetch.md) - connect more sources from **Settings**; every twenty minutes the scheduler pulls fresh data into your tree.
+- [**Memory**](../features/memory.md) - connect more sources; they sync on a schedule into your memory engine.
 - [**Native Voice**](../features/native-tools/voice.md) - push-to-talk dictation and TTS replies so you can talk to OpenHuman instead of typing.
 
 ## Join the community

@@ -105,7 +105,7 @@ fn snapshot_of(components: &[(&str, &str)]) -> HealthSnapshot {
 #[test]
 fn critical_set_membership() {
     assert!(is_critical_component("core"));
-    assert!(is_critical_component("memory_tree_db"));
+    assert!(!is_critical_component("memory_tree_db"));
     assert!(!is_critical_component("scheduler"));
     assert!(!is_critical_component("channels"));
     assert!(!is_critical_component("update_checker"));
@@ -132,12 +132,12 @@ fn noncritical_failure_stays_healthy_but_degraded() {
 
 #[test]
 fn critical_failure_is_unhealthy() {
-    let v = verdict(&snapshot_of(&[("memory_tree_db", "error")]));
+    let v = verdict(&snapshot_of(&[("core", "error")]));
     assert!(
         !v.healthy,
         "a critical component failure 503s the container"
     );
-    assert_eq!(v.critical_unhealthy, vec!["memory_tree_db".to_string()]);
+    assert_eq!(v.critical_unhealthy, vec!["core".to_string()]);
 }
 
 #[test]

@@ -23,14 +23,11 @@ pub(super) fn configured_route_for_role<'a>(role: &str, config: &'a Config) -> O
         // Tier-specific multimodal model; when unset it falls through to
         // `primary_cloud` (→ managed `hint:vision`), as every unset route now does.
         "vision" => config.vision_provider.as_deref(),
-        // `memory_provider` covers both the memory-tree extract path and
-        // the summarizer sub-agent (whose definition declares
-        // `hint = "summarization"`). Both are "produce a condensed
-        // representation of input text" — same model class, no reason
-        // for a separate config knob.
+        // `memory_provider` routes the summarizer sub-agent (whose definition
+        // declares `hint = "summarization"`): "produce a condensed
+        // representation of input text".
         "memory" | "summarization" => config.memory_provider.as_deref(),
         "embeddings" => config.embeddings_provider.as_deref(),
-        "learning" => config.learning_provider.as_deref(),
         _ => None,
     }
 }

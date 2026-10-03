@@ -1,77 +1,32 @@
-//! Memory-tree, embedding-model, and Claude Agent SDK checks.
+//! Memory-engine, embedding-model, and Claude Agent SDK checks.
 
 use crate::config::Config;
 
 use super::daemon_env_checks::{truncate_for_display, COMMAND_VERSION_PREVIEW_CHARS};
-use super::run::MemoryChunkCount;
+use super::run::MemoryEngineCheck;
 use super::types::DiagnosticItem;
 
-pub(super) fn check_memory_tree_db(
-    config: &Config,
-    memory_chunks: &MemoryChunkCount,
-    items: &mut Vec<DiagnosticItem>,
-) {
-    let cat = "memory_tree_db";
-    let db_path = config.workspace_dir.join("memory_tree").join("chunks.db");
-
-    // ── Stale side-files (checked even when chunks.db is absent) ────
-    let base_name = db_path
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .into_owned();
-    let shm = db_path.with_file_name(format!("{base_name}-shm"));
-    let wal = db_path.with_file_name(format!("{base_name}-wal"));
-    for sidecar in [&shm, &wal] {
-        if sidecar.exists() {
-            items.push(DiagnosticItem::warn(
-                cat,
-                format!(
-                    "stale SQLite side-file present (may indicate unclean shutdown): {}",
-                    sidecar.display()
-                ),
-            ));
-        }
-    }
-
-    // ── SQLite-artifact check (informational only, not a gate) ──────
-    if !db_path.exists() {
-        items.push(DiagnosticItem::warn(
+/// Report the memory engine: which one is bound and whether it answers, or
+/// why memory is off. Off is a warning, not an error: a signed-out user with
+/// no CortexDB key has memory off by design.
+pub(super) fn check_memory_engine(memory: &MemoryEngineCheck, items: &mut Vec<DiagnosticItem>) {
+    let cat = "memory_engine";
+    log::debug!(
+        "[doctor] check_memory_engine: engine={:?} status={}",
+        memory.engine,
+        memory.status
+    );
+    let engine = memory.engine.as_deref().unwrap_or("none");
+    let reason = memory.reason.as_deref().unwrap_or("no reason given");
+    items.push(match memory.status.as_str() {
+        "ok" => DiagnosticItem::ok(cat, format!("memory engine '{engine}' is serving")),
+        "degraded" => DiagnosticItem::warn(
             cat,
-            format!("legacy SQLite artifact is absent: {}", db_path.display()),
-        ));
-    }
-
-    // ── Driver probe ────────────────────────────────────────────────
-    // The count used to be a `SELECT COUNT(*) FROM mem_tree_chunks` through
-    // the engine's own connection helper. It is the bound driver's answer now,
-    // which is what lets this check mean something on a workspace whose memory
-    // is not SQLite at all — and what takes the engine crate out of this file.
-    match memory_chunks {
-        Ok(count) => {
-            log::debug!(
-                "[doctor] check_memory_tree_db: driver reported {count} chunks at {}",
-                db_path.display()
-            );
-            items.push(DiagnosticItem::ok(
-                cat,
-                format!(
-                    "memory driver accessible ({count} chunks); SQLite artifact: {}",
-                    db_path.display()
-                ),
-            ));
-        }
-        Err(err) => {
-            log::debug!(
-                "[doctor] check_memory_tree_db: chunk-count probe failed at {}: {err}",
-                db_path.display()
-            );
-            items.push(DiagnosticItem::error(
-                cat,
-                format!("DB probe failed at {}: {err}", db_path.display()),
-            ));
-        }
-    }
+            format!("memory engine '{engine}' is degraded: {reason}"),
+        ),
+        "off" => DiagnosticItem::warn(cat, format!("memory is off: {reason}")),
+        _ => DiagnosticItem::error(cat, format!("memory engine '{engine}' is down: {reason}")),
+    });
 }
 
 // ── Embedding model health ───────────────────────────────────────

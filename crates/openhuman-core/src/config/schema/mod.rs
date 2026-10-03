@@ -30,7 +30,6 @@ pub use hooks::HooksConfig;
 pub mod hosting;
 pub use hosting::HostingConfig;
 mod identity_cost;
-mod learning;
 mod load;
 pub use load::{
     action_dir_env_override, active_user_marker_path, active_workspace_dir,
@@ -55,6 +54,7 @@ pub(crate) use load::CONFIG_OWNER_MISMATCH_MARKER;
 pub mod claude_agent_sdk;
 pub use claude_agent_sdk::ClaudeAgentSdkConfig;
 mod local_ai;
+mod memory;
 mod modules;
 mod node;
 mod observability;
@@ -65,8 +65,6 @@ mod runtime;
 mod runtime_pool;
 mod runtime_python;
 mod scheduler_gate;
-mod storage_memory;
-mod subsystems;
 mod task_sources;
 mod tokenjuice;
 mod tools;
@@ -74,8 +72,8 @@ mod update;
 mod web_chat_config;
 
 pub use agent::{
-    AgentConfig, DelegateAgentConfig, MemoryContextWindow, MemoryWindowLimits,
-    OrchestratorModelConfig, RequiredOutputContract, TeamModelConfig, ToolSearchConfig,
+    AgentConfig, DelegateAgentConfig, OrchestratorModelConfig, RequiredOutputContract,
+    TeamModelConfig, ToolSearchConfig,
 };
 pub use autonomy::AutonomyConfig;
 pub use capability_providers::{CapabilityProviderConfig, CapabilityProviderTrustState};
@@ -91,8 +89,11 @@ pub use cron::CronConfig;
 pub use dashboard::{DashboardConfig, DiagramViewerConfig, EventStreamConfig, ModelHealthConfig};
 pub use dictation::{DictationActivationMode, DictationConfig};
 pub use identity_cost::{CostConfig, ModelPricing};
-pub use learning::{LearningConfig, ReflectionSource};
 pub use local_ai::{LocalAiConfig, LocalAiUsage};
+pub use memory::{
+    migrate_legacy_source, MemoryConfig, MemoryContextConfig, MemoryConversationsConfig,
+    MemoryEngineSettings, MemorySourceConfig, MemorySourceKind, MEMORY_CORTEXDB_KEY_NAME,
+};
 pub use modules::{ModuleOverride, ModulesConfig};
 pub use node::NodeConfig;
 pub use observability::{AgentTracingBackend, AgentTracingConfig, ObservabilityConfig};
@@ -108,14 +109,7 @@ pub use runtime::{
 };
 pub use runtime_pool::{RuntimePoolConfig, RuntimePoolLangConfig};
 pub use runtime_python::RuntimePythonConfig;
-pub use scheduler_gate::{SchedulerGateConfig, SchedulerGateMode};
-pub use storage_memory::{
-    LlmBackend, MemoryConfig, MemoryTreeConfig, StorageConfig, StorageProviderConfig,
-    StorageProviderSection, DEFAULT_CLOUD_LLM_MODEL,
-};
-pub use subsystems::{
-    MemoryDriverConfig, MemoryHooksConfig, MemorySubsystemConfig, SubsystemsConfig,
-};
+pub use scheduler_gate::{PauseReason, Policy, SchedulerGateConfig, SchedulerGateMode};
 pub use task_sources::TaskSourcesConfig;
 pub use tokenjuice::TokenjuiceConfig;
 pub use tools::{

@@ -19,7 +19,18 @@ import { behavior } from "../state.mjs";
  *   - a reused body `idempotency_key` with different text is a 409
  *     `IDEMPOTENCY_CONFLICT`, and forgetting does not release the key;
  *   - `GET /memory/scopes` honours `limit` and caps at 50 without it;
- *   - `/memory/events` lists newest first with every record emitted twice.
+ *   - `/memory/events` lists newest first with every record emitted twice,
+ *     honours `scope`, `limit`, an offset `cursor` and a comma-separated
+ *     `labels` filter (events carrying ANY one of the labels);
+ *   - `GET /memory/events/:id` returns one event (404 NOT_FOUND otherwise);
+ *   - `/memory/recall` ranks a scope's events by how many query words (3+
+ *     letters) they hold, honours `view: "descend"`, the metadata `labels`
+ *     filter and `budgets.per_layer_limits.events`, and mints a `pack_<n>` id
+ *     that `/memory/answer` must be given as `use_pack_id`;
+ *   - `/memory/answer` answers deterministically from the pack it is given:
+ *     "grounded answer for <question>" followed by the pack's top event text.
+ *
+ * Everything is in memory and deterministic; `resetMockMemory()` clears it.
  */
 
 const DEFAULT_SCOPE_PAGE = 50;
@@ -38,7 +49,7 @@ const ANSWER_KEYS = new Set([
   "use_pack_id",
 ]);
 
-/** token -> { events, idempotency, claims, nextOffset, nextId } */
+/** token -> { events, idempotency, claims, packs, nextOffset, nextId, nextPack } */
 const stores = new Map();
 
 export function resetMockMemory() {
@@ -52,8 +63,10 @@ function storeFor(token) {
       events: [],
       idempotency: new Map(),
       claims: new Set(),
+      packs: new Map(),
       nextOffset: 0,
       nextId: 0,
+      nextPack: 0,
     };
     stores.set(token, store);
   }
@@ -95,11 +108,39 @@ function textOf(event) {
   return event?.content?.text;
 }
 
+/** Whether `event` carries any one of `wanted` (an empty list keeps all). */
+function labelled(event, wanted) {
+  if (!wanted.length) return true;
+  const labels = Array.isArray(event?.context?.labels) ? event.context.labels : [];
+  return labels.some((label) => wanted.includes(label));
+}
+
+/** Lower-cased query words of 3+ alphanumeric characters. */
+function wordsOf(query) {
+  return String(query || "")
+    .split(/\s+/)
+    .map((w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "").toLowerCase())
+    .filter((w) => w.length >= 3);
+}
+
+/** Render an event's text for a reader, prefixing the speaker. */
+function rendered(event) {
+  const text = textOf(event);
+  if (typeof text !== "string") return event;
+  const role = String(event?.content?.role || "user");
+  return { ...event, content: { ...event.content, text: `[${role}] ${text}` } };
+}
+
 export async function handleMemory(ctx) {
   const { method, url, res, req, parsedBody } = ctx;
   const path = url.split("?")[0];
   if (!path.startsWith("/memory/")) return false;
-  const route = path.slice("/memory/".length).replace(/\/+$/, "");
+  let route = path.slice("/memory/".length).replace(/\/+$/, "");
+  let eventId = null;
+  if (route.startsWith("events/")) {
+    eventId = decodeURIComponent(route.slice("events/".length));
+    route = "events";
+  }
   const known = new Set([
     "experience",
     "events",
@@ -160,15 +201,26 @@ export async function handleMemory(ctx) {
     store.nextId += 1;
     const id = `evt_${store.nextId}`;
     store.idempotency.set(key, { text, scope, modality, content, id });
+    const given = body.context && typeof body.context === "object" ? body.context : {};
     store.events.push({
       id,
       scope,
       modality,
       wal_offset: store.nextOffset,
       content,
-      context: { recorded_at: new Date().toISOString() },
+      context: { ...given, recorded_at: new Date().toISOString() },
     });
     ok(res, { event_id: id, status: "captured", replayed_from_idempotency: false });
+    return true;
+  }
+
+  if (route === "events" && method === "GET" && eventId !== null) {
+    const found = store.events.find((e) => e.id === eventId);
+    if (!found) {
+      fail(res, 404, "NOT_FOUND", "event not found");
+      return true;
+    }
+    ok(res, found);
     return true;
   }
 
@@ -177,9 +229,13 @@ export async function handleMemory(ctx) {
     const scope = params.get("scope") || "";
     const cursor = Number(params.get("cursor") || 0) || 0;
     const limit = Number(params.get("limit") || 50) || 50;
+    const wanted = (params.get("labels") || "")
+      .split(",")
+      .map((l) => l.trim())
+      .filter(Boolean);
     const stream = [];
     for (const event of [...store.events].reverse()) {
-      if (event.scope !== scope) continue;
+      if (event.scope !== scope || !labelled(event, wanted)) continue;
       stream.push(event, event);
     }
     const items = stream.slice(cursor, cursor + limit);
@@ -194,17 +250,31 @@ export async function handleMemory(ctx) {
 
   if (route === "recall" && method === "POST") {
     const scope = String(body.scope || "");
-    const query = String(body.query || "").toLowerCase();
-    const hits = store.events
-      .filter((e) => e.scope === scope)
-      .filter((e) => !query || String(textOf(e) ?? "").toLowerCase().includes(query))
-      .map((e) => {
-        const text = textOf(e);
-        return typeof text === "string"
-          ? { ...e, content: { ...e.content, text: `[user] ${text}` } }
-          : e;
-      });
-    ok(res, { pack_id: "pack_test", layers: { events: hits } });
+    const descend = body.view === "descend";
+    const wanted = Array.isArray(body.filters?.metadata?.labels)
+      ? body.filters.metadata.labels.map(String)
+      : [];
+    const words = wordsOf(body.query);
+    const budgetRaw = body.budgets?.per_layer_limits?.events;
+    const budget = Number.isFinite(Number(budgetRaw)) && budgetRaw !== undefined
+      ? Number(budgetRaw)
+      : Infinity;
+    const inScope = (e) => e.scope === scope || (descend && e.scope.startsWith(`${scope}/`));
+    const scored = [];
+    // Newest first, so equal scores rank the most recent event highest.
+    for (const e of [...store.events].reverse()) {
+      if (!inScope(e) || !labelled(e, wanted)) continue;
+      const text = String(textOf(e) ?? "").toLowerCase();
+      const score = words.filter((w) => text.includes(w)).length;
+      if (words.length && score === 0) continue;
+      scored.push({ score, e });
+    }
+    scored.sort((a, b) => b.score - a.score);
+    const events = scored.slice(0, budget).map(({ e }) => rendered(e));
+    store.nextPack += 1;
+    const packId = `pack_${store.nextPack}`;
+    store.packs.set(packId, events);
+    ok(res, { pack_id: packId, layers: { events } });
     return true;
   }
 
@@ -245,7 +315,10 @@ export async function handleMemory(ctx) {
 
   if (route === "scopes" && method === "GET") {
     const limit = Number(queryOf(url).get("limit") || DEFAULT_SCOPE_PAGE) || DEFAULT_SCOPE_PAGE;
-    const paths = [...new Set(store.events.map((e) => e.scope))].sort();
+    const prefix = queryOf(url).get("prefix") || "";
+    const paths = [...new Set(store.events.map((e) => e.scope))]
+      .filter((p) => !prefix || p === prefix || p.startsWith(prefix))
+      .sort();
     ok(res, { items: paths.slice(0, limit).map((path) => ({ path })) });
     return true;
   }
@@ -256,10 +329,28 @@ export async function handleMemory(ctx) {
       fail(res, 400, "VALIDATION_ERROR", `unknown key ${unknown}`);
       return true;
     }
+    let events = [];
+    if (body.use_pack_id !== undefined) {
+      const pack = store.packs.get(String(body.use_pack_id));
+      if (!pack) {
+        fail(res, 400, "MISSING_PACK", "unknown use_pack_id");
+        return true;
+      }
+      events = pack;
+    }
+    const top = events.find((e) => typeof textOf(e) === "string");
+    const question = String(body.question || "");
     ok(res, {
-      answer: "grounded",
-      citations: [{ id: "evt_1", key: "k", content: "c", score: 0.5 }],
-      context_block: "c",
+      answer: top
+        ? `grounded answer for ${question}: ${textOf(top)}`
+        : `grounded answer for ${question}`,
+      citations: events.slice(0, 5).map((e, i) => ({
+        id: e.id,
+        key: e.id,
+        content: String(textOf(e) ?? ""),
+        score: Number((1 / (1 + i)).toFixed(4)),
+      })),
+      context_block: events.map((e) => String(textOf(e) ?? "")).join("\n"),
       diagnostics: { answer_model: "mock" },
     });
     return true;

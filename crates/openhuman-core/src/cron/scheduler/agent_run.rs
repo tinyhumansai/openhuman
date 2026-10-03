@@ -210,13 +210,22 @@ pub(super) async fn run_agent_job(
     }
 }
 
-/// Fires a `JobType::Flow` job: publishes `DomainEvent::FlowScheduleTick` for
+/// Fires a `JobType::Flow` job. A system job (`system:<name>`, see
+/// [`crate::cron::system_jobs`]) publishes `DomainEvent::CronSystemJobDue`;
+/// any other publishes `DomainEvent::FlowScheduleTick` for
 /// the bound flow id (stored in `job.command`, see `JobType::Flow`'s doc) and
 /// returns immediately. This job type does no work itself — dispatching the
 /// actual `flows::ops::flows_run` happens asynchronously in
 /// `flows::bus::FlowTriggerSubscriber`, which is the sole consumer of this
 /// event (kept out of the cron domain so cron stays flow-agnostic).
 pub(super) fn run_flow_schedule_job(job: &CronJob) -> (bool, String) {
+    if let Some(name) = crate::cron::system_jobs::system_job_name(job) {
+        tracing::info!(job_id = %job.id, job = %name, "[cron] system job due — publishing CronSystemJobDue");
+        BUS.publish(DomainEvent::CronSystemJobDue {
+            job: name.to_string(),
+        });
+        return (true, format!("system job {name} dispatched"));
+    }
     let flow_id = job.command.clone();
     tracing::info!(
         target: "flows",

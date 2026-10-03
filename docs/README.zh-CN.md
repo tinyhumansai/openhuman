@@ -63,9 +63,9 @@ OpenHuman 是大多数助手所不具备的三样东西的集合：**一颗大�
 
 ### 🧠 大脑
 
-- **[记忆树](https://tinyhumans.gitbook.io/openhuman/features/memory-tree) + [Obsidian Wiki](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki)**：你的数据被压缩为带评分的 Markdown 树，存储在你本机的 SQLite 中，并镜像为一个你可以打开和编辑的 [Obsidian 仓库](https://x.com/karpathy/status/2039805659525644595)。没有向量浓汤式的黑箱。
+- **[记忆](../gitbooks/features/memory.md)**：基于可替换引擎（TinyHumans 托管或你自己的 CortexDB）的 Recall、Fetch、Store。存储文档、对话和学习内容，回答附带引用，并为每个新聊天提供 `context.md` 简报。
 - **[100+ OAuth 集成、5,000+ MCP 服务器、90,000+ Skills](https://tinyhumans.gitbook.io/openhuman/features/integrations)**：一键接入 Gmail、Notion、GitHub、Slack 以及你技术栈中的其他服务。[自动拉取](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki/auto-fetch)每 20 分钟为大脑输送养分，所以它在今天早上就已经拥有明天的上下文。
-- **[目标与待办](https://tinyhumans.gitbook.io/openhuman/features/goals-and-todos)**：长期目标、持久化的会话级目标，以及在聊天中显示的智能体待办列表。
+- **[目标与待办](https://tinyhumans.gitbook.io/openhuman/features/goals-and-todos)**：持久化的会话级目标，以及在聊天中显示的智能体待办列表。
 - **[TokenJuice](https://tinyhumans.gitbook.io/openhuman/features/token-compression)**：工具输出在触达模型之前先被压缩：信息不变，token 最多减少 80%。没有它，这么大的一颗大脑将贵得用不起。
 
 ### 🕸️ 编排者
@@ -90,17 +90,11 @@ OpenHuman 是大多数助手所不具备的三样东西的集合：**一颗大�
 
 OpenHuman 是首个能在几分钟内了解你的智能体框架。灵感来源于 [Karpathy 的 LLM 知识库](https://x.com/karpathy/status/2039805659525644595)。大多数智能体从零开始。Hermes 通过观察你的工作来学习；OpenClaw 等待插件输送上下文。无论哪种方式，你都需要花费数天甚至数周时间，智能体才能对你的技术栈有足够的了解从而真正发挥作用。
 
-<p align="center">
- <img src="../gitbooks/.gitbook/assets/memory.png" alt="OpenHuman 上下文构建示意图">
-</p>
+> OpenHuman 将文档、对话和学习内容存入记忆引擎，并带引用地回答问题。
 
-> OpenHuman 将你的所有文档、邮件和聊天记录进行摘要和压缩，并创建一个记忆图谱，让你的智能体记住关于你的一切。
-
-OpenHuman 跳过了等待期。连接你的账户，让[自动拉取](https://tinyhumans.gitbook.io/openhuman/features/integrations/auto-fetch)以 20 分钟为周期将数据拉到本地，然后由[记忆树](https://tinyhumans.gitbook.io/openhuman/features/memory-tree)将所有内容压缩为 Markdown 文件，智能存储在一个 [Karpathy 风格的 Obsidian wiki](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki) 中。
+OpenHuman 跳过了等待期。添加来源（文件夹、文件、链接、GitHub、RSS、已连接应用），按计划同步，智能体即可通过[记忆](../gitbooks/features/memory.md)直接回答。
 
 仅需一次同步，智能体就拥有了你收件箱、日历、仓库、文档、消息的完整（压缩后的）上下文。无需训练期，无需"给它几周时间"。它成为你，由你掌控。
-
-已经在其他编码智能体中自托管 [agentmemory](https://github.com/rohitg00/agentmemory)？OpenHuman 提供可选的 `Memory` 后端来代理它：在 `config.toml` 中设置 `memory.backend = "agentmemory"`，同一个持久化存储将同时服务于 OpenHuman 和 Claude Code、Cursor、Codex、OpenCode。详见 [agentmemory 后端](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki/agentmemory-backend)页面。
 
 ## 编排器，而非聊天机器人
 
@@ -137,9 +131,9 @@ OpenHuman 跳过了等待期。连接你的账户，让[自动拉取](https://ti
 | **开源**       | 🚫 闭源          | ✅ MIT      | ✅ MIT       | ✅ GNU                                                                                      |
 | **易上手**     | ✅ 桌面 + CLI    | ⚠️ 终端优先 | ⚠️ 终端优先  | ✅ 清爽 UI，几分钟上手                                                                      |
 | **成本**       | ⚠️ 订阅 + 附加项 | ⚠️ 自带模型 | ⚠️ 自带模型  | ✅ 单一订阅 + TokenJuice                                                                    |
-| **记忆**       | ✅ 对话范围      | ⚠️ 依赖插件 | ✅ 自学习    | 🚀 记忆树 + Obsidian 仓库，可选 [agentmemory](https://github.com/rohitg00/agentmemory) 后端 |
+| **记忆**       | ✅ 对话范围      | ⚠️ 依赖插件 | ✅ 自学习    | 🚀 可替换引擎（TinyHumans 或自有 CortexDB）、引用、`context.md` |
 | **集成**       | ⚠️ 少量连接器    | ⚠️ 自行接入 | ⚠️ 自行接入  | 🚀 100+ OAuth · 5k+ MCP · 90k+ Skills                                                       |
-| **自动拉取**   | 🚫 无            | 🚫 无       | 🚫 无        | ✅ 20 分钟同步到记忆                                                                        |
+| **来源同步**   | 🚫 无            | 🚫 无       | 🚫 无        | ✅ 按计划同步到记忆 |
 | **编排**       | ⚠️ 子任务        | ⚠️ 单循环   | ⚠️ 单循环    | 🚀 智能体图 + 检查点 + E2E 加密的 A2A                                                       |
 | **工作流**     | 🚫 无            | ⚠️ 脚本     | ⚠️ 脚本      | 🚀 可视化、持久化、智能体提议、审批把关                                                     |
 | **会议**       | 🚫 无            | 🚫 无       | 🚫 无        | 🚀 加入 Meet/Zoom/Teams/Webex，能发言，实时转写                                             |

@@ -10,7 +10,7 @@
 //! ## Why it happens, and why the routing itself is correct
 //!
 //! [`super::factory::provider_for_role`] deliberately routes the background
-//! roles (`vision`, `embeddings`, `memory`, `learning`, `agentic`, `burst`)
+//! roles (`vision`, `embeddings`, `memory`, `agentic`, `burst`)
 //! to the primary cloud provider when their
 //! own route is unset: they run tier-specific models (`hint:vision`,
 //! `hint:summarization`, …) that local runtimes and BYOK slugs do not serve. A
@@ -44,7 +44,6 @@ const CLOUD_FALLBACK_ROLES: &[&str] = &[
     "embeddings",
     "memory",
     "summarization",
-    "learning",
     "agentic",
     "burst",
 ];
@@ -59,7 +58,7 @@ pub(crate) fn role_falls_back_to_cloud(role: &str) -> bool {
 /// sentence ("… does not support **vision**").
 ///
 /// `None` for roles whose name is not a capability the user would recognise as
-/// a model feature (`learning`, `burst`, …); callers fall back to the role
+/// a model feature (`burst`, …); callers fall back to the role
 /// name itself.
 pub(crate) fn role_capability_label(role: &str) -> Option<&'static str> {
     match role.trim() {

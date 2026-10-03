@@ -1,4 +1,4 @@
-//! Read-only resolvers on [`Config`]: memory-tree content root, per-workload
+//! Read-only resolvers on [`Config`]: files dir, per-workload
 //! local-model routing, and exact agent model pins.
 
 use std::path::PathBuf;
@@ -14,34 +14,18 @@ impl Config {
         crate::config::resolve_files_dir(&self.files_dir_override)
     }
 
-    /// Resolve the root directory where chunk `.md` files are stored.
-    ///
-    /// Resolution order:
-    /// 1. `memory_tree.content_dir` if `Some`.
-    /// 2. Default: `<workspace_dir>/memory_tree/content/`.
-    ///
-    /// This is the only place in the codebase that should compute the content
-    /// root — all code that needs the path should call this method.
-    pub fn memory_tree_content_root(&self) -> PathBuf {
-        self.memory_tree
-            .content_dir
-            .clone()
-            .unwrap_or_else(|| self.workspace_dir.join("memory_tree").join("content"))
-    }
-
     /// Read the per-workload provider string and return the local model id
     /// when the workload is routed to Ollama.
     ///
     /// Recognised workload names:
     /// `"chat"`, `"reasoning"`, `"agentic"`, `"coding"`, `"vision"`, `"memory"`,
-    /// `"embeddings"`, `"learning"`.
+    /// `"embeddings"`.
     ///
     /// Returns `None` when the provider isn't `"ollama:<model>"` (including
     /// when the field is unset, blank, `"cloud"`, or any other prefix).
     /// This is the single source of truth for "is this workload local?" —
-    /// callers MUST NOT consult the legacy `local_ai.usage.*` booleans or
-    /// `memory_tree.llm_backend`. Those fields are deprecated zombies kept
-    /// for migration only.
+    /// callers MUST NOT consult the legacy `local_ai.usage.*` booleans, which are
+    /// deprecated zombies kept for migration only.
     pub fn workload_local_model(&self, workload: &str) -> Option<String> {
         let raw = match workload {
             "chat" => self.chat_provider.as_deref(),
@@ -51,7 +35,6 @@ impl Config {
             "vision" => self.vision_provider.as_deref(),
             "memory" => self.memory_provider.as_deref(),
             "embeddings" => self.embeddings_provider.as_deref(),
-            "learning" => self.learning_provider.as_deref(),
             _ => None,
         }?;
         let trimmed = raw.trim();

@@ -1,6 +1,7 @@
-//! Embedding providers for the OpenHuman memory system.
+//! Embedding providers.
 //!
-//! Converts text into numerical vectors for semantic search. Providers:
+//! Converts text into numerical vectors for semantic search (tool discovery,
+//! voice, the `embeddings` RPC). Providers:
 //!
 //! - **Managed** (default): Routes through the OpenHuman backend's
 //!   `POST /openai/v1/embeddings` (Voyage-backed). The recommended path —
@@ -14,6 +15,7 @@
 
 #[path = "cloud_adapter.rs"]
 pub mod cloud;
+mod embedding_trait;
 mod factory;
 mod provider_trait;
 mod rpc;
@@ -30,14 +32,6 @@ pub use provider_trait::{
     format_embedding_signature, EmbeddingProvider, TinyInferenceEmbeddingProvider,
 };
 pub use rpc::provider_from_config;
-// Reached through this re-export by `modules::memory_host`, which serves the
-// seam over the bus. `memory::host_impls` served the same seam in-process and
-// reached it the same way, until the in-process engine left the test build too
-// (openhuman#6161) and took that file with it. `embeddings::rpc` itself names
-// the function through `super::rpc`, not through here, so this gate does not
-// narrow it.
-#[cfg(any(test, feature = "modules"))]
-pub(crate) use rpc::resolve_api_key;
 pub use schemas::{
     all_controller_schemas as all_embeddings_controller_schemas,
     all_registered_controllers as all_embeddings_registered_controllers,

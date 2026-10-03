@@ -64,6 +64,7 @@ import type { ToastNotification } from '../types/intelligence';
 import { IS_DEV } from '../utils/config';
 import { isLocalSessionToken } from '../utils/localSession';
 import { openhumanComposioGetMode } from '../utils/tauriCommands';
+import Memory from './Memory';
 
 /** Small inline icon helper for the Connections sidebar nav. */
 const navIcon = (d: string) => (
@@ -479,6 +480,7 @@ type ConnectionsTab =
   | 'channels'
   | 'mcp'
   | 'skills'
+  | 'brain'
   | 'agent-tools'
   | 'llm'
   | 'voice'
@@ -563,6 +565,7 @@ export default function Skills() {
       raw === 'channels' ||
       raw === 'mcp' ||
       raw === 'skills' ||
+      raw === 'brain' ||
       raw === 'agent-tools' ||
       raw === 'llm' ||
       raw === 'voice' ||
@@ -607,6 +610,9 @@ export default function Skills() {
     (tab: ConnectionsTab) => {
       const params = new URLSearchParams(location.search);
       params.set('tab', tab);
+      // Memory's own chip param (and v1's `view`) must not leak into other tabs.
+      params.delete('brain');
+      params.delete('view');
       navigate({ pathname: location.pathname, search: `?${params.toString()}` });
     },
     [location.pathname, location.search, navigate]
@@ -1028,6 +1034,15 @@ export default function Skills() {
                     ),
                   },
                   {
+                    // Memory v2: engine, ask, learnings, conversations,
+                    // documents and context (formerly the top-level /brain page).
+                    value: 'brain',
+                    label: t('nav.brain'),
+                    icon: navIcon(
+                      'M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z'
+                    ),
+                  },
+                  {
                     // Built-in agent tools, relocated from Settings. (`?tab=tools`
                     // is a legacy alias for MCP, hence the distinct value.)
                     value: 'agent-tools',
@@ -1158,11 +1173,17 @@ export default function Skills() {
             panels (description, no title; the back button hides because the
             Connections sidebar owns navigation), so they fill the content pane
             and own their scroll directly. */
-        activeTab === 'mcp' || activeTab === 'skills' ? (
+        activeTab === 'mcp' || activeTab === 'skills' || activeTab === 'brain' ? (
           // The MCP and Skills pages own their own header and tab strip, like
           // the LLM page does, so they take the pane whole.
           <div className="h-full p-4">
-            {activeTab === 'mcp' ? <McpServersPage /> : <SkillsPage onToast={addToast} />}
+            {activeTab === 'mcp' ? (
+              <McpServersPage />
+            ) : activeTab === 'brain' ? (
+              <Memory />
+            ) : (
+              <SkillsPage onToast={addToast} />
+            )}
           </div>
         ) : INTELLIGENCE_TABS.has(activeTab) ? (
           // API-keys / provider panels were orphaned flush on the shell — give

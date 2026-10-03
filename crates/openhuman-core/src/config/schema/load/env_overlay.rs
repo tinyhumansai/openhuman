@@ -4,16 +4,15 @@
 //! config section's overrides live in a submodule below.
 
 mod dictation_context;
-mod learning_memory;
+mod embeddings;
 mod observability;
 mod proxy;
 mod runtime;
 mod search;
-mod subsystems_update;
+mod update;
 
 use super::super::proxy::{set_runtime_proxy_config, ProxyScope};
 use super::super::Config;
-use super::dirs::MEMORY_SYNC_INTERVAL_SECS_ENV_VAR;
 use std::path::PathBuf;
 
 /// Classification of an `OPENHUMAN_SHELL_HIDE_WINDOW` env value. Split out from
@@ -176,20 +175,6 @@ impl Config {
             }
         }
 
-        if let Some(raw) = env.get(MEMORY_SYNC_INTERVAL_SECS_ENV_VAR) {
-            let trimmed = raw.trim();
-            if !trimmed.is_empty() {
-                match trimmed.parse::<u64>() {
-                    Ok(secs) => self.memory_sync_interval_secs = Some(secs),
-                    Err(_) => tracing::warn!(
-                        env = %MEMORY_SYNC_INTERVAL_SECS_ENV_VAR,
-                        value = %raw,
-                        "invalid memory-sync interval ignored; expected an unsigned integer (0 = manual)"
-                    ),
-                }
-            }
-        }
-
         if let Some(language) = env.get("OPENHUMAN_OUTPUT_LANGUAGE") {
             let language = language.trim();
             if !language.is_empty() {
@@ -238,9 +223,7 @@ impl Config {
         self.apply_proxy_env(env);
         self.apply_runtime_env(env);
         self.apply_observability_env(env);
-        self.apply_learning_env(env);
-        self.apply_memory_tree_env(env);
-        self.apply_subsystems_env(env);
+        self.apply_embedding_env(env);
         self.apply_update_env(env);
         self.apply_dictation_env(env);
         self.apply_context_env(env);

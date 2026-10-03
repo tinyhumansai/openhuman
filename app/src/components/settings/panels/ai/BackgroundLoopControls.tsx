@@ -2,7 +2,7 @@
  * Background loop map + usage diagnostics.
  *
  * The loop map of the background work that runs without a chat message
- * (memory workers, reflection rebuilds, connection sync), plus the
+ * (connection sync), plus the
  * recent-usage ledger + budget math. `view` lets a host panel (UsagePanel) mount just the ledger.
  */
 import debug from 'debug';
@@ -18,16 +18,10 @@ import {
   type TeamUsage,
 } from '../../../../services/api/creditsApi';
 import { Badge, Button, Card, StatusLine } from '../../../ui';
-import type { RoutingMap } from './aiPanelTypes';
 import {
   activeConnection,
-  type BackgroundLoopProviderView,
   COMPOSIO_PERIODIC_TICK_MINUTES,
-  describeProvider,
   formatCount,
-  LEARNING_REBUILD_MINUTES,
-  MEMORY_POLL_SECONDS,
-  MEMORY_WORKERS,
   spendAmount,
   summarizeSpendByAction,
   summarizeSpendByHour,
@@ -41,13 +35,9 @@ const log = debug('settings:background-loops');
 type BackgroundLoopControlsView = 'all' | 'ledger';
 
 export const BackgroundLoopControls = ({
-  routing,
-  cloudProviders,
   view = 'all',
   hideHeader = false,
 }: {
-  routing: RoutingMap;
-  cloudProviders: BackgroundLoopProviderView[];
   view?: BackgroundLoopControlsView;
   hideHeader?: boolean;
 }) => {
@@ -106,12 +96,9 @@ export const BackgroundLoopControls = ({
   const latestSpend = spendRows[0] ?? null;
   const activeConnections = connections.filter(activeConnection);
   const composioPeriodicTicksPerWeek = Math.ceil(WEEK_MINUTES / COMPOSIO_PERIODIC_TICK_MINUTES);
-  const learningTicksPerWeek = Math.ceil(WEEK_MINUTES / LEARNING_REBUILD_MINUTES);
-  const memoryPollsPerWeek = Math.ceil((WEEK_MINUTES * 60 * MEMORY_WORKERS) / MEMORY_POLL_SECONDS);
   const composioConnectionScansPerWeek = composioPeriodicTicksPerWeek * activeConnections.length;
   const backgroundApiReadsPerWeek = composioConnectionScansPerWeek;
-  const backgroundWakeupsPerWeek =
-    composioPeriodicTicksPerWeek + learningTicksPerWeek + memoryPollsPerWeek;
+  const backgroundWakeupsPerWeek = composioPeriodicTicksPerWeek;
   const scheduledCallsPerRemainingDollar =
     usage && usage.remainingUsd > 0 ? backgroundApiReadsPerWeek / usage.remainingUsd : null;
   const estimatedRowsLeft =
@@ -136,27 +123,6 @@ export const BackgroundLoopControls = ({
       : 'n/a';
 
   const loops = [
-    {
-      name: t('settings.ai.loops.memoryTreeWorkers.name'),
-      enabled: true,
-      cadence: t('settings.ai.loops.cadence.queue'),
-      route: describeProvider(routing.memory, cloudProviders),
-      work: t('settings.ai.loops.memoryTreeWorkers.work'),
-      risk: t('settings.ai.loops.memoryTreeWorkers.risk')
-        .replace('{workers}', String(MEMORY_WORKERS))
-        .replace('{seconds}', String(MEMORY_POLL_SECONDS)),
-    },
-    {
-      name: t('settings.ai.loops.reflectionRebuild.name'),
-      enabled: true,
-      cadence: t('settings.ai.loops.cadence.thirtyMin'),
-      route: describeProvider(routing.learning, cloudProviders),
-      work: t('settings.ai.loops.reflectionRebuild.work'),
-      risk: t('settings.ai.loops.reflectionRebuild.risk').replace(
-        '{count}',
-        formatCount(learningTicksPerWeek)
-      ),
-    },
     {
       name: t('settings.ai.loops.composioSync.name'),
       enabled: true,
@@ -241,7 +207,6 @@ export const BackgroundLoopControls = ({
           backgroundApiReadsPerWeek={backgroundApiReadsPerWeek}
           backgroundWakeupsPerWeek={backgroundWakeupsPerWeek}
           composioConnectionScansPerWeek={composioConnectionScansPerWeek}
-          memoryPollsPerWeek={memoryPollsPerWeek}
           estimatedRowsLeft={estimatedRowsLeft}
           estimatedRowsPerBudget={estimatedRowsPerBudget}
           projectedExhaustAt={projectedExhaustAt}

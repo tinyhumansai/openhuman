@@ -869,69 +869,6 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
                 break;
             };
             match event {
-                openhuman_core::core::events::DomainEvent::MemorySyncStageChanged {
-                    trigger,
-                    stage,
-                    provider,
-                    connection_id,
-                    detail,
-                    source_id,
-                } => {
-                    let payload = serde_json::json!({
-                        "trigger": trigger,
-                        "stage": stage,
-                        "provider": provider,
-                        "connection_id": connection_id,
-                        "detail": detail,
-                        // source_id is the memory-source row id for frontend per-row
-                        // indicator matching (RC#2, issue #3295). connection_id is
-                        // preserved unchanged for downstream consumers.
-                        "source_id": source_id,
-                    });
-                    let _ = io_memory_sync.emit("memory:sync_stage", &payload);
-                }
-                openhuman_core::core::events::DomainEvent::TreeSummarizerPropagated {
-                    namespace,
-                    node_id,
-                    level,
-                    token_count,
-                } => {
-                    let payload = serde_json::json!({
-                        "namespace": namespace,
-                        "node_id": node_id,
-                        "level": level,
-                        "token_count": token_count,
-                    });
-                    let _ = io_memory_sync.emit("memory:tree_progress", &payload);
-                }
-                openhuman_core::core::events::DomainEvent::TreeSummarizerRebuildCompleted {
-                    namespace,
-                    total_nodes,
-                } => {
-                    let payload = serde_json::json!({
-                        "namespace": namespace,
-                        "total_nodes": total_nodes,
-                    });
-                    let _ = io_memory_sync.emit("memory:tree_completed", &payload);
-                }
-                openhuman_core::core::events::DomainEvent::MemoryTreeBuildProgress {
-                    phase,
-                    step,
-                    tree_scope,
-                    level,
-                    item_count,
-                    detail,
-                } => {
-                    let payload = serde_json::json!({
-                        "phase": phase,
-                        "step": step,
-                        "tree_scope": tree_scope,
-                        "level": level,
-                        "item_count": item_count,
-                        "detail": detail,
-                    });
-                    let _ = io_memory_sync.emit("memory:build_progress", &payload);
-                }
                 openhuman_core::core::events::DomainEvent::HarnessInitProgress {
                     step_id,
                     state,

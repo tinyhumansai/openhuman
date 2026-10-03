@@ -23,7 +23,7 @@ re-deriving those findings.
 The default `library-bench.sh` sweep runs the six scenarios currently linked
 into the binary. `memory-ingest` and `cold-phases` remain documented workload
 designs, but are excluded because the binary no longer links the in-process
-memory engine they measured. All runnable scenarios run in
+memory engine they measured (superseded by Memory v2, whose engine is remote). All runnable scenarios run in
 `target/release/library-profile <scenario>`, replace
 network inference with a deterministic provider (`rss-bench` feature), and
 print one pretty-printed JSON result object to stdout (diagnostics go to
@@ -123,7 +123,7 @@ behavior, not linked code size.
 | --- | --- |
 | `OPENHUMAN_PROFILE_TURNS` | Turn count for `long-agent` (default 25). |
 | `OPENHUMAN_PROFILE_PREWARM_SUBAGENTS=1` | Run one warm-up turn before measuring (`subagents`), isolating first-use cost from steady state. |
-| `OPENHUMAN_PROFILE_DISABLE_MEMORY_WRITES=1` | Disable `memory.auto_save` and episodic capture, isolating orchestration from persistence. |
+| `OPENHUMAN_PROFILE_DISABLE_MEMORY_WRITES=1` | Disable conversation memory (`[memory.conversations]`) and the `context.md` brief (`[memory.context]`), isolating orchestration from persistence. |
 | `OPENHUMAN_PROFILE_FORCE_UTC=1` | Skip `iana_time_zone`/CoreFoundation timezone resolution. |
 | `OPENHUMAN_PROFILE_HOLD_SECS` / `HOLD_BEFORE_SECS` | Pause the process at settled/baseline state for external inspection (`vmmap`, `heap`, `malloc_history`, Instruments). |
 | `OPENHUMAN_PROFILE_DHAT_OUT` | Output path for dhat JSON (set by `library-heap.sh`). |
@@ -164,8 +164,8 @@ scenario and feature set (see the baseline table below).
 
 Treat this as a **north star, not an apples-to-apples benchmark**. ZeroClaw's
 scope and feature set differ substantially from the OpenHuman core: OpenHuman
-links a full agent/memory/tool/orchestration stack (SQLite-backed unified
-memory, TinyCortex PII detection, prompt-injection detection, a builtin-agent
+links a full agent/memory/tool/orchestration stack (pluggable Memory v2
+engine host, TinyMemory secret/PII scrubbing, prompt-injection detection, a builtin-agent
 registry, tool catalogs, provider routing) that a narrower harness may not
 carry at all. A closer gap is a meaningful signal that the initialization
 graph is leaner; it is not evidence of feature parity, and a wider gap is not
@@ -259,7 +259,7 @@ Start cheap, escalate only as needed:
 
 1. **`library-bench.sh`** — RSS/duration medians across fresh processes. Answers "did this change move the needle" for most changes.
 2. **`library-cpu.sh` (samply)** — symbolized CPU profile when a scenario is slower than expected, or to attribute cold-path CPU to a specific phase (registry init, agent build, memory construction, SQLite init, TinyAgents turn runner were the top contributors in the prior session).
-3. **`library-heap.sh` (dhat)** — live-heap allocation sites and retained bytes when RSS is high but the cause isn't obvious from CPU alone (e.g. the TinyCortex PII `RegexSet` finding came from stack-logged allocation attribution, not CPU sampling).
+3. **`library-heap.sh` (dhat)** — live-heap allocation sites and retained bytes when RSS is high but the cause isn't obvious from CPU alone (e.g. an earlier PII `RegexSet` finding came from stack-logged allocation attribution, not CPU sampling).
 4. **Instruments / `vmmap` / `heap` / `malloc_history`** — deepest macOS-native attribution, using the `OPENHUMAN_PROFILE_HOLD_SECS` / `HOLD_BEFORE_SECS` hooks to pause the process at baseline or settled state:
 
    ```bash

@@ -78,7 +78,6 @@ fn grouped_schemas_contains_migrated_namespaces() {
     assert!(grouped.contains_key("config"));
     assert!(grouped.contains_key("auth"));
     assert!(grouped.contains_key("service"));
-    assert!(grouped.contains_key("migrate"));
     assert!(grouped.contains_key("inference"));
 }
 
@@ -291,52 +290,6 @@ fn chat_alias_points_to_the_separate_executable() {
 // `OPENHUMAN_WORKSPACE`, i.e. env mutation plus disk writes. Same reasoning
 // recorded in the M5.4 block of `all_tests.rs`.
 
-use crate::core::all::{
-    capability_for_parts, capability_for_rpc_method, sole_capability_for_namespace,
-};
-use crate::core::cli_capability::capability_verdict;
-use tinymemory_api::capabilities::Capabilities;
-
-#[test]
-fn capability_gated_namespace_reports_a_config_fact_not_a_typo() {
-    let required = sole_capability_for_namespace("memory_tree");
-    assert!(required.is_some(), "memory_tree must be a gated namespace");
-    let err = capability_verdict(
-        "null",
-        Capabilities::mandatory(),
-        required,
-        "openhuman memory_tree",
-    )
-    .expect_err("the null driver does not advertise `tree`");
-    let msg = err.to_string();
-    assert!(msg.contains("null"), "{msg}");
-    assert!(msg.contains("tree"), "{msg}");
-    assert!(!msg.contains("unknown namespace"), "{msg}");
-}
-
-#[test]
-fn capability_gated_function_reports_a_config_fact_not_a_typo() {
-    let required = capability_for_parts("memory", "doc_ingest").flatten();
-    let err = capability_verdict(
-        "null",
-        Capabilities::mandatory(),
-        required,
-        "openhuman memory doc_ingest",
-    )
-    .expect_err("the null driver does not advertise `ingest`");
-    let msg = err.to_string();
-    assert!(msg.contains("ingest"), "{msg}");
-    assert!(!msg.contains("unknown function"), "{msg}");
-}
-
-#[test]
-fn capability_gated_rpc_method_reports_its_family_unfiltered() {
-    assert_eq!(
-        capability_for_rpc_method("openhuman.memory_tree_wipe_all"),
-        Some(Some(tinymemory_api::capabilities::Capability::Tree))
-    );
-}
-
 /// A real typo must stay a typo — the gate never fires for it, because the
 /// unfiltered lookup finds no controller to name a family for.
 #[test]
@@ -372,7 +325,7 @@ fn unknown_function_in_a_live_namespace_still_reports_unknown_function() {
 #[test]
 fn default_build_leaves_the_generic_namespace_path_unchanged() {
     let grouped = grouped_schemas();
-    for ns in ["memory", "memory_tree", "memory_goals"] {
+    for ns in ["memory"] {
         assert!(grouped.contains_key(ns), "`{ns}` must still be listed");
     }
     // `memory_diff` was removed with the `memory-git` gate; it must not come
@@ -380,65 +333,5 @@ fn default_build_leaves_the_generic_namespace_path_unchanged() {
     assert!(
         !grouped.contains_key("memory_diff"),
         "`memory_diff` was removed and must not be listed"
-    );
-}
-
-/// The gate must fire on the path a user actually takes.
-///
-/// This drives `run_namespace_command` itself rather than the pure
-/// `capability_verdict` helper, because the two disagreed once: the check
-/// originally sat in the not-found arm, which is unreachable on a plain CLI
-/// invocation (no ambient `CoreContext` ⇒ `grouped_schemas()` is unfiltered ⇒
-/// the gated function is still *found*). Every helper-level test passed while
-/// the real command ran to completion under a driver that does not advertise
-/// the family. Assert through the entry point or this regresses silently.
-#[test]
-fn generic_namespace_path_reports_the_config_fact_under_a_driver_without_the_family() {
-    let workspace = tempdir().expect("temp workspace");
-    // Env lock held, and both vars restored, until the guard drops.
-    let _env = EnvVarGuard::workspace(workspace.path()).with("OPENHUMAN_MEMORY_DRIVER", "null");
-
-    let err = super::run_namespace_command(
-        "memory_tree",
-        &["list_chunks".to_string()],
-        &grouped_schemas(),
-    )
-    .expect_err("`tree` is not advertised by the null driver, so this must not run");
-
-    let message = err.to_string();
-    assert!(
-        message.starts_with(crate::core::cli_capability::CAPABILITY_UNAVAILABLE_PREFIX),
-        "must read as a configuration fact, not an unknown-command error: {message}"
-    );
-    assert!(
-        message.contains("null") && message.contains("tree"),
-        "must name the bound driver and the missing family: {message}"
-    );
-    assert!(
-        !message.contains("unknown"),
-        "a gated command is not a typo and must not read like one: {message}"
-    );
-}
-
-#[test]
-fn raw_call_path_rejects_a_method_the_bound_driver_does_not_advertise() {
-    let workspace = tempdir().expect("temp workspace");
-    // Env lock held, and both vars restored, until the guard drops.
-    let _env = EnvVarGuard::workspace(workspace.path()).with("OPENHUMAN_MEMORY_DRIVER", "null");
-
-    let err = super::run_call_command(&[
-        "--method".to_string(),
-        "openhuman.memory_tree_wipe_all".to_string(),
-    ])
-    .expect_err("the null driver must not dispatch a tree wipe");
-
-    let message = err.to_string();
-    assert!(
-        message.starts_with(crate::core::cli_capability::CAPABILITY_UNAVAILABLE_PREFIX),
-        "must reject before dispatching: {message}"
-    );
-    assert!(
-        message.contains("null") && message.contains("tree"),
-        "{message}"
     );
 }

@@ -79,13 +79,6 @@ pub(super) enum FailureDisposition {
     /// they are debug-only and never reach Sentry. Any other unknown method is
     /// still recorded for triage, at warn severity (captured, no page).
     UnknownMethod { probe: bool },
-    /// The caller submitted an ingest payload that does not match the
-    /// canonicaliser schema for its `source_kind` (#5169). The handler already
-    /// returned a precise error naming the missing or malformed field, and no
-    /// core-side change can fix a producer sending the wrong shape. Still
-    /// captured for triage (a spike means a producer regressed), but at warn
-    /// severity so it does not page.
-    InvalidIngestPayload,
     /// Everything else: reported through
     /// `observability::report_error_or_expected`.
     Unexpected,
@@ -122,8 +115,6 @@ pub(super) fn classify_failure(message: &str, expected_user_state: bool) -> Fail
         FailureDisposition::UnknownMethod {
             probe: openhuman_core::core::dispatch::is_known_probe_method(unknown_method),
         }
-    } else if openhuman_core::memory::tree::tree::rpc::is_invalid_ingest_payload_message(message) {
-        FailureDisposition::InvalidIngestPayload
     } else {
         FailureDisposition::Unexpected
     }

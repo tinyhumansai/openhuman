@@ -49,8 +49,6 @@ pub mod desktop;
 #[cfg(feature = "documents")]
 pub mod documents;
 pub mod host;
-pub mod memory;
-mod memory_host;
 pub mod ops;
 pub mod registry;
 pub mod runtime;

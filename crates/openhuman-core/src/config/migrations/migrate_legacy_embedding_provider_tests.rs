@@ -49,7 +49,7 @@ fn rewrites_fastembed_to_ollama_when_local_preferred() {
         config.memory.embedding_dimensions,
         DEFAULT_OLLAMA_DIMENSIONS
     );
-    // Both targets land on the memory tree's fixed 1024-dim format.
+    // Both targets are 1024-dim.
     assert_eq!(
         DEFAULT_OLLAMA_DIMENSIONS,
         DEFAULT_CLOUD_EMBEDDING_DIMENSIONS

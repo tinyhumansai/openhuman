@@ -23,7 +23,6 @@ pub use dump_writer::{write_prompt_dumps, DumpWriteSummary};
 pub use wire::render as render_wire_dump;
 
 use crate::agent::harness::definition::AgentDefinitionRegistry;
-use crate::agent::prompts::LearnedContextData;
 use crate::agent::session_host::OpenHumanSessionHost;
 use crate::config::Config;
 use tinytools::ToolCategory;
@@ -170,21 +169,6 @@ async fn load_dump_config(
         config.default_model = Some(model);
     }
 
-    // The `agent` CLI dispatches straight to this dumper and never runs the
-    // runtime bootstrap, so nothing else wires the host's memory seams.
-    //
-    // The `tinymemory-core` seams this used to install are gone with the crate
-    // (#5560). The reason they were needed — building a session agent
-    // constructed an in-process memory store whose embedding seam failed loudly
-    // when unwired — no longer holds: `session::builder::factory` stopped
-    // booting one, so `dump-prompt` reaches no engine to call back into.
-    //
-    // The contract event sink still installs, idempotently, for the same reason
-    // as in `runtime::context`: it is a `tinymemory-api` seam with a live
-    // production publisher, and it drops silently rather than loudly when
-    // unwired. Same rationale as `memory_cli`.
-    crate::memory::host::install_memory_event_sink();
-
     Ok(config)
 }
 
@@ -204,7 +188,7 @@ async fn render_via_session(config: &Config, agent_id: &str) -> Result<DumpedPro
     agent.refresh_delegation_tools();
 
     let text = agent
-        .build_system_prompt(LearnedContextData::default())
+        .build_system_prompt()
         .with_context(|| format!("rendering system prompt for `{agent_id}`"))?;
 
     Ok(session_dump(&agent, agent_id, text))

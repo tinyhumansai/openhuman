@@ -474,9 +474,15 @@ export const ACTION_TOOL_SPECS: Record<string, { arg: string; specs: Record<stri
   memory: {
     arg: 'action',
     specs: {
-      recall: spec('recallMemories', BrainCircuitIcon, 'memory', { chip: chip.query() }),
-      store: spec('saveToMemory', SaveIcon, 'memory', { chip: chip.text('key', 'content') }),
+      // Memory v2 actions.
+      recall: spec('recallMemories', BrainCircuitIcon, 'memory', {
+        chip: chip.text('question', 'query'),
+      }),
+      fetch: spec('searchMemory', BrainIcon, 'memory', { chip: chip.query() }),
+      learn: spec('saveToMemory', SaveIcon, 'memory', { chip: chip.text('text') }),
       forget: spec('forgetMemory', EraserIcon, 'memory', { chip: chip.text('key') }),
+      // v1 actions, kept so persisted transcripts still render.
+      store: spec('saveToMemory', SaveIcon, 'memory', { chip: chip.text('key', 'content') }),
       hybrid_search: spec('searchMemory', BrainIcon, 'memory', { chip: chip.query() }),
       vector_search: spec('searchMemory', BrainIcon, 'memory', { chip: chip.query() }),
       raw_search: spec('searchMemory', BrainIcon, 'memory', { chip: chip.query() }),

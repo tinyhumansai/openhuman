@@ -63,7 +63,7 @@ model, tool scope, sandbox mode, iteration cap, tier, `omit_*` flags, parsed
 directly into `AgentDefinition`), a `prompt.md` holding the static archetype
 body, and a `prompt.rs` that `include_str!`s that body and exposes
 `pub fn build(&PromptContext) -> anyhow::Result<String>`, appending
-runtime-dependent sections (rendered tool list, user files, workspace) to it.
+runtime-dependent sections (rendered tool list, workspace) to it.
 Every archetype currently uses `AgentGraph::Default`; an archetype that needs a
 bespoke `AgentGraph` adds a `graph.rs` and sets `BuiltinAgent::graph_fn`. The per-archetype contract is
 documented on [`agents/mod.rs`](agents/mod.rs).
@@ -77,7 +77,7 @@ subagent, and `chat -> chat` / `reasoning -> reasoning` delegation is
 rejected (the pair rule is `validate_tier_transition` in the harness; unknown
 subagent ids are tolerated here as a separate integrity concern).
 `BUILTINS` is also the registration point for archetypes that live with
-other domains: `agent_memory` (`memory/agent/agent/`), `skill_setup`
+other domains: `skill_setup`
 (`skills/catalog/agent/`, feature `skills`), and
 `workflow_builder` and `flow_discovery` (`flows/agents/`, feature `flows`).
 Workspace-level overrides (`<workspace_dir>/agents/*.toml`, with a
@@ -86,20 +86,16 @@ Workspace-level overrides (`<workspace_dir>/agents/*.toml`, with a
 `AgentDefinitionRegistry::load` re-runs `validate_tier_hierarchy` after that
 merge.
 
-The 16 archetypes in this directory:
+The 12 archetypes in this directory:
 
 | Archetype | Role |
 | --- | --- |
-| `archivist` | Background: extracts lessons from a completed session into `MEMORY.md` and FTS5 |
 | `critic` | Workflow-run worker: adversarial, read-only cross-check of claims, diffs and code. Not a chat delegate |
-| `flow_memory_agent` (feature `flows`) | Read-only context/memory retrieval for automation-flow `agent` nodes (`agent_ref`) |
-| `goals_agent` | Background: keeps `MEMORY_GOALS.md` fresh from session context |
 | `image_agent` | Image generation/edit specialist |
 | `morning_briefing` | Proactive scheduled daily summary (tasks, calendar, email, skills) on a named, read-only tool belt |
 | `orchestrator` | Default user-facing `chat`-tier agent; direct-first, delegates only when it materially helps |
 | `planner` | Workflow-run worker (`reasoning` tier): decomposes a question into research angles, or researches one angle. Read-only; not a chat delegate |
 | `presentation_agent` (feature `documents`) | Builds decks from evidence; owns grounding/citations/image verification |
-| `profile_memory_agent` | Profile, persona, preferences, people-graph specialist |
 | `summarizer` | Runtime-dispatched only: compresses oversized tool results for the orchestrator, and synthesizes workflow-run reports |
 | `task_manager_agent` | Task-source/workflow/artifact specialist: proactive feeds, workflow bundles, artifacts |
 | `trigger_reactor` | One or two tool calls in direct reaction to an external trigger, no planning |
@@ -108,7 +104,7 @@ The 16 archetypes in this directory:
 | `vision_agent` | Read-only image understanding: describe, OCR, locate UI elements |
 
 The orchestrator's chat delegates (its `[subagents]` allowlist) are
-`task_manager_agent`, `profile_memory_agent`, `agent_memory`, `vision_agent`,
+`task_manager_agent`, `vision_agent`,
 `image_agent`, `video_agent`, `presentation_agent`, `skill_setup`,
 `workflow_builder` and `flow_discovery`. `planner` and `critic` stay
 registered only for the `parallel_research_cross_check` workflow-run template
@@ -126,8 +122,7 @@ playbooks are now inline skill guides on tool packs (`coding`, `web3`,
 too; see [`tools/toolpacks/README.md`](../../tools/toolpacks/README.md#inline-skill-guides).
 Running an installed skill is the orchestrator's own `run_workflow`.
 
-`flow_memory_agent` is `#[cfg]`-gated out of both the module list and
-`BUILTINS` when `flows` is disabled; `presentation_agent` stays compiled but
+`presentation_agent` stays compiled but
 `builtin_enabled` drops it from `load_builtins` without `documents`, in
 lockstep with its `generate_presentation` tool.
 

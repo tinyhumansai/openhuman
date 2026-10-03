@@ -21,8 +21,8 @@ function snapshot(overrides: Partial<HarnessInitSnapshot> = {}): HarnessInitSnap
         updatedAt: null,
       },
       {
-        id: 'spacy',
-        label: 'spaCy',
+        id: 'kompress',
+        label: 'Compression runtime',
         required: false,
         state: 'running',
         message: null,
@@ -50,7 +50,7 @@ describe('InitProgressScreen', () => {
     );
 
     expect(screen.getByText('Python runtime')).toBeInTheDocument();
-    expect(screen.getByText('Language model')).toBeInTheDocument();
+    expect(screen.getByText('Compression runtime')).toBeInTheDocument();
     expect(screen.getByText('Node.js runtime')).toBeInTheDocument();
     expect(screen.getByText('Ready')).toBeInTheDocument();
     expect(screen.getByText('Installing…')).toBeInTheDocument();
@@ -76,8 +76,8 @@ describe('InitProgressScreen', () => {
       overall: 'failed',
       steps: [
         {
-          id: 'spacy',
-          label: 'spaCy',
+          id: 'kompress',
+          label: 'Compression runtime',
           required: false,
           state: 'failed',
           message: 'pip install timed out',

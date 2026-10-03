@@ -206,7 +206,7 @@ async fn an_allowlist_that_readmits_a_spawn_tool_is_refused_loudly() {
 /// record stays in the log for the process rail; it just stops being chat.
 #[test]
 fn mirrored_tool_results_are_hidden_from_the_worker_thread_chat() {
-    use crate::memory::conversations::{self as store, CreateConversationThread};
+    use crate::threads::store::{self as store, CreateConversationThread};
 
     let dir = std::env::temp_dir().join(format!("wt-5934-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();

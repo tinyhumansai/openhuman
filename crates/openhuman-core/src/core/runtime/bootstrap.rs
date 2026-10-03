@@ -360,7 +360,7 @@ pub(crate) async fn start_core_runtime_services(
     };
 
     // Long-lived bootstrap loops selected by ServiceSet.
-    // One-time first-run initialization (managed Python runtime, spaCy model,
+    // One-time first-run initialization (managed Python runtime, Kompress,
     // managed Node runtime). Spawned AFTER subscribers are live but does NOT
     // block the ready signal — the core becomes RPC-ready immediately and the
     // frontend watches per-step progress via `openhuman.harness_init_status`.

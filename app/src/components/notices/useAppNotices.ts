@@ -1,13 +1,12 @@
 /**
  * Every notice the app raises, as one list.
  *
- * The problem this solves is fragmentation: the same state was surfaced twice
- * in two different chromes. "Memory has stopped growing" existed both as a
- * classified `UserActionableError` (panel) and as a full-width
- * `MemoryEmbeddingBudgetBanner` pushed above every route, and the usage-limit
- * upsell had a third. A banner that displaces page content is the loudest
- * possible treatment for something the user often cannot act on right now, and
- * three of them could stack.
+ * The problem this solves is fragmentation: the same state was surfaced in
+ * several chromes (a classified `UserActionableError` panel entry, and
+ * full-width banners pushed above every route for the usage-limit upsell). A
+ * banner that displaces page content is the loudest possible treatment for
+ * something the user often cannot act on right now, and several of them could
+ * stack.
  *
  * So the sources are merged here and rendered once, by {@link NoticeCenter}.
  * Adding a source means adding a block to this hook — not another
@@ -21,7 +20,6 @@ import { useCallback, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { formatResetTime } from '../../features/conversations/utils/format';
-import { useEmbeddingBudgetState } from '../../hooks/useEmbeddingBudgetState';
 import { useUsageState } from '../../hooks/useUsageState';
 import { useT } from '../../lib/i18n/I18nContext';
 import { applyOpenRouterFreeModels } from '../../services/api/openrouterFreeModels';
@@ -32,7 +30,6 @@ import type { UserActionableError, UserErrorAction } from '../../types/userError
 import { PRICING_URL } from '../../utils/links';
 import { openUrl } from '../../utils/openUrl';
 import { dismissBanner, shouldShowBanner } from '../upsell/upsellDismissState';
-import { useMemoryQuarantinePoll } from './useMemoryQuarantinePoll';
 
 export type NoticeSeverity = 'error' | 'warning' | 'info';
 
@@ -65,25 +62,15 @@ export interface AppNotice {
 const ACTION_ROUTE: Record<Exclude<UserErrorAction, 'dismiss'>, string> = {
   open_billing: '/settings/account',
   open_provider_settings: '/settings/llm',
-  // #5324: both memory-embedding remediations (local Ollama, BYO key) live on
-  // this one screen, so a single CTA covers them without the user needing to
-  // know which one applies.
-  open_embeddings_settings: '/connections?tab=embeddings',
   // Opening this screen also restarts the integration health poll, so it is
   // both the explanation and the retry.
   open_connections: '/connections?tab=skills',
-  // openhuman#5820: after a corrupt-store quarantine the rebuilt tree is
-  // empty; the per-source Sync and All In controls that repopulate it live on
-  // Brain's Sources tab (the Sync tab only shows status and history).
-  open_memory_sync: '/brain?tab=sources',
 };
 
 const ACTION_LABEL_KEY: Record<Exclude<UserErrorAction, 'dismiss'>, string> = {
   open_billing: 'userErrors.action.openBilling',
   open_provider_settings: 'userErrors.action.openProviderSettings',
-  open_embeddings_settings: 'userErrors.action.openEmbeddingsSettings',
   open_connections: 'userErrors.action.openConnections',
-  open_memory_sync: 'userErrors.action.openMemorySync',
 };
 
 const SEVERITY_RANK: Record<NoticeSeverity, number> = { error: 0, warning: 1, info: 2 };
@@ -120,9 +107,6 @@ export function useAppNotices(): AppNotice[] {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const active = useAppSelector(selectActiveUserErrors);
-  const { level: budgetLevel, pct: budgetPct } = useEmbeddingBudgetState();
-  // openhuman#5820: durable, app-wide replay of a corrupt-store quarantine.
-  useMemoryQuarantinePoll();
   const {
     teamUsage,
     isLoading: usageLoading,
@@ -191,27 +175,6 @@ export function useAppNotices(): AppNotice[] {
             }
           : {}),
         onDismiss: () => dispatch(dismissUserError({ id: entry.id })),
-      });
-    }
-
-    // ── Memory embedding budget (#5324) ────────────────────────────────
-    // The id carries the level so an escalation is a *new* notice rather than
-    // a mutation of a dismissed one.
-    const budgetId = `memory-embedding-budget:${budgetLevel}`;
-    if (budgetLevel !== 'none' && !dismissed.has(budgetId)) {
-      const exhausted = budgetLevel === 'exhausted';
-      notices.push({
-        id: budgetId,
-        // Exhausted is not a warning: memory has already stopped growing.
-        severity: exhausted ? 'error' : 'warning',
-        title: exhausted ? t('memoryBudget.exhaustedTitle') : t('memoryBudget.approachingTitle'),
-        body: exhausted
-          ? t('memoryBudget.exhaustedMessage')
-          : t('memoryBudget.approachingMessage').replace('{pct}', String(budgetPct)),
-        actionLabel: t('memoryBudget.cta'),
-        onAction: () => navigate(ACTION_ROUTE.open_embeddings_settings),
-        // Only the early warning can be silenced; the escalations cannot.
-        ...(budgetLevel === 'warn' ? { onDismiss: () => dismiss(budgetId) } : {}),
       });
     }
 
@@ -289,8 +252,6 @@ export function useAppNotices(): AppNotice[] {
     return notices.sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]);
   }, [
     active,
-    budgetLevel,
-    budgetPct,
     dismiss,
     dismissed,
     dispatch,

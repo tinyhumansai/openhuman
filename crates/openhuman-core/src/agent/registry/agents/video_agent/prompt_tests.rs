@@ -1,5 +1,5 @@
 use super::*;
-use crate::agent::prompts::{LearnedContextData, ToolCallFormat};
+use crate::agent::prompts::ToolCallFormat;
 use std::collections::HashSet;
 
 #[test]
@@ -12,14 +12,10 @@ fn build_returns_nonempty_body() {
         tools: &[],
         workflows: &[],
         dispatcher_instructions: "",
-        learned: LearnedContextData::default(),
         visible_tool_names: &visible,
         tool_call_format: ToolCallFormat::PFormat,
         connected_integrations: &[],
         connected_identities_md: String::new(),
-        include_profile: false,
-        include_memory_md: false,
-        curated_snapshot: None,
         user_identity: None,
         personality_roster: vec![],
         agents_md_global: None,

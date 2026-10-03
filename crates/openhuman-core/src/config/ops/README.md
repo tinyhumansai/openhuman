@@ -34,7 +34,7 @@ dictation and voice-server mutators exist only in `load_and_apply_*` form.
 - `agent.rs`: `apply_autonomy_settings` / `get_autonomy_settings`,
   `add_auto_approve_tool`, `apply_agent_settings` / `get_agent_settings`,
   `apply_agent_paths_settings` / `get_agent_paths`, `ensure_usable_cwd`,
-  `expand_tilde`, `redact_home`, `apply_memory_sync_settings`.
+  `expand_tilde`, `redact_home`.
 - `loader.rs`: `load_config_with_timeout`,
   `load_config_for_workspace_with_timeout`, `get_config_snapshot`,
   `client_config_json`, `reload_config_from_paths`, `reset_local_data`,

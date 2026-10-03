@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use super::persist_delivered_reply;
-use crate::memory::agent::memory_loader::MemoryCitation;
-use crate::memory::conversations::{self, CreateConversationThread};
+use crate::memory::types::TurnCitation;
+use crate::threads::store::{self as conversations, CreateConversationThread};
 
 fn temp_ws() -> PathBuf {
     let dir = std::env::temp_dir().join(format!("web-chat-reply-{}", uuid::Uuid::new_v4()));
@@ -98,7 +98,7 @@ fn citations_ride_on_the_authoritative_row() {
     let ws = temp_ws();
     seed_thread(&ws, "t-6");
 
-    let citation = MemoryCitation {
+    let citation = TurnCitation {
         id: "mem-1".to_string(),
         key: "draft-location".to_string(),
         namespace: Some("notes".to_string()),

@@ -7,8 +7,8 @@ use crate::core::all::ControllerFuture;
 
 use super::super::helpers::{
     deserialize_params, to_json, AgentSettingsUpdate, AutonomySettingsUpdate,
-    BrowserSettingsUpdate, ComputerSettingsUpdate, MemorySyncSettingsUpdate, PrivacyModeUpdate,
-    SandboxSettingsUpdate, SetBrowserAllowAllParams,
+    BrowserSettingsUpdate, ComputerSettingsUpdate, PrivacyModeUpdate, SandboxSettingsUpdate,
+    SetBrowserAllowAllParams,
 };
 
 pub(crate) fn handle_get_autonomy_settings(_params: Map<String, Value>) -> ControllerFuture {
@@ -128,20 +128,6 @@ pub(super) fn handle_set_browser_allow_all(params: Map<String, Value>) -> Contro
     Box::pin(async move {
         let payload = deserialize_params::<SetBrowserAllowAllParams>(params)?;
         to_json(config_rpc::set_browser_allow_all(payload.enabled)?)
-    })
-}
-
-pub(super) fn handle_get_memory_sync_settings(_params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move { to_json(config_rpc::get_memory_sync_settings().await?) })
-}
-
-pub(super) fn handle_update_memory_sync_settings(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let update = deserialize_params::<MemorySyncSettingsUpdate>(params)?;
-        let patch = config_rpc::MemorySyncSettingsPatch {
-            sync_interval_secs: update.sync_interval_secs,
-        };
-        to_json(config_rpc::load_and_apply_memory_sync_settings(patch).await?)
     })
 }
 

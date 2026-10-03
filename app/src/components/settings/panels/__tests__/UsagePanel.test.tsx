@@ -1,8 +1,7 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen } from '@testing-library/react';
 import { useLocation } from 'react-router-dom';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 
-import { loadAISettings } from '../../../../services/api/aiSettingsApi';
 import { renderWithProviders } from '../../../../test/test-utils';
 import UsagePanel from '../UsagePanel';
 
@@ -40,13 +39,6 @@ vi.mock('../../../dashboard/UsageLogPanel', () => ({
   default: () => <div data-testid="stub-usage-log" />,
 }));
 
-vi.mock('../../../../services/api/aiSettingsApi', async () => {
-  const actual = await vi.importActual<typeof import('../../../../services/api/aiSettingsApi')>(
-    '../../../../services/api/aiSettingsApi'
-  );
-  return { ...actual, loadAISettings: vi.fn() };
-});
-
 vi.mock('../../hooks/useSettingsNavigation', () => ({
   useSettingsNavigation: () => ({
     navigateBack: vi.fn(),
@@ -55,31 +47,18 @@ vi.mock('../../hooks/useSettingsNavigation', () => ({
   }),
 }));
 
-const mockLoad = vi.mocked(loadAISettings);
-
-const snapshot = { routing: {}, cloudProviders: [] } as unknown as Awaited<
-  ReturnType<typeof loadAISettings>
->;
-
 const LocationProbe = () => {
   const location = useLocation();
   return <output data-testid="location-probe">{`${location.search}${location.hash}`}</output>;
 };
 
 describe('UsagePanel', () => {
-  beforeEach(() => {
-    mockLoad.mockReset();
-    mockLoad.mockResolvedValue(snapshot);
-  });
-
   test('default hash renders the Costs tab with the embedded cost dashboard', () => {
     renderWithProviders(<UsagePanel />, { initialEntries: ['/settings/usage'] });
 
     expect(screen.getByTestId('usage-tab-costs')).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByTestId('usage-tab-background')).toHaveAttribute('aria-selected', 'false');
     expect(screen.getByTestId('stub-cost-dashboard')).toHaveAttribute('data-embedded', 'true');
-    // Costs tab must not pay for the AI-settings snapshot.
-    expect(mockLoad).not.toHaveBeenCalled();
   });
 
   test('#tokens hash selects the Token savings tab with the embedded TokenJuice panel', () => {
@@ -107,7 +86,6 @@ describe('UsagePanel', () => {
     const controls = await screen.findByTestId('stub-background-loops');
     expect(controls).toHaveAttribute('data-view', 'all');
     expect(controls).toHaveAttribute('data-hide-header', 'true');
-    expect(mockLoad).toHaveBeenCalledTimes(1);
   });
 
   test('clicking the Background tab switches the view in place', async () => {
@@ -144,15 +122,5 @@ describe('UsagePanel', () => {
 
     await screen.findByTestId('stub-cost-dashboard');
     expect(screen.getByTestId('usage-tab-costs')).toHaveAttribute('aria-selected', 'true');
-  });
-
-  test('surfaces a snapshot load failure on the Background tab', async () => {
-    mockLoad.mockRejectedValue(new Error('rpc down'));
-    renderWithProviders(<UsagePanel />, { initialEntries: ['/settings/usage#background'] });
-
-    await waitFor(() =>
-      expect(screen.getByTestId('usage-background-tab')).toHaveTextContent(/rpc down/)
-    );
-    expect(screen.queryByTestId('stub-background-loops')).not.toBeInTheDocument();
   });
 });

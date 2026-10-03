@@ -11,14 +11,10 @@ fn prompt_builder_assembles_sections() {
         tools: &prompt_tools,
         workflows: &[],
         dispatcher_instructions: "instr",
-        learned: LearnedContextData::default(),
         visible_tool_names: &NO_FILTER,
         tool_call_format: ToolCallFormat::PFormat,
         connected_integrations: &[],
         connected_identities_md: String::new(),
-        include_profile: false,
-        include_memory_md: false,
-        curated_snapshot: None,
         user_identity: None,
         personality_roster: vec![],
         agents_md_global: None,
@@ -41,14 +37,10 @@ fn grounding_contract_appended_to_every_build_path() {
         tools: &prompt_tools,
         workflows: &[],
         dispatcher_instructions: "instr",
-        learned: LearnedContextData::default(),
         visible_tool_names: &NO_FILTER,
         tool_call_format: ToolCallFormat::PFormat,
         connected_integrations: &[],
         connected_identities_md: String::new(),
-        include_profile: false,
-        include_memory_md: false,
-        curated_snapshot: None,
         user_identity: None,
         personality_roster: vec![],
         agents_md_global: None,
@@ -133,14 +125,10 @@ fn identity_section_creates_missing_workspace_files() {
         tools: &prompt_tools,
         workflows: &[],
         dispatcher_instructions: "",
-        learned: LearnedContextData::default(),
         visible_tool_names: &NO_FILTER,
         tool_call_format: ToolCallFormat::PFormat,
         connected_integrations: &[],
         connected_identities_md: String::new(),
-        include_profile: false,
-        include_memory_md: false,
-        curated_snapshot: None,
         user_identity: None,
         personality_roster: vec![],
         agents_md_global: None,
@@ -214,14 +202,10 @@ fn datetime_section_is_static_grounding_rule_without_volatile_timestamp() {
         tools: &prompt_tools,
         workflows: &[],
         dispatcher_instructions: "instr",
-        learned: LearnedContextData::default(),
         visible_tool_names: &NO_FILTER,
         tool_call_format: ToolCallFormat::PFormat,
         connected_integrations: &[],
         connected_identities_md: String::new(),
-        include_profile: false,
-        include_memory_md: false,
-        curated_snapshot: None,
         user_identity: None,
         personality_roster: vec![],
         agents_md_global: None,
@@ -285,14 +269,10 @@ fn datetime_section_appends_resolve_time_rule_only_when_tool_present() {
         tools: &with_prompt_tools,
         workflows: &[],
         dispatcher_instructions: "instr",
-        learned: LearnedContextData::default(),
         visible_tool_names: &NO_FILTER,
         tool_call_format: ToolCallFormat::PFormat,
         connected_integrations: &[],
         connected_identities_md: String::new(),
-        include_profile: false,
-        include_memory_md: false,
-        curated_snapshot: None,
         user_identity: None,
         personality_roster: vec![],
         agents_md_global: None,
@@ -442,14 +422,10 @@ fn tools_section_pformat_renders_signature_not_schema() {
         tools: &prompt_tools,
         workflows: &[],
         dispatcher_instructions: "",
-        learned: LearnedContextData::default(),
         visible_tool_names: &NO_FILTER,
         tool_call_format: ToolCallFormat::PFormat,
         connected_integrations: &[],
         connected_identities_md: String::new(),
-        include_profile: false,
-        include_memory_md: false,
-        curated_snapshot: None,
         user_identity: None,
         personality_roster: vec![],
         agents_md_global: None,
@@ -500,14 +476,10 @@ fn tools_section_renders_invalid_schema_tool_without_arguments() {
         tools: &prompt_tools,
         workflows: &[],
         dispatcher_instructions: "",
-        learned: LearnedContextData::default(),
         visible_tool_names: &NO_FILTER,
         tool_call_format: ToolCallFormat::PFormat,
         connected_integrations: &[],
         connected_identities_md: String::new(),
-        include_profile: false,
-        include_memory_md: false,
-        curated_snapshot: None,
         user_identity: None,
         personality_roster: vec![],
         agents_md_global: None,
@@ -569,14 +541,10 @@ fn tools_section_code_formats_render_function_signatures() {
             tools: &prompt_tools,
             workflows: &[],
             dispatcher_instructions: "## Tool Use Protocol\n\n(block)",
-            learned: LearnedContextData::default(),
             visible_tool_names: &NO_FILTER,
             tool_call_format: format,
             connected_integrations: &[],
             connected_identities_md: String::new(),
-            include_profile: false,
-            include_memory_md: false,
-            curated_snapshot: None,
             user_identity: None,
             personality_roster: vec![],
             agents_md_global: None,
@@ -619,14 +587,10 @@ fn tools_section_uses_pformat_signature_for_text_dispatchers() {
             tools: &prompt_tools,
             workflows: &[],
             dispatcher_instructions: "",
-            learned: LearnedContextData::default(),
             visible_tool_names: &NO_FILTER,
             tool_call_format: format,
             connected_integrations: &[],
             connected_identities_md: String::new(),
-            include_profile: false,
-            include_memory_md: false,
-            curated_snapshot: None,
             user_identity: None,
             personality_roster: vec![],
             agents_md_global: None,
@@ -665,14 +629,10 @@ fn tools_section_json_with_an_embedded_catalogue_lists_tools_once() {
         tools: &prompt_tools,
         workflows: &[],
         dispatcher_instructions: &block,
-        learned: LearnedContextData::default(),
         visible_tool_names: &NO_FILTER,
         tool_call_format: ToolCallFormat::Json,
         connected_integrations: &[],
         connected_identities_md: String::new(),
-        include_profile: false,
-        include_memory_md: false,
-        curated_snapshot: None,
         user_identity: None,
         personality_roster: vec![],
         agents_md_global: None,
@@ -686,94 +646,4 @@ fn tools_section_json_with_an_embedded_catalogue_lists_tools_once() {
     );
     assert!(!rendered.contains("Call as:"), "{rendered}");
     assert!(rendered.contains("Parameters:"), "{rendered}");
-}
-
-#[test]
-fn user_memory_section_renders_namespaces_with_headings() {
-    let learned = LearnedContextData {
-        tree_root_summaries: vec![
-            ns_summary_at(
-                "user",
-                "Steven prefers terse Rust answers.",
-                "2026-05-25T00:00:00Z",
-            ),
-            ns_summary_at(
-                "conversations",
-                "Recent thread: prompt rework.",
-                "2026-05-25T00:00:00Z",
-            ),
-        ],
-        ..Default::default()
-    };
-    let prompt_tools: Vec<PromptTool<'_>> = Vec::new();
-    let ctx = PromptContext {
-        workspace_dir: Path::new("/tmp"),
-        model_name: "test-model",
-        agent_id: "",
-        tools: &prompt_tools,
-        workflows: &[],
-        dispatcher_instructions: "",
-        learned,
-        visible_tool_names: &NO_FILTER,
-        tool_call_format: ToolCallFormat::PFormat,
-        connected_integrations: &[],
-        connected_identities_md: String::new(),
-        include_profile: false,
-        include_memory_md: false,
-        curated_snapshot: None,
-        user_identity: None,
-        personality_roster: vec![],
-        agents_md_global: None,
-        agents_md_local: None,
-    };
-    let rendered = UserMemorySection.build(&ctx).unwrap();
-    assert!(rendered.starts_with("## User Memory\n\n"));
-    assert!(
-        rendered
-            .contains("### user (last updated 2026-05-25)\n\nSteven prefers terse Rust answers."),
-        "heading must carry the absolute update date (#2944); got:\n{rendered}"
-    );
-    assert!(rendered
-        .contains("### conversations (last updated 2026-05-25)\n\nRecent thread: prompt rework."));
-}
-
-#[test]
-fn memory_date_label_formats_absolute_utc_date() {
-    let dt = chrono::DateTime::parse_from_rfc3339("2026-05-25T18:30:00Z")
-        .unwrap()
-        .with_timezone(&chrono::Utc);
-    // Absolute date, no time-of-day — must stay byte-stable day to day.
-    assert_eq!(memory_date_label(dt), "2026-05-25");
-}
-
-#[test]
-fn user_memory_section_labels_stale_summary_and_warns_against_present_tense() {
-    // #2944 regression: a summary last updated weeks ago must render with
-    // its absolute date, and the section must steer the model to compare
-    // against the current date — so a May-25 briefing is never served as
-    // today's.
-    let learned = LearnedContextData {
-        tree_root_summaries: vec![ns_summary_at(
-            "briefings",
-            "Daily briefing: 2 meetings, proposal due.",
-            "2026-05-25T07:00:00Z",
-        )],
-        ..Default::default()
-    };
-    let rendered = UserMemorySection.build(&ctx_with_learned(learned)).unwrap();
-
-    assert!(
-        rendered.contains("### briefings (last updated 2026-05-25)"),
-        "stale summary must carry its absolute update date; got:\n{rendered}"
-    );
-    // Guardrail: tell the model to cross-check against the current date
-    // and not restate older memory as today's.
-    assert!(
-        rendered.contains("Current Date & Time"),
-        "section must reference the current-date block; got:\n{rendered}"
-    );
-    assert!(
-        rendered.contains("never present older memory as"),
-        "section must forbid presenting stale memory as current; got:\n{rendered}"
-    );
 }

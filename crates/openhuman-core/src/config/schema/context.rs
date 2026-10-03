@@ -1,12 +1,10 @@
 //! Context management configuration.
 //!
 //! Knobs for the global `crates/openhuman-core/src/agent/context/` module — budget
-//! thresholds, summarization trigger percentages, microcompact behavior,
-//! and the session-memory extraction cadence. Wired into the root
+//! thresholds, summarization trigger percentages and microcompact behavior. Wired into the root
 //! [`super::Config`] as the `context` section; env overrides live in
 //! [`super::load`].
 
-use crate::agent::context::session_memory::SessionMemoryConfig;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -57,8 +55,7 @@ pub struct ContextConfig {
     /// the raw payload before it enters agent history. Default: 4000 tokens.
     /// Set to 0 to disable.
     ///
-    /// Token count is estimated as `chars / 4` (the same heuristic used
-    /// by `tree_summarizer::estimate_tokens`). Pairs with
+    /// Token count is estimated as `chars / 4` (a rough heuristic). Pairs with
     /// [`Self::summarizer_max_payload_tokens`] which caps the upper end
     /// (paying for an LLM call on a multi-million-token blob makes no
     /// economic sense, so above the cap the existing
@@ -80,10 +77,6 @@ pub struct ContextConfig {
         alias = "summarizer_max_payload_bytes"
     )]
     pub summarizer_max_payload_tokens: usize,
-
-    /// Session-memory extraction thresholds.
-    #[serde(default)]
-    pub session_memory: SessionMemoryConfig,
 
     /// Override for the model used by the summarizer when autocompaction
     /// fires. `None` (the default) means "use the caller's current
@@ -231,7 +224,6 @@ impl Default for ContextConfig {
             tool_result_budget_bytes: default_tool_result_budget_bytes(),
             summarizer_payload_threshold_tokens: default_summarizer_payload_threshold_tokens(),
             summarizer_max_payload_tokens: default_summarizer_max_payload_tokens(),
-            session_memory: SessionMemoryConfig::default(),
             summarizer_model: None,
             prefer_markdown_tool_output: default_true(),
             compaction_enabled: default_true(),

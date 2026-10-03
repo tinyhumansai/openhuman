@@ -3,31 +3,25 @@ import { describe, expect, it } from 'vitest';
 import { AVATAR_MENU_ITEMS, NAV_TABS } from '../navConfig';
 
 describe('NAV_TABS', () => {
-  it('has exactly 4 entries', () => {
-    expect(NAV_TABS).toHaveLength(4);
+  it('has exactly 3 entries', () => {
+    expect(NAV_TABS).toHaveLength(3);
   });
 
   it('has the correct ids in order', () => {
-    expect(NAV_TABS.map(t => t.id)).toEqual(['chat', 'brain', 'flows', 'connections']);
+    expect(NAV_TABS.map(t => t.id)).toEqual(['chat', 'flows', 'connections']);
   });
 
   it('has the correct paths', () => {
-    expect(NAV_TABS.map(t => t.path)).toEqual(['/chat', '/brain', '/flows', '/connections']);
+    expect(NAV_TABS.map(t => t.path)).toEqual(['/chat', '/flows', '/connections']);
   });
 
   it('has the correct labelKeys', () => {
-    expect(NAV_TABS.map(t => t.labelKey)).toEqual([
-      'nav.chat',
-      'nav.brain',
-      'nav.flows',
-      'nav.connections',
-    ]);
+    expect(NAV_TABS.map(t => t.labelKey)).toEqual(['nav.chat', 'nav.flows', 'nav.connections']);
   });
 
   it('has the correct walkthroughAttrs', () => {
     expect(NAV_TABS.map(t => t.walkthroughAttr)).toEqual([
       'tab-chat',
-      'tab-brain',
       'tab-flows',
       'tab-connections',
     ]);

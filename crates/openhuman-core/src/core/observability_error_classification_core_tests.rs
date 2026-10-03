@@ -263,63 +263,6 @@ fn wallet_not_configured_sentinel_is_ascii_lowercase() {
     );
 }
 
-/// Sentry TAURI-RUST-QWW (#5164): a memory-store identifier rejection is
-/// deterministic in the caller's own input, so it repeats at the caller's
-/// retry rate (3,055 events / 1 user / 1 day) without carrying new signal.
-/// Every rejection wording the store emits must classify as
-/// `MemoryIdentifierRejected`, including the retired PII wording that
-/// pre-#5164 cores still send.
-
-#[test]
-fn classifies_memory_identifier_rejections_as_expected() {
-    for msg in [
-        "document namespace/key cannot contain secrets",
-        "document namespace/key cannot contain personal identifiers",
-        "document key cannot be empty",
-        "kv key cannot contain secrets",
-        "kv namespace/key cannot contain secrets",
-        "episodic session_id/role cannot contain secrets",
-        // The stringified RPC re-report shape that reaches the dispatcher.
-        "openhuman.memory_store failed: document namespace/key cannot contain secrets",
-    ] {
-        assert_eq!(
-            expected_error_kind(msg),
-            Some(ExpectedErrorKind::MemoryIdentifierRejected),
-            "must classify as MemoryIdentifierRejected: {msg}"
-        );
-    }
-    // Full demotion path (classifier -> report arm) must not panic.
-    report_error_or_expected(
-        "document namespace/key cannot contain secrets",
-        "rpc",
-        "openhuman.memory_store",
-        &[],
-    );
-}
-
-/// Guard against over-suppression: a real failure on the same memory write
-/// path — SQLite, embeddings, the markdown sidecar — carries none of the
-/// rejection wording and MUST still reach Sentry (stay `None`). Nor may a
-/// bare "cannot contain secrets" from an unrelated domain borrow the
-/// memory-store demotion.
-
-#[test]
-fn does_not_classify_real_memory_write_failures_as_identifier_rejections() {
-    for msg in [
-        "upsert memory_docs: database is locked",
-        "insert vector chunk: disk I/O error",
-        "lookup existing document_id: no such table: memory_docs",
-        "write_markdown_doc: permission denied",
-        "webhook payload cannot contain secrets",
-    ] {
-        assert_ne!(
-            expected_error_kind(msg),
-            Some(ExpectedErrorKind::MemoryIdentifierRejected),
-            "must NOT classify as MemoryIdentifierRejected: {msg}"
-        );
-    }
-}
-
 /// Guard against over-suppression: an MCP transport failure that is NOT the
 /// typed 401 (a 500, or a generic "unauthorized" with no MCP anchor) MUST
 /// still reach Sentry (stay `None`) so a real defect isn't blinded.

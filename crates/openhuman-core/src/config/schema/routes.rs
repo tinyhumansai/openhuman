@@ -9,7 +9,13 @@ pub struct ModelRouteConfig {
     pub model: String,
 }
 
-/// A per-workload embedding provider override. Defined in the contract crate —
-/// the memory store's embedder factory reads it. See
-/// [`tinymemory_api::host::EmbeddingRouteConfig`].
-pub use tinymemory_api::host::EmbeddingRouteConfig;
+/// A per-workload embedding provider override (`[[embedding_routes]]`).
+/// Inert serde data; its serde form is persisted in users' `config.toml`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct EmbeddingRouteConfig {
+    pub hint: String,
+    pub provider: String,
+    pub model: String,
+    #[serde(default)]
+    pub dimensions: Option<usize>,
+}

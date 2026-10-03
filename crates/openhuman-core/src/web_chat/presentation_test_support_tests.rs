@@ -1,4 +1,4 @@
-use crate::memory::agent::memory_loader::MemoryCitation;
+use crate::memory::types::TurnCitation;
 
 pub async fn deliver_response_for_test(
     client_id: &str,
@@ -6,7 +6,7 @@ pub async fn deliver_response_for_test(
     request_id: &str,
     full_response: &str,
     user_message: &str,
-    citations: &[MemoryCitation],
+    citations: &[TurnCitation],
 ) {
     deliver_response_in_workspace_for_test(
         client_id,
@@ -55,7 +55,7 @@ pub async fn deliver_response_in_workspace_for_test(
     request_id: &str,
     full_response: &str,
     user_message: &str,
-    citations: &[MemoryCitation],
+    citations: &[TurnCitation],
     workspace_dir: Option<&std::path::Path>,
 ) {
     super::deliver_response(

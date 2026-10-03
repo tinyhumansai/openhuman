@@ -244,7 +244,6 @@ if should_run_suite "navigation"; then
   run "test/e2e/specs/navigation-settings-panels.spec.ts"     "navigation-settings"       "navigation"
   run "test/e2e/specs/command-palette.spec.ts"                "command-palette"           "navigation"
   run "test/e2e/specs/channels-smoke.spec.ts"                 "channels-smoke"            "navigation"
-  run "test/e2e/specs/insights-dashboard.spec.ts"             "insights-dashboard"        "navigation"
   run "test/e2e/specs/guided-tour-gates.spec.ts"              "guided-tour-gates"         "navigation"
   _mini_summary "navigation"
 fi
@@ -300,10 +299,6 @@ if should_run_suite "notifications"; then
   echo ""
   echo "## Running suite: notifications"
   run "test/e2e/specs/notifications.spec.ts"                  "notifications"             "notifications"
-  run "test/e2e/specs/memory-roundtrip.spec.ts"               "memory-roundtrip"          "notifications"
-  run "test/e2e/specs/coding-session-memory.spec.ts"           "coding-session-memory"     "notifications"
-  run "test/e2e/specs/memory-sources-conversation.spec.ts"    "memory-sources-conv"       "notifications"
-  run "test/e2e/specs/memory-sync-schedule.spec.ts"           "memory-sync-schedule"      "notifications"
   run "test/e2e/specs/cron-jobs-flow.spec.ts"                 "cron-jobs"                 "notifications"
   _mini_summary "notifications"
 fi
@@ -407,13 +402,11 @@ if should_run_suite "settings"; then
   echo "## Running suite: settings"
   run "test/e2e/specs/settings-channels-permissions.spec.ts"  "settings-channels"         "settings"
   run "test/e2e/specs/settings-data-management.spec.ts"       "settings-data"             "settings"
-  run "test/e2e/specs/settings-dev-options.spec.ts"           "settings-dev"              "settings"
   run "test/e2e/specs/settings-ai-skills.spec.ts"             "settings-ai-skills"        "settings"
   run "test/e2e/specs/settings-account-preferences.spec.ts"   "settings-account"          "settings"
   run "test/e2e/specs/settings-advanced-config.spec.ts"       "settings-advanced"         "settings"
   run "test/e2e/specs/settings-feature-preferences.spec.ts"   "settings-features"         "settings"
   run "test/e2e/specs/settings-search.spec.ts"                "settings-search"           "settings"
-  run "test/e2e/specs/memory-engine-settings.spec.ts"         "settings-memory-engine"   "settings"
   _mini_summary "settings"
 fi
 

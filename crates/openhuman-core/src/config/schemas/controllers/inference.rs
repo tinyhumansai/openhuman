@@ -141,7 +141,6 @@ pub(super) fn handle_update_model_settings(params: Map<String, Value>) -> Contro
             vision_provider: update.vision_provider,
             memory_provider: update.memory_provider,
             embeddings_provider: update.embeddings_provider,
-            learning_provider: update.learning_provider,
         };
         to_json(config_rpc::load_and_apply_model_settings(patch).await?)
     })
@@ -151,12 +150,9 @@ pub(super) fn handle_update_memory_settings(params: Map<String, Value>) -> Contr
     Box::pin(async move {
         let update = deserialize_params::<MemorySettingsUpdate>(params)?;
         let patch = config_rpc::MemorySettingsPatch {
-            backend: update.backend,
-            auto_save: update.auto_save,
             embedding_provider: update.embedding_provider,
             embedding_model: update.embedding_model,
             embedding_dimensions: update.embedding_dimensions,
-            memory_window: update.memory_window,
         };
         to_json(config_rpc::load_and_apply_memory_settings(patch).await?)
     })
@@ -191,7 +187,6 @@ pub(super) fn handle_update_local_ai_settings(params: Map<String, Value>) -> Con
             model_id: update.model_id,
             chat_model_id: update.chat_model_id,
             usage_embeddings: update.usage_embeddings,
-            usage_learning_reflection: update.usage_learning_reflection,
             api_key: update.api_key,
         };
         to_json(config_rpc::load_and_apply_local_ai_settings(patch).await?)

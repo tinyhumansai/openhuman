@@ -4,12 +4,7 @@ use super::*;
 fn all_steps_have_stable_ids_and_are_non_required() {
     let steps = all_steps();
     let ids: Vec<_> = steps.iter().map(|s| s.id).collect();
-    let mut expected = vec![
-        "python_runtime",
-        "spacy",
-        "kompress",
-        "runtime_python_server",
-    ];
+    let mut expected = vec!["python_runtime", "kompress", "runtime_python_server"];
     // `node_runtime` is a registration-site gate: it is absent (not
     // dead-but-listed) when the managed Node runtime is compiled out. `cfg!`
     // (not `#[cfg]`) keeps `expected` mutable-and-used in both builds — same
@@ -38,7 +33,7 @@ fn provisioning_classification_excludes_service_startup() {
 }
 
 /// #5056: on a fresh install (`Config::default()`) `runtime_python.enabled`
-/// is `true` but no Python backend (spaCy/Kompress) is on, so the
+/// is `true` but no Python backend (Kompress) is on, so the
 /// `python_runtime` step must report itself already `Done` and `run` must
 /// be a no-op — proving the eager managed-CPython download is skipped
 /// when nothing at boot needs it. This is a pure gating check
@@ -61,22 +56,11 @@ async fn python_runtime_step_is_done_by_default_with_no_backend_enabled() {
     );
 }
 
-/// Inverse of the above: once a backend (spaCy) is enabled, the step must
+/// Inverse of the above: once a backend (Kompress) is enabled, the step must
 /// no longer be trivially `Done` via the eager-skip branch — proving the
 /// gate still allows provisioning when a backend genuinely needs Python.
 /// We only assert the gating predicate here (not `is_done`/`run`), so the
 /// test never attempts a real interpreter probe/download.
-#[test]
-fn python_needed_eagerly_true_when_spacy_backend_enabled() {
-    let mut config = Config::default();
-    config.runtime_python.enabled = true;
-    config.memory_tree.spacy_enabled = true;
-    assert!(
-        python_needed_eagerly(&config),
-        "python should be needed eagerly once a Python backend is enabled"
-    );
-}
-
 #[tokio::test]
 async fn disabled_runtimes_report_done_without_work() {
     let mut config = Config::default();

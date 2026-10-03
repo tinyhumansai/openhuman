@@ -91,7 +91,7 @@ Rename-Item "$env:USERPROFILE\.openhuman" ".openhuman.backup"
 
 Relaunch. OpenHuman recreates a fresh data folder and you sign in again.
 
-- If the fresh start **works**, the old folder was the issue, but your data is safe in the backup. You can copy specific pieces back (your memory database and vault) and test after each.
+- If the fresh start **works**, the old folder was the issue, but your data is safe in the backup. You can copy specific pieces back (your workspace files such as `memory/context.md`) and test after each.
 - If it **still fails**, the data folder wasn't the cause. **Restore your backup** by renaming it back, so you lose nothing, and escalate (below).
 
 ---

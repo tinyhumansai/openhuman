@@ -95,7 +95,7 @@ export async function runHarnessInit(force = false): Promise<HarnessInitSnapshot
   const payload = await callCoreRpc<unknown>({
     method: 'openhuman.harness_init_run',
     params: { force },
-    // Provisioning can download Python / Node / spaCy — allow a long budget.
+    // Provisioning can download Python / Node — allow a long budget.
     timeoutMs: 10 * 60 * 1000,
   });
   return parseHarnessInitSnapshot(payload);

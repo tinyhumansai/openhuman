@@ -36,7 +36,6 @@ fn bare() -> crate::agent::SessionHostBuilder {
     crate::agent::SessionHostBuilder::new()
         .chat_model(model)
         .tools(Vec::new())
-        .memory(crate::memory::test_support::noop_memory())
         .tool_dispatcher(Box::new(tinytools_agent::dialect::XmlDialect))
 }
 

@@ -17,7 +17,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const REGISTRY_DIR = join(ROOT, "crates/openhuman-core/src/modules");
 
 /** Test modules the core suite loads, by registry record id. */
-export const TEST_MODULE_IDS = ["tinymemory", "tinyjuice", "tinysearch"];
+export const TEST_MODULE_IDS = ["tinyjuice", "tinysearch"];
 
 /** Concatenate registry.rs and its `registry/records_*.rs` fragments. */
 export function readRegistrySource(dir = REGISTRY_DIR) {

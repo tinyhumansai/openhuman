@@ -2,8 +2,8 @@
 
 use super::support::{envelope, run_to_completion, workspace_dir};
 use crate::core::Outcome;
-use crate::memory::conversations;
-use crate::memory::{ApiEnvelope, EmptyRequest, PurgeConversationThreadsResponse};
+use crate::threads::store as conversations;
+use crate::threads::{ApiEnvelope, EmptyRequest, PurgeConversationThreadsResponse};
 use std::path::PathBuf;
 use tinyagents_session::turn_state;
 

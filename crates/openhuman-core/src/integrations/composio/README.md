@@ -13,11 +13,11 @@ call; see [Module boundary](#module-boundary) below.
 ## Responsibilities
 
 - List toolkits, connections, agent-ready toolkits, and a local capability matrix.
-- Begin OAuth handoffs (`authorize`) and delete connections (with optional source-scoped memory cleanup).
+- Begin OAuth handoffs (`authorize`) and delete connections (with optional cleanup of the memory synced through that connection).
 - Discover Composio action tool schemas (`list_tools`) and execute actions (`execute`), mode-aware over the backend/direct split.
 - Manage triggers: list available/active, create, enable, disable, plus a persistent trigger-event history archive.
-- Fetch normalized per-toolkit user profiles, persist identity facets, and drive periodic connection sync through the `tinyconnectors` module.
-- Gate agent action visibility/execution by per-toolkit user scope preferences (read/write/admin) and curated catalogs sourced from the `tinymemory-api` contract crate.
+- Fetch normalized per-toolkit user profiles, persist connected identities, and sync a connection's records into memory (`composio_sync` / `run_sync_pass`) through the `tinyconnectors` module.
+- Gate agent action visibility/execution by per-toolkit user scope preferences (read/write/admin) and curated catalogs from `contract/`.
 - Gate late-bound per-action tool calls behind a full live contract on first use (#4853).
 - Manage the Composio routing mode and the direct-mode API key (`get_mode` / `set_api_key` / `clear_api_key`), including a BYO-key repeated-401 short-circuit.
 - Classify execute failures into stable error classes; funnel op-layer errors to Sentry under `domain="composio"`.
@@ -60,13 +60,13 @@ triggers) from a real transport failure.
 | `crates/openhuman-core/src/integrations/composio/execute_dispatch.rs` | Host entry for running one action: applies egress enforcement/disclosure, then calls the module's `EXECUTE` member (prepare → retry → error mapping all run in `tinyconnectors`). Used by the `composio_execute` agent tool, `tools.composio_execute`, the memory host, LinkedIn enrichment and the output probe. |
 | `crates/openhuman-core/src/integrations/composio/googlecalendar_args.rs` | Host IANA time-zone lookup; the calendar defaulting itself is `tinyconnectors::execute::apply_calendar_query_defaults` (#1714). |
 | `crates/openhuman-core/src/integrations/composio/identity.rs` | Resolves the connected account username for a toolkit via the connector module profile-fetch path (used by skill preflight identity gate). |
-| `crates/openhuman-core/src/integrations/composio/identity_store.rs` | Persists Composio-sourced identity facets through the bound memory driver (`MemoryProfile::upsert_provider_facet`); ported from the deleted in-process engine, minus its downstream stability-scoring signal. |
-| `crates/openhuman-core/src/integrations/composio/profile_md.rs` | Mirrors managed identity facet blocks into `{workspace_dir}/PROFILE.md` between `<!-- openhuman:<block>:start/end -->` markers, ported verbatim from the deleted engine's `profile_md`. |
+| `crates/openhuman-core/src/integrations/composio/identity_store.rs` | Persists connected-account identities in `<workspace>/integrations/composio_identities.json`. |
+| `crates/openhuman-core/src/integrations/composio/file_store.rs` | Atomic JSON file helpers for the identity and user-scope files under `<workspace>/integrations/`. |
 | `crates/openhuman-core/src/integrations/composio/direct_auth/mod.rs` | Direct-mode API-key health tracking: a process-local consecutive-401-failure counter (keyed by a non-logged key fingerprint) that short-circuits repeated invalid-key polling. |
 | `crates/openhuman-core/src/integrations/composio/trigger_history.rs` | Process-global `OnceLock` handle to `tinyconnectors::triggers::TriggerArchive` (`init_global`/`global`). |
-| `crates/openhuman-core/src/integrations/composio/bus.rs` | Compatibility shim re-exporting `crate::memory::sync::composio::bus` (trigger/config-change subscribers still live there). |
-| `crates/openhuman-core/src/integrations/composio/periodic.rs` | Host-owned periodic connection sync loop. **Not** a shim: it used to re-export the engine's `memory_sync::composio::periodic`, but tinymemory v1.13.4 deleted that module and its would-be replacement in the `tinymemory-module` never materialized, so this file implements the tick loop directly against `ops::run_sync_within_budget`. |
-| `crates/openhuman-core/src/integrations/composio/providers/mod.rs` | Two unrelated halves reunified by one former shim: curated catalogs / scope verdicts / identity vocabulary re-exported from the `tinymemory-api` contract crate (pure data, no provider needed), plus this host's own `slack` RPC layer over the connector module. The old `ComposioProvider` trait and provider registry are gone with the deleted engine. |
+| `crates/openhuman-core/src/integrations/composio/bus.rs` + `bus/` | Trigger, connection-created and config-changed subscribers, and their registration. |
+| `crates/openhuman-core/src/integrations/composio/providers/mod.rs` | Re-exports the curated catalogs, scope verdicts, identity vocabulary and run types from `contract/`. |
+| `crates/openhuman-core/src/integrations/composio/contract/` | The Composio vocabulary: catalogs, scopes, profiles, run shapes, task shapes. Plain data and pure functions. |
 | `*_tests.rs` | Sibling test suites for each file. |
 
 ## Ops layout
@@ -77,19 +77,19 @@ triggers) from a real transport failure.
 | --- | --- |
 | `error_utils` | `OpResult`, `resolve_client`, `report_composio_op_error`, helpers |
 | `toolkits` | `composio_list_toolkits`, `composio_list_capabilities`... |
-| `connections` | `composio_list_connections`, `composio_authorize`, `_delete_...` |
-| `memory_cleanup` | Memory-cleanup helpers for connection deletion |
+| `connections` | `composio_list_connections`, `composio_authorize`, `_delete_...`, `active_connection_ids` |
 | `tools_ops` | `composio_list_tools` |
 | `execute` | `composio_execute` |
 | `triggers` | GitHub repos + trigger CRUD + trigger history |
-| `providers_ops` | `composio_get_user_profile`, `_refresh_...`, `composio_sync` |
+| `providers_ops` | `composio_get_user_profile`, `composio_refresh_all_identities` |
+| `sync` | `composio_sync`, `run_sync_pass`: connector records → `memory::sources::composio::store_records` |
+| `pass_failure` | when a connector pass failed; the retry schedule |
 | `direct_mode` | `composio_get_mode`, `composio_set_api_key`, `_clear_...` |
-| `user_scopes` | per-toolkit agent scope prefs, over the bound memory driver |
+| `user_scopes` | per-toolkit agent scope prefs in `<workspace>/integrations/composio_user_scopes.json` |
 
-`pass_budget.rs` holds `run_sync_within_budget`, the tinyconnectors-mediated
-sync pass shared by every entry point that syncs once per invocation
-(periodic tick, manual provider sync, `connection_created`, the Slack ingest
-RPC).
+There is no periodic loop here: scheduled Composio syncs are memory v2
+sources (`memory::sources::composio::sync_toolkit`), which call
+`run_sync_pass` per active connection.
 
 ## Public surface
 
@@ -103,8 +103,8 @@ From `mod.rs` re-exports:
 - **Identity**: `connection_identity`.
 - **Trigger history**: `init_composio_trigger_history`, `global_composio_trigger_history`.
 - **Types**: `ComposioConnection`, `ComposioConnectionsResponse`, `ComposioToolkitsResponse`, `ComposioToolSchema`/`ComposioToolFunction`, `ComposioToolsResponse`, `ComposioAuthorizeResponse`, `ComposioExecuteResponse`, `ComposioDeleteResponse`, `ComposioCapability`/`ComposioCapabilitiesResponse`, `ComposioAgentReadyToolkitsResponse`, `ComposioTriggerEvent`/`ComposioTriggerMetadata`, `ComposioTriggerHistoryEntry`/`ComposioTriggerHistoryResult`.
-- **Periodic sync**: `record_sync_success`, `start_periodic_sync` (from `periodic.rs`, host code, see above).
-- **Re-exported from `providers::{ProviderUserProfile, SyncOutcome, SyncReason}`** (contract types, `tinymemory_api::composio`), plus `crate::memory::sync::composio::bus::{register_composio_trigger_subscriber, ComposioConfigChangedSubscriber, ComposioTriggerSubscriber}`.
+- **Contract types**: `ProviderUserProfile`, `SyncOutcome`, `SyncReason` (via `providers`).
+- **Bus**: `register_composio_trigger_subscriber`, `ComposioTriggerSubscriber`, `ComposioConnectionCreatedSubscriber`, `ComposioConfigChangedSubscriber`.
 
 ## RPC / controllers
 
@@ -117,7 +117,7 @@ Namespace `composio`, exposed as `openhuman.composio_*`:
 | `composio.list_agent_ready_toolkits` | Toolkit slugs that ship a curated agent catalog (#2283). |
 | `composio.list_connections` | Active OAuth connections (mode-aware; reconciles integrations cache). |
 | `composio.authorize` | Begin OAuth handoff; returns `connectUrl` + `connectionId`. |
-| `composio.delete_connection` | Delete connection; optional source-scoped memory cleanup. |
+| `composio.delete_connection` | Delete connection; `clear_memory` forgets the items tagged `connection:<id>` (count in `memory_chunks_deleted`). |
 | `composio.list_tools` | OpenAI function-calling tool schemas (optional toolkit/tag filter). |
 | `composio.execute` | Execute an action slug with `{tool, arguments}`. |
 | `composio.list_github_repos` | Repos for an authorized GitHub connection. |
@@ -128,7 +128,7 @@ Namespace `composio`, exposed as `openhuman.composio_*`:
 | `composio.list_trigger_history` | Recent archived trigger events + JSONL archive paths. |
 | `composio.get_user_profile` | Normalized provider profile for a connection. |
 | `composio.refresh_all_identities` | Re-fetch + persist identities for all active connections (#1365). |
-| `composio.sync` | Spawn a background provider sync pass (`manual`/`periodic`/`connection_created`). |
+| `composio.sync` | Spawn a background sync of one connection into memory (`manual`/`periodic`/`connection_created`); errors up front when memory is off. |
 | `composio.get_user_scopes` / `composio.set_user_scopes` | Read/write per-toolkit read/write/admin scope prefs. |
 | `composio.get_mode` | Current routing mode + whether a direct-mode key is set (never returns the key). |
 | `composio.set_api_key` / `composio.clear_api_key` | Store/clear direct-mode Composio API key (key never logged/returned). |
@@ -141,10 +141,10 @@ From `tools.rs` (`all_composio_agent_tools`, registered only when `agent::subage
 
 ## Events
 
-Subscribers/handlers for trigger and config-change events still live in `crate::memory::sync::composio::bus` (re-exported here via `bus.rs`). All three are registered by one call, `register_composio_trigger_subscriber()`, from `crates/openhuman-core/src/core/runtime/subscribers.rs` after trigger history initialization:
+The subscribers live in `bus/`. All three are registered by one call, `register_composio_trigger_subscriber()`, from `crates/openhuman-core/src/core/runtime/subscribers.rs` after trigger history initialization:
 
 - **`ComposioTriggerSubscriber`**, reacts to `DomainEvent::ComposioTriggerReceived` (published by `platform::socket::event_handlers` when the backend emits `composio:trigger`); archives the event to `trigger_history` and routes it through `agent::triage::run_triage` unless `OPENHUMAN_TRIGGER_TRIAGE_DISABLED`, `composio.triage_disabled`, or `composio.triage_disabled_toolkits` opts out.
-- **`ComposioConnectionCreatedSubscriber`**, reacts to `DomainEvent::ComposioConnectionCreated` (published by `composio_authorize`); waits for the connection to go active, invalidates and eagerly warms the integrations cache, then runs the initial profile fetch + sync.
+- **`ComposioConnectionCreatedSubscriber`**, reacts to `DomainEvent::ComposioConnectionCreated` (published by `composio_authorize`); waits for the connection to go active, invalidates and eagerly warms the integrations cache, then (after onboarding, for toolkits with a native sync provider) fetches the profile and starts `composio_sync`.
 - **`ComposioConfigChangedSubscriber`**, reacts to `DomainEvent::ComposioConfigChanged` (mode/api-key changes).
 
 Published from `ops/` via `crate::core::bus::BUS.publish` (`crate::core::events::DomainEvent`): `DomainEvent::ComposioConnectionCreated` (authorize), `DomainEvent::ComposioConnectionDeleted` (delete), `DomainEvent::ComposioActionExecuted` (execute success/failure, with cost + elapsed).
@@ -153,8 +153,8 @@ Published from `ops/` via `crate::core::bus::BUS.publish` (`crate::core::events:
 
 - **Trigger history** (`trigger_history.rs`): JSONL records under `<workspace>/state/triggers/YYYY-MM-DD.jsonl`, partitioned by UTC day, written by `tinyconnectors::triggers::TriggerArchive` (exclusive file lock on append) behind a process-global `OnceLock` handle. Exposed via `composio.list_trigger_history`.
 - **Direct-mode API key**: stored in the encrypted keychain (via `credentials`); never logged/returned. `direct_auth/mod.rs` additionally tracks a process-local (non-persisted) consecutive-401 counter for the same key.
-- **Identity facets**: written through the bound memory driver via `identity_store.rs` (`MemoryProfile::upsert_provider_facet`) and mirrored into `PROFILE.md` by `profile_md.rs`; **user scope prefs** persist through `ops::user_scopes` over the same bound driver (`crate::memory::binding`).
-- **Connection-scoped cleanup**: `ops::memory_cleanup` deletes through `MemorySourceSink::forget_matching` (the `Source` / `SourcePrefix` / `Owner` selectors) rather than through the engine's chunk store (#5560). A driver that does not serve `Sources` is refused per target, and the refusal is reported beside `memory_chunks_deleted` rather than read as a delete of nothing.
+- **Connected identities**: `<workspace>/integrations/composio_identities.json` (`identity_store.rs`). **User scope prefs**: `<workspace>/integrations/composio_user_scopes.json` (`ops::user_scopes`). Both written atomically (temp file + rename) under one process-wide lock (`file_store.rs`).
+- **Synced memory**: stored by `memory::sources::composio` with a `connection:<id>` tag; `delete_connection` with `clear_memory` forgets by that tag (`forget_connection`). Memory off forgets nothing.
 - **Integrations cache**: warmed in the background after app startup/sign-in, then kept for the process lifetime. Connection create/delete, config changes, and a divergent `list_connections` response invalidate it; the change paths eagerly re-warm it. Idle time does not trigger a backend fetch on a chat turn (`connected_integrations.rs`).
 
 ## Dependencies
@@ -163,9 +163,7 @@ Published from `ops/` via `crate::core::bus::BUS.publish` (`crate::core::events:
 - `crate::config`: `Config` / `ComposioConfig` (`mode`, `entity_id`), `config::rpc` config loading.
 - `crate::modules`: loads the `tinyconnectors` native module that `module_client.rs` calls into (behind the `modules` feature).
 - `tinyconnectors_bus`: the wire contract (member names, payload types) for the `tinyconnectors` module call surface; a plain dependency, not feature-gated.
-- `tinymemory_api::composio`: curated catalogs, scope verdicts, identity vocabulary, and task-fetch types (`providers/mod.rs`, `identity_store.rs`, `profile_md.rs`).
-- `crate::memory::binding`: the workspace's bound memory driver. Connection-scoped cleanup deletes through `MemorySourceSink::forget_matching`; identity facets and user-scope prefs are also read/written through this binding.
-- `crate::memory::sync::composio`: still owns the trigger/config-change bus subscribers (this module re-exports them via `bus.rs`) and the `slack` RPC layer re-exported from `providers/mod.rs`.
+- `crate::memory::{engine, sources::composio}`: resolving the bound engine, storing synced records, forgetting a connection's items.
 - `crate::agent::harness`: sandbox mode (`current_sandbox_mode` / `SandboxMode`) for tool gating; `current_task_recency_window` applied through `tinyconnectors::execute::{apply_window_args, filter_response}` in `tools/execute.rs`.
 - `tinytools`: `Tool`, `ToolResult`, `ToolCategory`, `PermissionLevel`, `ToolCallOptions`.
 - `crate::security`: `SecurityPolicy` / `ToolOperation` for direct-tool gating.
@@ -181,25 +179,22 @@ Published from `ops/` via `crate::core::bus::BUS.publish` (`crate::core::events:
 - `crates/openhuman-core/src/core/all.rs`: registers the controllers.
 - `crates/openhuman-core/src/tools/{mod,ops}.rs`, `tools/schemas/composio.rs`: wires agent tools into the tool registry.
 - `crates/openhuman-core/src/core/runtime/subscribers.rs`: at startup initializes trigger history and registers the three bus subscribers.
-- `crates/openhuman-core/src/channels/runtime/startup/start_channels.rs` (`start_channels`), the one caller of `start_periodic_sync()`. `core/runtime/services.rs`'s `composio_integration_sync` job only runs `memory::sources::reconcile::ensure_composio_sources`; its comment explains why the periodic loop is not started there.
 - `crates/openhuman-core/src/agent/**`: session-host tool assembly (deferred per-action tools, recorded-tool rebuild), triage escalation and debug (e.g. `agent/subagent_host/`, `agent/orchestration/tools/`, `agent/debug/mod.rs`).
 - `crates/openhuman-core/src/platform/socket/event_handlers.rs`: parses `composio:trigger` and publishes `ComposioTriggerReceived`.
-- `crates/openhuman-core/src/agent/learning/linkedin_enrichment*.rs`, `agent/learning/profile_md_renderer.rs`: connected-identity enrichment consumers.
 - `crates/openhuman-core/src/agent/prompts/connected_identities.rs`: renders connected identities into the agent prompt.
 - `crates/openhuman-core/src/skills/preflight.rs`: identity gate via `connection_identity`.
 - `crates/openhuman-core/src/security/credentials/ops/composio.rs`: direct-mode API key storage.
 - `crates/openhuman-core/src/channels/runtime/dispatch/routing.rs`: channel routing over connected integrations.
 - `crates/openhuman-core/src/flows/**` (`ops/catalog.rs`, `ops/connection_ref_gate.rs`, `ops/tool_contract_gate.rs`, `ops/connections.rs`, `ops/wiring_warnings.rs`, `ops/approval_manifest.rs`, `ops/builder.rs`, `tinyflows/caps/tools/composio.rs`), workflow builder capability adapters over the catalog.
 - `crates/openhuman-core/src/integrations/task_sources/**`: re-exports `NormalizedTask`/`TaskContainer`/`TaskFetchFilter`/`TaskKind` from `providers/mod.rs` (its fetch stage is stubbed since `ComposioProvider::fetch_tasks` went away).
-- `crates/openhuman-core/src/memory/**` (`ops/sync.rs`, `sources/rpc/registry_crud.rs`/`source_sync.rs`/`status_toolkits.rs`/`apply_all.rs`, `tree/tree/mod.rs`), memory sync and read paths over Composio-sourced data.
+- `crates/openhuman-core/src/memory/sources/composio.rs`: scheduled Composio sources call `active_connection_ids` and `run_sync_pass`.
 - `crates/openhuman-core/src/modules/{connectors_tests,memory_host}.rs`: module loader tests/wiring for the connector bridge.
 - `crates/openhuman-core/src/core/observability.rs`: matches `direct_auth::COMPOSIO_INVALID_API_KEY_ANCHOR` / `_USER_MESSAGE` when classifying errors.
 
 ## Notes / gotchas
 
-- **`bus.rs` is a compatibility shim**, trigger/config-change subscribers still live under `crates/openhuman-core/src/memory/sync/composio/`. **`periodic.rs` and `providers/mod.rs` are not shims anymore**, read their own module docs; both were rewritten host-side or reunified from a contract crate after tinymemory v1.13.4 deleted the in-process Composio pipeline they used to glob-import.
 - **Mode-aware routing (#1710)**: the `ops/` layer calls the connector module (`module_client::call*`) for every member, and the module reconciles the backend/direct route from live config on each call, so a `composio.mode` toggle is honoured per call. Two host-side exceptions: `list_connections` in direct mode uses `resolve_composio_route` + `direct_list_connections` (the in-process `DirectRoute` over the host transport, so the host proxy/TLS settings, per-client loopback overrides and the pre-store key probe apply); execution goes through `execute_dispatch.rs`, which is a thin egress gate over the module's `EXECUTE`. Operations a route does not offer (e.g. the toolkit allowlist or triggers in direct mode) come back as a named refusal, recognised by `module_client::is_unsupported_by_route`, and are rendered as empty rather than as an outage. `ops::error_utils::resolve_client` survives only for tests.
-- **`ops/` is split by concern** (see [Ops layout](#ops-layout)) rather than one large file; `pass_budget.rs` is the one piece of shared sync-pass plumbing every sync entry point calls through.
+- **`ops/` is split by concern** (see [Ops layout](#ops-layout)) rather than one large file; `ops/sync.rs`'s `run_sync_pass` is the one sync pass every caller goes through.
 - **Error classification matters for the UI**: `execute` may return pre-classified `[composio:error:<class>] …` strings (parsed by `app/src/lib/composio/formatters.ts`); `ops/execute.rs` preserves them rather than re-wrapping.
 - **Sentry funnel**: `report_composio_op_error` re-tags op-layer failures under `domain="composio"` with `failure="non_2xx"|"transport"` (+ extracted backend status) so transient 5xx leaks are dropped by `before_send` while genuine bugs surface.
 - **Type drift tolerance**: trigger types use `de_string_or_object` / `de_opt_string_or_object` to accept upstream fields that flip between string and object shapes.

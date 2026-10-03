@@ -9,11 +9,9 @@ fn security(autonomy: AutonomyLevel) -> Arc<SecurityPolicy> {
     })
 }
 
-/// A `Config` rooted at a fresh tempdir — `lookup_flavour` (via
-/// `flavour`) touches disk under `workspace_dir`, so every test needs its
-/// own isolated root rather than sharing whatever `Config::default()`'s
-/// workspace_dir happens to resolve to. The `TempDir` guard must outlive
-/// the adapter, so callers keep it alive for the test's duration.
+/// A `Config` rooted at a fresh tempdir with an in-memory reference engine
+/// bound to it. The `TempDir` guard must outlive the adapter, so callers keep
+/// it alive for the test's duration.
 fn test_config() -> (TempDir, Arc<Config>) {
     let tmp = TempDir::new().unwrap();
     let mut cfg = Config::default();
@@ -23,12 +21,10 @@ fn test_config() -> (TempDir, Arc<Config>) {
 
 fn adapter(autonomy: AutonomyLevel) -> (TempDir, OpenHumanMemory) {
     let (tmp, config) = test_config();
-    // `flavour` reads through `MemoryTree::flavour_profile` since #5560, so the
-    // workspace needs a driver serving the Tree family — the null driver a test
-    // workspace otherwise resolves to answers `Unsupported`, which the node
-    // reports as a capability error rather than as an absent profile. This is
-    // the driver the loaded module wraps.
-    crate::memory::test_support::install_memory_driver_for_test(&config);
+    crate::memory::engine::install_test_engine(
+        &config.workspace_dir,
+        Arc::new(tinymemory::conformance::ReferenceEngine::new()),
+    );
     (
         tmp,
         OpenHumanMemory {
@@ -112,7 +108,7 @@ async fn remember_flow_scope_without_trusted_origin_errs() {
 ///
 /// This is asserted indirectly but unambiguously: with NO trusted
 /// `TrustedAutomation { Workflow }` origin scoped, `remember`'s later steps
-/// (the tier-gate write summary is fine, but `flow_memory_namespace` —
+/// (the tier-gate write summary is fine, but the trusted flow id —
 /// reached only AFTER the tier gate — requires one and errors
 /// `"trusted Workflow-scoped origin"` if missing, see
 /// `remember_flow_scope_without_trusted_origin_errs` above). If the secret
@@ -197,33 +193,99 @@ async fn forget_blocked_in_readonly_autonomy() {
     assert!(err.to_string().contains(POLICY_BLOCKED_MARKER));
 }
 
-// ── flavour / people delegate cleanly with no trusted origin required ──
+// ── flavour / people: unsupported in memory v2 ──────────────────────────
 
 #[tokio::test]
-async fn flavour_unknown_slug_errs() {
+async fn flavour_reports_every_slug_unknown() {
     let (_tmp, adapter) = adapter(AutonomyLevel::Full);
-    let err = adapter.flavour("not-a-real-flavour").await.unwrap_err();
-    assert!(err.to_string().contains("Unknown flavour"));
+    let err = adapter.flavour("coding_style").await.unwrap_err();
+    assert!(err.to_string().contains("unknown flavour"));
 }
 
 #[tokio::test]
-async fn flavour_valid_slug_with_no_tree_yet_reports_not_found() {
-    let (_tmp, adapter) = adapter(AutonomyLevel::Full);
-    let result = adapter.flavour("coding_style").await.unwrap();
-    assert_eq!(result["found"], json!(false));
-    assert_eq!(result["profile"], Value::Null);
-}
-
-#[tokio::test]
-async fn flavour_blocked_in_readonly_autonomy_still_reaches_lookup() {
-    // Read is Allow at every tier, so ReadOnly must behave identically
-    // to Full for a read-only operation like `flavour`.
+async fn people_returns_an_empty_unsupported_listing() {
     let (_tmp, adapter) = adapter(AutonomyLevel::ReadOnly);
-    let result = adapter.flavour("coding_style").await.unwrap();
-    assert_eq!(result["found"], json!(false));
+    let result = adapter.people(Some("ada")).await.unwrap();
+    assert_eq!(result["people"], json!([]));
+    assert_eq!(result["supported"], json!(false));
 }
 
-// ── value_to_content / filter_people_by_query (pure helpers) ──────────
+// ── round trip inside a trusted workflow run ──────────────────────────
+
+fn workflow_origin(flow_id: &str) -> AgentTurnOrigin {
+    AgentTurnOrigin::TrustedAutomation {
+        job_id: flow_id.to_string(),
+        source: TrustedAutomationSource::Workflow {
+            require_approval: false,
+        },
+    }
+}
+
+#[tokio::test]
+async fn remember_search_and_forget_round_trip_in_the_flows_own_scope() {
+    let (_tmp, adapter) = adapter(AutonomyLevel::Full);
+    turn_origin::with_origin(workflow_origin("f1"), async {
+        adapter
+            .remember("flow", "sent", json!("newsletter item 42"))
+            .await
+            .unwrap();
+        adapter
+            .remember("flow", "sent", json!("newsletter item 43"))
+            .await
+            .unwrap();
+        let found = adapter
+            .recall("flow", "newsletter item", json!({"operation": "search"}))
+            .await
+            .unwrap();
+        let results = found["results"].as_array().unwrap();
+        assert_eq!(results.len(), 1, "a key rewrite replaces the old value");
+        assert_eq!(results[0]["key"], json!("sent"));
+        let text = results[0]["text"].as_str().unwrap();
+        assert!(text.contains("item 43"));
+        assert!(
+            text.contains("untrusted-source"),
+            "flow output is marked as data"
+        );
+
+        let recalled = adapter
+            .recall("flows", "newsletter item", json!({"operation": "recall"}))
+            .await
+            .unwrap();
+        assert!(recalled["answer"].is_string());
+        assert_eq!(recalled["results"].as_array().unwrap().len(), 1);
+
+        adapter.forget("flow", "sent").await.unwrap();
+        adapter.forget("flow", "never-written").await.unwrap();
+        let after = adapter
+            .recall("flow", "newsletter item", json!({"operation": "search"}))
+            .await
+            .unwrap();
+        assert!(after["results"].as_array().unwrap().is_empty());
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn flow_scope_never_sees_another_flows_items() {
+    let (_tmp, adapter) = adapter(AutonomyLevel::Full);
+    turn_origin::with_origin(workflow_origin("f-other"), async {
+        adapter
+            .remember("flow", "k", json!("other flow note"))
+            .await
+            .unwrap();
+    })
+    .await;
+    turn_origin::with_origin(workflow_origin("f-mine"), async {
+        let found = adapter
+            .recall("flow", "other flow note", json!({"operation": "search"}))
+            .await
+            .unwrap();
+        assert!(found["results"].as_array().unwrap().is_empty());
+    })
+    .await;
+}
+
+// ── pure helpers ───────────────────────────────────────────────────────
 
 #[test]
 fn value_to_content_keeps_strings_verbatim() {
@@ -241,42 +303,18 @@ fn value_to_content_serializes_non_strings() {
 }
 
 #[test]
-fn filter_people_by_query_matches_display_name_case_insensitively() {
-    let listing = json!({
-        "people": [
-            {"display_name": "Ada Lovelace", "primary_email": null, "primary_phone": null, "handles": []},
-            {"display_name": "Grace Hopper", "primary_email": null, "primary_phone": null, "handles": []},
-        ]
-    });
-    let filtered = filter_people_by_query(listing, "ada");
-    let people = filtered["people"].as_array().unwrap();
-    assert_eq!(people.len(), 1);
-    assert_eq!(people[0]["display_name"], json!("Ada Lovelace"));
+fn min_score_keeps_unscored_rows() {
+    assert!(passes_min_score(None, Some(0.9)));
+    assert!(passes_min_score(Some(0.5), None));
+    assert!(!passes_min_score(Some(0.1), Some(0.5)));
 }
 
 #[test]
-fn filter_people_by_query_matches_handle_values() {
-    let listing = json!({
-        "people": [
-            {
-                "display_name": "Someone",
-                "primary_email": null,
-                "primary_phone": null,
-                "handles": [{"kind": "email", "value": "someone@example.com"}]
-            },
-        ]
-    });
-    let filtered = filter_people_by_query(listing, "example.com");
-    assert_eq!(filtered["people"].as_array().unwrap().len(), 1);
-}
-
-#[test]
-fn filter_people_by_query_no_match_returns_empty() {
-    let listing = json!({
-        "people": [
-            {"display_name": "Ada Lovelace", "primary_email": null, "primary_phone": null, "handles": []},
-        ]
-    });
-    let filtered = filter_people_by_query(listing, "zzz-no-match");
-    assert!(filtered["people"].as_array().unwrap().is_empty());
+fn plain_agent_learnings_are_trusted_and_everything_else_is_not() {
+    assert!(!is_untrusted(&MemoryMeta::default()));
+    assert!(is_untrusted(&crate::flows::flow_meta("f", &[])));
+    assert!(is_untrusted(&MemoryMeta::from_source(
+        SourceKind::Composio,
+        None
+    )));
 }

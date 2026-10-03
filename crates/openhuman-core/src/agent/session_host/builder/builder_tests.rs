@@ -49,7 +49,7 @@ fn builtin_def(id: &str) -> crate::agent::harness::definition::AgentDefinition {
 /// `tools_agent` was removed), so the shape is synthesised from a real
 /// built-in: same parsing and defaults, only the id and the belt differ.
 fn wildcard_probe_def() -> crate::agent::harness::definition::AgentDefinition {
-    let mut def = builtin_def("archivist");
+    let mut def = builtin_def("summarizer");
     def.id = "wildcard_probe".to_string();
     def.delegate_name = None;
     def.tools = crate::agent::harness::definition::ToolScope::Wildcard;
@@ -61,8 +61,6 @@ fn wildcard_probe_def() -> crate::agent::harness::definition::AgentDefinition {
 mod explicit_definition_tests;
 #[path = "builder_tests_host_tools_tests.rs"]
 mod host_tools_tests;
-#[path = "builder_tests_memory_write_instruction_tests.rs"]
-mod memory_write_instruction_tests;
 #[path = "builder_tests_session_definition_tests.rs"]
 mod session_definition_tests;
 #[path = "builder_tests_tool_exposure_tests.rs"]

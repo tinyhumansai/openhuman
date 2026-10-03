@@ -2,7 +2,6 @@ use anyhow::Result;
 use async_trait::async_trait;
 use openhuman_core::agent::prompts::SystemPromptBuilder;
 use openhuman_core::agent::OpenHumanSessionHost;
-use openhuman_core::memory::{Memory, MemoryCategory, MemoryEntry};
 use tinytools::{Tool, ToolResult};
 use tinytools_agent::dialect::XmlDialect;
 
@@ -49,64 +48,6 @@ impl Tool for StubTool {
     }
 }
 
-struct StubMemory;
-
-#[async_trait]
-impl Memory for StubMemory {
-    async fn store(
-        &self,
-        _namespace: &str,
-        _key: &str,
-        _content: &str,
-        _category: MemoryCategory,
-        _session_id: Option<&str>,
-    ) -> Result<()> {
-        Ok(())
-    }
-
-    async fn recall(
-        &self,
-        _query: &str,
-        _limit: usize,
-        _opts: openhuman_core::memory::RecallOpts<'_>,
-    ) -> Result<Vec<MemoryEntry>> {
-        Ok(Vec::new())
-    }
-
-    async fn get(&self, _namespace: &str, _key: &str) -> Result<Option<MemoryEntry>> {
-        Ok(None)
-    }
-
-    async fn list(
-        &self,
-        _namespace: Option<&str>,
-        _category: Option<&MemoryCategory>,
-        _session_id: Option<&str>,
-    ) -> Result<Vec<MemoryEntry>> {
-        Ok(Vec::new())
-    }
-
-    async fn forget(&self, _namespace: &str, _key: &str) -> Result<bool> {
-        Ok(false)
-    }
-
-    async fn namespace_summaries(&self) -> Result<Vec<openhuman_core::memory::NamespaceSummary>> {
-        Ok(Vec::new())
-    }
-
-    async fn count(&self) -> Result<usize> {
-        Ok(0)
-    }
-
-    async fn health_check(&self) -> bool {
-        true
-    }
-
-    fn name(&self) -> &str {
-        "stub"
-    }
-}
-
 fn base_builder() -> openhuman_core::agent::SessionHostBuilder {
     OpenHumanSessionHost::builder()
         .chat_model(Arc::new(StubModel))
@@ -114,7 +55,6 @@ fn base_builder() -> openhuman_core::agent::SessionHostBuilder {
             Box::new(StubTool("alpha")),
             Box::new(StubTool("beta")),
         ])
-        .memory(Arc::new(StubMemory))
         .tool_dispatcher(Box::new(XmlDialect))
 }
 
@@ -136,15 +76,6 @@ fn builder_validates_required_fields() {
     let err = OpenHumanSessionHost::builder()
         .chat_model(Arc::new(StubModel))
         .tools(vec![Box::new(StubTool("alpha"))])
-        .build()
-        .err()
-        .expect("missing memory should error");
-    assert!(err.to_string().contains("memory is required"));
-
-    let err = OpenHumanSessionHost::builder()
-        .chat_model(Arc::new(StubModel))
-        .tools(vec![Box::new(StubTool("alpha"))])
-        .memory(Arc::new(StubMemory))
         .build()
         .err()
         .expect("missing dispatcher should error");

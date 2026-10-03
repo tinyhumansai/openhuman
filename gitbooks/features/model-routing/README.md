@@ -37,7 +37,7 @@ The router wraps several pre-created providers (Anthropic, OpenAI, Google, Groq,
 | `hint:reasoning` | A strong reasoning model          | Multi-step planning, math, code-heavy turns                            |
 | `hint:fast`      | A fast/cheap model                | UI helpers, autocompletes, small classification calls                  |
 | `hint:vision`    | A vision-capable model            | Screenshots, image attachments, OCR                                    |
-| `hint:summarize` | A model good at compression       | Memory tree summary builders                                           |
+| `hint:summarize` | A model good at compression       | Background summarization                                           |
 | `hint:code`      | A code-tuned model                | Native coder turns                                                     |
 | `hint:burst`     | A high-throughput, low-cost model | Cheap, latency-tolerant work for high-fanout agents |
 

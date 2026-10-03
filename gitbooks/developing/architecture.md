@@ -7,7 +7,7 @@ icon: code-branch
 
 **A personal AI assistant built on Rust, with a persistent local memory and an agent harness that can act across your connected services.**
 
-OpenHuman is a cross-platform communication and automation platform: a Rust core that runs agent turns, keeps a local-first memory tree, and executes tools against memory, channels, integrations, and (for users who opt in) a wallet, all wrapped in a single React + Rust (Tauri) codebase that can target multiple platforms. **What we document and ship for users today is desktop only: Windows, macOS, and Linux.** Android, iOS, and web are **not** supported in current docs or releases. The stack includes a managed Node.js runtime for tool-capable skills, persistent Rust-native WebSocket infrastructure to the backend, and a native Rust tool-dispatch path plus a standards-based Model Context Protocol (MCP) server for external clients.
+OpenHuman is a cross-platform communication and automation platform: a Rust core that runs agent turns, keeps a pluggable memory engine, and executes tools against memory, channels, integrations, and (for users who opt in) a wallet, all wrapped in a single React + Rust (Tauri) codebase that can target multiple platforms. **What we document and ship for users today is desktop only: Windows, macOS, and Linux.** Android, iOS, and web are **not** supported in current docs or releases. The stack includes a managed Node.js runtime for tool-capable skills, persistent Rust-native WebSocket infrastructure to the backend, and a native Rust tool-dispatch path plus a standards-based Model Context Protocol (MCP) server for external clients.
 
 ---
 
@@ -66,7 +66,7 @@ Tauri v2 compiles the Rust core into native binaries per platform, embedding the
 |                        Rust Core (openhuman_core)                  |
 |                                                                  |
 |  +------------------+  +------------------+  +-----------------+ |
-|  |  Agent harness    |  |  Socket Manager  |  |  Memory tree    | |
+|  |  Agent harness    |  |  Socket Manager  |  |  Memory (v2)    | |
 |  |  (tinyagents)      |  |  (client to      |  |  + encryption   | |
 |  |  + tool dispatch   |  |   backend, WS)   |  |  at rest        | |
 |  +------------------+  +------------------+  +-----------------+ |
@@ -175,9 +175,9 @@ Every remote tool definition, whether coming in through a connected server or se
 
 ## Memory
 
-Agent memory runs on TinyCortex, the memory engine vendored under `tinymemory` (`vendor/tinymemory/vendor/tinycortex`). OpenHuman's own code keeps RPC, tools, scheduling, credentials, and the host namespace-document store; the tree mechanics (chunking, scoring, retrieval, embedding) are crate-owned. See [Pluggable engines](engines.md) for which memory and embedding backends actually run, and [Memory tree](architecture/memory-tree.md) for the host layer over the engine.
+Memory v2 is three operations (Recall, Fetch, Store) over a pluggable engine: `tinyhumans` (hosted CortexDB, needs sign-in) or `cortexdb` (your own endpoint and key); with neither, memory is off. The contract and engines live in `vendor/tinymemory` (`tinymemory-api`, `tinymemory-cortex`, `-documents`, `-sources`, `-safety`, `-context`, `-import`, `-conformance`). OpenHuman's `crates/openhuman-core/src/memory/` keeps the host side: engine binding, ops, the single `memory` agent tool, conversation buffering, document sources, the compiled `context.md`, the consent-gated v1 import and the exit flush. See [Memory architecture](architecture/memory.md), [Pluggable engines](engines.md) and the spec `docs/specs/memory-v2.md`.
 
-Conversation state is separate from memory: each thread's transcript is a JSONL file keyed by thread and agent id, and compaction seals a generation rather than deleting it, so the full history stays recoverable even though a resumed session only reads the latest generation.
+Conversation state is separate from memory: each thread's transcript is a JSONL file keyed by thread and agent id (the thread store is `tinyagents_session::threads` in `vendor/tinyagents`, wrapped by `threads::store`), and compaction seals a generation rather than deleting it, so the full history stays recoverable even though a resumed session only reads the latest generation.
 
 ---
 
@@ -201,7 +201,7 @@ Conversation state is separate from memory: each thread's transcript is a JSONL 
 +-------------------------------------------------------------------+
 ```
 
-Credentials go through the OS keychain via the `keyring` crate (macOS Keychain, Windows Credential Manager, Linux Secret Service), on desktop only. Memory is encrypted at rest with AES-256-GCM, keyed by Argon2id. Executable tools run through `SecurityPolicy` (`crates/openhuman-core/src/security/policy/`: `types.rs`, `path_checks.rs`, `command_checks.rs`, `enforcement.rs`) and a host-appropriate sandbox backend selected at runtime, Docker, Bubblewrap, Firejail, Landlock, or a no-op fallback (`crates/openhuman-core/src/security/{docker,bubblewrap,firejail,landlock}.rs`, `detect.rs`); the legacy per-skill QuickJS memory and stack limit model is gone. Web-to-desktop auth handoff uses single-use login tokens with a 5-minute TTL, exchanged via the Rust HTTP client so it bypasses browser CORS. All WebSocket and HTTP connections use rustls, with no dependency on the platform's OpenSSL. Sensitive state lives in Redux (in memory) and the OS keychain (persistent); nothing sensitive goes into localStorage. User prompts are normalized, scored, and enforced server-side (`allow | review | block`) before model or tool execution; see `crates/openhuman-core/src/security/prompt_injection/`.
+Credentials go through the OS keychain via the `keyring` crate (macOS Keychain, Windows Credential Manager, Linux Secret Service), on desktop only. Executable tools run through `SecurityPolicy` (`crates/openhuman-core/src/security/policy/`: `types.rs`, `path_checks.rs`, `command_checks.rs`, `enforcement.rs`) and a host-appropriate sandbox backend selected at runtime, Docker, Bubblewrap, Firejail, Landlock, or a no-op fallback (`crates/openhuman-core/src/security/{docker,bubblewrap,firejail,landlock}.rs`, `detect.rs`); the legacy per-skill QuickJS memory and stack limit model is gone. Web-to-desktop auth handoff uses single-use login tokens with a 5-minute TTL, exchanged via the Rust HTTP client so it bypasses browser CORS. All WebSocket and HTTP connections use rustls, with no dependency on the platform's OpenSSL. Sensitive state lives in Redux (in memory) and the OS keychain (persistent); nothing sensitive goes into localStorage. User prompts are normalized, scored, and enforced server-side (`allow | review | block`) before model or tool execution; see `crates/openhuman-core/src/security/prompt_injection/`.
 
 ---
 
@@ -249,10 +249,10 @@ Every layer is async and non-blocking. The Rust core runs concurrent tool execut
 
 ## Vendored crate family & recent shifts
 
-Core subsystems run on published `tiny*` crates, vendored as git submodules under `vendor/` (`tinyagents`, `tinyflows`, `tinychannels`, `tinyjuice`, `tinymemory`, …) so crate changes can be tested in-tree before publishing. `tinycortex` is not a top-level submodule: the memory engine is reached through the copy `tinymemory` vendors (`vendor/tinymemory/vendor/tinycortex`), which is the commit the prebuilt `tinymemory` module is built from. The major ownership boundaries are:
+Core subsystems run on published `tiny*` crates, vendored as git submodules under `vendor/` (`tinyagents`, `tinyflows`, `tinychannels`, `tinyjuice`, `tinymemory`, …) so crate changes can be tested in-tree before publishing. `tinymemory` no longer vendors a local engine; it holds the Memory v2 contract and the CortexDB engine. The major ownership boundaries are:
 
 - **Agent engine on tinyagents.** Every agent turn runs through the `tinyagents` crate harness via the seam in `crates/openhuman-core/src/agent/tinyagents/`; see [Agent harness](architecture/agent-harness.md).
-- **Memory on tinycortex.** The generic store/tree/queue/retrieval/sync engine is crate-owned. TinyCortex is the only memory engine that actually runs today; the remote drivers listed in config exist but are not wired in (see [Engines](engines.md)). OpenHuman keeps RPC, tools, scheduling, credentials, security/event policy, worker orchestration, and the host namespace-document store. `crates/openhuman-core/src/memory/` (`host.rs`, `api.rs`, `binding.rs`, `tree/`, `ops/`, `schemas/`) implements those seams over the vendored `tinymemory` engine (`tinymemory-core`, `tinymemory-api`). Concrete embedding transports are shared through `tinyagents::harness::embeddings`.
+- **Memory on tinymemory (v2).** The contract, CortexDB engine, sources, safety scrubbing, context compiler and v1 importer are crate-owned (`vendor/tinymemory`). OpenHuman keeps the host side under `crates/openhuman-core/src/memory/` (see [Memory architecture](architecture/memory.md)). The chat thread store moved to `tinyagents_session::threads`.
 - **Inference on the crate ModelRouter.** Host workload-tier model routing and cloud provider slugs now use the crate-native `ModelRouter`/`OpenAiModel` (#4782, #4783).
 ---
 
@@ -277,7 +277,7 @@ Core subsystems run on published `tiny*` crates, vendored as git submodules unde
 | **Realtime**   | Socket.io (client)                 | Bidirectional event-based communication                   |
 | **AI**         | MCP (JSON-RPC 2.0)                 | Standardized tool protocol for LLM integration            |
 | **Search**     | OpenAI embeddings + SQLite FTS5    | Hybrid semantic + keyword search                          |
-| **Graph**      | SQLite (`codegraph`/`memory_tree`) | Entity/code relationship graph, embedded                  |
+| **Graph**      | SQLite (`codegraph`)               | Code relationship graph, embedded                         |
 
 ---
 

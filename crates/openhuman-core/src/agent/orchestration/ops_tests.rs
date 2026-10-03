@@ -3,7 +3,6 @@ use crate::agent::harness::definition::AgentDefinitionRegistry;
 use crate::agent::harness::fork_context::{with_parent_context, ParentExecutionContext};
 use crate::agent::prompts::ToolCallFormat;
 use crate::config::AgentConfig;
-use crate::memory::test_support::NoopMemory;
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use std::future::Future;
@@ -36,7 +35,6 @@ fn parent_context(model: Arc<dyn ChatModel<()>>) -> ParentExecutionContext {
         model_name: "test-model".to_string(),
         temperature: 0.2,
         workspace_dir: std::env::temp_dir(),
-        memory: Arc::new(NoopMemory),
         agent_config: AgentConfig::default(),
         workflows: Arc::new(Vec::new()),
         memory_context: Arc::new(None),

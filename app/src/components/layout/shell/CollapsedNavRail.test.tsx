@@ -19,7 +19,7 @@ describe('CollapsedNavRail', () => {
 
   it('renders every primary destination with a visible label, without Home or Discord', () => {
     renderWithProviders(<CollapsedNavRail />, { initialEntries: ['/home'] });
-    for (const key of ['nav.chat', 'nav.brain', 'nav.flows', 'nav.connections', 'nav.settings']) {
+    for (const key of ['nav.chat', 'nav.flows', 'nav.connections', 'nav.settings']) {
       expect(screen.getByRole('button', { name: key })).toBeInTheDocument();
       expect(screen.getByText(key)).toBeVisible();
     }
@@ -42,15 +42,15 @@ describe('CollapsedNavRail', () => {
 
   it('exposes every collapsed icon label as a tooltip fallback', () => {
     renderWithProviders(<CollapsedNavRail />, { initialEntries: ['/home'] });
-    for (const key of ['nav.chat', 'nav.brain', 'nav.flows', 'nav.connections', 'nav.settings']) {
+    for (const key of ['nav.chat', 'nav.flows', 'nav.connections', 'nav.settings']) {
       expect(screen.getByRole('button', { name: key })).toHaveAttribute('title', key);
     }
   });
 
   it('navigates to a destination path when its icon is clicked', () => {
     renderWithProviders(<CollapsedNavRail />, { initialEntries: ['/home'] });
-    fireEvent.click(screen.getByRole('button', { name: 'nav.brain' }));
-    expect(mockNavigate).toHaveBeenCalledWith('/brain');
+    fireEvent.click(screen.getByRole('button', { name: 'nav.flows' }));
+    expect(mockNavigate).toHaveBeenCalledWith('/flows');
   });
 
   it('marks the active destination with aria-current', () => {

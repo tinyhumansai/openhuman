@@ -5,11 +5,9 @@
 //! for callers that only hold indices into the parent's tool vec.
 
 use super::super::builder::GLOBAL_STYLE_SUFFIX;
-use super::super::sections::{GROUNDING_BODY, MEMORY_MD_FRAMING};
+use super::super::sections::GROUNDING_BODY;
 use super::super::types::*;
-use super::workspace_files::{
-    inject_workspace_file, inject_workspace_file_capped, write_agents_md_blocks,
-};
+use super::workspace_files::{inject_workspace_file, write_agents_md_blocks};
 use std::fmt::Write;
 use std::path::Path;
 use tinytools_agent::dialect::{CodeDialect, NativeDialect, PFormatDialect, ToolDialect};
@@ -88,7 +86,7 @@ pub fn render_subagent_system_prompt(
 /// `agents_md_global` / `agents_md_local` are the pre-loaded AGENTS.md layers
 /// (see [`crate::agent::prompts::agents_md::load_agents_md_layers`]); `None`/`None` (the value
 /// the public wrapper passes) renders no AGENTS.md block. When present they are
-/// injected as `## Project instructions (AGENTS.md)` right after the user files
+/// injected as `## Project instructions (AGENTS.md)` right after the identity block
 /// and before the tool catalogue — matching the section order of the default /
 /// sub-agent builders.
 #[allow(clippy::too_many_arguments)]
@@ -131,40 +129,10 @@ pub fn render_subagent_system_prompt_with_format(
         }
     }
 
-    // 1c. PROFILE.md (onboarding enrichment output) and MEMORY.md
-    //     (archivist-curated long-term memory). Each is gated on its own
-    //     flag and capped at `USER_FILE_MAX_CHARS` (~1000 tokens) so a
-    //     growing on-disk file can't push the system prompt out of the
-    //     cache-friendly prefix range.
-    //
-    //     KV-cache contract: once these files land in a session's
-    //     rendered prompt the bytes are frozen for the remainder of that
-    //     session. Do not re-read them mid-turn — a byte change breaks
-    //     the backend's automatic prefix cache. Mid-session writes to
-    //     either file are intentionally only visible on the NEXT session.
-    if options.include_profile {
-        inject_workspace_file_capped(&mut out, workspace_dir, "PROFILE.md", USER_FILE_MAX_CHARS);
-    }
-    if options.include_memory_md {
-        // Frame MEMORY.md as durable, cross-session background memory —
-        // byte-identical to `UserFilesSection::build` (GH-4745). Without the
-        // frame an Inline/File sub-agent on a brand-new thread reads the bare
-        // `### MEMORY.md` block as prior in-thread conversation and asserts
-        // continuity that isn't there. Buffer first so the note is emitted
-        // only when the file actually carries content — a dangling frame
-        // pointing at nothing would itself imply phantom history.
-        let mut mem = String::new();
-        inject_workspace_file_capped(&mut mem, workspace_dir, "MEMORY.md", USER_FILE_MAX_CHARS);
-        if !mem.trim().is_empty() {
-            out.push_str(MEMORY_MD_FRAMING);
-            out.push_str(&mem);
-        }
-    }
-
-    // 1d. Project instructions (AGENTS.md), pre-loaded by the caller and shared
+    // 1c. Project instructions (AGENTS.md), pre-loaded by the caller and shared
     //     with the section-based builders through `write_agents_md_blocks` so
     //     the byte layout can never drift between the two paths. Placed after
-    //     the user files and before the tool catalogue, matching the default
+    //     the identity block and before the tool catalogue, matching the default
     //     section order. Skipped entirely when both layers are `None`.
     write_agents_md_blocks(&mut out, agents_md_global, agents_md_local);
 

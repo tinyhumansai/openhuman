@@ -302,12 +302,6 @@ pub async fn set_credential(
         logs.push("process globals rebound after credential install".to_string());
         start_credential_gated_services(&effective_config).await;
         logs.push("credential-gated services started".to_string());
-        crate::memory::ops::maintenance::reembed_best_effort(
-            &effective_config,
-            "credential stored",
-        )
-        .await;
-        logs.push("memory re-embed backfill checked".to_string());
     }
 
     // Open the scheduler gate now that a live credential is in place; workers

@@ -1,37 +1,6 @@
 use super::*;
 
 #[test]
-fn user_memory_section_returns_empty_when_no_summaries() {
-    // Empty learned context → section returns empty string and is
-    // skipped by the prompt builder, so the cache boundary stays
-    // exactly where it was for workspaces with no tree summaries.
-    let learned = LearnedContextData::default();
-    let prompt_tools: Vec<PromptTool<'_>> = Vec::new();
-    let ctx = PromptContext {
-        workspace_dir: Path::new("/tmp"),
-        model_name: "test-model",
-        agent_id: "",
-        tools: &prompt_tools,
-        workflows: &[],
-        dispatcher_instructions: "",
-        learned,
-        visible_tool_names: &NO_FILTER,
-        tool_call_format: ToolCallFormat::PFormat,
-        connected_integrations: &[],
-        connected_identities_md: String::new(),
-        include_profile: false,
-        include_memory_md: false,
-        curated_snapshot: None,
-        user_identity: None,
-        personality_roster: vec![],
-        agents_md_global: None,
-        agents_md_local: None,
-    };
-    let rendered = UserMemorySection.build(&ctx).unwrap();
-    assert!(rendered.is_empty());
-}
-
-#[test]
 fn render_subagent_system_prompt_renders_workspace_tail() {
     let workspace = std::env::temp_dir().join(format!(
         "openhuman_prompt_subagent_{}",
@@ -107,25 +76,13 @@ fn subagent_prompt_defaults_to_json_and_omits_protocol_without_tools() {
 
 #[test]
 fn subagent_render_options_invert_definition_flags() {
-    // (omit_identity, omit_safety_preamble,
-    //  omit_profile, omit_memory_md)
-    let options = SubagentRenderOptions::from_definition_flags(true, false, false, false);
+    // (omit_identity, omit_safety_preamble)
+    let options = SubagentRenderOptions::from_definition_flags(true, false);
     assert!(!options.include_identity);
     assert!(options.include_safety_preamble);
-    assert!(options.include_profile);
-    assert!(options.include_memory_md);
     let narrow = SubagentRenderOptions::narrow();
-    let default = SubagentRenderOptions::default();
-    assert_eq!(narrow.include_identity, default.include_identity);
-    assert_eq!(
-        narrow.include_safety_preamble,
-        default.include_safety_preamble
-    );
-    assert_eq!(narrow.include_profile, default.include_profile);
-    assert_eq!(narrow.include_memory_md, default.include_memory_md);
-    // Narrow default = every flag off, including both user files.
-    assert!(!narrow.include_profile);
-    assert!(!narrow.include_memory_md);
+    assert!(!narrow.include_identity);
+    assert!(!narrow.include_safety_preamble);
 }
 
 #[test]
@@ -147,8 +104,6 @@ fn render_subagent_system_prompt_honors_identity_safety_and_skills_flags() {
         SubagentRenderOptions {
             include_identity: true,
             include_safety_preamble: true,
-            include_profile: false,
-            include_memory_md: false,
         },
         ToolCallFormat::Json,
         &[],
@@ -217,127 +172,44 @@ fn render_with_files(files: &[(&str, &str)], options: SubagentRenderOptions) -> 
     )
 }
 
-fn only(identity: bool, profile: bool, memory: bool) -> SubagentRenderOptions {
-    SubagentRenderOptions {
-        include_identity: identity,
-        include_safety_preamble: false,
-        include_profile: profile,
-        include_memory_md: memory,
-    }
-}
-
-const PROFILE: &str = "# User Profile\nName: Jane Doe\nRole: Data scientist";
-const MEMORY: &str = "# Long-term memory\nUser prefers terse Rust answers.";
-
 #[test]
-fn subagent_profile_md_follows_include_profile_flag_independent_of_identity() {
-    // include_profile=true injects PROFILE.md even with the identity preamble
-    // omitted (SOUL/IDENTITY stay hidden); with identity on, all three appear.
-    let soul = [
-        ("SOUL.md", "# Soul\nctx"),
-        ("IDENTITY.md", "# Identity\nctx"),
-        ("PROFILE.md", PROFILE),
-    ];
-    let rendered = render_with_files(&soul, only(false, true, false));
-    assert!(rendered.contains("### PROFILE.md"), "{rendered}");
-    assert!(rendered.contains("Jane Doe"), "{rendered}");
-    assert!(!rendered.contains("## Project Context"), "{rendered}");
-    assert!(
-        !rendered.contains("### SOUL.md") && !rendered.contains("### IDENTITY.md"),
-        "{rendered}"
-    );
-
-    let rendered = render_with_files(&soul, only(true, true, false));
-    for header in [
-        "## Project Context",
-        "### SOUL.md",
-        "### IDENTITY.md",
-        "### PROFILE.md",
-    ] {
-        assert!(rendered.contains(header), "{header}: {rendered}");
-    }
-
-    // include_profile=false never leaks the file, even when it is on disk.
-    let rendered = render_with_files(&soul, SubagentRenderOptions::narrow());
-    assert!(!rendered.contains("### PROFILE.md"), "{rendered}");
-    assert!(!rendered.contains("ctx"), "{rendered}");
-}
-
-#[test]
-fn render_subagent_system_prompt_silently_skips_missing_profile_md() {
-    // Pre-onboarding workspaces have no PROFILE.md: no orphan header, no
-    // "[File not found]" placeholder.
-    let rendered = render_with_files(&[], only(false, true, false));
-    assert!(!rendered.contains("### PROFILE.md"), "{rendered}");
-    assert!(
-        !rendered.contains("[File not found: PROFILE.md]"),
-        "{rendered}"
-    );
-}
-
-#[test]
-fn subagent_definition_flags_gate_profile_md() {
-    // omit_profile=false opts IN even with omit_identity=true.
-    let rendered = render_with_files(
-        &[("PROFILE.md", PROFILE)],
-        SubagentRenderOptions::from_definition_flags(true, true, false, false),
-    );
-    assert!(rendered.contains("### PROFILE.md"), "{rendered}");
-    assert!(rendered.contains("Jane Doe"), "{rendered}");
-
-    // A narrow specialist (every omit_* true) must not see it.
-    let rendered = render_with_files(
-        &[("PROFILE.md", PROFILE)],
-        SubagentRenderOptions::from_definition_flags(true, true, true, true),
-    );
-    assert!(!rendered.contains("### PROFILE.md"), "{rendered}");
-    assert!(!rendered.contains("Jane Doe"), "{rendered}");
-}
-
-#[test]
-fn render_subagent_system_prompt_frames_memory_md_as_background() {
-    // GH-4745: sub-agent MEMORY.md must share the background-memory frame so a
-    // fresh thread does not read it as prior in-thread conversation.
-    let rendered = render_with_files(
-        &[(
+fn subagent_identity_flag_gates_bootstrap_files_and_never_injects_v1_memory_files() {
+    let files = [
+        (
+            "SOUL.md",
+            "# Soul
+ctx",
+        ),
+        (
+            "IDENTITY.md",
+            "# Identity
+ctx",
+        ),
+        (
+            "PROFILE.md",
+            "# User Profile
+Name: Jane Doe",
+        ),
+        (
             "MEMORY.md",
-            "# Long-term memory\nReviewed `def f(x)` last week; user prefers terse notes.",
-        )],
-        only(false, false, true),
+            "# Long-term memory
+User prefers terse Rust answers.",
+        ),
+    ];
+    let with_identity = render_with_files(
+        &files,
+        SubagentRenderOptions::from_definition_flags(false, true),
     );
-    assert!(
-        rendered.contains("### MEMORY.md") && rendered.contains("terse notes"),
-        "{rendered}"
-    );
-    let frame_at = rendered
-        .find("background — not this conversation")
-        .unwrap_or_else(|| panic!("missing background frame: {rendered}"));
-    let heading_at = rendered.find("### MEMORY.md").unwrap();
-    assert!(
-        frame_at < heading_at,
-        "frame must precede block: {rendered}"
-    );
-}
+    assert!(with_identity.contains("### SOUL.md"), "{with_identity}");
+    assert!(with_identity.contains("### IDENTITY.md"), "{with_identity}");
 
-#[test]
-fn render_subagent_system_prompt_omits_memory_framing_when_no_memory_content() {
-    // include_memory_md=true but no MEMORY.md on disk: no dangling frame.
-    let rendered = render_with_files(&[], only(false, false, true));
-    assert!(
-        !rendered.contains("background — not this conversation"),
-        "{rendered}"
-    );
-}
+    let narrow = render_with_files(&files, SubagentRenderOptions::narrow());
+    assert!(!narrow.contains("## Project Context"), "{narrow}");
 
-#[test]
-fn subagent_memory_md_follows_include_memory_flag() {
-    let rendered = render_with_files(&[("MEMORY.md", MEMORY)], only(false, false, true));
-    assert!(rendered.contains("### MEMORY.md"), "{rendered}");
-    assert!(rendered.contains("terse Rust answers"), "{rendered}");
-
-    let rendered = render_with_files(&[("MEMORY.md", MEMORY)], SubagentRenderOptions::narrow());
-    assert!(!rendered.contains("### MEMORY.md"), "{rendered}");
-    assert!(!rendered.contains("terse Rust answers"), "{rendered}");
+    for rendered in [&with_identity, &narrow] {
+        assert!(!rendered.contains("PROFILE.md") && !rendered.contains("Jane Doe"));
+        assert!(!rendered.contains("MEMORY.md") && !rendered.contains("terse Rust"));
+    }
 }
 
 #[test]

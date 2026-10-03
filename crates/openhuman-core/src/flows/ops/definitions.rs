@@ -230,36 +230,6 @@ pub async fn flows_list(config: &Config) -> Result<Outcome<Vec<Flow>>, String> {
 /// itself — `store::remove_flow` below still errors clearly if `id` doesn't
 /// exist.
 pub async fn flows_delete(config: &Config, id: &str) -> Result<Outcome<Value>, String> {
-    flows_delete_impl(config, id, None).await
-}
-
-/// Backs [`flows_delete`]. `memory_override`, when `Some`, is the guarded
-/// driver used for the namespace-clear step below in place of the one
-/// `memory::ops::guard::active_memory_guard` resolves — the same seam, and now
-/// the same type, as `bus::FlowRunDigestSubscriber`'s `with_memory`.
-///
-/// # Why an override at all
-///
-/// `active_memory_guard` resolves the ambient `CoreContext`'s workspace, and a
-/// pre-boot unit test has no context — it falls back to the single shared test
-/// workspace that every `memory::ops` fixture writes into, not to the
-/// `tempdir` this call's `config` names. A test asserting that *this* clear
-/// step ran therefore has to be handed the binding over its own workspace, or
-/// it is asserting against a store it never wrote to.
-///
-/// # What changed (#5560)
-///
-/// This used to take a `tinymemory_core::store::MemoryClientRef` — a direct
-/// handle on the in-process engine, and the only reason this file named the
-/// engine crate at all. It is an `Arc<MemoryGuard>` now, so the injected path
-/// and the resolved path are the same type running the same policy steps; the
-/// override can no longer be a second, unguarded door into memory. Production
-/// still passes `None`.
-pub(super) async fn flows_delete_impl(
-    config: &Config,
-    id: &str,
-    memory_override: Option<Arc<crate::memory::guard::MemoryGuard>>,
-) -> Result<Outcome<Value>, String> {
     match store::get_flow(config, id) {
         Ok(Some(flow)) => unbind_trigger(config, &flow),
         Ok(None) => {}
@@ -287,35 +257,17 @@ pub(super) async fn flows_delete_impl(
         }
     }
 
-    // Best-effort: clear this flow's private memory namespace along with its
-    // row — a deleted flow must not leave stray `flow_memory_remember`
-    // entries or run digests behind. Never fails the delete itself: the flow
-    // row is already gone by this point regardless of what happens here.
-    let memory_namespace = flow_namespace(id);
-    let guard = match memory_override {
-        Some(guard) => Ok(guard),
-        None => crate::memory::ops::guard::active_memory_guard().await,
-    };
-    let clear_result = match guard {
-        Ok(guard) => {
-            tracing::debug!(target: "flows", flow_id = %id, namespace = %memory_namespace, driver = %guard.driver_id(), "[flows] flows_delete: clearing flow memory namespace through the bound driver");
-            match guard.as_documents() {
-                Some(documents) => documents
-                    .clear_namespace(&memory_namespace)
-                    .await
-                    .map_err(|error| error.to_string()),
-                // Name the driver: "does not support" with no subject reads as
-                // a host bug, and the actual fact is which driver is bound.
-                None => Err(format!(
-                    "the bound memory driver '{}' does not serve the documents family",
-                    guard.driver_id()
-                )),
-            }
+    // Best-effort: forget this flow's memory along with its row — a deleted
+    // flow must not leave stray `flow_memory_remember` items or run digests
+    // behind. Memory off forgets nothing. Never fails the delete itself: the
+    // flow row is already gone by this point.
+    match crate::flows::forget_matching(config, crate::flows::flow_filter(id)).await {
+        Ok(forgotten) => {
+            tracing::debug!(target: "flows", flow_id = %id, forgotten, "[flows] flows_delete: forgot flow memory");
         }
-        Err(error) => Err(error),
-    };
-    if let Err(error) = clear_result {
-        tracing::warn!(target: "flows", flow_id = %id, namespace = %memory_namespace, %error, "[flows] flows_delete: failed to clear flow memory namespace");
+        Err(error) => {
+            tracing::warn!(target: "flows", flow_id = %id, code = error.code(), %error, "[flows] flows_delete: failed to forget flow memory");
+        }
     }
 
     publish_flow_changed(id, "deleted", "system");

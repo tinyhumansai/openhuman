@@ -8,7 +8,6 @@ allow = [
     "open_workspace_path",
     "reveal_workspace_path",
     "preview_workspace_text",
-    "resolve_workspace_absolute_path",
 ]
 
 deny = []

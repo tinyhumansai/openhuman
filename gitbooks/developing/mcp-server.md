@@ -33,20 +33,20 @@ clients can write as `mcp:<client>`.
 
 ## Tools
 
-The MCP surface is deliberately read-only and routes through the existing
-controller registry plus the core security policy read gate:
+The MCP surface routes through the existing controller registry plus the core
+security policy: read tools pass the read gate, and the two write tools
+(`memory.learn`, `memory.forget`) pass the act gate and are audited:
 
 | MCP tool            | Backing RPC                          | Purpose                                                                 |
 | ------------------- | ------------------------------------ | ----------------------------------------------------------------------- |
 | `web_search`\*      | `openhuman.tools_web_search`         | Ranked web search through the configured providers, with fallback.      |
 | `web_answer`\*      | `openhuman.tools_web_answer`         | Grounded answer with citations (Gemini with Google Search by default).  |
 | `searxng_search`\*  | `openhuman.tools_searxng_search`     | Search a configured self-hosted SearXNG instance.                       |
-| `memory.search`     | `openhuman.memory_tree_search`       | Keyword search over memory-tree chunks.                                 |
-| `memory.recall`     | `openhuman.memory_tree_recall`       | Semantic recall over memory-tree summaries/chunks.                      |
-| `tree.read_chunk`   | `openhuman.memory_tree_get_chunk`    | Read one chunk returned by search or recall.                            |
-| `tree.browse`       | `openhuman.memory_tree_list_chunks`  | Paginated chunk listing with source / entity / time filters.            |
-| `tree.top_entities` | `openhuman.memory_tree_top_entities` | Most-referenced canonical entities, optionally filtered by kind.        |
-| `tree.list_sources` | `openhuman.memory_tree_list_sources` | Distinct ingest sources with chunk counts and last-activity timestamps. |
+| `memory.recall`     | `openhuman.memory_recall`            | Ask a question; get an answer with citations (read-only).               |
+| `memory.fetch`      | `openhuman.memory_fetch`             | Raw hits for a query, with metadata filters and a cursor (read-only).   |
+| `memory.list`       | `openhuman.memory_items_list`        | Page through stored items, newest first (read-only).                    |
+| `memory.learn`      | `openhuman.memory_learn`             | Store one learning (adds an item; non-destructive).                     |
+| `memory.forget`     | `openhuman.memory_forget`            | Permanently remove items by id (destructive; act-gated).                |
 
 - Tools marked \* are listed only when a provider can serve them: `web_search`
   and `web_answer` when their search role has a usable provider (a signed-in
@@ -57,11 +57,19 @@ controller registry plus the core security policy read gate:
 `provider` (pins one provider and disables fallback). `web_answer` accepts
 `query` and optional `depth` (`quick` or `deep`). `searxng_search` accepts
 `query` and optional `max_results` (1-20).
-`memory.search` and `memory.recall` accept `query` plus optional `k` (default
-10, capped at 50). `tree.read_chunk` accepts `chunk_id`. `tree.browse` accepts
-optional `source_kinds`, `source_ids`, `entity_ids`, `since_ms`, `until_ms`,
-`query`, `k`, and `offset`. `tree.top_entities` accepts optional `kind` and
-`k`. `tree.list_sources` accepts an optional `user_email_hint`.
+`memory.recall` accepts `question` plus optional `filter` and `limit`.
+`memory.fetch` accepts `query` plus optional `mode`, `filter`, `limit` and
+`cursor`; `mode` must be one the active memory engine supports, and both launch
+engines (`tinyhumans`, `cortexdb`) support only `hybrid`, so leave it out
+unless you know otherwise. `memory.list` accepts optional `filter`, `limit` and
+`cursor`. `limit` defaults to 10 and is capped at 100. `filter` takes any of
+`workspace`, `folder`, `file_path`, `language`, `repo`, `commit`, `url`,
+`thread_id`, `agent_id`, `kinds` (`document`, `conversation`, `learning`),
+`sources`, `tags_any`, `observed_after` and `observed_before` (RFC 3339).
+`memory.learn` accepts `text` plus optional `kind` (`preference`, `fact`,
+`procedure`, `correction`, `other`) and `confidence` (0 to 1). `memory.forget`
+accepts `ids` (1 to 100). Memory tools answer `MEMORY_OFF` when no memory engine
+is usable. See [Memory v2](../../docs/specs/memory-v2.md) for the model.
 
 Enable SearXNG under Connections → Search, in `config.toml`, or via environment:
 
@@ -151,7 +159,7 @@ session:
 | RPC method                            | Purpose                                                                                                                                                        |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `openhuman.tool_registry_list`        | List MCP stdio tools and controller-backed tools with stable `tool_id`, route, version, input/output schemas, allowed agents, tags, enabled state, and health. |
-| `openhuman.tool_registry_get`         | Return one registry entry by `tool_id`, for example `memory.search` or `tools.web_search`.                                                                     |
+| `openhuman.tool_registry_get`         | Return one registry entry by `tool_id`, for example `memory.recall` or `tools.web_search`.                                                                     |
 | `openhuman.tool_registry_diagnostics` | Return redacted inventory counts, write-surface candidates, policy surfaces, and external capability-provider diagnostics.                                     |
 
 The registry is discovery-only. It does not change tool dispatch or permission
@@ -197,5 +205,5 @@ notification and has no response.
 
 ```text
 {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{},"resources":{"subscribe":false,"listChanged":false}},"serverInfo":{"name":"openhuman-core","version":"<crate version>"},"instructions":"..."}}
-{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"memory.search",...},{"name":"memory.recall",...},{"name":"tree.read_chunk",...},{"name":"tree.browse",...},{"name":"tree.top_entities",...},{"name":"tree.list_sources",...}]}}
+{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"memory.recall",...},{"name":"memory.fetch",...},{"name":"memory.list",...},{"name":"memory.learn",...},{"name":"memory.forget",...}]}}
 ```

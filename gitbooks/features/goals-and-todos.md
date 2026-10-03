@@ -1,20 +1,9 @@
 ---
-description: Durable user goals and the agent's native TinyAgents work state.
+description: The agent's session todo list and per-thread goals.
 icon: target
 ---
 
 # Goals & Todos
-
-## Long-term goals
-
-OpenHuman keeps a short, human-readable list of durable user objectives in
-`MEMORY_GOALS.md`. The Intelligence → Goals panel supports adding, editing, and
-deleting entries, while the goals reflection agent can make small changes based
-on recent memory and conversations.
-
-The list is deliberately bounded to keep it useful in prompts. Each entry has a
-stable short id so edits do not depend on ordering. The corresponding RPC
-surface is `openhuman.memory_goals_*`.
 
 ## Agent work state
 
@@ -46,4 +35,4 @@ goal on screen for the many turns after the one that set it.
 
 ## See also
 
-- [Memory Tree](obsidian-wiki/memory-tree.md): what goal reflection reads from.
+- [Memory](memory.md): durable preferences and facts live there as learnings; goals and todos are in-session only.

@@ -592,11 +592,9 @@ impl ToolInvoker for OpenHumanTools {
 ///
 /// `state_namespace` scopes the [`tinyflows_sqlite::flows::SqliteStateStore`] KV so two saved flows that
 /// use the same state key never read or overwrite each other — callers pass a
-/// per-flow namespace (e.g. `"flow:<id>"`). Note this is **not** the same
-/// namespace `OpenHumanMemory` writes flow-scoped memory under — that one is
-/// derived independently from the run's trusted origin via
-/// `flows::flow_namespace`, so the two never need to agree on separator
-/// conventions.
+/// per-flow namespace (e.g. `"flow:<id>"`). This KV namespace is unrelated to
+/// flow-scoped memory: `OpenHumanMemory` tags memory items with
+/// `flows::flow_tag`, derived independently from the run's trusted origin.
 pub fn build_capabilities(config: Arc<Config>, state_namespace: impl Into<String>) -> Capabilities {
     let security = Arc::new(SecurityPolicy::from_config(
         &config.autonomy,

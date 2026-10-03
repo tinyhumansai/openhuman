@@ -107,17 +107,6 @@ fn a_reason_is_cut_on_a_character_boundary() {
 }
 
 #[test]
-fn a_failed_pass_that_filled_the_item_cap_is_not_retried() {
-    assert_eq!(retry_after_failure(1, true), Some(Duration::from_secs(5)));
-    assert_eq!(
-        retry_after_failure(1, false),
-        None,
-        "no room left: the run ends failed rather than completing at the cap"
-    );
-    assert_eq!(retry_after_failure(MAX_FAILED_ATTEMPTS, true), None);
-}
-
-#[test]
 fn the_retry_schedule_waits_five_then_ten_seconds_then_gives_up() {
     assert_eq!(retry_delay(0), None, "nothing has failed yet");
     assert_eq!(retry_delay(1), Some(Duration::from_secs(5)));

@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-import MemoryDataPanel from '../../../components/settings/panels/MemoryDataPanel';
+import MemoryEngineSetup from '../../../components/memory/MemoryEngineSetup';
 import { useT } from '../../../lib/i18n/I18nContext';
 import { useCoreState } from '../../../providers/CoreStateProvider';
 import { trackEvent } from '../../../services/analytics';
@@ -44,7 +44,7 @@ export default function VaultSetupStep() {
     [setDraft]
   );
 
-  const configureContent = useMemo(() => <MemoryDataPanel embedded />, []);
+  const configureContent = useMemo(() => <MemoryEngineSetup />, []);
 
   return (
     <>

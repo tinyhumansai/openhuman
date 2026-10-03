@@ -25,7 +25,7 @@ pub async fn flows_search_tool_catalog(
 /// Resolves the toolkit for a *single action* slug, rejecting anything that is
 /// not shaped `<TOOLKIT>_<ACTION>`.
 ///
-/// [`tinymemory_api::composio::toolkit_from_slug`] falls back to the whole
+/// [`crate::integrations::composio::contract::toolkit_from_slug`] falls back to the whole
 /// string when there is no `_`, so it answers `Some` for every non-empty input
 /// — `toolkit_from_slug("nodashhere") == Some("nodashhere")`. That permissive
 /// fall-back is load-bearing for `compute_required_connections`, which maps
@@ -46,7 +46,7 @@ pub(crate) fn toolkit_for_contract_slug(slug: &str) -> Option<String> {
     if toolkit_segment.is_empty() || action_segment.is_empty() {
         return None;
     }
-    tinymemory_api::composio::toolkit_from_slug(trimmed)
+    crate::integrations::composio::contract::toolkit_from_slug(trimmed)
 }
 
 /// Fetches one Composio action's full contract (secret-free) — the RPC the

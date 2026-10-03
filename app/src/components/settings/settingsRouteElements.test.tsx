@@ -72,3 +72,29 @@ describe('retired /settings/integrations route', () => {
     await waitFor(() => expect(window.location.hash).toBe('#/connections'));
   });
 });
+
+/**
+ * Memory v2: the v1 memory settings panels are gone; their slugs land on the
+ * matching chip of the Memory page (Connections → Memory).
+ */
+describe.each([
+  ['/settings/memory-engine', '#/connections?tab=brain&brain=engine'],
+  ['/settings/memory-data', '#/connections?tab=brain&brain=documents'],
+  ['/settings/memory-sync', '#/connections?tab=brain&brain=documents'],
+  ['/settings/memory-debug', '#/connections?tab=brain&brain=ask'],
+  ['/settings/tasks', '#/connections?tab=brain&brain=ask'],
+])('retired memory settings route %s', (route, target) => {
+  it(`redirects to ${target}`, async () => {
+    window.location.hash = `#${route}`;
+    render(
+      <HashRouter>
+        <Routes>
+          <Route path="/settings" element={<Outlet />}>
+            {settingsRouteElements()}
+          </Route>
+        </Routes>
+      </HashRouter>
+    );
+    await waitFor(() => expect(window.location.hash).toBe(target));
+  });
+});

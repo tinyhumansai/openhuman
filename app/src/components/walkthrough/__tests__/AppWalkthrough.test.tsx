@@ -548,11 +548,12 @@ describe('createWalkthroughSteps', () => {
     const navigate = vi.fn();
     const steps = createWalkthroughSteps(navigate);
 
-    // Steps: 2=chat, 3=integrations, 4=channels, 5=settings, 6=chat-tab, 9=chat-welcome.
-    // The tail has shifted down twice: once when the Human nav step was dropped
-    // (Human has no nav row — the chat composer's idle button opens it), and
-    // again when the Feedback step went with the sidebar icon it pointed at.
-    const crossPageIndices = [2, 3, 4, 5, 6, 9];
+    // Steps: 2=chat, 3=integrations, 4=channels, 5=settings, 6=chat-tab, 8=chat-welcome.
+    // The tail has shifted down three times: when the Human nav step was dropped
+    // (Human has no nav row — the chat composer's idle button opens it), when
+    // the Feedback step went with the sidebar icon it pointed at, and when the
+    // Memory nav step went with Memory's move under Connections.
+    const crossPageIndices = [2, 3, 4, 5, 6, 8];
     for (const idx of crossPageIndices) {
       expect(typeof steps[idx].before, `step[${idx}] should have a before fn`).toBe('function');
     }
@@ -562,7 +563,7 @@ describe('createWalkthroughSteps', () => {
     const navigate = vi.fn();
     const steps = createWalkthroughSteps(navigate);
 
-    const homeOnlyIndices = [0, 1, 7, 8];
+    const homeOnlyIndices = [0, 1, 7];
     for (const idx of homeOnlyIndices) {
       expect(steps[idx].before, `step[${idx}] should not have a before fn`).toBeUndefined();
     }
@@ -574,7 +575,7 @@ describe('createWalkthroughSteps', () => {
     { idx: 4, route: null, target: 'skills-channels' },
     { idx: 5, route: '/settings', target: 'settings-menu' },
     { idx: 6, route: '/chat', target: 'tab-chat' },
-    { idx: 9, route: '/chat', target: 'chat-agent-panel' },
+    { idx: 8, route: '/chat', target: 'chat-agent-panel' },
   ])('before hook for step $idx calls navigate("$route")', async ({ idx, route, target }) => {
     const navigate = vi.fn();
 
@@ -606,7 +607,6 @@ describe('createWalkthroughSteps', () => {
       '[data-walkthrough="skills-channels"]',
       '[data-walkthrough="settings-menu"]',
       '[data-walkthrough="tab-chat"]',
-      '[data-walkthrough="tab-brain"]',
       '[data-walkthrough="tab-connections"]',
       '[data-walkthrough="chat-agent-panel"]',
     ]);

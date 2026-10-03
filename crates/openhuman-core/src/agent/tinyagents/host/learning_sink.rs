@@ -1,73 +1,20 @@
 //! Host adapter for [`tinyagents_harness::host::LearningSink`] — the seam the
-//! generic agent runtime uses to hand a finished turn to OpenHuman's
-//! self-learning subsystem.
+//! generic agent runtime uses to hand a finished turn to the host's post-turn
+//! hooks ([`crate::agent::hooks::PostTurnHook`], e.g. the ones an embedder
+//! registers through `hooks::register_embedder_post_turn_hook`).
 //!
-//! This is `docs/specs/plan-agents.md` Phase 4. OpenHuman already has a
-//! post-turn learning fan-out: [`crate::agent::hooks::PostTurnHook`]
-//! implementations (`UserProfileHook`, `ToolTrackerHook`, `ReflectionHook`,
-//! `ToolMemoryCaptureHook`, `AgentExperienceCaptureHook`, `ArchivistHook`, …)
-//! dispatched by [`crate::agent::hooks::fire_hooks`]. That function
-//! is already exactly the shape the crate's trait doc asks for — it
-//! `tokio::spawn`s every hook and returns immediately, logging failures rather
-//! than propagating them. So this adapter is deliberately thin: translate
-//! [`TurnSummary`] into a [`TurnContext`] and enqueue.
+//! The adapter is thin: it translates a [`TurnSummary`] into a
+//! [`TurnContext`] and enqueues it through [`crate::agent::hooks::fire_hooks`],
+//! which spawns every hook and returns at once.
 //!
-//! # Contract mismatches, and how each is resolved
-//!
-//! **1. `tools_invoked` is names-only; `TurnContext.tool_calls` is outcomes.**
-//! This is the load-bearing mismatch. [`TurnSummary::tools_invoked`] carries a
-//! deduplicated list of tool *names* by design — the crate doc is explicit that
-//! arguments and results must never travel this path because the record is
-//! built to be persisted. OpenHuman's
-//! [`crate::agent::hooks::ToolCallRecord`] is the opposite: it exists
-//! to carry `success`, `duration_ms`, and a sanitized `output_summary`, and
-//! every outcome-mining hook (`ToolTrackerHook`, `AgentExperienceCaptureHook`)
-//! reads precisely those fields.
-//!
-//! There is no honest projection from one to the other. Synthesizing records
-//! with `success: true, duration_ms: 0` would make `ToolTrackerHook` write
-//! fabricated success rates and a corrupted running average into the
-//! `tool_effectiveness` namespace, and would make
-//! `AgentExperienceCaptureHook` mine "successful multi-tool experience"
-//! candidates from a turn whose tools may all have failed. Persisting an
-//! invented outcome is worse than persisting none, so **`tool_calls` is left
-//! empty** and the names are emitted to the log only. The outcome-driven hooks
-//! then self-disable (both early-return on an empty `tool_calls`), which is the
-//! correct degradation: silent no-op, not silent lies.
-//!
-//! The hooks that read the *text* of the turn — `UserProfileHook`'s preference
-//! extraction and `ReflectionHook`'s heuristic cue fast-path, which runs before
-//! and independently of the `min_turn_complexity` gate — are unaffected and
-//! keep working from a names-only summary.
-//!
-//! **2. `thread_id` vs `session_id`.** `TurnContext.session_id` is populated
-//! host-side from the harness' `event_session_id`; a [`TurnSummary`] only
-//! carries a [`tinyagents_harness::ids::ThreadId`]. The thread id is the
-//! closest available correlation key, so it is mapped through. The visible
-//! consequence is that `ReflectionHook`'s `max_reflections_per_session` throttle
-//! becomes per-thread rather than per-session on this path — a slightly
-//! different, but not incorrect, bucketing.
-//!
-//! **3. Missing fields.** [`TurnSummary`] has no wall-clock duration and no
-//! model-call count, so `turn_duration_ms` is `0` and `iteration_count` is `1`.
-//! Neither is read by any gate; they are reporting fields only. `entrypoint` is
-//! `None` because the crate summary has no notion of a channel.
-//!
-//! **4. Errors are advisory.** The trait doc is emphatic that the turn is
-//! already committed and an `Err` must not roll it back. `fire_hooks` is
-//! infallible and non-blocking, so [`OpenHumanLearningSink::on_turn_complete`]
-//! always returns `Ok(())`; hook failures surface in the host log where they
-//! belong.
-//!
-//! # Domains deliberately not wired here
-//!
-//! - [`crate::agent::learning::transcript_ingest`] is *transcript-file*
-//!   driven (`ingest_transcript_path` / `ingest_session_transcript` take a
-//!   session `.jsonl` on disk) and runs on session close, not per turn. A sink
-//!   invocation has no transcript to point at.
-//!
-//! It is reachable through the same `Memory` those hooks write to, so nothing
-//! is lost by leaving it on its own cadence.
+//! `TurnSummary::tools_invoked` is names-only, while `TurnContext.tool_calls`
+//! carries outcomes (`success`, `duration_ms`). There is no honest projection
+//! from one to the other, so `tool_calls` is left empty rather than filled
+//! with invented outcomes; the names are logged only. `TurnSummary` carries a
+//! thread id but no session id, so the thread id is mapped through as the
+//! nearest correlation key. Errors are advisory: the turn is already
+//! committed, so [`OpenHumanLearningSink::on_turn_complete`] always returns
+//! `Ok(())`.
 
 use std::sync::Arc;
 
@@ -76,9 +23,6 @@ use tinyagents_harness::error::Result;
 use tinyagents_harness::host::{LearningSink, TurnSummary};
 
 use crate::agent::hooks::{self, PostTurnHook, TurnContext};
-use crate::agent::learning::{ToolTrackerHook, UserProfileHook};
-use crate::config::LearningConfig;
-use crate::memory::Memory;
 
 /// Adapts OpenHuman's [`PostTurnHook`] fan-out to the crate's
 /// [`LearningSink`] capability.
@@ -87,8 +31,6 @@ use crate::memory::Memory;
 /// installed is a composition decision the session builder already makes (see
 /// `agent/session_host/builder/factory.rs`); duplicating that policy here
 /// would give the generic runtime a second, silently divergent hook set.
-/// [`OpenHumanLearningSink::from_learning_config`] is a convenience for the
-/// hooks that need nothing but config and memory.
 pub struct OpenHumanLearningSink {
     /// Hooks fired, in parallel, for every completed turn.
     hooks: Vec<Arc<dyn PostTurnHook>>,
@@ -105,25 +47,7 @@ impl OpenHumanLearningSink {
         Self { hooks }
     }
 
-    /// Builds a sink over the two hooks that need only `[learning]` config and
-    /// a [`Memory`] handle: [`UserProfileHook`] and [`ToolTrackerHook`].
-    ///
-    /// Both hooks re-check `LearningConfig::enabled` plus their own sub-flag
-    /// inside `on_turn_complete`, so they are always installed and gate
-    /// themselves — that keeps a config toggle live without rebuilding the sink.
-    ///
-    /// `ReflectionHook` is *not* included: its constructor also needs an
-    /// `Arc<Config>` and an optional `ChatModel` provider, which are session
-    /// composition concerns. Add it with [`OpenHumanLearningSink::with_hook`].
-    pub fn from_learning_config(config: LearningConfig, memory: Arc<dyn Memory>) -> Self {
-        Self::new(vec![
-            Arc::new(UserProfileHook::new(config.clone(), Arc::clone(&memory))),
-            Arc::new(ToolTrackerHook::new(config, memory)),
-        ])
-    }
-
-    /// Appends one more hook, for hooks whose construction needs more than
-    /// config + memory (`ReflectionHook`, `ArchivistHook`, …).
+    /// Appends one more hook.
     pub fn with_hook(mut self, hook: Arc<dyn PostTurnHook>) -> Self {
         self.hooks.push(hook);
         self
@@ -145,16 +69,7 @@ impl OpenHumanLearningSink {
             assistant_response: summary.output.clone(),
             // Intentionally empty — a names-only summary cannot supply the
             // `success` / `duration_ms` / `output_summary` fields that give a
-            // `ToolCallRecord` its meaning, and fabricating them would poison
-            // the `tool_effectiveness` tallies. See the module doc.
-            //
-            // TODO(phase4): if outcome-driven learning is wanted over the
-            // generic runtime, the fix is upstream — the crate would need a
-            // richer per-tool record (name + outcome class + duration, still no
-            // arguments or results), most likely alongside
-            // `tinyagents_harness::host::ToolOutcomeClassifier`, which already
-            // owns the "did this tool call succeed" judgement host-side. It is
-            // not something this adapter can synthesize.
+            // `ToolCallRecord` its meaning. See the module doc.
             tool_calls: Vec::new(),
             // Not carried by `TurnSummary`; reporting-only fields, read by no
             // gate in any installed hook.

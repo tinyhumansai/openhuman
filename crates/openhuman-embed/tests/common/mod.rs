@@ -37,22 +37,18 @@ pub fn chat_completion(content: &str) -> serde_json::Value {
     })
 }
 
-/// A config that keeps the turn offline: no local runtimes, no spaCy, no
-/// embeddings endpoint. Mirrors `crates/openhuman-core/src/bin/library_profile/harness.rs::fixture()`,
+/// A config that keeps the turn offline: no local runtimes and no
+/// conversation memory. Mirrors `crates/openhuman-core/src/bin/library_profile/harness.rs::fixture()`,
 /// which is the recipe already proven against real turns.
 pub fn offline_config() -> Config {
     let mut config = Config::default();
     config.local_ai.runtime_enabled = false;
     config.runtime_python.enabled = false;
-    config.memory_tree.spacy_enabled = false;
-    config.memory_tree.embedding_endpoint = None;
-    config.memory_tree.embedding_model = None;
-    config.memory_tree.embedding_strict = false;
-    // User-message memory autosave is intentionally fire-and-forget. It can
-    // still be writing after a turn returns, which is useful in the product but
-    // unrelated to these tests' contracts and would race the final
+    // Conversation memory ingest is intentionally fire-and-forget. It can
+    // still be buffering after a turn returns, which is useful in the product
+    // but unrelated to these tests' contracts and would race the final
     // ephemeral-workspace cleanup assertion.
-    config.memory.auto_save = false;
+    config.memory.conversations.enabled = false;
     // Session-store dual writes and shadow reads are also deliberately
     // fire-and-forget; leaving them on makes their detached filesystem work
     // race the synchronous ephemeral cleanup.

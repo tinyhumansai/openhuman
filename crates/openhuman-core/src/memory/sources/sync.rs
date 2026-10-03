@@ -1,117 +1,199 @@
-//! Scope derivation for a configured source: which tree scope, and which
-//! raw-archive id, a registry entry maps onto.
+//! Syncing sources into memory.
 //!
-//! # What came home and what did not (#5560)
-//!
-//! `tinymemory_core::sources::sync` was the whole ingest pipeline — the source
-//! run, the tree rebuild, the re-embed queue and the Composio sync half — and
-//! exactly one item of it was reached from production here:
-//! [`derive_scopes`], called by `rpc::reconcile_rpc`. That one is not pipeline
-//! at all. It reads the registry entry's `kind` and `url`, formats them through
-//! `tinymemory_sources::readers::github` (an engine-neutral crate this host
-//! already depends on), and for a Gmail connector scans
-//! `<content root>/raw/gmail-*/_source.md` for the scope the archiver wrote.
-//! Registry fields, a filesystem scan under a path the host owns, and no store
-//! access — so it is host work that happened to live upstream, the same line
-//! [`super::reconcile`] came home along.
-//!
-//! Everything else in that module stayed where it is. `sync_source` had no
-//! caller left in `src/` — the sync the product runs goes over the bus through
-//! `MemorySourceSync` — and porting the pipeline would move it *into* the host
-//! rather than behind the module, which is the opposite of the point.
+//! Non-Composio sources are read through `tinymemory-sources`' readers
+//! (`collect_items`), which turn each file, page, commit or feed entry into a
+//! `Document` with its metadata filled. Every item is scrubbed and stored on
+//! the bound engine; per-item failures are logged and skipped, not fatal.
+//! Composio sources go through [`super::composio`].
 
+use std::collections::HashSet;
+use std::path::PathBuf;
+use std::sync::{LazyLock, Mutex};
+
+use chrono::{DateTime, Utc};
+use tinymemory::documents::NativeConverter;
+use tinymemory::sources::readers::reader_for_request;
+use tinymemory::sources::{apply_kind_defaults, collect_items, MemorySourceEntry, SourceKind};
+
+use crate::config::schema::{MemorySourceConfig, MemorySourceKind};
 use crate::config::Config;
-use crate::memory::sources::types::{MemorySourceEntry, SourceKind};
+use crate::memory::engine::{self, BoundEngine};
+use crate::memory::error::{MemoryError, MemoryResult};
+use crate::memory::ops::store_on;
+use crate::memory::types::SourceStatus;
 
-/// A source's tree scope paired with its raw-archive source id.
-///
-/// The two slugify to **different** directories for GitHub
-/// (`github:owner/repo` vs `github.com/owner/repo`); conflating them makes
-/// reconcile scan an empty directory while the real archive sits uncovered.
-///
-/// Not to be confused with `tinymemory_api::provider::types::SourceScope`,
-/// which is the recall allowlist that crosses the bus. Same name, unrelated
-/// shapes — check which one a call site means before moving it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SourceScope {
-    /// Tree registry key, e.g. `"github:owner/repo"`.
-    pub tree_scope: String,
-    /// Raw-archive id whose slug names `raw/<slug>/`, e.g.
-    /// `"github.com/owner/repo"`. Equal to `tree_scope` for sources that
-    /// archive under their scope (gmail).
-    pub archive_source_id: String,
+use super::state;
+
+/// Sources syncing right now, per workspace, so a second request for the same
+/// source does not start a parallel run.
+static RUNNING: LazyLock<Mutex<HashSet<(PathBuf, String)>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+/// The `tinymemory-sources` entry that reads `source`; `None` for Composio,
+/// which syncs through the connector module instead.
+pub(super) fn reader_entry(source: &MemorySourceConfig) -> MemoryResult<Option<MemorySourceEntry>> {
+    let kind = match source.kind {
+        MemorySourceKind::Folder => SourceKind::Folder,
+        MemorySourceKind::File => SourceKind::File,
+        MemorySourceKind::Link => SourceKind::WebPage,
+        MemorySourceKind::Github => SourceKind::GithubRepo,
+        MemorySourceKind::Rss => SourceKind::RssFeed,
+        MemorySourceKind::Composio => return Ok(None),
+    };
+    let mut entry = MemorySourceEntry::new(source.id.clone(), kind, source.label.clone());
+    match source.kind {
+        MemorySourceKind::Folder | MemorySourceKind::File => {
+            entry.path = Some(source.target.clone())
+        }
+        _ => entry.url = Some(source.target.clone()),
+    }
+    apply_kind_defaults(&mut entry);
+    entry
+        .validate()
+        .map_err(|error| MemoryError::invalid(error.to_string()))?;
+    Ok(Some(entry))
 }
 
-/// Derive the tree scope(s) + raw-archive id(s) that a source maps to.
-///
-/// A verbatim port of the engine's function: same match arms, same
-/// `gmail-` directory prefix, same `scope:` line parse, same empty answer for
-/// every kind that has no raw archive to reconcile yet.
-pub fn derive_scopes(source: &MemorySourceEntry, config: &Config) -> Vec<SourceScope> {
-    use crate::memory::sources::readers::github;
-
-    match source.kind {
-        SourceKind::GithubRepo => {
-            let Some(url) = source.url.as_deref() else {
-                return Vec::new();
-            };
-            match (
-                github::repo_chunk_scope(url),
-                github::repo_archive_source_id(url),
-            ) {
-                (Some(tree_scope), Some(archive_source_id)) => vec![SourceScope {
-                    tree_scope,
-                    archive_source_id,
-                }],
-                _ => Vec::new(),
-            }
-        }
-        SourceKind::Composio => {
-            // Composio sources scope by toolkit + connection email.
-            // Gmail: "gmail:<slug_account_email>" — archive dir shares
-            // the scope. Others: no raw archive to reconcile yet.
-            let toolkit = source.toolkit.as_deref().unwrap_or("unknown");
-            match toolkit {
-                "gmail" | "GMAIL" => {
-                    // The scope for gmail is "gmail:<slugified_email>".
-                    // We scan the raw directory to find it.
-                    let content_root = config.memory_tree_content_root();
-                    let raw_dir = content_root.join("raw");
-                    if let Ok(entries) = std::fs::read_dir(&raw_dir) {
-                        entries
-                            .filter_map(|e| e.ok())
-                            .filter(|e| {
-                                e.file_name()
-                                    .to_str()
-                                    .map(|n| n.starts_with("gmail-"))
-                                    .unwrap_or(false)
-                            })
-                            .filter_map(|e| {
-                                // Read _source.md to get the scope.
-                                let source_md = e.path().join("_source.md");
-                                let content = std::fs::read_to_string(&source_md).ok()?;
-                                content.lines().find(|l| l.starts_with("scope:")).map(|l| {
-                                    let scope = l
-                                        .trim_start_matches("scope:")
-                                        .trim()
-                                        .trim_matches('"')
-                                        .to_string();
-                                    SourceScope {
-                                        tree_scope: scope.clone(),
-                                        archive_source_id: scope,
-                                    }
-                                })
-                            })
-                            .collect()
-                    } else {
-                        Vec::new()
-                    }
-                }
-                _ => Vec::new(),
-            }
-        }
-        _ => Vec::new(),
+/// Reads `source` and stores what it yields. Returns the number stored.
+pub async fn sync_one(config: &Config, source: &MemorySourceConfig) -> MemoryResult<u64> {
+    let bound = engine::resolve(config).engine()?;
+    let Some(entry) = reader_entry(source)? else {
+        return super::composio::sync_toolkit(config, &bound, source).await;
+    };
+    let reader = reader_for_request(&entry.kind);
+    let collected = collect_items(
+        reader.as_ref(),
+        &entry,
+        &config.action_dir,
+        &NativeConverter,
+    )
+    .await
+    .map_err(|error| MemoryError::Engine(format!("reading the source failed: {error}")))?;
+    if !collected.skipped.is_empty() {
+        tracing::debug!(
+            id = %source.id,
+            skipped = collected.skipped.len(),
+            "[memory:sources] some items could not be read"
+        );
     }
+    store_all(&bound, collected.items, &source.id).await
+}
+
+pub(super) async fn store_all(
+    bound: &BoundEngine,
+    items: Vec<tinymemory::StoreItem>,
+    source_id: &str,
+) -> MemoryResult<u64> {
+    let mut stored = 0u64;
+    let mut last_error = None;
+    for item in items {
+        match store_on(bound, item).await {
+            Ok(_) => stored += 1,
+            Err(error @ (MemoryError::Unauthorized(_) | MemoryError::Off(_))) => return Err(error),
+            Err(error) => {
+                tracing::debug!(id = %source_id, code = error.code(), "[memory:sources] item store failed");
+                last_error = Some(error);
+            }
+        }
+    }
+    match (stored, last_error) {
+        (0, Some(error)) => Err(error),
+        _ => Ok(stored),
+    }
+}
+
+/// `memory_sources_sync`: starts a background sync of source `id`, or of
+/// every source, and returns the ids whose sync started.
+pub fn start_sync(config: &Config, id: Option<&str>) -> MemoryResult<Vec<String>> {
+    engine::resolve(config).engine()?;
+    let targets: Vec<MemorySourceConfig> = match id {
+        Some(id) => vec![config
+            .memory
+            .sources
+            .iter()
+            .find(|source| source.id == id)
+            .cloned()
+            .ok_or_else(|| MemoryError::invalid(format!("no source `{id}`")))?],
+        None => config.memory.sources.clone(),
+    };
+    let mut started = Vec::new();
+    for source in targets {
+        let key = (config.workspace_dir.clone(), source.id.clone());
+        let claimed = RUNNING
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(key.clone());
+        if !claimed {
+            tracing::debug!(id = %source.id, "[memory:sources] already syncing");
+            continue;
+        }
+        state::update(&config.workspace_dir, &source.id, |state| {
+            state.status = SourceStatus::Syncing;
+            state.error = None;
+        });
+        started.push(source.id.clone());
+        let config = config.clone();
+        tokio::spawn(async move {
+            run_and_record(&config, &source).await;
+            RUNNING
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&key);
+        });
+    }
+    Ok(started)
+}
+
+async fn run_and_record(config: &Config, source: &MemorySourceConfig) {
+    let result = sync_one(config, source).await;
+    let now = Utc::now();
+    state::update(&config.workspace_dir, &source.id, |state| match &result {
+        Ok(items) => {
+            state.status = SourceStatus::Idle;
+            state.last_sync_at = Some(now);
+            state.items = *items;
+            state.error = None;
+        }
+        Err(error) => {
+            state.status = SourceStatus::Error;
+            state.last_sync_at = Some(now);
+            state.error = Some(error.to_string());
+        }
+    });
+    match result {
+        Ok(items) => tracing::info!(id = %source.id, items, "[memory:sources] sync finished"),
+        Err(error) => tracing::warn!(
+            id = %source.id,
+            code = error.code(),
+            "[memory:sources] sync failed"
+        ),
+    }
+}
+
+/// The scheduled tick: starts every source whose `schedule_mins` has elapsed.
+/// Returns the ids started. Memory off starts nothing.
+pub fn sync_due(config: &Config, now: DateTime<Utc>) -> Vec<String> {
+    if !engine::is_on(config) {
+        return Vec::new();
+    }
+    let states = state::load(&config.workspace_dir);
+    let due: Vec<String> = config
+        .memory
+        .sources
+        .iter()
+        .filter(|source| super::is_due(source, states.get(&source.id), now))
+        .map(|source| source.id.clone())
+        .collect();
+    let mut started = Vec::new();
+    for id in due {
+        match start_sync(config, Some(&id)) {
+            Ok(ids) => started.extend(ids),
+            Err(error) => {
+                tracing::debug!(id = %id, code = error.code(), "[memory:sources] due sync not started")
+            }
+        }
+    }
+    started
 }
 
 #[cfg(test)]

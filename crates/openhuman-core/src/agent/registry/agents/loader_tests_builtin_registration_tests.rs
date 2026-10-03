@@ -35,42 +35,14 @@ fn presentation_agent_absent_when_documents_off() {
 }
 
 #[test]
-fn automatic_memory_agents_do_not_expose_call_memory_agent() {
-    for def in load_builtins().expect("built-in TOML must parse") {
-        if def.trigger_memory_agent != TriggerMemoryAgent::Always {
-            continue;
-        }
-
-        let exposes_call_memory_agent = match &def.tools {
-            ToolScope::Named(tools) => tools.iter().any(|tool| tool == "call_memory_agent"),
-            ToolScope::Wildcard => false,
-        };
-
-        assert!(
-            !exposes_call_memory_agent,
-            "{} uses trigger_memory_agent but still exposes call_memory_agent",
-            def.id
-        );
-        assert!(
-            !def.subagents
-                .iter()
-                .any(|entry| matches!(entry, SubagentEntry::AgentId(id) if id == "agent_memory")),
-            "{} uses trigger_memory_agent but still lists agent_memory in subagents",
-            def.id
-        );
-    }
-}
-
-#[test]
 fn trigger_reactor_has_agentic_hint_and_narrow_tools() {
     let def = find("trigger_reactor");
     assert!(matches!(def.model, ModelSpec::Hint(ref h) if h == "agentic"));
     match &def.tools {
         ToolScope::Named(tools) => {
-            assert!(!tools.iter().any(|t| t == "call_memory_agent"));
             assert!(
-                tools.iter().any(|t| t == "memory_store"),
-                "trigger_reactor needs memory_store"
+                tools.iter().any(|t| t == "memory"),
+                "trigger_reactor needs the memory tool"
             );
             // A worker with no `[subagents]` allowlist can never dispatch a
             // spawn, so listing the tool only advertised a dead route.
@@ -180,9 +152,7 @@ fn coding_agent_prompts_reference_action_sandbox_not_stale_workspace() {
 
 #[test]
 fn every_builtin_has_a_prompt_body() {
-    use crate::agent::prompts::{
-        ConnectedIntegration, LearnedContextData, PromptContext, PromptTool, ToolCallFormat,
-    };
+    use crate::agent::prompts::{ConnectedIntegration, PromptContext, PromptTool, ToolCallFormat};
     let empty_tools: Vec<PromptTool<'_>> = Vec::new();
     let empty_integrations: Vec<ConnectedIntegration> = Vec::new();
     let empty_visible: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -196,14 +166,10 @@ fn every_builtin_has_a_prompt_body() {
                     tools: &empty_tools,
                     workflows: &[],
                     dispatcher_instructions: "",
-                    learned: LearnedContextData::default(),
                     visible_tool_names: &empty_visible,
                     tool_call_format: ToolCallFormat::PFormat,
                     connected_integrations: &empty_integrations,
                     connected_identities_md: String::new(),
-                    include_profile: false,
-                    include_memory_md: false,
-                    curated_snapshot: None,
                     user_identity: None,
                     personality_roster: vec![],
                     agents_md_global: None,
@@ -333,7 +299,6 @@ fn master_agent_has_coding_hint_and_named_tools() {
                 !tools.iter().any(|t| t == "spawn_subagent"),
                 "spawn_subagent must not appear — removed in #1141"
             );
-            assert!(!tools.iter().any(|t| t == "call_memory_agent"));
             // The Master Agent owns the ordinary coding loop directly.
             // Keep its mutation surface intentionally small: one patch
             // mechanism for existing files, file_write for new files,
@@ -371,24 +336,21 @@ fn master_agent_has_coding_hint_and_named_tools() {
                     "Master Agent must have direct inspect tool `{direct}`"
                 );
             }
-            // The unified `memory` tool handles direct recall, keyword
-            // search, writes, and forgetting without a sub-agent round-trip.
-            // Preferences retain their dedicated direct tool.
-            for direct in ["memory", "save_preference"] {
-                assert!(
-                    tools.iter().any(|t| t == direct),
-                    "orchestrator must have direct memory tool `{direct}` (#4762)"
-                );
-            }
+            // Direct memory surface: recall/store are the product's core and
+            // must be one first-class direct tool, not a sub-agent spawn
+            // (over-delegation, #4744).
+            assert!(
+                tools.iter().any(|t| t == "memory"),
+                "orchestrator must have the direct `memory` tool"
+            );
         }
         ToolScope::Wildcard => panic!("orchestrator must have named tool allowlist"),
     }
     assert_eq!(def.max_iterations, 50);
-    // Memory retrieval is on-demand (via the `agent_memory` subagent,
-    // surfaced as `delegate_retrieve_memory`), not an eager pre-turn
-    // pre-fetch. The allowlist entry is what makes that route reachable
-    // (see the `agent_memory::tools` allowlist gate).
-    assert_eq!(def.trigger_memory_agent, TriggerMemoryAgent::Never);
+    assert!(
+        !def.omit_memory_context,
+        "the user-facing agent opens new sessions with the memory context"
+    );
 }
 
 /// Regression guard for the `resolve_time` wiring. Agents that emit
@@ -523,26 +485,6 @@ fn planner_has_readonly_mcp_discovery_not_execute() {
         }
         other => panic!("planner must use Named tool scope, got {other:?}"),
     }
-}
-
-/// The archivist is registered but deliberately not a chat delegate: the
-/// post-commit session-memory extraction runs it by id
-/// (`runtime_session.rs`), and a delegate would add its schema to every turn.
-#[test]
-fn the_orchestrator_does_not_delegate_to_the_archivist() {
-    let orchestrator = find("orchestrator");
-    assert!(
-        !orchestrator
-            .subagents
-            .iter()
-            .any(|entry| matches!(entry, SubagentEntry::AgentId(id) if id == "archivist")),
-        "`archivist` is back on the orchestrator's subagent list"
-    );
-    assert_eq!(
-        find("archivist").id,
-        "archivist",
-        "archivist must stay registered"
-    );
 }
 
 /// The specialists the inline skills replaced must not come back as

@@ -119,7 +119,7 @@ pub(super) fn build_flow_connections(
     http: Vec<crate::security::credentials::HttpCredentialSummary>,
     identities: &[crate::integrations::composio::providers::ConnectedIdentity],
 ) -> Vec<FlowConnection> {
-    use tinymemory_api::composio::normalize_connection_identifier;
+    use crate::integrations::composio::contract::normalize_connection_identifier;
 
     let identity_lookup: std::collections::HashMap<(String, String), &_> = identities
         .iter()
@@ -260,7 +260,7 @@ pub(crate) async fn connected_toolkits(config: &Config) -> std::collections::Has
 /// `oh:` tools and `http_request` nodes need no Composio connection and are
 /// skipped.
 pub async fn compute_required_connections(config: &Config, graph: &WorkflowGraph) -> Vec<Value> {
-    use tinymemory_api::composio::toolkit_from_slug;
+    use crate::integrations::composio::contract::toolkit_from_slug;
 
     // Collect required toolkits (deduped, order-preserving).
     let mut required: Vec<String> = Vec::new();

@@ -131,8 +131,7 @@ pub enum ProviderDelta {
 /// condition. Capping every agent turn at a realistic ceiling prices the
 /// pre-flight against a budget the user can actually afford; a residual `402`
 /// is then the genuine flat-balance case the insufficient-credits demote arm
-/// is meant for (TAURI-RUST-C62; mirrors [`EXTRACTION_MAX_OUTPUT_TOKENS`] in
-/// `memory_tree::score::extract::llm`).
+/// is meant for (TAURI-RUST-C62).
 ///
 /// `16384` sits comfortably above any realistic single agent turn — `max_tokens`
 /// is an upper bound, not a forced length, so the model still stops at its

@@ -30,13 +30,13 @@ use crate::config::Config;
 #[cfg(test)]
 use crate::core::events::DomainEvent;
 #[cfg(test)]
-use crate::flows::flow_namespace;
-#[cfg(test)]
 use crate::flows::store;
 #[cfg(test)]
 use dedup_commit::{flow_commit_lock, CommitTestHooks};
 #[cfg(test)]
-use run_digest::{render_run_digest, truncate_chars, DIGEST_MAX_CHARS};
+use run_digest::{
+    digest_filter, enforce_retention_cap, render_run_digest, truncate_chars, DIGEST_MAX_CHARS,
+};
 #[cfg(test)]
 use serde_json::Value;
 #[cfg(test)]

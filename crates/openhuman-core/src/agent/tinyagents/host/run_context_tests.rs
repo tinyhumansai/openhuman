@@ -237,7 +237,6 @@ fn stale_parent_snapshot() -> ParentExecutionContext {
         temperature: 0.0,
         workspace_dir: std::path::PathBuf::from("/tmp/openhuman-attach-parent"),
         workspace_descriptor: None,
-        memory: crate::memory::test_support::noop_memory(),
         agent_config: crate::config::AgentConfig::default(),
         workflows: Arc::new(Vec::new()),
         memory_context: Arc::new(None),

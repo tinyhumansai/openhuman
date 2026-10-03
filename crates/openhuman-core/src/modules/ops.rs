@@ -406,61 +406,7 @@ fn module_config(config: &Config, id: &str) -> serde_json::Value {
             serde_json::json!({})
         });
     }
-    if id != super::memory::MODULE_ID {
-        return serde_json::json!({});
-    }
-    serde_json::json!({
-        "workspace_dir": config.workspace_dir,
-        // The registry file the host writes `[[memory_sources]]` into. The
-        // module used to derive `workspace_dir/config.toml`, a file that does
-        // not exist, and answered `NotFound` for every host-registered source
-        // on sync (openhuman#5820). Additive: an older module ignores it.
-        "config_path": config.config_path,
-        "memory": config.memory,
-        "memory_tree": config.memory_tree,
-        "scheduler_gate": config.scheduler_gate,
-        "local_ai": config.local_ai,
-        "embeddings_provider": config.embeddings_provider,
-        "memory_provider": config.memory_provider,
-        "default_model": config.default_model,
-        "default_temperature": config.default_temperature,
-        "output_language": config.output_language,
-        "memory_sources": config.memory_sources,
-        "embedding_routes": config.embedding_routes,
-        "storage_provider": config.storage.provider.config,
-        "ollama_base_url": tinyinference_local::ollama::ollama_base_url_from_override(config.local_ai.base_url.as_deref()),
-        // The module's `EmbeddingHost::default_cloud_embedding_model`: what the
-        // engine switches to when the opted-in local model is unreachable
-        // (`store::factories`). That is the host's managed-cloud default, the
-        // same constant the in-process `OpenHumanEmbeddingHost` answers with.
-        // It is NOT `config.memory.embedding_model`, which is the user's
-        // intended model and is usually the local one; sending that here made
-        // the cloud fallback ask the managed embedder for `nomic-embed-text`
-        // (openhuman#5820).
-        "cloud_embedding_model":
-            tinyinference_embeddings::DEFAULT_CLOUD_MODEL,
-        "cloud_embedding_dimensions":
-            tinyinference_embeddings::DEFAULT_CLOUD_DIMENSIONS,
-        "models_supporting_dimensions":
-            tinyinference_embeddings::MODELS_SUPPORTING_DIMENSIONS,
-        // The periodic composio and workspace-source sync loops run INSIDE the
-        // module now (tinymemory#100), and these three are what let them run at
-        // all. Without the cadence the module answers manual-only and skips
-        // every source silently; without the mode `composio_config` never
-        // selects its direct branch and every connection fails. All three are
-        // `#[serde(default)]` upstream, so an older module ignores them rather
-        // than failing to load.
-        "memory_sync_interval_secs": config.memory_sync_interval_secs,
-        "composio_mode": config.composio.mode,
-        "composio_entity_id": config.composio.entity_id,
-        // Proxied Composio addresses the backend with this; without it the module
-        // builds its request against an empty base and fails in the HTTP client.
-        // Empty (never `null`: the module's config field is a string) when no
-        // backend transport is installed; proxied Composio then fails in the
-        // HTTP client, which the module already reports per connection.
-        "backend_api_url": crate::backend::base_url(&config.api_url).unwrap_or_default(),
-        "driver_id": "tinymemory",
-    })
+    serde_json::json!({})
 }
 
 /// A configured local artifact for `id`, if one is set.
@@ -477,12 +423,6 @@ fn local_override(config: &Config, id: &str) -> Option<PathBuf> {
         .find_map(|entry| (entry.id == id).then(|| PathBuf::from(entry.path.clone())));
 
     configured
-        .or_else(|| {
-            (id == super::memory::MODULE_ID)
-                .then(|| std::env::var_os("TINYMEMORY_TEST_MODULE"))
-                .flatten()
-                .map(PathBuf::from)
-        })
         .or_else(|| {
             (id == super::search::MODULE_ID)
                 .then(|| std::env::var_os("TINYSEARCH_TEST_MODULE"))

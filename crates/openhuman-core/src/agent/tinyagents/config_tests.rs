@@ -60,7 +60,6 @@ fn default_config_maps_to_the_crate_defaults() {
     // dialect: python-style calls mis-parse on too many models.
     assert_eq!(s.tools.dispatcher, ToolDispatcher::Auto);
     assert_eq!(s.tools, ToolConfig::default());
-    assert_eq!(s.memory.max_memory_context_chars, 2000);
 }
 
 #[test]
@@ -80,24 +79,6 @@ fn every_dispatcher_spelling_maps_and_unknown_falls_back_to_auto() {
     ] {
         assert_eq!(dispatcher_from(raw), want, "mapping {raw:?}");
     }
-}
-
-#[test]
-fn memory_limits_come_from_resolved_limits_not_the_legacy_field() {
-    let mut c = base();
-    c.agent.memory_window = Some(crate::config::schema::MemoryContextWindow::Maximum);
-    // The legacy scalar is deliberately set low; the preset must win.
-    c.agent.max_memory_context_chars = 1;
-
-    let want = c.agent.resolved_memory_limits();
-    let got = session_config_from(&c).memory;
-    assert_eq!(got.max_memory_context_chars, want.max_memory_context_chars);
-    assert!(
-        got.max_memory_context_chars > 1,
-        "preset must override the legacy scalar"
-    );
-    assert_eq!(got.per_namespace_max_chars, want.per_namespace_max_chars);
-    assert_eq!(got.total_tree_max_chars, want.total_tree_max_chars);
 }
 
 #[test]
@@ -149,7 +130,6 @@ fn per_section_mappers_agree_with_the_composed_one() {
     let s = session_config_from(&c);
     assert_eq!(s.turn, turn_config_from(&c.agent));
     assert_eq!(s.tools, tool_config_from(&c.agent));
-    assert_eq!(s.memory, memory_limits_from(&c.agent));
     assert_eq!(s.tools.dispatcher, ToolDispatcher::Pformat);
 }
 

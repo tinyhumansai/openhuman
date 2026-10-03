@@ -616,7 +616,7 @@ describe('useUsageState', () => {
   });
 
   it('suppresses near-limit banner when chat is fully routed away but background workloads remain (#3097)', async () => {
-    // Background workloads (memory, learning, …) keep the billing API call
+    // Background workloads (memory, …) keep the billing API call
     // alive (ALL_WORKLOADS check), but isFullyRoutedAway (CHAT_WORKLOADS) is
     // true so the near-limit banner must NOT show — the user's chat is not
     // on OpenHuman's budget.

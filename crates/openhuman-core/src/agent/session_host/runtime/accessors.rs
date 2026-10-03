@@ -3,7 +3,6 @@
 //! (which rebuilds the tool policy snapshot on every change).
 
 use super::super::types::{OpenHumanSessionHost, SessionHostBuilder};
-use crate::memory::Memory;
 use crate::tools::agent_policy::ToolPolicyEngine;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -124,11 +123,6 @@ impl OpenHumanSessionHost {
         &self,
     ) -> &crate::tools::agent_policy::ToolPolicySession {
         &self.tool_policy_session
-    }
-
-    /// Borrow the agent's memory backing store as an `Arc`.
-    pub fn memory_arc(&self) -> Arc<dyn Memory> {
-        Arc::clone(&self.memory)
     }
 
     /// The full host [`Config`](crate::config::Config) this session

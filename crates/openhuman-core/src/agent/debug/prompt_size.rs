@@ -95,7 +95,7 @@ impl PromptSizeReport {
     ///
     /// Split out from [`Self::build`] so `dump-all` can report every agent
     /// without paying a second render per agent — each render fetches live
-    /// Composio connections and walks the memory tree.
+    /// Composio connections.
     pub fn from_dump(dumped: &DumpedPrompt) -> Self {
         let sections = split_sections(&dumped.text);
         let mut tools: Vec<ToolSize> = dumped

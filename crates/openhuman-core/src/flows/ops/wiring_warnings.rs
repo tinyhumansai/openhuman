@@ -96,8 +96,8 @@ pub(super) async fn graph_output_field_warnings(
     use crate::flows::tinyflows::caps::fetch_live_toolkit_catalog;
     // Reading a graph's `=`-bindings is the engine's grammar, not this host's:
     // both helpers were a private copy here until the gates moved upstream.
+    use crate::integrations::composio::contract::toolkit_from_slug;
     use tinyflows::bindings::{collect_expressions, parse_node_binding};
-    use tinymemory_api::composio::toolkit_from_slug;
 
     let mut warnings = Vec::new();
     for node in &graph.nodes {
@@ -275,7 +275,7 @@ fn schema_says_path_is_non_array(output_schema: &Value, configured_path: &str) -
 /// check against).
 async fn graph_split_out_path_warnings(config: &Config, graph: &WorkflowGraph) -> Vec<String> {
     use crate::flows::tinyflows::caps::{apply_probe_override, fetch_live_toolkit_catalog};
-    use tinymemory_api::composio::toolkit_from_slug;
+    use crate::integrations::composio::contract::toolkit_from_slug;
 
     let mut warnings = Vec::new();
     for node in &graph.nodes {

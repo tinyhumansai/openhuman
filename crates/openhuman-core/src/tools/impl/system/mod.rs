@@ -13,7 +13,6 @@ mod python_exec;
 mod retrieve_tool_output;
 mod schedule;
 mod shell;
-mod tool_stats;
 mod update_apply;
 mod update_check;
 
@@ -30,7 +29,6 @@ pub use python_exec::PythonExecTool;
 pub use retrieve_tool_output::{retrieve_tool_output_tool, RetrieveToolOutputTool};
 pub use schedule::ScheduleTool;
 pub use shell::ShellTool;
-pub use tool_stats::ToolStatsTool;
 pub use update_apply::UpdateApplyTool;
 pub use update_check::UpdateCheckTool;
 

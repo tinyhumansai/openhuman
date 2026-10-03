@@ -90,18 +90,6 @@ const RESOURCE_CATALOG: &[PromptResource] = &[
         content: include_str!("../../agent/registry/agents/video_agent/prompt.md"),
     },
     PromptResource {
-        uri: "openhuman://prompts/agents/archivist",
-        name: "archivist",
-        description: "Background worker that distils conversations into persistent memory.",
-        content: include_str!("../../agent/registry/agents/archivist/prompt.md"),
-    },
-    PromptResource {
-        uri: "openhuman://prompts/agents/goals_agent",
-        name: "goals_agent",
-        description: "Background curator that keeps the user's long-term goals list fresh.",
-        content: include_str!("../../agent/registry/agents/goals_agent/prompt.md"),
-    },
-    PromptResource {
         uri: "openhuman://prompts/agents/trigger_triage",
         name: "trigger_triage",
         description: "Read-only worker that classifies incoming automation triggers.",
@@ -137,12 +125,6 @@ const RESOURCE_CATALOG: &[PromptResource] = &[
         description: "Specialist worker for task-source feeds, workflow bundles, and artifacts.",
         content: include_str!("../../agent/registry/agents/task_manager_agent/prompt.md"),
     },
-    PromptResource {
-        uri: "openhuman://prompts/agents/profile_memory_agent",
-        name: "profile_memory_agent",
-        description: "Specialist worker for profile and long-term memory updates.",
-        content: include_str!("../../agent/registry/agents/profile_memory_agent/prompt.md"),
-    },
     #[cfg(feature = "flows")]
     PromptResource {
         uri: "openhuman://prompts/agents/flow_discovery",
@@ -156,19 +138,6 @@ const RESOURCE_CATALOG: &[PromptResource] = &[
         name: "workflow_builder",
         description: "Workflow authoring specialist that builds tinyflows automation graphs and returns proposals for review.",
         content: tinyflows_copilot::prompts::WORKFLOW_BUILDER,
-    },
-    #[cfg(feature = "flows")]
-    PromptResource {
-        uri: "openhuman://prompts/agents/flow_memory_agent",
-        name: "flow_memory_agent",
-        description: "Flow Memory Agent — read-only context and memory retrieval specialist a flow's `agent` node routes to for run-time context, style, history, or people lookups.",
-        content: include_str!("../../agent/registry/agents/flow_memory_agent/prompt.md"),
-    },
-    PromptResource {
-        uri: "openhuman://prompts/agents/agent_memory",
-        name: "agent_memory",
-        description: "Dedicated memory retrieval subagent using smart-walk strategies.",
-        content: include_str!("../../memory/agent/agent/prompt.md"),
     },
     #[cfg(feature = "skills")]
     PromptResource {

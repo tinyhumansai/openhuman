@@ -111,8 +111,7 @@ pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcReque
                         "[rpc] unknown probe/legacy method (allow-listed) — debug only, not reporting to Sentry"
                     );
                 }
-                FailureDisposition::UnknownMethod { probe: false }
-                | FailureDisposition::InvalidIngestPayload => {
+                FailureDisposition::UnknownMethod { probe: false } => {
                     openhuman_core::core::observability::report_warning_message(
                         display_message.as_str(),
                         "rpc",

@@ -10,8 +10,6 @@ fn definition() -> AgentDefinition {
         omit_identity: true,
         omit_memory_context: true,
         omit_safety_preamble: true,
-        omit_profile: false,
-        omit_memory_md: true,
         model: ModelSpec::Hint("reasoning".to_string()),
         temperature: 0.2,
         tools: ToolScope::Named(vec!["web_search".to_string(), "file_read".to_string()]),
@@ -26,7 +24,6 @@ fn definition() -> AgentDefinition {
         timeout_secs: None,
         sandbox_mode: SandboxMode::ReadOnly,
         background: false,
-        trigger_memory_agent: Default::default(),
         tokenjuice_compression: crate::inference::tokenjuice::AgentTokenjuiceCompression::Auto,
         subagents: vec![
             SubagentEntry::AgentId("critic".to_string()),
@@ -65,8 +62,6 @@ fn metadata_projection_omits_prompt_and_paths() {
     assert_eq!(display.direct_tool_count, 2);
     assert!(!display.uses_wildcard_tools);
     assert_eq!(display.subagent_ids, vec!["critic"]);
-    assert!(display.includes_profile);
-    assert!(!display.includes_memory_md);
     assert!(!display.includes_memory_context);
     assert!(display.can_run_as_user_facing_worker);
     assert!(!display.write_capable);

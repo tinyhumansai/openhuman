@@ -6,7 +6,7 @@
 //! truncation tests do.
 
 use super::*;
-use crate::memory::conversations::{self, run_reply_message_id, ConversationMessage};
+use crate::threads::store::{self as conversations, run_reply_message_id, ConversationMessage};
 use serde_json::json;
 use tempfile::TempDir;
 use tinyagents_session::turn_state::store as turn_state_store;
@@ -100,7 +100,7 @@ fn message(id: &str, content: &str, sender: &str) -> ConversationMessage {
 async fn seed_message_log(dir: &std::path::Path, thread_id: &str) {
     conversations::blocking::ensure_thread(
         dir.to_path_buf(),
-        crate::memory::conversations::CreateConversationThread {
+        crate::threads::store::CreateConversationThread {
             id: thread_id.to_string(),
             title: "test thread".to_string(),
             created_at: "2026-09-24T00:00:00Z".to_string(),

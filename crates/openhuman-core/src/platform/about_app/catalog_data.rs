@@ -8,14 +8,14 @@ const LOCAL_RAW: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
     destinations: &[],
 });
 
-// A remote memory engine receives the memories the assistant stores and the
-// recall queries it runs. Local TinyCortex (the default) sends nothing.
+// Memory v2 always runs on a remote engine: it receives the documents, conversations
+// and learnings the assistant stores and the recall/fetch queries it runs.
 const MEMORY_TO_REMOTE_ENGINE: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
     leaves_device: true,
     data_kind: PrivacyDataKind::Raw,
     destinations: &[
         "TinyHumans-hosted CortexDB (when selected)",
-        "User-configured Supermemory, Mem0, Cognee, CortexDB or AgentMemory service (when selected)",
+        "User-configured CortexDB service (when selected)",
     ],
 });
 
@@ -34,7 +34,7 @@ const DERIVED_TO_BACKEND: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
     destinations: &["OpenHuman backend", "TinyHumans Neocortex"],
 });
 
-const CODING_SESSION_TO_BACKEND: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
+const RAW_TO_INFERENCE_PROVIDER: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
     leaves_device: true,
     data_kind: PrivacyDataKind::Raw,
     destinations: &["Configured OpenHuman inference provider"],
@@ -45,7 +45,7 @@ const CODING_SESSION_TO_BACKEND: Option<CapabilityPrivacy> = Some(CapabilityPriv
 // managed cloud default or a user-selected remote model). The raw file content
 // therefore leaves the device whenever a remote provider is active —
 // `LOCAL_RAW` (leaves_device: false) under-reported this. Same shape as
-// `CODING_SESSION_TO_BACKEND`: raw payload to the configured provider.
+// `RAW_TO_INFERENCE_PROVIDER`: raw payload to the configured provider.
 const AGENTS_MD_TO_INFERENCE_PROVIDER: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
     leaves_device: true,
     data_kind: PrivacyDataKind::Raw,
@@ -96,22 +96,6 @@ const GITHUB_RELEASES_METADATA: Option<CapabilityPrivacy> = Some(CapabilityPriva
     leaves_device: true,
     data_kind: PrivacyDataKind::Metadata,
     destinations: &["GitHub Releases"],
-});
-
-// GitHub repo memory source: the reader queries a repository's activity
-// (commits / issues / PRs) directly against the GitHub API — via the `gh`
-// CLI when available, otherwise the public REST API — not through the
-// OpenHuman backend. The *outbound* payload is metadata (which repo, which
-// activity, pagination) plus whatever auth `gh` carries; the fetched content
-// is archived locally under the vault and only its embeddings travel onward
-// (covered by the embedding-provider capability). Mirrors the
-// `GITHUB_RELEASES_METADATA` shape — third-party GitHub host, metadata-class
-// outbound — so the Privacy surface reflects that the request leaves the
-// device to a destination distinct from the managed backend.
-const GITHUB_REPO_SOURCE: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
-    leaves_device: true,
-    data_kind: PrivacyDataKind::Metadata,
-    destinations: &["GitHub API (api.github.com)"],
 });
 
 // Persona Pack fetches the published mascot manifest directly from GitHub raw

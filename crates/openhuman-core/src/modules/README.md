@@ -1,7 +1,7 @@
 # modules
 
 The native loadable-module host. A module is a first-party `cdylib`: `tinydocs`,
-`tinywallet`, `tinymemory`, `tinyjuice`, `tinyvoice`, `tinyruntime` (+
+`tinywallet`, `tinyjuice`, `tinyvoice`, `tinyruntime` (+
 `tinyruntime-nodejs` / `tinyruntime-python`), `tinymcp`, `tinyconnectors`,
 `tinybox`, `tinychannels`, `tinyhosts`, `tinysearch`, that
 speaks the tinybus module ABI. It is downloaded from a pinned GitHub release,
@@ -13,7 +13,7 @@ argument; this file is the navigation layer over it.
 
 Feature-gated as `modules`, and unusually load-bearing for a feature: it is ON
 in both the contributor default set and the shipped product set, because the
-memory subsystem's module-backed driver is not optional at test time (see the
+default feature set keeps it on for the shipped modules (see the
 comment above `default = [...]` in `crates/openhuman-core/Cargo.toml`).
 `documents`, `web3`, and `voice` each imply `modules` and each turn a
 per-module host half on inside this directory (`documents.rs`, `wallet.rs`,
@@ -39,8 +39,6 @@ directory on `modules`.
 
 | `wallet.rs` | Host half of `tinywallet` (feature `web3`): confidential and split transaction-signing flows |
 | `voice.rs` | Host half of `tinyvoice` (feature `voice`): the voice primitives |
-| `memory/` (`provider.rs`, `core_provider.rs`, `capabilities.rs`, `documents_tree.rs`, `entities_graph_diff.rs`, `goals_tools_sources.rs`, `ingest_answer.rs`, `people_chunks_retrieval.rs`, `sync_sessions_episodic.rs`) | `ModuleMemoryProvider`, forwarding `MemoryProvider` calls to the loaded `tinymemory` module via `tinymemory-api` |
-| `memory_host.rs` | Host-owned callbacks served *to* the TinyMemory module: `EmbeddingHost`, `ChatHost`, `ComposioHost`, and `RuntimeHost` (event publishing, error reporting, scheduler policy, spaCy); sole survivor of the `host_impls` pair after the in-process engine left (openhuman#6161) |
 | `runtime.rs` | Host half of `tinyruntime`: resolving a language runtime (via `tinyruntime-nodejs`/`-python`) and running code on it |
 | `connectors.rs` | Reaching `tinyconnectors`; egress policy, route selection, and webhook delivery stay in this crate even though scope enforcement moved into the module |
 | `search.rs` | Private TinySearch configuration, synchronous tool declarations from `tinysearch-bus`, and confidential execution calls; reloads persisted settings and refreshes a loaded module before invocation |
@@ -89,9 +87,7 @@ layer.
 
 `boot::load_declared_modules` does two things at startup: it loads search-path
 artifacts directly through the host, then calls `ensure_loaded` for every
-`LoadPolicy::Eager` record (currently only `tinymemory`, and only when
-`memory::binding::admit` selects the module-backed driver; its host callbacks
-are installed first). It never fails the boot. Everything else is
+`LoadPolicy::Eager` record (none at present). It never fails the boot. Everything else is
 `LoadPolicy::Lazy` and resolves on first `ensure_loaded` call: deliberately
 not eager, so a user who never touches a feature never pays its download.
 
@@ -137,9 +133,7 @@ method constants, request/response types, and its contract version:
 | `tinymcp-bus` | `mcp` |
 | `tinysearch-bus` | search provider declarations and bus payloads |
 | `tinychannels-bus` | channel vocabulary |
-| `tinymemory-api` | memory (selectively re-exported as `crate::memory::api`, not copied or widened) |
-| `tinymemory-bus` | memory method names (`names::methods`, used throughout `memory/`, e.g. `memory/provider.rs`) |
-| `tinyconnectors-bus` | `tinyconnectors` names and the Composio types `memory_host.rs` forwards |
+| `tinyconnectors-bus` | `tinyconnectors` names and the Composio types |
 
 Rules: never redeclare a contract type in OpenHuman; call members through
 contract constants, not string literals; contract crates stay synchronous and
@@ -173,8 +167,6 @@ sandbox boundary. From `AGENTS.md`, do not weaken these:
 - `crate::runtime::client`: the ungated facade re-exporting `resolve`,
   `execute`, `pool_stats`, and `RuntimeCallError` from `modules::runtime`, so
   a build without `modules` still compiles.
-- `memory::binding`: binds `ModuleMemoryProvider` when the memory driver
-  selects the module-backed class.
 - `core::all::all_registered_controllers`: wires the `modules` RPC namespace
   (`crate::modules::all_registered_controllers()`).
 - `config::schema::modules::ModulesConfig`: `enabled`, `allow_download`,
@@ -191,8 +183,8 @@ sandbox boundary. From `AGENTS.md`, do not weaken these:
 
 - [`modules/registry`](registry/README.md) for how a module's record is
   admitted (checksum, ABI, manifest).
-- [`modules/memory`](memory/README.md) for one concrete example of a module's
-  host-side half, `tinymemory`.
+- [`modules/documents.rs`](documents.rs) for one concrete example of a module's
+  host-side half, `tinydocs`.
 - `gitbooks/developing/performance.md` for how loading modules on demand
   (rather than linking everything in) keeps a minimal build small and a full
   one modular without paying for what a given install never uses.

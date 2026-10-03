@@ -106,7 +106,7 @@ pub(super) struct ParallelEntry {
 #[derive(Debug, Clone)]
 pub(super) struct WebChatTaskResult {
     pub(super) full_response: String,
-    pub(super) citations: Vec<crate::memory::agent::memory_loader::MemoryCitation>,
+    pub(super) citations: Vec<crate::memory::types::TurnCitation>,
     /// Holistic token/cost/context totals for the turn (parent + sub-agents),
     /// forwarded to the frontend on `chat_done`. `None` for synthetic results
     /// (e.g. budget-exhausted placeholders) that never ran a real turn.

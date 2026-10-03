@@ -686,10 +686,9 @@ impl CoreProcessHandle {
     /// drain, then aborts whatever is left so any background tokio tasks the
     /// server spawned stop driving I/O before CEF's teardown runs.
     ///
-    /// The moment is what makes the server's post-drain teardown real. The
-    /// memory engine releases its job leases there, and an immediate abort
-    /// skipped it on every normal quit, so every next launch waited the
-    /// leases out (tinymemory#133). The wait is the same shape as the gateway
+    /// The moment is what makes the server's post-drain teardown real. Memory
+    /// stores its buffered conversation turns there, and an immediate abort
+    /// would drop them on every normal quit. The wait is the same shape as the gateway
     /// shutdown beside it: short, bounded, and worth the last moment of the
     /// UI thread. A server that does not finish in time is aborted as before.
     pub async fn send_terminate_signal(&self) {
@@ -703,8 +702,8 @@ impl CoreProcessHandle {
     ///
     /// The moment is sized from what that teardown is allowed to take, so the
     /// abort below never lands in the middle of it: the memory exit budget
-    /// (`EXIT_BUDGET`, every driver and the hook registry on one deadline)
-    /// plus half a second for the drain itself. There is no local-runtime
+    /// (`EXIT_BUDGET`, storing buffered conversation turns) plus half a second
+    /// for the drain itself. There is no local-runtime
     /// cleanup after it: OpenHuman never spawns Ollama / LM Studio / MLX.
     /// Typical quits finish in milliseconds; the budget is only what a wedged
     /// store may cost.

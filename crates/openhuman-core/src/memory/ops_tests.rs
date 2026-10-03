@@ -1,281 +1,345 @@
-//! Unit tests for the memory `ops` helpers (retrieval context construction,
-//! hit filtering, and LLM context message formatting).
+use super::*;
+use crate::memory::error::{INVALID_REQUEST, MEMORY_OFF, UNSUPPORTED};
+use crate::memory::test_fixtures::{bind_reference, config_in, stored};
+use crate::memory::types::EngineStatus;
+use tinymemory::{FetchMode, ItemKind, MetaFilter, SourceKind, SourceRef, ToolCallRef};
 
-// The engine's re-export and the contract's are the same item; name the
-// contract, which is what this crate still links (openhuman#6161).
-use serde_json::json;
-use tinymemory_api::types::{MemoryItemKind, NamespaceMemoryHit, RetrievalScoreBreakdown};
-
-use super::{build_retrieval_context, filter_hits_by_document_ids, format_llm_context_message};
-use crate::memory::api::types::GraphRelationRecord;
-
-fn sample_hit() -> NamespaceMemoryHit {
-    NamespaceMemoryHit {
-        id: "doc-1".to_string(),
-        kind: MemoryItemKind::Document,
-        namespace: "team".to_string(),
-        key: "atlas-status".to_string(),
-        title: Some("Atlas status".to_string()),
-        content: "Project Atlas is owned by Alice.".to_string(),
-        category: "core".to_string(),
-        source_type: Some("doc".to_string()),
-        updated_at: 1_700_000_000.0,
-        score: 0.92,
-        score_breakdown: RetrievalScoreBreakdown {
-            keyword_relevance: 0.3,
-            vector_similarity: 0.4,
-            graph_relevance: 0.9,
-            episodic_relevance: 0.0,
-            freshness: 0.0,
-            final_score: 0.92,
-        },
-        document_id: Some("doc-1".to_string()),
-        chunk_id: Some("doc-1#chunk-1".to_string()),
-        supporting_relations: vec![GraphRelationRecord {
-            namespace: Some("team".to_string()),
-            subject: "Alice".to_string(),
-            predicate: "OWNS".to_string(),
-            object: "Atlas".to_string(),
-            attrs: json!({"source": "graph"}),
-            updated_at: 1_700_000_000.0,
-            evidence_count: 2,
-            order_index: Some(1),
-            document_ids: vec!["doc-1".to_string()],
-            chunk_ids: vec!["doc-1#chunk-1".to_string()],
-        }],
-        taint: crate::memory::MemoryTaint::Internal,
+fn learn_params(text: &str) -> LearnParams {
+    LearnParams {
+        text: text.to_string(),
+        kind: None,
+        confidence: None,
+        meta: None,
     }
 }
 
-#[test]
-fn build_retrieval_context_projects_hits_into_relations_and_chunks() {
-    let context = build_retrieval_context(&[sample_hit()]);
-    assert_eq!(context.entities.len(), 2);
-    assert_eq!(context.relations.len(), 1);
-    assert_eq!(context.chunks.len(), 1);
-    assert_eq!(context.chunks[0].document_id.as_deref(), Some("doc-1"));
-    assert_eq!(context.relations[0].predicate, "OWNS");
+#[tokio::test]
+async fn every_engine_operation_reports_memory_off_without_an_engine() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+
+    let recall_error = recall(
+        &config,
+        RecallParams {
+            question: "anything?".into(),
+            filter: None,
+            limit: None,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(recall_error.code(), MEMORY_OFF);
+
+    let fetch_error = fetch(
+        &config,
+        FetchParams {
+            query: "x".into(),
+            mode: None,
+            filter: None,
+            limit: None,
+            cursor: None,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(fetch_error.code(), MEMORY_OFF);
+
+    let learn_error = learn(&config, learn_params("a fact"), None)
+        .await
+        .unwrap_err();
+    assert_eq!(learn_error.code(), MEMORY_OFF);
+
+    let forget_error = forget(
+        &config,
+        ForgetParams {
+            ids: vec!["a".into()],
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(forget_error.code(), MEMORY_OFF);
+
+    let list_error = items_list(&config, ItemsListParams::default())
+        .await
+        .unwrap_err();
+    assert_eq!(list_error.code(), MEMORY_OFF);
+
+    assert_eq!(engines_list(&config).active, None);
+    assert!(!engines_list(&config).engines.is_empty());
+
+    let view = engine_get(&config).await;
+    assert_eq!(view.status, EngineStatus::Off);
+    assert_eq!(view.engine.as_deref(), Some(TINYHUMANS_ENGINE));
+    assert!(view.reason.is_some());
+    assert!(view.fetch_modes.is_empty());
+    assert!(!view.has_key);
 }
 
-fn sample_hit_with_entity_types() -> NamespaceMemoryHit {
-    NamespaceMemoryHit {
-        id: "doc-2".to_string(),
-        kind: MemoryItemKind::Document,
-        namespace: "team".to_string(),
-        key: "atlas-status".to_string(),
-        title: Some("Atlas status".to_string()),
-        content: "Project Atlas is owned by Alice.".to_string(),
-        category: "core".to_string(),
-        source_type: Some("doc".to_string()),
-        updated_at: 1_700_000_000.0,
-        score: 0.92,
-        score_breakdown: RetrievalScoreBreakdown {
-            keyword_relevance: 0.3,
-            vector_similarity: 0.4,
-            graph_relevance: 0.9,
-            episodic_relevance: 0.0,
-            freshness: 0.0,
-            final_score: 0.92,
+#[tokio::test]
+async fn learn_recall_fetch_list_and_forget_round_trip() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    let engine = bind_reference(&config);
+
+    let learned = learn(
+        &config,
+        learn_params("The user prefers dark roast coffee"),
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(!learned.id.is_empty());
+
+    let answer = recall(
+        &config,
+        RecallParams {
+            question: "coffee".into(),
+            filter: None,
+            limit: Some(5),
         },
-        document_id: Some("doc-2".to_string()),
-        chunk_id: Some("doc-2#chunk-1".to_string()),
-        supporting_relations: vec![GraphRelationRecord {
-            namespace: Some("team".to_string()),
-            subject: "Alice".to_string(),
-            predicate: "OWNS".to_string(),
-            object: "Atlas".to_string(),
-            attrs: json!({
-                "source": "ingestion",
-                "entity_types": {
-                    "subject": "PERSON",
-                    "object": "PROJECT"
-                }
+    )
+    .await
+    .unwrap();
+    assert!(!answer.citations.is_empty());
+
+    let page = fetch(
+        &config,
+        FetchParams {
+            query: "coffee".into(),
+            mode: None,
+            filter: Some(MetaFilter {
+                kinds: vec![ItemKind::Learning],
+                ..MetaFilter::default()
             }),
-            updated_at: 1_700_000_000.0,
-            evidence_count: 2,
-            order_index: Some(1),
-            document_ids: vec!["doc-2".to_string()],
-            chunk_ids: vec!["doc-2#chunk-1".to_string()],
-        }],
-        taint: crate::memory::MemoryTaint::Internal,
+            limit: Some(1000),
+            cursor: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(page.hits.len(), 1);
+
+    let listed = items_list(&config, ItemsListParams::default())
+        .await
+        .unwrap();
+    assert_eq!(listed.items.len(), 1);
+    assert_eq!(listed.items[0].id.0, learned.id);
+
+    let view = engines_list(&config);
+    assert_eq!(view.active.as_deref(), Some("reference"));
+    let health = engine_get(&config).await;
+    assert_eq!(health.status, EngineStatus::Ok);
+    assert!(!health.fetch_modes.is_empty());
+
+    let forgotten = forget(
+        &config,
+        ForgetParams {
+            ids: vec![learned.id.clone(), "  ".into()],
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(forgotten.forgotten, 1);
+    assert!(engine.is_empty());
+}
+
+#[tokio::test]
+async fn forget_needs_an_id() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    bind_reference(&config);
+    let error = forget(
+        &config,
+        ForgetParams {
+            ids: vec![" ".into()],
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code(), INVALID_REQUEST);
+}
+
+#[test]
+fn host_meta_wins_over_caller_meta() {
+    let caller = MemoryMeta {
+        thread_id: Some("forged".into()),
+        repo: Some("owner/repo".into()),
+        tags: vec!["mine".into()],
+        ..MemoryMeta::default()
+    };
+    let host = MemoryMeta {
+        thread_id: Some("t-real".into()),
+        agent_id: Some("orchestrator".into()),
+        tool_call: Some(ToolCallRef {
+            name: "memory".into(),
+            id: Some("call-1".into()),
+        }),
+        source: SourceRef {
+            kind: SourceKind::Agent,
+            id: None,
+        },
+        tags: vec!["host".into(), "mine".into()],
+        ..MemoryMeta::default()
+    };
+    let item = learning_item(
+        LearnParams {
+            text: "  likes tea  ".into(),
+            kind: Some(LearningKind::Preference),
+            confidence: Some(0.5),
+            meta: Some(caller),
+        },
+        Some(host),
+    )
+    .unwrap();
+    let meta = item.meta();
+    assert_eq!(meta.thread_id.as_deref(), Some("t-real"));
+    assert_eq!(meta.agent_id.as_deref(), Some("orchestrator"));
+    assert_eq!(
+        meta.repo.as_deref(),
+        Some("owner/repo"),
+        "caller fields kept"
+    );
+    assert_eq!(meta.source.kind, SourceKind::Agent);
+    assert_eq!(meta.tags, vec!["mine".to_string(), "host".to_string()]);
+    assert!(meta.observed_at.is_some());
+    match item {
+        StoreItem::Learning {
+            text,
+            kind,
+            confidence,
+            ..
+        } => {
+            assert_eq!(text, "likes tea");
+            assert_eq!(kind, LearningKind::Preference);
+            assert!((confidence - 0.5).abs() < f32::EPSILON);
+        }
+        other => panic!("expected a learning, got {:?}", other.kind()),
     }
 }
 
 #[test]
-fn build_retrieval_context_extracts_entity_types_from_attrs() {
-    let context = build_retrieval_context(&[sample_hit_with_entity_types()]);
-    assert_eq!(context.entities.len(), 2);
+fn learning_confidence_must_be_a_probability() {
+    let mut params = learn_params("x");
+    params.confidence = Some(1.5);
+    assert_eq!(
+        learning_item(params, None).unwrap_err().code(),
+        INVALID_REQUEST
+    );
+    assert_eq!(
+        learning_item(learn_params("   "), None).unwrap_err().code(),
+        INVALID_REQUEST
+    );
+}
 
-    let alice = context.entities.iter().find(|e| e.name == "Alice").unwrap();
-    assert_eq!(alice.entity_type.as_deref(), Some("PERSON"));
-
-    let atlas = context.entities.iter().find(|e| e.name == "Atlas").unwrap();
-    assert_eq!(atlas.entity_type.as_deref(), Some("PROJECT"));
+#[tokio::test]
+async fn stores_are_scrubbed_of_secrets() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    let engine = bind_reference(&config);
+    learn(
+        &config,
+        learn_params("deploy key sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789 is set"),
+        None,
+    )
+    .await
+    .unwrap();
+    let items = stored(&engine, MetaFilter::default()).await;
+    assert_eq!(items.len(), 1);
+    assert!(!items[0]
+        .text
+        .contains("abcdefghijklmnopqrstuvwxyz0123456789"));
 }
 
 #[test]
-fn build_retrieval_context_entity_type_none_when_attrs_missing() {
-    let context = build_retrieval_context(&[sample_hit()]);
-    assert_eq!(context.entities.len(), 2);
+fn engine_set_validates_and_rebinds() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut config = config_in(&tmp);
 
-    for entity in &context.entities {
+    let unknown = EngineSetParams {
+        engine: "nope".into(),
+        endpoint: None,
+        api_key: None,
+    };
+    assert_eq!(
+        apply_engine_set(&mut config, &unknown).unwrap_err().code(),
+        INVALID_REQUEST
+    );
+
+    for endpoint in ["not a url", "ftp://host", "file:///etc"] {
+        let params = EngineSetParams {
+            engine: CORTEXDB_ENGINE.into(),
+            endpoint: Some(endpoint.into()),
+            api_key: None,
+        };
         assert_eq!(
-            entity.entity_type, None,
-            "entity_type should be None when attrs has no entity_types"
+            apply_engine_set(&mut config, &params).unwrap_err().code(),
+            INVALID_REQUEST,
+            "{endpoint}"
         );
     }
-}
 
-#[test]
-fn helpers_filter_document_ids_and_format_context_message() {
-    let hit = sample_hit();
-    let filtered = filter_hits_by_document_ids(vec![hit.clone()], Some(&["doc-2".to_string()]));
-    assert!(filtered.is_empty());
-
-    let message = format_llm_context_message(Some("who owns atlas"), &[hit])
-        .expect("context message should exist");
-    assert!(message.contains("Query: who owns atlas"));
-    // Without entity_types in attrs, relations render without type annotations.
-    assert!(message.contains("Alice -[OWNS]-> Atlas"));
-}
-
-#[test]
-fn format_llm_context_message_includes_entity_types_when_present() {
-    let hit = sample_hit_with_entity_types();
-    let message = format_llm_context_message(Some("who owns atlas"), &[hit])
-        .expect("context message should exist");
-    assert!(
-        message.contains("Alice (PERSON) -[OWNS]-> Atlas (PROJECT)"),
-        "expected entity types in relation text, got: {message}"
-    );
-}
-
-// ── Pure-helper coverage ───────────────────────────────────────
-
-use super::{
-    chunk_metadata, extract_entity_type, maybe_retrieval_context, memory_request_id,
-    relation_identity, relation_metadata, timestamp_to_rfc3339, validate_memory_relative_path,
-};
-use crate::memory::MemoryRetrievalContext;
-
-#[test]
-fn memory_request_id_is_nonempty_and_unique() {
-    let a = memory_request_id();
-    let b = memory_request_id();
-    assert!(!a.is_empty());
-    assert!(!b.is_empty());
-    assert_ne!(a, b);
-}
-
-#[test]
-fn timestamp_to_rfc3339_valid_seconds_and_fractional() {
-    let s = timestamp_to_rfc3339(1_700_000_000.0).unwrap();
-    assert!(s.contains("2023"));
-    // Fractional seconds should preserve nanoseconds within range.
-    let s = timestamp_to_rfc3339(1_700_000_000.5).unwrap();
-    assert!(s.contains("2023"));
-}
-
-fn relation_fixture(namespace: Option<&str>) -> GraphRelationRecord {
-    GraphRelationRecord {
-        namespace: namespace.map(str::to_string),
-        subject: "Alice".into(),
-        predicate: "OWNS".into(),
-        object: "Atlas".into(),
-        attrs: json!({"entity_types":{"subject":"PERSON","object":"PROJECT"}}),
-        updated_at: 1_700_000_000.0,
-        evidence_count: 2,
-        order_index: Some(1),
-        document_ids: vec!["doc-1".into()],
-        chunk_ids: vec!["doc-1#c1".into()],
-    }
-}
-
-#[test]
-fn relation_identity_uses_global_for_missing_namespace() {
-    let rel = relation_fixture(None);
-    assert_eq!(relation_identity(&rel), "global|Alice|OWNS|Atlas");
-    let rel = relation_fixture(Some("team"));
-    assert_eq!(relation_identity(&rel), "team|Alice|OWNS|Atlas");
-}
-
-#[test]
-fn relation_metadata_includes_expected_keys() {
-    let rel = relation_fixture(Some("team"));
-    let m = relation_metadata(&rel);
-    assert_eq!(m["namespace"], "team");
-    assert_eq!(m["order_index"], 1);
-    assert!(m["document_ids"].is_array());
-    assert!(m["updated_at"].is_string());
-}
-
-#[test]
-fn chunk_metadata_exposes_score_breakdown() {
-    let m = chunk_metadata(&sample_hit());
-    assert_eq!(m["kind"], "document");
-    assert_eq!(m["namespace"], "team");
-    assert!(m["score_breakdown"]["final_score"].is_number());
-}
-
-#[test]
-fn extract_entity_type_returns_nonempty_or_none() {
-    let attrs = json!({"entity_types":{"subject":"PERSON","object":""}});
-    assert_eq!(
-        extract_entity_type(&attrs, "subject"),
-        Some("PERSON".into())
-    );
-    // Empty string → None.
-    assert_eq!(extract_entity_type(&attrs, "object"), None);
-    // Missing role → None.
-    assert_eq!(extract_entity_type(&attrs, "missing"), None);
-    // Empty attrs → None.
-    assert_eq!(extract_entity_type(&json!({}), "subject"), None);
-}
-
-#[test]
-fn format_llm_context_message_returns_none_for_empty_hits() {
-    assert!(format_llm_context_message(None, &[]).is_none());
-    assert!(format_llm_context_message(Some("query"), &[]).is_none());
-}
-
-#[test]
-fn filter_hits_by_document_ids_passes_through_when_filter_is_none() {
-    let hits = vec![sample_hit()];
-    let filtered = filter_hits_by_document_ids(hits.clone(), None);
-    assert_eq!(filtered.len(), 1);
-}
-
-#[test]
-fn filter_hits_by_document_ids_retains_matching_ids() {
-    let hits = vec![sample_hit()];
-    let filtered = filter_hits_by_document_ids(hits, Some(&["doc-1".to_string()]));
-    assert_eq!(filtered.len(), 1);
-}
-
-#[test]
-fn maybe_retrieval_context_respects_include_flag() {
-    let empty = MemoryRetrievalContext {
-        entities: vec![],
-        relations: vec![],
-        chunks: vec![],
+    let keyed_tinyhumans = EngineSetParams {
+        engine: TINYHUMANS_ENGINE.into(),
+        endpoint: None,
+        api_key: Some("k".into()),
     };
-    // include=false → always None
-    assert!(maybe_retrieval_context(false, empty.clone()).is_none());
-    // include=true but context empty → None
-    assert!(maybe_retrieval_context(true, empty).is_none());
-    // include=true + non-empty context → Some
-    let ctx = build_retrieval_context(&[sample_hit()]);
-    assert!(maybe_retrieval_context(true, ctx).is_some());
+    assert_eq!(
+        apply_engine_set(&mut config, &keyed_tinyhumans)
+            .unwrap_err()
+            .code(),
+        INVALID_REQUEST
+    );
+
+    assert!(!engine::is_on(&config));
+    let cortex = EngineSetParams {
+        engine: CORTEXDB_ENGINE.into(),
+        endpoint: Some("https://cortex.example.test".into()),
+        api_key: Some("cdb-test-key".into()),
+    };
+    apply_engine_set(&mut config, &cortex).unwrap();
+    assert_eq!(config.memory.engine, CORTEXDB_ENGINE);
+    assert_eq!(
+        config.memory.endpoint_for(CORTEXDB_ENGINE).as_deref(),
+        Some("https://cortex.example.test")
+    );
+    let bound = engine::resolve(&config).engine().expect("rebuilt on");
+    assert_eq!(bound.id, CORTEXDB_ENGINE);
+    assert_eq!(bound.endpoint, "https://cortex.example.test");
+
+    let clear = EngineSetParams {
+        engine: CORTEXDB_ENGINE.into(),
+        endpoint: Some(String::new()),
+        api_key: Some(String::new()),
+    };
+    apply_engine_set(&mut config, &clear).unwrap();
+    assert!(config.memory.endpoint_for(CORTEXDB_ENGINE).is_none());
+    assert!(!engine::is_on(&config), "removing the key turns memory off");
 }
 
-#[test]
-fn validate_memory_relative_path_rejects_empty_absolute_and_traversal() {
-    // Empty string is now allowed: it refers to the memory root
-    // (`<workspace>/memory`) since the file-based RPCs resolve everything
-    // relative to that directory rather than the workspace root.
-    assert!(validate_memory_relative_path("").is_ok());
-    assert!(validate_memory_relative_path("/etc/passwd").is_err());
-    assert!(validate_memory_relative_path("../secrets").is_err());
-    assert!(validate_memory_relative_path("ok/subdir/file.md").is_ok());
-    assert!(validate_memory_relative_path("simple.txt").is_ok());
+#[tokio::test]
+async fn fetch_refuses_a_mode_the_engine_does_not_declare() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut config = config_in(&tmp);
+    apply_engine_set(
+        &mut config,
+        &EngineSetParams {
+            engine: CORTEXDB_ENGINE.into(),
+            endpoint: Some("https://cortex.example.test".into()),
+            api_key: Some("cdb-test-key".into()),
+        },
+    )
+    .unwrap();
+    let error = fetch(
+        &config,
+        FetchParams {
+            query: "x".into(),
+            mode: Some(FetchMode::Keyword),
+            filter: None,
+            limit: None,
+            cursor: None,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code(), UNSUPPORTED);
 }

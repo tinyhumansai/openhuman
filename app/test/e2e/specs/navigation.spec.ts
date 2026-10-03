@@ -14,7 +14,8 @@
  * the BottomTabBar / router silently no-ops.
  */
 import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
-import { hasAppChrome } from '../helpers/element-helpers';
+import { hasAppChrome, waitForTestId } from '../helpers/element-helpers';
+import { isTauriDriver } from '../helpers/platform';
 import { resetApp } from '../helpers/reset-app';
 import { navigateViaHash, waitForHomePage } from '../helpers/shared-flows';
 import { startMockServer, stopMockServer } from '../mock-server';
@@ -26,6 +27,8 @@ interface Route {
   /** Min character count we expect in the rendered React tree after the
    * route mounts. A truly-blank screen surfaces as <100 chars of text. */
   minChars?: number;
+  /** A `data-testid` that must be in the DOM once the route has mounted. */
+  readyTestId?: string;
 }
 
 // Phase 2/3/6 IA revamp:
@@ -43,11 +46,12 @@ const ROUTES: Route[] = [
   { hash: '/connections' },
   { hash: '/settings' },
   { hash: '/flows' },
-  // Orchestration folded under Brain; `/orchestration` now redirects to
-  // `/brain?tab=orchestration`, so we assert the Brain destination instead
-  // (the bare `/orchestration` hash would settle on the redirect target and
-  // fail the `^#/orchestration` match, same reasoning as /home above).
-  { hash: '/brain' },
+  // Memory (v2) is a sub-page of Connections; the retired `/brain` route
+  // redirects here, so assert the canonical destination (a redirecting hash
+  // would settle on its target and fail the `^#<hash>` match, same reasoning
+  // as /home above). The Memory page mounts with its chip bar whatever the
+  // engine state, so its root testid is a stable ready signal.
+  { hash: '/connections?tab=brain', readyTestId: 'memory-page' },
 ];
 
 async function rootTextLength(): Promise<number> {
@@ -90,7 +94,14 @@ describe('Navigation', () => {
       await waitForAppReady(10_000);
 
       const hash = await browser.execute(() => window.location.hash);
-      expect(hash).toMatch(new RegExp(`^#${route.hash}`));
+      // Escape the hash: `?` in `/connections?tab=brain` is a regex quantifier.
+      const escaped = route.hash.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      expect(hash).toMatch(new RegExp(`^#${escaped}`));
+
+      // waitForTestId is tauri-driver only; Mac2 keeps the hash + char checks.
+      if (route.readyTestId && isTauriDriver()) {
+        await waitForTestId(route.readyTestId, 15_000);
+      }
 
       const chars = await rootTextLength();
       expect(chars).toBeGreaterThan(route.minChars ?? 50);

@@ -54,9 +54,9 @@ const ROUTES: RouteCheck[] = [
     markers: ['Notifications', 'Alerts', 'Notification', 'No notifications'],
   },
   { hash: '/settings', markers: ['Settings', 'Account', 'Billing', 'Advanced'] },
-  // Brain page (the old /activity & /intelligence pages were retired; memory
-  // lives here now). Tabs: Graph, Memory, Sources, Sync.
-  { hash: '/brain', markers: ['Graph', 'Memory', 'Sources'] },
+  // Memory page (Connections → Memory, v2). Chips: Engine, Ask, Learnings,
+  // Conversations, Documents, Context.
+  { hash: '/connections?tab=brain', markers: ['Engine', 'Ask', 'Documents', 'Memory'] },
   {
     hash: '/home',
     markers: [

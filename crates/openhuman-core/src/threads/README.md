@@ -24,7 +24,7 @@ is intentionally no task-board, todo, or goal RPC surface here.
 ## Persistence
 
 Conversation and message storage is delegated to
-`memory::conversations::blocking`; do not call the synchronous conversation
+`threads::store::blocking` (the store is `tinyagents_session::threads`); do not call the synchronous conversation
 store from async handlers. Turn snapshots live under
 `memory/conversations/turn_states/` and are retained for settled processing
 replay. The welcome migration is guarded by

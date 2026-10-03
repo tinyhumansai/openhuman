@@ -1,6 +1,6 @@
 //! Unified chat-provider factory.
 //!
-//! Resolves workload names (e.g. `"reasoning"`, `"learning"`) to a
+//! Resolves workload names (e.g. `"reasoning"`, `"summarization"`) to a
 //! crate-native `ChatModel` plus the concrete model id selected for a workload.
 //!
 //! ## Provider-string grammar

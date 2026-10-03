@@ -16,12 +16,12 @@ async fn create_chat_model_managed_emits_exactly_one_egress_realpath() {
     let mut rx = crate::core::bus::BUS.get().unwrap().receiver();
 
     // Unique model marker so the process-wide bus can't confuse a concurrent
-    // test's managed event with ours. `learning` has no managed tier and
+    // test's managed event with ours. `scratch` has no managed tier and
     // resolves to the managed backend, so `default_model` flows through verbatim.
     let marker = "egress-managed-realpath-marker-v1";
     let mut config = Config::default();
     config.default_model = Some(marker.to_string());
-    let _ = create_chat_model_with_model_id("learning", &config, 0.7);
+    let _ = create_chat_model_with_model_id("scratch", &config, 0.7);
 
     // Bound the drain with a unique sentinel published AFTER our construction.
     let sentinel = "egress-managed-sentinel-end";
@@ -121,7 +121,6 @@ fn local_chat_still_routes_background_roles_to_the_managed_backend() {
         "embeddings",
         "memory",
         "summarization",
-        "learning",
         "agentic",
         "burst",
     ] {
@@ -239,7 +238,6 @@ fn cloud_fallback_roles_match_the_roles_provider_for_role_actually_falls_back() 
         "embeddings",
         "memory",
         "summarization",
-        "learning",
         "agentic",
         "burst",
     ] {

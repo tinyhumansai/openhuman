@@ -2,9 +2,7 @@ use super::*;
 use crate::channels::email_channel::EmailConfig;
 use crate::channels::providers::yuanbao::YuanbaoConfig;
 use crate::config::schema::{DiscordConfig, IMessageConfig};
-use chrono::{TimeZone, Utc};
 use tempfile::tempdir;
-use tinymemory_api::chunks::{chunk_id, Chunk, Metadata, SourceKind, SourceRef};
 
 fn isolated_test_config() -> (tempfile::TempDir, Config) {
     let tmp = tempdir().expect("failed to create temp dir");
@@ -13,30 +11,6 @@ fn isolated_test_config() -> (tempfile::TempDir, Config) {
     config.config_path = tmp.path().join("config.toml");
     std::fs::create_dir_all(&config.workspace_dir).expect("failed to create workspace dir");
     (tmp, config)
-}
-
-fn sample_chat_chunk(source_id: &str, seq: u32) -> Chunk {
-    let ts = Utc
-        .timestamp_millis_opt(1_700_000_000_000 + i64::from(seq))
-        .unwrap();
-    Chunk {
-        id: chunk_id(SourceKind::Chat, source_id, seq, "channel memory"),
-        content: format!("channel memory {source_id} {seq}"),
-        metadata: Metadata {
-            source_kind: SourceKind::Chat,
-            source_id: source_id.to_string(),
-            owner: "alice@example.com".to_string(),
-            timestamp: ts,
-            time_range: (ts, ts),
-            tags: vec!["channel".to_string()],
-            source_ref: Some(SourceRef::new(format!("discord://{source_id}/{seq}"))),
-            path_scope: None,
-        },
-        token_count: 12,
-        seq_in_source: seq,
-        created_at: ts,
-        partial_message: false,
-    }
 }
 
 /// Read the persisted Discord `allowed_users` array from the saved config.toml.
