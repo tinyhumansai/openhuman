@@ -338,3 +338,99 @@ fn a_mistyped_file_path_is_a_correctable_call_not_a_missing_program() {
         Some(("unsupported", 0))
     );
 }
+
+/// Queue one validation/no-progress-style nudge the way a first shell timeout
+/// does, and return the middleware holding it.
+async fn middleware_with_one_pending_nudge() -> RepeatedToolFailureMiddleware {
+    let handle = SteeringHandle::allow_all();
+    let slot = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let mw = RepeatedToolFailureMiddleware::new(handle, 3, slot);
+    let mut call = TaToolCall::new(
+        "sh-1",
+        "shell",
+        serde_json::json!({ "command": "whois a.io" }),
+    );
+    mw.before_tool(&mut ctx(), &(), &mut call).await.unwrap();
+    let mut result = failing_result("shell", "Command timed out after 60s and was killed");
+    mw.after_tool(&mut ctx(), &(), &invocation("sh-1", "shell"), &mut result)
+        .await
+        .unwrap();
+    mw
+}
+
+fn nudge_request(leading: &TaMessage) -> ModelRequest {
+    ModelRequest {
+        messages: vec![
+            leading.clone(),
+            TaMessage::user("look up a.io"),
+            TaMessage::tool("sh-1", "Command timed out after 60s and was killed"),
+        ],
+        ..Default::default()
+    }
+}
+
+fn system_messages(request: &ModelRequest) -> usize {
+    request
+        .messages
+        .iter()
+        .filter(|message| matches!(message, TaMessage::System(_)))
+        .count()
+}
+
+/// #6962: DeepSeek moves every system turn to the prompt head, so a nudge sent
+/// as a new system message reset its prompt cache to the static prefix. For a
+/// model whose profile hoists system messages the nudge rides the tail tool
+/// result instead, and the leading system message stays byte-identical.
+#[tokio::test]
+async fn nudges_for_a_hoisting_model_add_no_system_message() {
+    let mw = middleware_with_one_pending_nudge().await;
+    let mut run_ctx = ctx();
+    run_ctx.model_profile = Some(tinyinference_llm::model::ModelProfile {
+        hoists_system_messages: true,
+        mid_conversation_system_messages: true,
+        ..Default::default()
+    });
+    let leading = TaMessage::system("persona");
+    let mut request = nudge_request(&leading);
+
+    mw.nudge_injector()
+        .before_model(&mut run_ctx, &(), &mut request)
+        .await
+        .unwrap();
+
+    assert_eq!(request.messages.len(), 3, "no message added");
+    assert_eq!(
+        request.messages[0], leading,
+        "leading system message untouched"
+    );
+    assert_eq!(system_messages(&request), 1, "no new system message");
+    let tail = request.messages.last().unwrap().text();
+    assert!(tail.starts_with("Command timed out"), "{tail}");
+    assert!(tail.contains("smaller, bounded"), "nudge delivered: {tail}");
+}
+
+/// Other models keep the tail system message the nudge always used.
+#[tokio::test]
+async fn nudges_for_other_models_stay_tail_system_messages() {
+    let mw = middleware_with_one_pending_nudge().await;
+    let leading = TaMessage::system("persona");
+    let mut request = nudge_request(&leading);
+
+    mw.nudge_injector()
+        .before_model(&mut ctx(), &(), &mut request)
+        .await
+        .unwrap();
+
+    assert_eq!(request.messages.len(), 4);
+    assert_eq!(request.messages[0], leading);
+    assert!(matches!(
+        request.messages.last(),
+        Some(TaMessage::System(_))
+    ));
+    assert!(request
+        .messages
+        .last()
+        .unwrap()
+        .text()
+        .contains("smaller, bounded"));
+}
