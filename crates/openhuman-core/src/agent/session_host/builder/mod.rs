@@ -13,6 +13,7 @@ mod dispatcher;
 mod factory;
 mod helpers;
 mod host_tools;
+mod iteration_cap;
 mod setters;
 
 pub use host_tools::{HostTools, HostTurnTools, TurnContext};

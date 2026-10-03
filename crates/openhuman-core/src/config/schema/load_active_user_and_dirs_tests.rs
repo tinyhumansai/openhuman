@@ -695,3 +695,34 @@ fn env_overlay_runtime_pool_workers_and_enabled() {
         "empty python worker count keeps the prior value"
     );
 }
+
+/// #6958: the iteration cap could only be raised by patching `agent.toml`.
+/// `OPENHUMAN_AGENT_MAX_TOOL_ITERATIONS` sets the explicit override that wins
+/// over the agent definition's cap.
+#[test]
+fn env_overlay_agent_max_tool_iterations_override() {
+    let mut cfg = Config::default();
+    assert_eq!(cfg.agent.max_tool_iterations_override, None);
+
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new().with("OPENHUMAN_AGENT_MAX_TOOL_ITERATIONS", " 250 "),
+    );
+    assert_eq!(cfg.agent.max_tool_iterations_override, Some(250));
+    assert_eq!(
+        cfg.agent.max_tool_iterations,
+        Config::default().agent.max_tool_iterations,
+        "the override never rewrites the definition-less default"
+    );
+
+    // Zero, garbage and blank values are ignored, keeping the last good value.
+    for ignored in ["0", "lots", "-5", ""] {
+        cfg.apply_env_overlay_with(
+            &HashMapEnv::new().with("OPENHUMAN_AGENT_MAX_TOOL_ITERATIONS", ignored),
+        );
+        assert_eq!(
+            cfg.agent.max_tool_iterations_override,
+            Some(250),
+            "`{ignored}` must not change the override"
+        );
+    }
+}

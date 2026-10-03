@@ -82,15 +82,33 @@ conclusion yet, say that plainly and name what is missing.";
 /// persisting rather than gathering. A turn with nothing to persist loses that
 /// round — which is the cost of making the artifact structural instead of
 /// merely requested.
+///
+/// # A code change is not a file to write (#6958)
+///
+/// This used to say that "an incomplete file that marks its gaps honestly is
+/// worth far more than no file at all". For a report or a guide that is true.
+/// For a code change it steered a DeepSWE run that had made no source edits
+/// into writing `ROLLING_WINDOW_IMPLEMENTATION_NOTES.md` into the user's repo:
+/// the only "file" it could produce in one call was a description of the
+/// change. So the wording now splits the two cases. A requested file is
+/// still written; a code task applies real edits to its source files, and a
+/// notes, plan or summary file in the project is ruled out by name, because a
+/// partial set of real edits is the only partial result a code task can use.
+/// What is left undone belongs in the reply, which the next call asks for.
 pub(crate) const FINAL_WRITE_INSTRUCTION: &str = "\
 This is the last call on which you can use a tool, and the only tools left are the ones that write files. \
 Gathering is over — anything you have not found by now will not be found in this turn.\n\
 \n\
-If this task asked you to produce a file and you have not written it yet, write it now, from what is already in the \
-results above. An incomplete file that marks its gaps honestly is worth far more than no file at all: write down what \
-you did establish, and say explicitly inside the file which parts you could not confirm.\n\
+If this task asked you to produce a file (a report, a guide, a document) and you have not written it yet, write it now \
+with file_write, from what is already in the results above, and mark inside it any part you could not confirm.\n\
 \n\
-If there is nothing to write — the task asked only for an answer, or you have already written the file — then do not \
+If this task is a code change, apply as much of the change as you can right now as real edits to the source files: \
+apply_patch for targeted edits, or file_write to rewrite a file whose full content you have. A partial set of real \
+edits is worth more than any description of them. Do not write notes, a plan, a summary, a TODO list or any other \
+document into the project in place of the change. If you cannot edit a file exactly, leave it untouched and name it \
+in your reply.\n\
+\n\
+If there is nothing to write — the task asked only for an answer, or the work is already written — then do not \
 call a tool. Answer instead, and you will be asked to conclude next.";
 
 /// One completed tool call, carrying enough of its **actual output** to stand

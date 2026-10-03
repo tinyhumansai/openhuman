@@ -12,7 +12,10 @@ mod agent_chat;
 mod runtime_ops;
 mod turn_guards;
 
-pub use agent_chat::{agent_chat, agent_chat_for, agent_chat_simple, AgentChatTarget};
+pub use agent_chat::{
+    agent_chat, agent_chat_for, agent_chat_reply_for, agent_chat_simple, AgentChatReply,
+    AgentChatTarget,
+};
 pub use runtime_ops::{
     local_ai_prompt, local_ai_status, local_ai_summarize, local_ai_transcribe,
     local_ai_transcribe_bytes, local_ai_tts, local_ai_vision_prompt,

@@ -21,6 +21,10 @@ use crate::agent::tinyagents::host::OpenHumanRunContext;
 use crate::agent::tinyagents::model::TurnChatModel;
 use crate::agent::tinyagents::turn_outcome::ToolOutcomeSink;
 
+/// Fractions of a capped turn's model-call budget at which the model is told
+/// how many calls are left (#6958; `FinalCallWrapUpMiddleware::with_budget_notice`).
+const BUDGET_NOTICE_THRESHOLDS: [f64; 2] = [0.5, 0.8];
+
 /// Store `ToolResultArtifactIndexStore` is registered under on the run context.
 const ARTIFACT_INDEX_STORE: &str =
     crate::agent::harness::tool_result_artifacts::TINYAGENTS_TOOL_RESULT_ARTIFACT_STORE;
@@ -205,7 +209,11 @@ pub(super) fn install_context_ladder(
             // file tool; `apply_patch` has a create mode). `shell` is left out
             // on purpose: it can equally run a crawler.
             .with_deliverable_tools(["file_write", "apply_patch"])
-            .with_cleared_placeholder(crate::agent::context::CLEARED_PLACEHOLDER),
+            .with_cleared_placeholder(crate::agent::context::CLEARED_PLACEHOLDER)
+            // #6958: the model first heard about its budget on the
+            // penultimate call, too late for a multi-file change. Say how many
+            // calls are left at half and at 80% of the budget.
+            .with_budget_notice(BUDGET_NOTICE_THRESHOLDS),
         )
     });
     let wrap_up_fired = wrap_up_mw.clone();

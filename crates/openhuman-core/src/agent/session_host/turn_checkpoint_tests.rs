@@ -440,3 +440,52 @@ fn the_repair_re_ask_names_the_violation_and_repeats_the_instruction() {
     let empty = close_repair_instruction(&instruction, CloseViolation::NoReply);
     assert!(empty.contains("empty or tried to call a tool"), "{empty}");
 }
+
+/// #6958: at the 200-call cap a DeepSWE run with no source edits answered this
+/// round by writing `ROLLING_WINDOW_IMPLEMENTATION_NOTES.md` into the user's
+/// repo, because the instruction said an incomplete file "is worth far more
+/// than no file at all". For a code change the deliverable is the edits, so
+/// the round must steer at `apply_patch`/`file_write` on source files and
+/// forbid notes or plan files in the project.
+#[test]
+fn the_final_write_instruction_steers_code_tasks_to_real_edits() {
+    let text = FINAL_WRITE_INSTRUCTION;
+    let lower = text.to_lowercase();
+    assert!(
+        text.contains("apply_patch") && text.contains("file_write"),
+        "names the tools that make the edits: {text}"
+    );
+    assert!(
+        lower.contains("source files"),
+        "a code task's deliverable is its source edits: {text}"
+    );
+    for forbidden in ["notes", "plan", "summary"] {
+        assert!(
+            lower.contains(forbidden),
+            "must explicitly rule out a `{forbidden}` file in the project: {text}"
+        );
+    }
+    assert!(
+        lower.contains("partial set of real edits"),
+        "a partial change beats a document about it: {text}"
+    );
+    assert!(
+        !lower.contains("incomplete file") && !lower.contains("worth far more than no file"),
+        "the wording that produced the notes file must be gone: {text}"
+    );
+}
+
+/// The round still exists for the case it was built for (#6548): a task whose
+/// requested product *is* a file must still be told to write it.
+#[test]
+fn the_final_write_instruction_still_asks_for_a_requested_file() {
+    let lower = FINAL_WRITE_INSTRUCTION.to_lowercase();
+    assert!(
+        lower.contains("asked you to produce a file"),
+        "{FINAL_WRITE_INSTRUCTION}"
+    );
+    assert!(
+        lower.contains("do not call a tool"),
+        "nothing to write still means answer instead: {FINAL_WRITE_INSTRUCTION}"
+    );
+}

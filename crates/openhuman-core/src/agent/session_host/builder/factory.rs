@@ -954,30 +954,13 @@ impl OpenHumanSessionHost {
         // `agent_harness_e2e` mock now serves SSE for streaming, so the crate-native
         // streaming path is exercised end-to-end.
         //
-        // Issue #4868 — resolve the per-agent iteration cap. When a named
-        // definition is present, its `effective_max_iterations()` (which honors
-        // `iteration_policy = "extended"` -> 50, and the declared `max_iterations`
-        // for strict agents) takes priority over the global
-        // `config.agent.max_tool_iterations` (default 10). This is the single
-        // shared resolution point that closes #4868 for every direct-invocation
-        // path: flows_build, flows_discover, agent-node runtime, cron, MCP
-        // server, etc. Falls back to the global default when there is no
-        // definition for this agent_id.
+        // Issue #4868 / #6958 — resolve the per-agent iteration cap at its one
+        // shared resolution point (explicit override, then the definition's
+        // `effective_max_iterations()`, then the global default). See
+        // `iteration_cap::resolve_max_tool_iterations`.
         let mut effective_agent_config = config.agent.clone();
-        if let Some(def) = target_def {
-            let def_cap = def.effective_max_iterations();
-            log::info!(
-                "[agent::builder] applying definition iteration cap for agent_id={}: \
-                 definition.max_iterations={} iteration_policy={:?} -> effective={} \
-                 (was global default {})",
-                agent_id,
-                def.max_iterations,
-                def.iteration_policy,
-                def_cap,
-                config.agent.max_tool_iterations,
-            );
-            effective_agent_config.max_tool_iterations = def_cap;
-        }
+        effective_agent_config.max_tool_iterations =
+            super::iteration_cap::resolve_max_tool_iterations(&config.agent, target_def);
         // Host-first, so a host tool wins a name collision -- see
         // `HostTurnTools::merge_into`, which owns that rule and why.
         let (host_policy, withheld_tool_names) =

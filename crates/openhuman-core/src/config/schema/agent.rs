@@ -230,18 +230,32 @@ pub struct AgentConfig {
     /// When true: bootstrap_max_chars=6000, rag_chunk_limit=2. Use for 13B or smaller models.
     #[serde(default)]
     pub compact_context: bool,
+    /// Tool-iteration cap for a turn whose agent has **no** definition of its
+    /// own. A named definition's `effective_max_iterations()` replaces it (see
+    /// `session_host::builder::iteration_cap`), so raising this does not lift
+    /// the orchestrator or any other defined agent; use
+    /// [`max_tool_iterations_override`](Self::max_tool_iterations_override)
+    /// for that.
     #[serde(default = "default_agent_max_tool_iterations")]
     pub max_tool_iterations: usize,
+    /// Explicit operator cap that wins over every agent definition's cap,
+    /// raising or lowering it, for the agent a turn runs as (sub-agents it
+    /// spawns keep their own definition caps). `None`, the default, leaves the
+    /// definition in charge. Also set per launch by
+    /// `OPENHUMAN_AGENT_MAX_TOOL_ITERATIONS`. Added for #6958, where the only
+    /// way to give a coding turn a larger budget was patching `agent.toml`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tool_iterations_override: Option<usize>,
     /// Agent the web-chat path (`channel_web_chat`, what the desktop composer
     /// calls) routes a turn to. `None` — the default — means `orchestrator`,
     /// which is what the shipped app runs.
     ///
     /// This is the only way to move that path off the orchestrator. A named
-    /// definition's `effective_max_iterations()` *overwrites*
+    /// definition's `effective_max_iterations()` replaces
     /// `max_tool_iterations` at the single resolution point in
-    /// `session_host::builder::factory`, so raising the global cap cannot lift
-    /// an agent that declares its own — the choice has to be which definition
-    /// answers, not which number is larger. The RPC path already takes an
+    /// `session_host::builder::iteration_cap`, so pick the agent here for its
+    /// prompt and tools; to change only the budget, set
+    /// `max_tool_iterations_override` instead. The RPC path already takes an
     /// `agent_id` per call; web chat carries no such field, and adding one to
     /// that wire contract to satisfy an operator preference would be the wrong
     /// seam.
@@ -612,6 +626,7 @@ impl Default for AgentConfig {
         Self {
             compact_context: false,
             max_tool_iterations: default_agent_max_tool_iterations(),
+            max_tool_iterations_override: None,
             chat_agent_id: None,
             max_history_messages: default_agent_max_history_messages(),
             parallel_tools: false,

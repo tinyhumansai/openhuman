@@ -105,6 +105,29 @@ impl Config {
             }
         }
 
+        // Explicit tool-iteration cap that wins over every agent definition's
+        // (#6958; see `session_host::builder::iteration_cap`). A positive
+        // integer; anything else is ignored with a warning.
+        if let Some(raw) = env.get("OPENHUMAN_AGENT_MAX_TOOL_ITERATIONS") {
+            let trimmed = raw.trim();
+            if !trimmed.is_empty() {
+                match trimmed.parse::<usize>() {
+                    Ok(cap) if cap > 0 => {
+                        tracing::debug!(
+                            cap,
+                            "OPENHUMAN_AGENT_MAX_TOOL_ITERATIONS overrides \
+                             agent.max_tool_iterations_override"
+                        );
+                        self.agent.max_tool_iterations_override = Some(cap);
+                    }
+                    _ => tracing::warn!(
+                        value = trimmed,
+                        "OPENHUMAN_AGENT_MAX_TOOL_ITERATIONS is not a positive integer; ignored"
+                    ),
+                }
+            }
+        }
+
         // One-launch override of `composio.mode`: `backend | direct | disabled`.
         // The factory rejects an unknown spelling loudly, so no validation here.
         if let Some(raw) = env.get("OPENHUMAN_COMPOSIO_MODE") {

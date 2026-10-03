@@ -1635,8 +1635,9 @@ async fn approval_gate_timeout_inner() {
 // ─── Task 7: Max iterations + empty provider response ────────────────────────
 //
 // max_iterations_exceeded:
-//   The orchestrator's effective max_tool_iterations comes from its agent
-//   definition (currently 15), rather than the global default of 10.
+//   The orchestrator's definition cap (200 since #6958) is lifted to a small
+//   value here through `[agent] max_tool_iterations_override`, which wins over
+//   the definition, so the test stays fast and independent of that number.
 //   Circuit breakers (REPEAT_FAILURE_THRESHOLD=3 on failing calls,
 //   NO_PROGRESS_FAILURE_THRESHOLD=6 on consecutive fails) only fire on
 //   success=false outcomes. We must pick a tool that:
@@ -1683,25 +1684,29 @@ fn max_iterations_exceeded() {
     run_on_agent_stack("max_iterations_exceeded", max_iterations_exceeded_inner);
 }
 
+/// The explicit override that caps the capped-turn tests below. Small, so a
+/// turn reaches it in a handful of scripted calls; it wins over the
+/// orchestrator's definition cap (`resolve_max_tool_iterations`).
+const SMALL_CAP: usize = 6;
+
+fn small_cap_config() -> String {
+    format!("[agent]\nmax_tool_iterations_override = {SMALL_CAP}\n")
+}
+
+/// A scripted upstream that never stops calling tools. Each call uses a unique
+/// expression to prevent REPEAT_OUTPUT_THRESHOLD from firing first.
+/// resolve_time is a pure computation tool (no I/O) that always succeeds.
+/// The required parameter name is "expr" (resolve_time.rs schema).
+fn endless_tool_calls(count: usize) -> Vec<Value> {
+    (0..count)
+        .map(|i| tool_call_completion("resolve_time", json!({ "expr": format!("{}m ago", i + 1) })))
+        .collect()
+}
+
 async fn max_iterations_exceeded_inner() {
     let _lock = env_lock();
-    init_agent_def_registry();
-    let max_iterations = AgentDefinitionRegistry::global()
-        .and_then(|registry| registry.get("orchestrator"))
-        .map(|definition| definition.effective_max_iterations())
-        .expect("built-in orchestrator definition must exist");
-
-    // Queue beyond the definition-derived cap. Deriving this count from the
-    // same definition used by the session builder keeps the regression valid
-    // when the orchestrator's policy changes. Each call uses a unique
-    // expression to prevent REPEAT_OUTPUT_THRESHOLD from firing first.
-    // resolve_time is a pure computation tool (no I/O) that always succeeds.
-    // The required parameter name is "expr" (resolve_time.rs schema).
-    let responses: Vec<Value> = (0..max_iterations + 5)
-        .map(|i| tool_call_completion("resolve_time", json!({ "expr": format!("{}m ago", i + 1) })))
-        .collect();
-    reset_script(responses);
-    let stack = boot_stack().await;
+    reset_script(endless_tool_calls(SMALL_CAP + 5));
+    let stack = boot_stack_with_config(&small_cap_config()).await;
 
     let mut events = spawn_sse_collector(format!(
         "{}/events?client_id=harness-maxiter",
@@ -1732,6 +1737,93 @@ async fn max_iterations_exceeded_inner() {
             || serialized.contains("maximum tool iterations")
             || serialized.contains("OpenHumanSessionHost exceeded"),
         "expected max-iterations surface (tool-call limit or similar); got: {serialized}"
+    );
+
+    stack.shutdown();
+}
+
+/// #6958: `inference_agent_chat` used to answer a capped turn with the same
+/// `{result, logs}` as a finished one, so a headless caller could not tell it
+/// had to continue. The result now carries `hit_cap` and the checkpoint text,
+/// and the reply stays in `result` for existing clients.
+///
+/// Also proves the config override end to end: the turn stops at `SMALL_CAP`
+/// rather than at the orchestrator definition's 200.
+#[test]
+fn inference_agent_chat_reports_hit_cap() {
+    run_on_agent_stack(
+        "inference_agent_chat_reports_hit_cap",
+        inference_agent_chat_reports_hit_cap_inner,
+    );
+}
+
+async fn inference_agent_chat_reports_hit_cap_inner() {
+    let _lock = env_lock();
+    reset_script(endless_tool_calls(SMALL_CAP + 5));
+    let stack = boot_stack_with_config(&small_cap_config()).await;
+
+    let resp = post_json_rpc(
+        &stack.rpc_base,
+        700,
+        "openhuman.inference_agent_chat",
+        json!({ "message": "loop forever", "model_override": "e2e-mock-model" }),
+    )
+    .await;
+    let result = assert_no_jsonrpc_error(&resp, "inference_agent_chat");
+
+    assert_eq!(result["hit_cap"], json!(true), "capped turn: {result}");
+    let reply = result["result"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the reply stays a string in `result`: {result}"));
+    assert!(
+        !reply.trim().is_empty(),
+        "a capped turn still answers: {result}"
+    );
+    assert_eq!(
+        result["checkpoint"],
+        json!(reply),
+        "the checkpoint is the capped turn's reply: {result}"
+    );
+    let calls = with_captured(|c| c.len());
+    assert!(
+        calls < SMALL_CAP + 5,
+        "the override must stop the turn near {SMALL_CAP} calls, not the definition's 200; \
+         saw {calls} upstream calls"
+    );
+
+    stack.shutdown();
+}
+
+/// A turn that finishes on its own reports `hit_cap: false` and no checkpoint.
+#[test]
+fn inference_agent_chat_reports_a_finished_turn() {
+    run_on_agent_stack(
+        "inference_agent_chat_reports_a_finished_turn",
+        inference_agent_chat_reports_a_finished_turn_inner,
+    );
+}
+
+async fn inference_agent_chat_reports_a_finished_turn_inner() {
+    let _lock = env_lock();
+    reset_script(vec![text_completion("all done")]);
+    let stack = boot_stack().await;
+
+    let resp = post_json_rpc(
+        &stack.rpc_base,
+        701,
+        "openhuman.inference_agent_chat",
+        json!({ "message": "say done", "model_override": "e2e-mock-model" }),
+    )
+    .await;
+    let result = assert_no_jsonrpc_error(&resp, "inference_agent_chat");
+
+    assert_eq!(result["hit_cap"], json!(false), "{result}");
+    assert!(result.get("checkpoint").is_none(), "{result}");
+    assert!(
+        result["result"]
+            .as_str()
+            .is_some_and(|reply| reply.contains("all done")),
+        "{result}"
     );
 
     stack.shutdown();

@@ -138,7 +138,12 @@ pub fn schemas(function: &str) -> ControllerSchema {
                      endpoint alone.",
                 ),
             ],
-            outputs: vec![json_output("response", "Agent response payload.")],
+            outputs: vec![json_output(
+                "response",
+                "Agent response payload: `result` (the reply text), `logs`, `hit_cap` (true when \
+                 the turn stopped at its tool-iteration cap instead of finishing) and, only when \
+                 hit_cap is true, `checkpoint` (the resumable checkpoint text, equal to `result`).",
+            )],
         },
         "agent_chat_simple" => ControllerSchema {
             namespace: "inference",
@@ -219,19 +224,18 @@ fn handle_agent_chat(params: Map<String, Value>) -> ControllerFuture {
             }
             _ => crate::inference::host_runtime::ops::AgentChatTarget::Orchestrator,
         };
-        to_json(
-            crate::inference::host_runtime::ops::agent_chat_for(
-                &mut config,
-                target,
-                &p.message,
-                p.model_override,
-                p.temperature,
-                p.thread_id,
-                p.cwd,
-                crate::config::schema::EphemeralRoute::from_params(p.inference_url, p.api_key),
-            )
-            .await?,
+        crate::inference::host_runtime::ops::agent_chat_reply_for(
+            &mut config,
+            target,
+            &p.message,
+            p.model_override,
+            p.temperature,
+            p.thread_id,
+            p.cwd,
+            crate::config::schema::EphemeralRoute::from_params(p.inference_url, p.api_key),
         )
+        .await?
+        .into_rpc_json()
     })
 }
 

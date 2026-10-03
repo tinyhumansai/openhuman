@@ -383,7 +383,10 @@ fn master_agent_has_coding_hint_and_named_tools() {
         }
         ToolScope::Wildcard => panic!("orchestrator must have named tool allowlist"),
     }
-    assert_eq!(def.max_iterations, 50);
+    // #6958: a coding turn routinely needs 50-180 model calls (every other
+    // harness on the DeepSWE sample did); 50 stopped all ten tasks before a
+    // single source edit.
+    assert_eq!(def.max_iterations, 200);
     // Memory retrieval is on-demand (via the `agent_memory` subagent,
     // surfaced as `delegate_retrieve_memory`), not an eager pre-turn
     // pre-fetch. The allowlist entry is what makes that route reachable

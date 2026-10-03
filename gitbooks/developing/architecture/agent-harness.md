@@ -236,7 +236,7 @@ The loader is `agent::prompts::agents_md` (pure functions returning pre-loaded s
 
 ## The tool-call loop
 
-Inside `Agent::turn`, the tool-call loop is the inner engine. Since issue #4249 it is the published **tinyagents** crate's `AgentHarness` loop, assembled per turn by `run_turn_via_tinyagents_shared` ([`crates/openhuman-core/src/agent/tinyagents/mod.rs`](../../../crates/openhuman-core/src/agent/tinyagents/mod.rs)). It runs up to `max_tool_iterations` rounds (default 10):
+Inside `Agent::turn`, the tool-call loop is the inner engine. Since issue #4249 it is the published **tinyagents** crate's `AgentHarness` loop, assembled per turn by `run_turn_via_tinyagents_shared` ([`crates/openhuman-core/src/agent/tinyagents/mod.rs`](../../../crates/openhuman-core/src/agent/tinyagents/mod.rs)). It runs up to the turn's iteration cap, resolved in `session_host/builder/iteration_cap.rs`: an explicit `[agent] max_tool_iterations_override` (or `OPENHUMAN_AGENT_MAX_TOOL_ITERATIONS`) wins, then the agent definition's cap (the orchestrator's is 200), then `max_tool_iterations` (default 10) for a turn with no definition. The model is told how many calls remain at 50% and 80% of the budget, and `inference_agent_chat` reports a capped turn with `hit_cap: true` and its `checkpoint` text:
 
 ```
 loop {

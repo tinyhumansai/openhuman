@@ -2,7 +2,11 @@ id = "orchestrator"
 display_name = "Master Agent"
 when_to_use = "Default user-facing agent — handles everyday work directly, including code-repository tasks, and delegates only when parallelism or specialised capability materially helps. You should not normally spawn another orchestrator from inside one."
 temperature = 0.4
-max_iterations = 50
+# Sized for code work (#6958): on the DeepSWE sample every other harness needed
+# 50-180 model calls per task, and 50 stopped all ten before a source edit.
+# Operators can still set any cap with `[agent] max_tool_iterations_override`
+# or `OPENHUMAN_AGENT_MAX_TOOL_ITERATIONS`.
+max_iterations = 200
 sandbox_mode = "sandboxed"
 
 # Spawn hierarchy: this is the user-facing tier. It can complete ordinary work

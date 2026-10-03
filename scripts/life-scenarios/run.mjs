@@ -273,9 +273,9 @@ async function prepareHome(runDir, opts, { searchBase } = {}) {
     // The web-chat path (`channel_web_chat`, the desktop driver below) has no
     // per-call `agent_id` the way `inference_agent_chat` does, so this is how
     // it is pointed at the suite's benchmark agent. Without it that path runs
-    // `orchestrator`, whose definition caps the turn at 15 iterations — and a
-    // definition cap OVERWRITES `[agent] max_tool_iterations` rather than being
-    // bounded by it, so no cap setting can substitute for choosing the agent.
+    // `orchestrator`. A definition cap replaces `[agent] max_tool_iterations`,
+    // so only `max_tool_iterations_override` changes the budget without
+    // changing which agent (prompt, tools) answers.
     "[agent]",
     `chat_agent_id = "${opts.agentId}"`,
     "",
