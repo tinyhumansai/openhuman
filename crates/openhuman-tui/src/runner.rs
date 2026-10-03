@@ -28,7 +28,7 @@ use openhuman_core::core::types::HostKind;
 pub fn run_from_cli(args: &[String]) -> anyhow::Result<()> {
     openhuman_core::core::cli::load_dotenv_for_cli()?;
     openhuman_core::platform::service::apply_startup_restart_delay_from_env();
-    openhuman_core::security::keyring::init_master_key();
+    openhuman_core::security::keyring::init_master_key().map_err(anyhow::Error::msg)?;
 
     let mut thread_id: Option<String> = None;
     let mut force_new = false;

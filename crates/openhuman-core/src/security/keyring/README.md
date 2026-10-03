@@ -9,7 +9,7 @@ OS-keychain-backed secret storage with pluggable test and debug backends, plus a
 - Probe and cache backend availability (`is_available`) so callers (wallet guards, snapshot loops) can fall back to file storage without re-triggering OS keychain prompts.
 - Migrate a secret from a plaintext file into the active backend (`migrate_from_file`), verifying the write before deleting the source.
 - Encrypt and decrypt config-field secrets via `SecretStore` (ChaCha20-Poly1305, `enc2:` prefix), including migration of the legacy XOR `enc:` format.
-- Load and cache a single app-scoped master encryption key from the OS keychain at startup (`init_master_key`) for the `encrypted_file` backend, reducing keychain access to one call per process.
+- Load and cache a single app-scoped master encryption key at startup (`init_master_key`) for the `encrypted_file` backend: from `OPENHUMAN_KEYRING_MASTER_KEY` / `OPENHUMAN_KEYRING_MASTER_KEY_FILE` when an operator supplies one (headless deployments with no keychain, #6926), otherwise from the OS keychain, reducing keychain access to one call per process.
 - Migrate the legacy plaintext `dev-keychain.json` into the encrypted `secrets.enc` file on first use.
 
 ## Key files
@@ -36,7 +36,7 @@ Re-exported from `mod.rs`:
 - `KeyringBackend`: backend trait (`get`/`set`/`delete`/`name`).
 - `SecretStore`: config-field encrypt/decrypt; `encrypt`/`decrypt`/`decrypt_and_migrate`/`needs_migration`/`is_encrypted`/`new`.
 - `KeyringError`: error enum with `diagnostic()`.
-- `init_master_key`: load the app master key from the OS keychain at startup (staging/prod only).
+- `init_master_key`: load the app master key at startup (staging/prod only) — from the environment (`OPENHUMAN_KEYRING_MASTER_KEY` inline, or `OPENHUMAN_KEYRING_MASTER_KEY_FILE` naming a file; 64 hex characters, exactly one of the two) when set, otherwise from the OS keychain. A set-but-malformed variable is a boot error, not a fall-through; the source is logged at `info`, the value never.
 - `init_workspace`: register the workspace dir for file and encrypted-file backends.
 - `get`, `set`, `delete`, `get_or_create_random`, `is_available`, `migrate_from_file`, `MigrationOutcome`.
 - `force_backend_for_test`: `pub(crate)`, test-only.
@@ -58,7 +58,7 @@ None. There is no `bus.rs`, and the module publishes and subscribes to no `Domai
 Secret storage backend, selected once and frozen in a `OnceLock`:
 
 - `os` (production default outside staging/prod special-casing): native OS credential store, macOS Keychain, Windows Credential Manager, or Linux Secret Service, under service name `"openhuman"`.
-- `encrypted_file` (staging/production, and via `OPENHUMAN_KEYRING_BACKEND=encrypted_file`): single ChaCha20-Poly1305 file `{workspace}/secrets.enc`, encrypted with a master key loaded once from the OS keychain (`openhuman` / `app:master_key`). Files are written `0600` on Unix via temp-file plus atomic rename.
+- `encrypted_file` (staging/production, and via `OPENHUMAN_KEYRING_BACKEND=encrypted_file`): single ChaCha20-Poly1305 file `{workspace}/secrets.enc`, encrypted with a master key loaded once — from `OPENHUMAN_KEYRING_MASTER_KEY` / `OPENHUMAN_KEYRING_MASTER_KEY_FILE` when set, otherwise from the OS keychain (`openhuman` / `app:master_key`). Files are written `0600` on Unix via temp-file plus atomic rename.
 - `file` (dev default, `cfg(test)`, or `OPENHUMAN_KEYRING_BACKEND=file`): plaintext JSON `{workspace}/dev-keychain.json`. Not encrypted; test and debug use only.
 - `mock` (test-only): in-memory `HashMap`.
 

@@ -112,6 +112,6 @@ pub use core::types::HostKind;
 pub fn run_core_from_args(args: &[String]) -> anyhow::Result<()> {
     core::cli::load_dotenv_for_cli()?;
     platform::service::apply_startup_restart_delay_from_env();
-    security::keyring::init_master_key();
+    security::keyring::init_master_key().map_err(anyhow::Error::msg)?;
     core::cli::run_from_cli_args(args)
 }

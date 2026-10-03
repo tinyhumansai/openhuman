@@ -115,14 +115,16 @@ URL with the typed token and reports `Connected ✓` / `Auth failed` /
 
 ## What you need before you start
 
-| Setting                | Required | Notes                                                                                                                     |
-| ---------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `OPENHUMAN_CORE_TOKEN` | yes      | Bearer token clients send to `/rpc`. Generate with `openssl rand -hex 32`. **Anyone with this token can drive the core.** |
-| `BACKEND_URL`          | yes      | Tinyhumans backend the core talks to (`https://api.tinyhumans.ai` for prod).                                              |
-| `OPENHUMAN_APP_ENV`    | no       | `production` or `staging`. Defaults to `production`.                                                                      |
-| `OPENHUMAN_CORE_HOST`  | no       | Defaults to `0.0.0.0` in the container.                                                                                   |
-| `OPENHUMAN_CORE_PORT`  | no       | Defaults to `7788`.                                                                                                       |
-| `RUST_LOG`             | no       | `info` is fine; `debug` for triage.                                                                                       |
+| Setting                             | Required | Notes                                                                                                                                                                                                                                                                          |
+| ----------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `OPENHUMAN_CORE_TOKEN`              | yes      | Bearer token clients send to `/rpc`. Generate with `openssl rand -hex 32`. **Anyone with this token can drive the core.**                                                                                                                                                      |
+| `BACKEND_URL`                       | yes      | Tinyhumans backend the core talks to (`https://api.tinyhumans.ai` for prod).                                                                                                                                                                                                   |
+| `OPENHUMAN_APP_ENV`                 | no       | `production` or `staging`. Defaults to `production`.                                                                                                                                                                                                                           |
+| `OPENHUMAN_KEYRING_MASTER_KEY`      | no       | 64 hex characters (`openssl rand -hex 32`). Master key for the production `encrypted_file` keyring, so a container with no OS keychain can store provider keys encrypted. Inject it from your secret manager like the bearer token; **losing it orphans every stored secret.** |
+| `OPENHUMAN_KEYRING_MASTER_KEY_FILE` | no       | Path to a file holding the same value, for Docker/Kubernetes secret mounts. Set one of the two, not both. Without either, `encrypted_file` needs an OS keychain.                                                                                                               |
+| `OPENHUMAN_CORE_HOST`               | no       | Defaults to `0.0.0.0` in the container.                                                                                                                                                                                                                                        |
+| `OPENHUMAN_CORE_PORT`               | no       | Defaults to `7788`.                                                                                                                                                                                                                                                            |
+| `RUST_LOG`                          | no       | `info` is fine; `debug` for triage.                                                                                                                                                                                                                                            |
 
 Endpoints exposed by the running container:
 
