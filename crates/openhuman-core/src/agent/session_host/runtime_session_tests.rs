@@ -373,3 +373,113 @@ async fn session_locator_is_memoized_across_calls() {
          same-binding check rejects the second transcript bind"
     );
 }
+
+const THREAD_GOAL_TOOLS: [&str; 3] = ["goal_get", "goal_set", "goal_complete"];
+/// The goal tool this fixture's default (non-orchestrator) session surfaces on a
+/// thread; the others are admitted only for agents that list them.
+const SURFACED_GOAL_TOOL: &str = "goal_complete";
+
+/// A text-dialect (XML) session over the real per-thread goal tools, optionally
+/// bound to a chat thread, with its runtime session already initialised.
+fn text_dialect_host(
+    thread_id: Option<&str>,
+) -> (crate::agent::OpenHumanSessionHost, tempfile::TempDir) {
+    let _ = crate::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins();
+    let action_dir = tempfile::tempdir().expect("tempdir");
+    let model: Arc<dyn tinyinference_llm::model::ChatModel<()>> =
+        Arc::new(tinyagents_harness::testkit::ScriptedModel::new(Vec::new()));
+    let tools = crate::agent::goals::goal_tools(action_dir.path());
+    let mut host = crate::agent::SessionHostBuilder::new()
+        .chat_model(model)
+        .tools(tools)
+        .action_dir(action_dir.path().to_path_buf())
+        .memory(crate::memory::test_support::noop_memory())
+        .tool_dispatcher(Box::new(tinytools_agent::dialect::XmlDialect))
+        .build()
+        .expect("session build");
+    host.set_thread_id(thread_id);
+    host.ensure_runtime_session().expect("runtime session");
+    (host, action_dir)
+}
+
+/// Render the first-turn system prompt and declared tool list of `host`.
+async fn prompt_and_declared_tools(
+    host: &crate::agent::OpenHumanSessionHost,
+) -> (String, ToolSnapshot) {
+    let prelude = host
+        .runtime_state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .prelude
+        .clone()
+        .expect("prelude");
+    let tiered = prelude
+        .build_system_prompt_tiered(crate::agent::prompts::LearnedContextData::default())
+        .expect("system prompt");
+    let snapshot = prelude
+        .prepare(true)
+        .await
+        .expect("tool surface")
+        .tools
+        .expect("declared tools");
+    (tiered.text, snapshot)
+}
+
+fn assert_no_goal_tools(prompt: &str, snapshot: &ToolSnapshot) {
+    for name in THREAD_GOAL_TOOLS {
+        assert!(!prompt.contains(name), "{name} leaked into the prompt");
+        assert!(
+            !snapshot.specs().iter().any(|spec| spec.name == name),
+            "{name} leaked into the declared tools"
+        );
+    }
+}
+
+/// Issue #6956 follow-up: the harness drops `goal_*` for a thread-less turn, so
+/// a text-dialect prompt that still catalogued them taught the model tools that
+/// answer "unregistered tool" when called.
+#[tokio::test]
+async fn text_dialect_prompt_omits_thread_goal_tools_without_a_thread() {
+    let (host, _dir) = text_dialect_host(None);
+    let (prompt, snapshot) = prompt_and_declared_tools(&host).await;
+    assert_no_goal_tools(&prompt, &snapshot);
+}
+
+#[tokio::test]
+async fn text_dialect_prompt_lists_thread_goal_tools_on_a_thread() {
+    let (host, _dir) = text_dialect_host(Some("thread-goals"));
+    let (prompt, snapshot) = prompt_and_declared_tools(&host).await;
+    assert!(
+        prompt.contains(SURFACED_GOAL_TOOL),
+        "{SURFACED_GOAL_TOOL} missing from the prompt"
+    );
+    assert!(
+        snapshot
+            .specs()
+            .iter()
+            .any(|spec| spec.name == SURFACED_GOAL_TOOL),
+        "{SURFACED_GOAL_TOOL} missing from the declared tools"
+    );
+}
+
+/// The prompt and tool snapshot are cached from the first turn, so binding a
+/// thread after the runtime session exists is refused: the thread-less
+/// surface (no goal tools) must not be contradicted by a later thread id.
+#[tokio::test]
+async fn a_thread_bound_after_session_init_is_refused_and_keeps_goal_tools_out() {
+    let (mut host, _dir) = text_dialect_host(None);
+    host.set_thread_id(Some("late-thread"));
+    assert_eq!(host.thread_id(), None, "late thread id must be refused");
+    assert_eq!(host.session_id(), None, "no durable identity was minted");
+    let (prompt, snapshot) = prompt_and_declared_tools(&host).await;
+    assert_no_goal_tools(&prompt, &snapshot);
+}
+
+#[tokio::test]
+async fn rebinding_the_same_thread_after_session_init_is_a_no_op() {
+    let (mut host, _dir) = text_dialect_host(Some("same-thread"));
+    host.set_thread_id(Some("same-thread"));
+    assert_eq!(host.thread_id(), Some("same-thread"));
+    let (prompt, _snapshot) = prompt_and_declared_tools(&host).await;
+    assert!(prompt.contains(SURFACED_GOAL_TOOL));
+}
