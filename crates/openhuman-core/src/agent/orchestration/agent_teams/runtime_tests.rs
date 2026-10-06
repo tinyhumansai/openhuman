@@ -57,6 +57,7 @@ impl ChatModel<()> for CannedModel {
 
 fn mock_parent(model: Arc<dyn ChatModel<()>>) -> ParentExecutionContext {
     ParentExecutionContext {
+        runtime_config: None,
         workspace_descriptor: None,
         agent_definition_id: "agent_team_runtime".to_string(),
         allowed_subagent_ids: HashSet::new(),

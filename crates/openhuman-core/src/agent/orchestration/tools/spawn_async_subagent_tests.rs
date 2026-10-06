@@ -457,6 +457,7 @@ async fn guard_does_not_fire_when_parent_thread_is_bound() {
 
 fn parent_context(workspace_dir: &Path) -> ParentExecutionContext {
     ParentExecutionContext {
+        runtime_config: None,
         workspace_descriptor: None,
         agent_definition_id: "orchestrator".into(),
         allowed_subagent_ids: HashSet::from(["task_manager_agent".to_string()]),
@@ -504,4 +505,95 @@ fn scoped_instance_advertises_exactly_the_allowlist() {
         .as_str()
         .unwrap_or_default()
         .contains("only these are dispatchable"));
+}
+
+#[test]
+fn scoped_instance_advertises_an_empty_enum_for_deny_all() {
+    let schema = SpawnAsyncSubagentTool::scoped(Vec::new()).parameters_schema();
+    assert_eq!(
+        schema["properties"]["agent_id"]["enum"],
+        serde_json::json!([])
+    );
+}
+
+/// #6934: a custom agent lives only in `config.agent_registry`, so a
+/// registry-only lookup refused every allowlisted custom id as "unknown
+/// agent_id" even once the parent's allowlist named it. With the parent's
+/// config snapshot on the context the id resolves; the call then proceeds to
+/// the same delivery guard the test above pins, which proves it got past
+/// both the lookup and the allowlist gate.
+#[tokio::test]
+async fn an_allowlisted_custom_agent_resolves_through_the_parent_config() {
+    let _ = AgentDefinitionRegistry::init_global_builtins();
+    let workspace = tempfile::TempDir::new().expect("workspace");
+
+    let mut config = crate::config::Config::default();
+    config.agent_registry.entries = vec![crate::agent::registry::AgentRegistryEntry {
+        id: "researcher".to_string(),
+        name: "Researcher".to_string(),
+        description: "Deep research on one topic.".to_string(),
+        source: crate::agent::registry::AgentRegistrySource::Custom,
+        enabled: true,
+        model: None,
+        system_prompt: Some("Research the topic.".to_string()),
+        tool_allowlist: vec!["web_search_tool".to_string()],
+        tool_denylist: Vec::new(),
+        subagents: crate::agent::registry::types::AgentSubagentPolicy::default(),
+        tags: Vec::new(),
+        metadata: serde_json::Value::Null,
+    }];
+    let mut parent = parent_context(workspace.path());
+    parent.allowed_subagent_ids = HashSet::from(["researcher".to_string()]);
+    parent.runtime_config = Some(Arc::new(config));
+
+    let result = with_parent_context(parent, async {
+        SpawnAsyncSubagentTool::new()
+            .execute(json!({
+                "agent_id": "researcher",
+                "prompt": "survey the literature",
+            }))
+            .await
+    })
+    .await
+    .unwrap();
+
+    let out = result.output();
+    assert!(
+        !out.contains("unknown agent_id"),
+        "custom id must resolve: {out}"
+    );
+    assert!(
+        !out.contains("subagents.allowlist"),
+        "allowlist gate must pass: {out}"
+    );
+    assert!(
+        out.contains("no parent chat thread"),
+        "reached the delivery guard: {out}"
+    );
+}
+
+/// Without a config snapshot the lookup is registry-only, and the error lists
+/// what *is* spawnable rather than failing silently.
+#[tokio::test]
+async fn a_custom_agent_is_unknown_to_a_parent_without_a_config() {
+    let _ = AgentDefinitionRegistry::init_global_builtins();
+    let workspace = tempfile::TempDir::new().expect("workspace");
+    let mut parent = parent_context(workspace.path());
+    parent.allowed_subagent_ids = HashSet::from(["researcher".to_string()]);
+
+    let result = with_parent_context(parent, async {
+        SpawnAsyncSubagentTool::new()
+            .execute(json!({ "agent_id": "researcher", "prompt": "survey" }))
+            .await
+    })
+    .await
+    .unwrap();
+
+    assert!(result.is_error);
+    let out = result.output();
+    assert!(out.contains("unknown agent_id 'researcher'"), "{out}");
+    assert!(
+        out.contains("task_manager_agent"),
+        "lists the spawnable ids: {out}"
+    );
 }

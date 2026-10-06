@@ -16,6 +16,7 @@ use tokio::time::Duration;
 
 fn parent_context(model: Arc<dyn ChatModel<()>>) -> ParentExecutionContext {
     ParentExecutionContext {
+        runtime_config: None,
         workspace_descriptor: None,
         agent_definition_id: "orchestrator".to_string(),
         allowed_subagent_ids: ["task_manager_agent".to_string()].into_iter().collect(),

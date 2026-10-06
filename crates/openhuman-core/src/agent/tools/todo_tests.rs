@@ -128,6 +128,7 @@ fn every_agent_binds_to_its_own_thread() {
         }
     }
     let parent = ParentExecutionContext {
+        runtime_config: None,
         agent_definition_id: "orchestrator".into(),
         allowed_subagent_ids: std::collections::HashSet::new(),
         turn_model_source: crate::agent::tinyagents::TurnModelSource::from_model(Arc::new(
@@ -186,6 +187,7 @@ async fn a_legacy_session_keyed_list_is_migrated_forward_once() {
         }
     }
     let parent = ParentExecutionContext {
+        runtime_config: None,
         agent_definition_id: "orchestrator".into(),
         allowed_subagent_ids: std::collections::HashSet::new(),
         turn_model_source: crate::agent::tinyagents::TurnModelSource::from_model(Arc::new(

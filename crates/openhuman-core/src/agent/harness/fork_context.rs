@@ -35,6 +35,15 @@ pub struct ParentExecutionContext {
     /// Canonical registry id of the parent agent definition.
     pub agent_definition_id: String,
 
+    /// The session's `Config` snapshot, when the parent was built from one.
+    /// Spawn tools resolve a child id against the harness registry *and*
+    /// `config.agent_registry` (a custom agent is only in the latter), and
+    /// read the parent's effective `subagents` override from it, so a
+    /// registry edit takes effect without a restart (#6934). `None` for
+    /// parents built without a config (tests, some background builders):
+    /// those fall back to the harness registry alone.
+    pub runtime_config: Option<Arc<crate::config::Config>>,
+
     /// Subagent ids this parent is allowed to spawn directly through the
     /// generic `spawn_subagent` tool. Empty means no generic subagent spawns.
     pub allowed_subagent_ids: HashSet<String>,

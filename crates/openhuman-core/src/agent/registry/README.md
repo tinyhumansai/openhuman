@@ -86,6 +86,26 @@ Workspace-level overrides (`<workspace_dir>/agents/*.toml`, with a
 `AgentDefinitionRegistry::load` re-runs `validate_tier_hierarchy` after that
 merge.
 
+Config-level edits (`config.agent_registry.entries`: `agent_registry_update`
+on a shipped agent saves a `Default`-sourced copy with the patch applied;
+`agent_registry_create_custom` saves a `Custom` entry) are **not** merged into
+`AgentDefinitionRegistry` — it is loaded once per process. The runtime reads
+them through `effective.rs` instead, from the `Config` snapshot a session is
+built with, so they take effect for sessions built after the save without a
+restart:
+
+- `effective_subagent_allowlist`: a saved override's `subagents.allowlist`
+  replaces the shipped list (only when it differs from it, so an edit that
+  touched something else does not freeze the allowlist at that snapshot) in
+  the `spawn_async_subagent` enum, the scoped tool instance, and the parent's
+  execute-side gate (`ParentExecutionContext::allowed_subagent_ids`).
+- `resolve_spawnable_definition` / `spawnable_ids`: every spawn path resolves
+  a child id against the harness registry first, then an enabled `Custom`
+  entry via `definition_from_registry_entry`, so a user-authored sub-agent is
+  dispatchable once the parent's allowlist names it (#6934). The parent's
+  config travels on `ParentExecutionContext::runtime_config`; a parent built
+  without one resolves against the harness registry alone.
+
 The 12 archetypes in this directory:
 
 | Archetype | Role |

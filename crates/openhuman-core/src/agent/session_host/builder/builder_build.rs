@@ -27,17 +27,16 @@ impl SessionHostBuilder {
             .map(|definition| definition.id.clone())
             .or_else(|| self.agent_definition_name.clone());
         if let Some(agent_id) = spawn_scope_id {
-            let allowed = super::allowed_subagent_ids_for(agent_id.trim());
-            if !allowed.is_empty() {
+            if let Some(allowed) = super::allowed_subagent_ids_for(
+                agent_id.trim(),
+                self.runtime_config.as_deref(),
+                self.session_definition.as_deref(),
+            ) {
                 if let Some(slot) = tools
                     .iter_mut()
                     .find(|tool| tool.name() == "spawn_async_subagent")
                 {
-                    tracing::debug!(
-                        agent = %agent_id,
-                        ids = allowed.len(),
-                        "[tools] scoping spawn_async_subagent schema to the subagent allowlist"
-                    );
+                    tracing::debug!(agent = %agent_id, ids = allowed.len(), "[tools] scoping spawn_async_subagent schema");
                     *slot = Box::new(
                         crate::agent::orchestration::tools::SpawnAsyncSubagentTool::scoped(allowed),
                     );
@@ -273,8 +272,13 @@ impl SessionHostBuilder {
         // provider. The explicit visible-tool allowlist and the resolved
         // channel permission policy must stay aligned so prompt-visible
         // tools cannot exceed the runtime execution boundary.
-        let visible_tool_specs_unfiltered =
-            visible_tool_specs_for_policy(&tool_specs, &visible_names, &tool_policy_session);
+        let visible_tool_specs_unfiltered = visible_tool_specs_for_policy(
+            &tool_specs,
+            &visible_names,
+            &tool_policy_session,
+            self.runtime_config.as_deref(),
+            self.session_definition.as_deref(),
+        );
 
         // Dedupe by tool name. Anthropic (and other strict providers)
         // rejects a chat/completions request that lists two tools with
@@ -475,7 +479,7 @@ impl SessionHostBuilder {
             connected_integrations_initialized: false,
             runtime_config,
             hosted_base,
-            definition: None,
+            definition: session_definition,
             omit_memory_context: self.omit_memory_context.unwrap_or(false),
             payload_summarizer: self.payload_summarizer,
             tokenjuice_compression: self.tokenjuice_compression,

@@ -70,6 +70,14 @@ impl SessionHostBuilder {
         self
     }
 
+    /// The `Config` snapshot this session is built from. Read while building
+    /// (the `spawn_async_subagent` enum follows a saved registry override of
+    /// this agent's `subagents`) and kept on the host as `runtime_config`.
+    pub fn runtime_config(mut self, config: Arc<crate::config::Config>) -> Self {
+        self.runtime_config = Some(config);
+        self
+    }
+
     /// Sets the AI provider as a **crate-native** turn-model source (Phase 3 P3-B):
     /// `build`/`build_summarizer` construct crate `ChatModel`s from `(role, config)`
     /// via `create_turn_chat_model` (managed → `OpenHumanBackendModel`, local/cloud →

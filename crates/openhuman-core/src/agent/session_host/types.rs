@@ -498,6 +498,8 @@ pub struct SessionHostBuilder {
     pub(super) permanent_tool_names: std::collections::HashSet<String>,
     pub(super) turn_model_source: Option<TurnModelSource>,
     /// Explicit host config for injected-model attachment staging and services.
+    /// Also consulted while building, so the `spawn_async_subagent` enum
+    /// honours a saved registry override of this agent's `subagents` (#6934).
     pub(super) runtime_config: Option<Arc<crate::config::Config>>,
     pub(super) tools: Option<Vec<Box<dyn Tool>>>,
     /// Delegation tools synthesised for the session's initial connection set.

@@ -210,7 +210,9 @@ pub fn merge_entries(
 /// override (a user edit to a shipped agent, e.g. via `update_agent`) is
 /// already resolvable through the harness `AgentDefinitionRegistry` by id —
 /// that agent ships an `agent.toml`/builtin definition — so it never reaches
-/// this fallback path.
+/// this fallback path. The override's *fields* are a separate concern: its
+/// `subagents.allowlist` is applied at session build and spawn time by
+/// [`super::effective::effective_subagent_allowlist`] (#6934).
 ///
 /// A **disabled** custom entry is deliberately treated as a miss (`None`),
 /// same as an unknown id — never synthesized into a runnable definition here.

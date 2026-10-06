@@ -687,9 +687,9 @@ async fn run_typed_mode(
             .or(definition.skill_filter.as_deref()),
     );
 
-    // Sub-agents must never spawn their own sub-agents. Strip `spawn_subagent`
-    // and every synthesised `delegate_*` tool regardless of the archetype's
-    // declared scope.
+    // Sub-agents must never spawn their own sub-agents. Strip the spawn tools
+    // (`is_subagent_spawn_tool`, worker threads) regardless of the archetype's
+    // declared scope — a custom agent's `tool_allowlist` included.
     let before = allowed_indices.len();
     allowed_indices.retain(|&i| {
         let name = parent.all_tools[i].name();

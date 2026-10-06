@@ -223,6 +223,7 @@ fn children_inherit_attachment_placeholders() {
 /// captured `on_progress` before `set_on_progress` ran, so it carries `None`.
 fn stale_parent_snapshot() -> ParentExecutionContext {
     ParentExecutionContext {
+        runtime_config: None,
         agent_definition_id: "orchestrator".into(),
         allowed_subagent_ids: std::collections::HashSet::new(),
         turn_model_source: crate::agent::tinyagents::TurnModelSource::from_model(Arc::new(

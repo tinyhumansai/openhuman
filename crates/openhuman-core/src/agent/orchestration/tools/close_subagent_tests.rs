@@ -104,6 +104,7 @@ fn parent_context(workspace_dir: &Path) -> ParentExecutionContext {
     let model: Arc<dyn tinyinference_llm::model::ChatModel<()>> =
         Arc::new(tinyagents_harness::testkit::ScriptedModel::new(Vec::new()));
     ParentExecutionContext {
+        runtime_config: None,
         workspace_descriptor: None,
         agent_definition_id: "orchestrator".into(),
         allowed_subagent_ids: HashSet::new(),

@@ -92,6 +92,7 @@ pub(crate) async fn build_root_parent(
     Ok(ParentExecutionContext {
         agent_definition_id: agent_definition_id.to_string(),
         allowed_subagent_ids: HashSet::new(),
+        runtime_config: agent.runtime_config(),
         turn_model_source: agent.turn_model_source(),
         all_tools: agent.tools_arc(),
         all_tool_specs: agent.durable_tool_specs_arc(),

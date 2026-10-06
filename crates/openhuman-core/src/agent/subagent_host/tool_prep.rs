@@ -55,6 +55,10 @@ pub(crate) fn subagent_prompt_protocol(
 ///
 /// Matches:
 /// * the generic `spawn_subagent` meta-tool (arbitrary archetype by id);
+/// * `spawn_async_subagent`, the orchestrator's background spawn. A custom
+///   agent's `tool_allowlist` (or a wildcard scope) can carry it onto a
+///   child, which could then fan out copies of itself up to the spawn-depth
+///   cap once its own id is on a `subagents` allowlist (#6934);
 /// * every synthesised per-archetype `delegate_*` tool
 ///   ([`crate::tools::orchestrator_tools::collect_orchestrator_tools`]
 ///   emits `delegate_code_executor`, `delegate_planner`, …).
@@ -65,7 +69,7 @@ pub(crate) fn subagent_prompt_protocol(
 /// this function and the corresponding generator in
 /// `orchestrator_tools.rs` together.
 pub(super) fn is_subagent_spawn_tool(name: &str) -> bool {
-    if name == "spawn_subagent" || name.starts_with("delegate_") {
+    if name == "spawn_subagent" || name == "spawn_async_subagent" || name.starts_with("delegate_") {
         return true;
     }
     // Synthesised delegation tools are named by the target agent's

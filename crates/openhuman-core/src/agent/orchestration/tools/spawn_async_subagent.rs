@@ -29,9 +29,9 @@ use tinytools::ToolRunContext;
 use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 
 pub struct SpawnAsyncSubagentTool {
-    /// The ids this instance advertises in its `agent_id` enum. Empty means
-    /// the whole registry. See [`SpawnAsyncSubagentTool::scoped`].
+    /// The ids this instance advertises in its `agent_id` enum.
     advertised_ids: Vec<String>,
+    scoped: bool,
 }
 
 /// Harness dispatch for the detached child path. It owns the typed parent run
@@ -87,6 +87,7 @@ impl SpawnAsyncSubagentTool {
     pub fn new() -> Self {
         Self {
             advertised_ids: Vec::new(),
+            scoped: false,
         }
     }
 
@@ -105,6 +106,7 @@ impl SpawnAsyncSubagentTool {
         ids.dedup();
         Self {
             advertised_ids: ids,
+            scoped: true,
         }
     }
 }
@@ -124,12 +126,9 @@ impl Default for SpawnAsyncSubagentTool {
 /// rest, so advertising them only bought a refused call and a slice of schema
 /// on every turn. Called from the per-session spec view
 /// (`builder::visible_tool_specs_for_policy`), the same place `use_skill`'s
-/// pack index is narrowed. A missing or empty allowlist leaves the spec alone:
-/// wildcard parents keep the full registry.
+/// pack index is narrowed. A missing allowlist leaves the spec alone; an empty
+/// allowlist produces an empty enum for native tool-calling's schema.
 pub fn scope_spawn_async_subagent_spec(spec: &mut tinytools::ToolSpec, allowed: &[String]) {
-    if allowed.is_empty() {
-        return;
-    }
     let Some(enum_slot) = spec
         .parameters
         .pointer_mut("/properties/agent_id/enum")
@@ -164,16 +163,10 @@ impl Tool for SpawnAsyncSubagentTool {
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
-        let scoped = !self.advertised_ids.is_empty();
-        let agent_ids: Vec<String> = if scoped {
-            self.advertised_ids.clone()
-        } else {
-            AgentDefinitionRegistry::global()
-                .map(|reg| reg.list().iter().map(|d| d.id.clone()).collect())
-                .unwrap_or_default()
-        };
+        let scoped = self.scoped;
+        let agent_ids: Vec<String> = self.advertised_ids.clone();
 
-        let agent_id_schema = if agent_ids.is_empty() {
+        let agent_id_schema = if agent_ids.is_empty() && !scoped {
             json!({
                 "type": "string",
                 "description": "Sub-agent id (e.g. planner, critic, summarizer)."

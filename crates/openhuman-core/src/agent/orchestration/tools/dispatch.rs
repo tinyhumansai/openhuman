@@ -174,14 +174,21 @@ pub(crate) async fn dispatch_subagent_with_live_parent(
         }
     };
 
-    let definition = match registry.get(agent_id) {
-        Some(def) => def,
-        None => {
-            return Ok(ToolResult::error(format!(
-                "{tool_name}: agent '{agent_id}' not found in registry"
-            )));
-        }
-    };
+    // Harness registry first, then an enabled custom agent in the session's
+    // config — a user-authored sub-agent lives only in the latter (#6934).
+    let config = run_context
+        .parent
+        .as_ref()
+        .and_then(|parent| parent.runtime_config.as_deref());
+    let definition =
+        match crate::agent::registry::resolve_spawnable_definition(registry, config, agent_id) {
+            Some(def) => def,
+            None => {
+                return Ok(ToolResult::error(format!(
+                    "{tool_name}: agent '{agent_id}' not found in registry"
+                )));
+            }
+        };
 
     let parent_ctx = run_context.parent.clone();
     if let Some(ctx) = &parent_ctx {

@@ -7,6 +7,7 @@
 
 pub mod agents;
 mod defaults;
+mod effective;
 mod ops;
 mod rpc;
 mod schemas;
@@ -14,6 +15,10 @@ pub mod tools;
 pub mod types;
 
 pub use defaults::{default_agents, definition_from_registry_entry};
+pub use effective::{
+    default_override_in_config, effective_subagent_allowlist, resolve_spawnable_definition,
+    spawnable_ids,
+};
 pub use ops::{
     find_custom_in_config, get_agent, list_agents, merge_entries, remove_agent, set_agent_enabled,
     update_agent, upsert_custom_agent,

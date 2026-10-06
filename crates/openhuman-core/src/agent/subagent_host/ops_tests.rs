@@ -250,6 +250,7 @@ fn make_parent(
     let tool_specs: Vec<Arc<tinytools::ToolSpec>> =
         tools.iter().map(|t| Arc::new(t.spec())).collect();
     ParentExecutionContext {
+        runtime_config: None,
         workspace_descriptor: None,
         agent_definition_id: "orchestrator".into(),
         allowed_subagent_ids: ["test".to_string(), "child".to_string(), "inner".to_string()]

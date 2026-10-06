@@ -83,6 +83,7 @@ fn unused_message_ref(_m: &Message) {}
 
 fn parent_execution_context(workspace_dir: &Path) -> ParentExecutionContext {
     ParentExecutionContext {
+        runtime_config: None,
         workspace_descriptor: None,
         agent_definition_id: "orchestrator".into(),
         allowed_subagent_ids: ["image_agent".to_string()].into_iter().collect(),
