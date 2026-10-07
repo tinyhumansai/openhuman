@@ -129,3 +129,5 @@ Notes:
 ```
 
 Paste the filled block as a commit comment on the `v<version>-staging` tagged commit before promoting to production.
+
+- [ ] **Codex session import** — On Brain > Sources, import a Codex history with a long session and pause between passes. Expected: saved checkpoints advance before session completion and resume without re-sending completed windows. With a configured driver project scope, only matching Codex sessions are imported and exclusions are explained. Missing processing consent/provider shows an actionable alert without changing settings; partial failures never show a success toast.

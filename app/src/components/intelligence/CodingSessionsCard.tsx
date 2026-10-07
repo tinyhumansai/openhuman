@@ -59,8 +59,10 @@ export function CodingSessionsCard({ onToast }: CodingSessionsCardProps) {
     }),
     [sources]
   );
-  const hasImportableHistory =
-    totals.files > 0 || sources.some(source => source.scan_truncated === true);
+  const scopedCodex = sources.find(source => source.kind === 'codex' && source.project_scope);
+  const hasImportableHistory = scopedCodex
+    ? scopedCodex.session_files > 0 || scopedCodex.scan_truncated === true
+    : totals.files > 0 || sources.some(source => source.scan_truncated === true);
 
   const ingest = useCallback(async () => {
     console.debug('[coding-sessions] drain: entry');
@@ -108,11 +110,17 @@ export function CodingSessionsCard({ onToast }: CodingSessionsCardProps) {
             : t('memorySources.codingSessions.completeMessage')
                 .replace('{processed}', String(result.sessionsProcessed))
                 .replace('{observations}', String(result.observations));
+      const diagnostics = result.failures
+        ?.slice(0, 10)
+        .map(failure => failure.summary)
+        .join(' ');
       const title = result.timedOut
         ? t('memorySources.codingSessions.stillRunning')
-        : incomplete
-          ? t('memorySources.codingSessions.stopped')
-          : t('memorySources.codingSessions.complete');
+        : result.sessionsFailed > 0
+          ? t('memorySources.codingSessions.failed')
+          : incomplete
+            ? t('memorySources.codingSessions.stopped')
+            : t('memorySources.codingSessions.complete');
       onToast?.({
         type: result.timedOut
           ? 'info'
@@ -125,6 +133,7 @@ export function CodingSessionsCard({ onToast }: CodingSessionsCardProps) {
         message,
       });
       await load();
+      if (!result.timedOut && result.sessionsFailed > 0) setError(diagnostics || message);
     } catch (cause) {
       console.error('[coding-sessions] drain failed', cause);
       const message = cause instanceof Error ? cause.message : String(cause);
@@ -181,6 +190,14 @@ export function CodingSessionsCard({ onToast }: CodingSessionsCardProps) {
         </div>
       </div>
 
+      {scopedCodex && (
+        <p className="mt-3 text-xs text-content-secondary" role="status">
+          {t('memorySources.codingSessions.projectScope').replace(
+            '{project}',
+            scopedCodex.project_scope ?? ''
+          )}
+        </p>
+      )}
       {ingesting && progress && (
         <p
           className="mt-3 text-xs text-content-secondary"
@@ -189,6 +206,9 @@ export function CodingSessionsCard({ onToast }: CodingSessionsCardProps) {
           {t('memorySources.codingSessions.progress')
             .replace('{processed}', String(progress.sessionsProcessed))
             .replace('{observations}', String(progress.observations))}
+          {(progress.checkpointsAdvanced ?? 0) > 0
+            ? ` · ${t('memorySources.codingSessions.checkpoints').replace('{count}', String(progress.checkpointsAdvanced))}`
+            : ''}
           {progress.moreRemaining
             ? ` · ${t('memorySources.codingSessions.remaining').replace(
                 '{remaining}',
@@ -210,10 +230,24 @@ export function CodingSessionsCard({ onToast }: CodingSessionsCardProps) {
             <div className="mt-1 text-xs text-content-secondary">
               {source.available
                 ? t('memorySources.codingSessions.counts')
-                    .replace('{files}', String(source.session_files))
-                    .replace('{evidence}', String(source.evidence_units))
+                    .replace(
+                      '{files}',
+                      `${source.session_files}${source.scan_truncated ? '+' : ''}`
+                    )
+                    .replace(
+                      '{evidence}',
+                      `${source.evidence_units}${source.scan_truncated ? '+' : ''}`
+                    )
                 : t('memorySources.codingSessions.notFound')}
             </div>
+            {source.kind === 'codex' && (source.sessions_excluded ?? 0) > 0 && (
+              <p className="mt-1 text-xs text-content-secondary">
+                {t('memorySources.codingSessions.excluded').replace(
+                  '{count}',
+                  String(source.sessions_excluded)
+                )}
+              </p>
+            )}
             {source.available && source.scan_truncated && (
               <div className="mt-1 text-xs text-amber-600 dark:text-amber-400">
                 {t('memorySources.codingSessions.truncated')}

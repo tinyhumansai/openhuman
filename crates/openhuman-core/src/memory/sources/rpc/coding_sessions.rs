@@ -175,6 +175,10 @@ pub async fn ingest_coding_sessions_rpc(
         ));
     };
 
+    // Check the existing consent/provider ladder before any transcript can be
+    // sent to inference. This reports a missing step without changing settings.
+    validate_ingestion_provider(&config)?;
+
     // Wall-clock ceiling so a stalled provider call or a wedged session step
     // can't keep the RPC waiting indefinitely (#4863 review), sized to the
     // requested backfill so a legitimate large run isn't killed mid-flight
@@ -205,3 +209,19 @@ pub async fn ingest_coding_sessions_rpc(
     );
     Ok(Outcome::new(report, vec![]))
 }
+
+/// Refuse missing processing prerequisites without changing consent or routing.
+fn validate_ingestion_provider(config: &Config) -> Result<(), String> {
+    if !config.local_ai.runtime_enabled && !config.memory_tree.cloud_summarization_opt_in {
+        return Err("cloud_processing_disabled: enable local AI, or explicitly opt in to cloud memory processing before importing sessions".into());
+    }
+    let (available, _) = crate::memory::tree::tree_runtime::ops::summarizer_available(config);
+    if !available {
+        return Err("summarization_unavailable: configure a summarisation provider in Connections, or check that your local AI model is available".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "coding_sessions_tests.rs"]
+mod tests;

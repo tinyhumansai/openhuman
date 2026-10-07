@@ -415,3 +415,60 @@ describe('memorySourcesService', () => {
     expect(result.moreRemaining).toBe(true);
   });
 });
+
+describe('Codex checkpoint reports', () => {
+  it('continues after checkpoint progress without a completed session', async () => {
+    const base = {
+      mode: 'incremental',
+      files_seen: 1,
+      sessions_skipped: 0,
+      sessions_failed: 0,
+      evidence_units: 20,
+      observations: 0,
+    };
+    mockedCall.mockReset();
+    mockedCall.mockResolvedValueOnce({
+      result: { ...base, sessions_processed: 0, checkpoints_advanced: 5, budget_hit: true },
+      logs: [],
+    } as never);
+    mockedCall.mockResolvedValueOnce({
+      result: { ...base, sessions_processed: 1, checkpoints_advanced: 2, budget_hit: false },
+      logs: [],
+    } as never);
+    const result = await drainCodingSessions();
+    expect(mockedCall).toHaveBeenCalledTimes(2);
+    expect(result.sessionsProcessed).toBe(1);
+    expect(result.checkpointsAdvanced).toBe(7);
+    expect(result.moreRemaining).toBe(false);
+  });
+
+  it('retains failures and stops automatic retry even with a remaining budget', async () => {
+    mockedCall.mockReset();
+    const failures = [
+      {
+        code: 'parse_failure',
+        session_id: 'opaque',
+        summary: 'Check the summarisation provider and retry.',
+      },
+    ];
+    mockedCall.mockResolvedValue({
+      result: {
+        mode: 'incremental',
+        files_seen: 2,
+        sessions_processed: 1,
+        sessions_skipped: 0,
+        sessions_failed: 1,
+        evidence_units: 2,
+        observations: 1,
+        checkpoints_advanced: 1,
+        failures,
+        budget_hit: true,
+      },
+      logs: [],
+    } as never);
+    const result = await drainCodingSessions();
+    expect(mockedCall).toHaveBeenCalledTimes(1);
+    expect(result.moreRemaining).toBe(true);
+    expect(result.failures).toEqual(failures);
+  });
+});

@@ -7466,6 +7466,10 @@ const en: TranslationMap = {
   'memoryBudget.exhaustedMessage':
     'Your embedding budget is used up, so new content is no longer being added to memory. Set up local embeddings or add your own API key to resume.',
   'memoryBudget.cta': 'Set up embeddings',
+  'memorySources.codingSessions.checkpoints': '{count} digest checkpoints saved',
+  'memorySources.codingSessions.projectScope': 'Importing Codex sessions for {project} only.',
+  'memorySources.codingSessions.excluded':
+    '{count} sessions excluded: project provenance is missing or outside the selected project.',
   'memorySources.codingSessions.title': 'Coding-agent sessions',
   'memorySources.codingSessions.description':
     'Turn your Codex and Claude Code decisions and corrections into private persona memory.',
@@ -7483,7 +7487,8 @@ const en: TranslationMap = {
   'memorySources.codingSessions.counts': '{files} sessions · {evidence} human turns',
   'memorySources.codingSessions.notFound': 'No local history found',
   'memorySources.codingSessions.scanning': 'Scanning local session history…',
-  'memorySources.codingSessions.truncated': 'Scan limited to the first 1,000 session files.',
+  'memorySources.codingSessions.truncated':
+    'Scan reached its file or byte limit. Counts are lower bounds.',
   'memorySources.codingSessions.complete': 'Coding sessions ingested',
   'memorySources.codingSessions.completeMessage':
     '{processed} sessions produced {observations} persona observations.',

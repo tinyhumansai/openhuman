@@ -252,6 +252,14 @@ export interface CodingSessionSourceStatus {
   evidence_units: number;
   invalid_files: number;
   scan_truncated?: boolean;
+  project_scope?: string | null;
+  sessions_excluded?: number;
+}
+
+export interface CodingSessionFailure {
+  code: string;
+  session_id: string;
+  summary: string;
 }
 
 export interface CodingSessionIngestResult {
@@ -264,6 +272,9 @@ export interface CodingSessionIngestResult {
   observations: number;
   budget_hit: boolean;
   pack_path?: string | null;
+  checkpoints_advanced?: number;
+  failures?: CodingSessionFailure[];
+  sessions_excluded?: number;
 }
 
 // A single ingest RPC is bounded so it fits under the core RPC client's hard
@@ -331,6 +342,10 @@ export async function ingestCodingSessions(
 }
 
 export interface CodingSessionDrainProgress {
+  /** Newly persisted digest pieces across completed passes. */
+  checkpointsAdvanced?: number;
+  /** Sanitised diagnostics from the latest pass. */
+  failures?: CodingSessionFailure[];
   /** Bounded ingest RPC passes completed so far in this drain. */
   passes: number;
   /** Sessions distilled across every pass in this drain. */
@@ -440,6 +455,8 @@ export async function drainCodingSessions(
     remaining: 0,
     moreRemaining: false,
     timedOut: false,
+    checkpointsAdvanced: 0,
+    failures: [],
   };
   log('drain_coding_sessions: entry max_per_pass=%d max_passes=%d', maxSessionsPerPass, maxPasses);
 
@@ -471,6 +488,9 @@ export async function drainCodingSessions(
     progress.passes += 1;
     progress.sessionsProcessed += result.sessions_processed;
     progress.sessionsFailed = result.sessions_failed;
+    progress.checkpointsAdvanced =
+      (progress.checkpointsAdvanced ?? 0) + (result.checkpoints_advanced ?? 0);
+    progress.failures = result.failures ?? [];
     progress.observations += result.observations;
     // files_seen is the discovered total for this scan; skipped + processed is
     // what this pass accounted for, so the remainder is the honest backlog.
@@ -478,9 +498,10 @@ export async function drainCodingSessions(
       0,
       result.files_seen - result.sessions_skipped - result.sessions_processed
     );
-    progress.moreRemaining = result.budget_hit;
+    progress.moreRemaining = result.budget_hit || result.sessions_failed > 0;
     onProgress?.({ ...progress });
 
+    if (result.sessions_failed > 0) break;
     if (!result.budget_hit) {
       log(
         'drain_coding_sessions: drained after pass=%d processed=%d',
@@ -489,7 +510,7 @@ export async function drainCodingSessions(
       );
       break;
     }
-    if (result.sessions_processed === 0) {
+    if (result.sessions_processed === 0 && (result.checkpoints_advanced ?? 0) === 0) {
       // The backlog still reports more work, but this pass distilled nothing
       // new — every remaining candidate failed or could not advance. Stop
       // rather than spin; the caller surfaces the retained failures.

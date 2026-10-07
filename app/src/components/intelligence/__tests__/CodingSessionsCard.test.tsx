@@ -288,7 +288,9 @@ describe('CodingSessionsCard', () => {
     ]);
     renderWithProviders(<CodingSessionsCard />);
 
-    expect(await screen.findByText('Scan limited to the first 1,000 session files.')).toBeVisible();
+    expect(
+      await screen.findByText('Scan reached its file or byte limit. Counts are lower bounds.')
+    ).toBeVisible();
   });
 
   it('keeps ingestion enabled when a capped scan has not found evidence yet', async () => {
@@ -306,4 +308,84 @@ describe('CodingSessionsCard', () => {
 
     expect(await screen.findByTestId('coding-sessions-ingest')).toBeEnabled();
   });
+});
+
+describe('Codex import diagnostics', () => {
+  it('shows scope, exclusions and lower-bound scan counts', async () => {
+    mockedStatus.mockResolvedValue([
+      {
+        kind: 'codex',
+        available: true,
+        session_files: 12,
+        evidence_units: 20,
+        invalid_files: 0,
+        scan_truncated: true,
+        project_scope: '/workspace/project',
+        sessions_excluded: 3,
+      },
+    ]);
+    renderWithProviders(<CodingSessionsCard />);
+    expect(
+      await screen.findByText('Importing Codex sessions for /workspace/project only.')
+    ).toBeInTheDocument();
+    expect(screen.getByTestId('coding-session-source-codex')).toHaveTextContent(
+      '12+ sessions · 20+ human turns'
+    );
+    expect(screen.getByTestId('coding-session-source-codex')).toHaveTextContent(
+      '3 sessions excluded'
+    );
+  });
+
+  it('keeps actionable partial failure visible and never announces success', async () => {
+    mockedStatus.mockResolvedValue([
+      { kind: 'codex', available: true, session_files: 2, evidence_units: 2, invalid_files: 0 },
+    ]);
+    mockedDrain.mockResolvedValue({
+      passes: 1,
+      sessionsProcessed: 1,
+      sessionsFailed: 1,
+      observations: 2,
+      remaining: 1,
+      moreRemaining: true,
+      timedOut: false,
+      failures: [
+        {
+          code: 'provider_failure',
+          session_id: 'opaque',
+          summary: 'Check provider access and retry.',
+        },
+      ],
+    });
+    const onToast = vi.fn();
+    renderWithProviders(<CodingSessionsCard onToast={onToast} />);
+    fireEvent.click(await screen.findByTestId('coding-sessions-ingest'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Check provider access and retry.');
+    expect(onToast).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'warning', title: 'Coding-session ingestion failed' })
+    );
+  });
+});
+
+it('shows saved checkpoint progress before a session completes', async () => {
+  mockedStatus.mockResolvedValue([
+    { kind: 'codex', available: true, session_files: 1, evidence_units: 100, invalid_files: 0 },
+  ]);
+  mockedDrain.mockImplementation(({ onProgress } = {}) => {
+    onProgress?.({
+      passes: 1,
+      sessionsProcessed: 0,
+      sessionsFailed: 0,
+      observations: 0,
+      remaining: 1,
+      moreRemaining: true,
+      timedOut: false,
+      checkpointsAdvanced: 5,
+    });
+    return new Promise(() => {});
+  });
+  renderWithProviders(<CodingSessionsCard />);
+  fireEvent.click(await screen.findByTestId('coding-sessions-ingest'));
+  expect(await screen.findByTestId('coding-sessions-progress')).toHaveTextContent(
+    '5 digest checkpoints saved'
+  );
 });
