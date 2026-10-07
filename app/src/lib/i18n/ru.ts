@@ -3,6 +3,19 @@ import type { TranslationMap } from './types';
 // Russian (Русский) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  // Editable composer dictation.
+  'composer.dictationUnavailable':
+    'Диктовка недоступна. Проверьте поставщика распознавания речи в разделе Настройки > Голос.',
+  'composer.dictationStatusFailed':
+    'Не удалось проверить доступность диктовки. Вернитесь в это окно, чтобы повторить попытку.',
+  'composer.dictate': 'Диктовать',
+  'composer.finishDictation': 'Завершить диктовку',
+  'composer.discardDictation': 'Отменить диктовку',
+  'composer.dictationStarting': 'Включение микрофона...',
+  'composer.dictationRecording': 'Идёт запись. Завершите её, чтобы добавить текст, или отмените.',
+  'composer.dictationFailed': 'Не удалось распознать речь. Попробуйте ещё раз.',
+  'composer.dictationTimedOut': 'Время диктовки истекло. Попробуйте ещё раз.',
+
   // Share cards (#5006).
   'share.button': 'Поделиться',
   'share.modalTitle': 'Поделитесь этим моментом',

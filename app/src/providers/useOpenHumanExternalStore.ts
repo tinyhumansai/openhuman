@@ -2,6 +2,7 @@ import type {
   AddToolResultOptions,
   AppendMessage,
   ThreadMessage as AuiThreadMessage,
+  DictationAdapter,
   RespondToToolApprovalOptions,
   ThreadSuggestion,
 } from '@assistant-ui/react';
@@ -347,6 +348,7 @@ export function useOpenHumanExternalStore(
   threadId: string | null,
   {
     welcomeSuggestions = true,
+    dictationAdapter,
   }: {
     /**
      * Offer the home chat's starter prompts on an empty thread. Off for a
@@ -354,6 +356,8 @@ export function useOpenHumanExternalStore(
      * a click SENDS the prompt, and those prompts are not builder requests.
      */
     welcomeSuggestions?: boolean;
+    /** Configured core STT with a capture lifecycle owned by this runtime. */
+    dictationAdapter?: DictationAdapter;
   } = {}
 ) {
   const dispatch = useAppDispatch();
@@ -686,43 +690,8 @@ export function useOpenHumanExternalStore(
     [threadId]
   );
 
-  // DO NOT add `dictation: new WebSpeechDictationAdapter()` to the `adapters`
-  // key below.
-  //
-  // It is exported by `@assistant-ui/react` at our pinned 0.15.16 and looks like
-  // a one-line win: the transcript already renders Dictate / StopDictation
-  // behind `s.thread.capabilities.dictation` (`thread.tsx`), and the runtime
-  // derives that capability from nothing but the key's presence —
-  // `dictation: this._store.adapters?.dictation !== void 0`. Supplying the
-  // adapter would light the button up immediately. It would also trap the user.
-  //
-  // Measured in a WKWebView harness, which is the engine Wry gives us on macOS:
-  //
-  //   no Info.plist            `webkitSpeechRecognition` present, start() →
-  //                            onerror "service-not-allowed"
-  //   + NSMicrophoneUsage…     `webkitSpeechRecognition` present, start() →
-  //     + NSSpeechRecognition…  NO EVENT AT ALL within 6s
-  //
-  // The second row is the dangerous one. A detectable error could be caught and
-  // the capability withdrawn; silence cannot. The composer would enter
-  // `dictation != null`, never leave it, and `StopDictation` would be the only
-  // way out — an affordance that looks like it works, unlike the merely inert
-  // Edit / BranchPicker / Reload controls gated off in #5897 and #6467.
-  //
-  // This is NOT "speech is impossible here". The app already ships working
-  // speech-to-text by a different route: the `mic-cloud` composer captures with
-  // `MediaRecorder` and transcribes through the core's `voice_*` RPC
-  // (`features/human/voice/sttClient.ts`), with `voice` in
-  // `scripts/ci/product-features.txt`. Its entry point is the "Voice mode" mic
-  // button rendered a few pixels from the dictation gate it would duplicate.
-  // The desktop `Info.plist` even describes that path — it declares
-  // `NSMicrophoneUsageDescription` ("voice dictation") and, tellingly, no
-  // `NSSpeechRecognitionUsageDescription`, which only the mobile plist carries.
-  //
-  // Inline dictation into the composer is still worth having; it should reuse
-  // that shipped capture + transcription rather than Web Speech. Tracked
-  // separately — it needs a capture lifecycle, interim results, cancellation
-  // and error surfacing, none of which this key would provide.
+  // Inline dictation uses MediaRecorder and the configured core STT provider.
+  // The runtime appends its final transcript to the editable draft.
   return useMemo(
     () => ({
       messages: runtimeMessages,
@@ -752,8 +721,11 @@ export function useOpenHumanExternalStore(
       // without an adapter is enabled, clickable, and throws "Runtime does not
       // support speech." That is the #5897 defect shape, and Reload already
       // sits in the same trap today.
-      // No `dictation` key here — see the Web Speech note above this object.
-      adapters: { feedback: feedbackAdapter, speech: openHumanSpeechAdapter },
+      adapters: {
+        feedback: feedbackAdapter,
+        speech: openHumanSpeechAdapter,
+        dictation: dictationAdapter,
+      },
     }),
     [
       runtimeMessages,
@@ -762,6 +734,7 @@ export function useOpenHumanExternalStore(
       extras,
       suggestions,
       feedbackAdapter,
+      dictationAdapter,
       onNew,
       onCancel,
       queue,

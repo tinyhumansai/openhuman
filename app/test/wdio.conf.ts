@@ -84,6 +84,8 @@ export const config: Options.Testrunner & Record<string, unknown> = {
   port: parseInt(process.env.TAURI_DRIVER_PORT || '4444', 10),
   path: '/',
   specs: [testSpecsPath],
+  // Browser-only mocked flows run through playwright.config.ts, not the native driver.
+  exclude: [path.join(projectRoot, 'test', 'e2e', 'specs', 'browser', '**', '*.spec.ts')],
   rootDir: projectRoot,
   // `tauri-driver` owns the native WebKit display lifecycle. WDIO's automatic
   // `xvfb-run` wrapper drops the local-runner IPC descriptor, so workers exit

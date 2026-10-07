@@ -27,6 +27,14 @@ Applies to every release, all platforms.
 - [ ] **A failed chat turn does not offer an invalid regenerate action** — Trigger a provider failure in a test profile and inspect its error card. Expected: the diagnostic text remains visible, with no Retry or Refresh button on that failed message. A completed assistant reply still offers Refresh (#6613).
 - [ ] **A failed turn leaves its thread usable** — In a test profile, get one successful reply, trigger a streamed provider failure on the next turn, then send another message in the same thread. Expected: the error card appears, the composer re-enables, the next reply streams normally, and the agent still has the first turn's context. If a queued follow-up starts as the failed turn ends, its stream and composer state stay active.
 
+### Editable composer dictation
+
+- [ ] **The recording limit does not upload audio**: Leave dictation recording for one minute without selecting Finish. Confirm capture stops, a timeout appears, and the draft remains unchanged without a transcription request.
+
+- [ ] **Dictation remains an editable draft on Windows, macOS, and Linux**: On Chat, select Dictate and grant microphone permission. Edit the draft while speaking, select Finish dictation, and correct the appended transcript before selecting Send. Confirm the microphone indicator clears when recording finishes.
+- [ ] **Discard and navigation release microphone capture**: Start dictation, then discard it or press Escape. Repeat while transcription is pending and while switching threads or opening Voice mode. Confirm the draft stays intact and the microphone indicator clears.
+- [ ] **Permission denial and missing voice support stay usable**: Deny microphone access and confirm a localized error with an editable draft. In a build with the voice feature disabled, confirm the Dictate control stays hidden.
+
 ### Refreshed application UI
 
 - [ ] **Settings, Connections, theme, and workflow surfaces remain usable** — On desktop, navigate between Settings sections and Connections tabs, switch between light/dark and at least one named theme family, export and re-import a custom theme, then open a workflow canvas and its run history. Expected: each route renders its own content without stale panels or horizontal overflow; imported themes can be selected and theme selection and run details survive a reload where persistence is expected.

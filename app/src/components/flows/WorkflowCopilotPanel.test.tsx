@@ -52,7 +52,10 @@ vi.mock('../../store/hooks', () => ({
 // Neither card calls this on mount (only on Approve/Deny/Connect click), but
 // stub it defensively so a real network call can never sneak into a render
 // test.
-vi.mock('../../services/coreRpcClient', () => ({ callCoreRpc: vi.fn() }));
+vi.mock('../../services/coreRpcClient', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../services/coreRpcClient')>()),
+  callCoreRpc: vi.fn(),
+}));
 
 const hookState = vi.hoisted(() => ({
   threadId: 'builder-1' as string | null,

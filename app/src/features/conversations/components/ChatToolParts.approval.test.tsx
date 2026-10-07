@@ -44,7 +44,10 @@ vi.mock('../../../services/api/threadApi', () => ({
   },
 }));
 
-vi.mock('../../../services/coreRpcClient', () => ({ callCoreRpc: vi.fn() }));
+vi.mock('../../../services/coreRpcClient', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../../services/coreRpcClient')>()),
+  callCoreRpc: vi.fn(),
+}));
 
 const THREAD_ID = 't-1';
 const REQUEST_ID = 'appr-1';

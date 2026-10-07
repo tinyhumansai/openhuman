@@ -3,6 +3,19 @@ import type { TranslationMap } from './types';
 // Bengali (বাংলা) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  // Editable composer dictation.
+  'composer.dictationUnavailable':
+    'শ্রুতলিখন উপলব্ধ নেই। সেটিংস > ভয়েস-এ আপনার স্পিচ প্রদানকারী পরীক্ষা করুন।',
+  'composer.dictationStatusFailed':
+    'শ্রুতলিখনের উপলব্ধতা পরীক্ষা করা যায়নি। আবার চেষ্টা করতে এই উইন্ডোতে ফিরে আসুন।',
+  'composer.dictate': 'ডিক্টেশন',
+  'composer.finishDictation': 'ডিক্টেশন শেষ করুন',
+  'composer.discardDictation': 'ডিক্টেশন বাতিল করুন',
+  'composer.dictationStarting': 'মাইক্রোফোন চালু হচ্ছে...',
+  'composer.dictationRecording': 'রেকর্ড হচ্ছে। লেখা যোগ করতে শেষ করুন, অথবা বাতিল করুন।',
+  'composer.dictationFailed': 'অডিও থেকে লেখায় রূপান্তর ব্যর্থ হয়েছে। আবার চেষ্টা করুন।',
+  'composer.dictationTimedOut': 'ডিক্টেশনের সময়সীমা শেষ হয়েছে। আবার চেষ্টা করুন।',
+
   // Share cards (#5006).
   'share.button': 'শেয়ার',
   'share.modalTitle': 'এই মুহূর্তটি শেয়ার করুন',

@@ -3,6 +3,19 @@ import type { TranslationMap } from './types';
 // Arabic (العربية) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  // Editable composer dictation.
+  'composer.dictationUnavailable':
+    'الإملاء غير متاح. تحقّق من مزوّد تحويل الكلام إلى نص في الإعدادات > الصوت.',
+  'composer.dictationStatusFailed':
+    'تعذّر التحقّق من توفّر الإملاء. عُد إلى هذه النافذة للمحاولة مجددًا.',
+  'composer.dictate': 'إملاء',
+  'composer.finishDictation': 'إنهاء الإملاء',
+  'composer.discardDictation': 'إلغاء الإملاء',
+  'composer.dictationStarting': 'جارٍ تشغيل الميكروفون...',
+  'composer.dictationRecording': 'جارٍ التسجيل. أنهِ التسجيل لإضافة النص أو ألغِ الإملاء.',
+  'composer.dictationFailed': 'فشل تحويل الصوت إلى نص. حاول مرة أخرى.',
+  'composer.dictationTimedOut': 'انتهت مهلة الإملاء. حاول مرة أخرى.',
+
   // Share cards (#5006).
   'share.button': 'مشاركة',
   'share.modalTitle': 'شارك هذه اللحظة',

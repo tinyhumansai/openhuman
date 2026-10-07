@@ -3,6 +3,21 @@ import type { TranslationMap } from './types';
 // German (Deutsch) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  // Editable composer dictation.
+  'composer.dictationUnavailable':
+    'Diktieren ist nicht verfügbar. Prüfe deinen Sprachanbieter unter Einstellungen > Sprache.',
+  'composer.dictationStatusFailed':
+    'Die Verfügbarkeit der Diktierfunktion konnte nicht geprüft werden. Kehre zu diesem Fenster zurück, um es erneut zu versuchen.',
+  'composer.dictate': 'Diktieren',
+  'composer.finishDictation': 'Diktat abschließen',
+  'composer.discardDictation': 'Diktat verwerfen',
+  'composer.dictationStarting': 'Mikrofon wird gestartet...',
+  'composer.dictationRecording':
+    'Aufnahme läuft. Zum Einfügen des Textes abschließen oder verwerfen.',
+  'composer.dictationFailed': 'Die Transkription ist fehlgeschlagen. Bitte erneut versuchen.',
+  'composer.dictationTimedOut':
+    'Das Zeitlimit für das Diktat wurde erreicht. Bitte erneut versuchen.',
+
   // Share cards (#5006).
   'share.button': 'Teilen',
   'share.modalTitle': 'Diesen Moment teilen',

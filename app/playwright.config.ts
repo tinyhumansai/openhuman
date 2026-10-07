@@ -3,7 +3,8 @@ import { defineConfig } from '@playwright/test';
 const baseURL = process.env.PW_BASE_URL || 'http://127.0.0.1:4173';
 
 export default defineConfig({
-  testDir: './test/playwright/specs',
+  testDir: './test',
+  testMatch: ['**/playwright/specs/**/*.spec.ts', '**/e2e/specs/browser/**/*.spec.ts'],
   fullyParallel: false,
   workers: 1,
   retries: process.env.CI ? 2 : 0,

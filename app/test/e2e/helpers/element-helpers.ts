@@ -21,6 +21,8 @@ import type { ChainablePromiseElement } from 'webdriverio';
 
 import { isTauriDriver } from './platform';
 
+export { webElements, type WebTestElement } from './web-elements';
+
 // ---------------------------------------------------------------------------
 // XPath helpers (macOS / Appium Mac2 path)
 // ---------------------------------------------------------------------------

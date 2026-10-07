@@ -3,6 +3,20 @@ import type { TranslationMap } from './types';
 // Korean (한국어) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  // Editable composer dictation.
+  'composer.dictationUnavailable':
+    '받아쓰기를 사용할 수 없습니다. 설정 > 음성에서 음성 인식 제공업체를 확인하세요.',
+  'composer.dictationStatusFailed':
+    '받아쓰기 사용 가능 여부를 확인하지 못했습니다. 다시 시도하려면 이 창으로 돌아오세요.',
+  'composer.dictate': '받아쓰기',
+  'composer.finishDictation': '받아쓰기 완료',
+  'composer.discardDictation': '받아쓰기 취소',
+  'composer.dictationStarting': '마이크 시작 중...',
+  'composer.dictationRecording':
+    '녹음 중입니다. 완료하면 텍스트가 추가되며, 취소하면 녹음이 삭제됩니다.',
+  'composer.dictationFailed': '음성 변환에 실패했습니다. 다시 시도하세요.',
+  'composer.dictationTimedOut': '받아쓰기 시간이 초과되었습니다. 다시 시도하세요.',
+
   // Share cards (#5006).
   'share.button': '공유',
   'share.modalTitle': '이 순간을 공유하세요',

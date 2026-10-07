@@ -3,6 +3,19 @@ import type { TranslationMap } from './types';
 // Polish (Polski) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  // Editable composer dictation.
+  'composer.dictationUnavailable':
+    'Dyktowanie jest niedostępne. Sprawdź dostawcę rozpoznawania mowy w Ustawienia > Głos.',
+  'composer.dictationStatusFailed':
+    'Nie udało się sprawdzić dostępności dyktowania. Wróć do tego okna, aby spróbować ponownie.',
+  'composer.dictate': 'Dyktuj',
+  'composer.finishDictation': 'Zakończ dyktowanie',
+  'composer.discardDictation': 'Odrzuć dyktowanie',
+  'composer.dictationStarting': 'Uruchamianie mikrofonu...',
+  'composer.dictationRecording': 'Nagrywanie. Zakończ, aby dodać tekst, lub odrzuć nagranie.',
+  'composer.dictationFailed': 'Transkrypcja się nie powiodła. Spróbuj ponownie.',
+  'composer.dictationTimedOut': 'Upłynął limit czasu dyktowania. Spróbuj ponownie.',
+
   // Share cards (#5006).
   'share.button': 'Udostępnij',
   'share.modalTitle': 'Udostępnij tę chwilę',
