@@ -149,6 +149,23 @@ To make one provider the default for everything that is not pinned, set `primary
 
 BYOK inherits your provider's capabilities, not OpenHuman's. Before pinning `vision_provider`, confirm the model you named accepts image input, and before pinning `embeddings_provider`, confirm the provider serves an embeddings endpoint. Not every chat provider does.
 
+### Example: CoreWeave Inference
+
+For an account with [CoreWeave Serverless Inference credits](https://docs.coreweave.com/products/inference/serverless/api-reference), use the existing custom OpenAI-compatible provider flow:
+
+1. Open **Connections → LLM → Add a provider → Add a custom provider**.
+2. Enter **CoreWeave Inference** as the name. The generated routing slug is `coreweave-inference`.
+3. Set the endpoint to `https://api.inference.wandb.ai/v1` and enter your [CoreWeave Forge (W&B) API key](https://forge.coreweave.com/settings) in the API key field. CoreWeave Inference still uses this W&B hostname and credential.
+4. Save the provider, then choose a model available to your account. Keep the full model ID, for example `moonshotai/Kimi-K2.6`.
+
+To route chat to that provider by hand, set this at the top level of `config.toml` (outside any table):
+
+```toml
+chat_provider = "coreweave-inference:moonshotai/Kimi-K2.6"
+```
+
+Use the slug shown in your provider editor if you chose a different name. Keep the API key in the provider's key field, not in the workload string. Other workloads keep their existing routes; only assign vision or embeddings after confirming support. The headless account requirement described above also applies to this custom cloud provider.
+
 ## Mixing routes
 
 The workload fields are independent, so a common privacy-conscious setup keeps recurring background work on-device and reserves a strong cloud model for the turns that need it:
