@@ -45,8 +45,12 @@ const WhatLeavesMyComputerSheet = ({ open, onClose }: WhatLeavesMyComputerSheetP
         <ul className="space-y-3 mb-6">
           {WHAT_LEAVES_ITEMS.map(item => (
             <li key={item.id} className="rounded-xl border border-line bg-surface-muted p-4">
-              <p className="text-sm font-medium text-content">{item.title}</p>
-              <p className="text-sm text-content-secondary mt-1 leading-relaxed">{item.body}</p>
+              <p className="text-sm font-medium text-content">
+                {item.titleKey ? t(item.titleKey) : item.title}
+              </p>
+              <p className="text-sm text-content-secondary mt-1 leading-relaxed">
+                {item.bodyKey ? t(item.bodyKey) : item.body}
+              </p>
             </li>
           ))}
         </ul>

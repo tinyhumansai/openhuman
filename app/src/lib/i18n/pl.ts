@@ -3,6 +3,13 @@ import type { TranslationMap } from './types';
 // Polish (Polski) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  'privacy.whatLeaves.analytics.title': 'Raporty awarii i analityka produktu (można wyłączyć)',
+  'privacy.whatLeaves.analytics.body':
+    'Raporty awarii Sentry oraz odsłony stron i użycie funkcji w Google Analytics pomagają nam ulepszać aplikację. Zmień ten wybór w Ustawienia → Prywatność i bezpieczeństwo. Udostępnianie śladów agentów to osobny wybór opisany poniżej.',
+  'privacy.whatLeaves.traces.title': 'Ślady działania agentów (za zgodą)',
+  'privacy.whatLeaves.traces.body':
+    'Za Twoją zgodą OpenHuman wysyła przez swój serwer dane o czasie i użyciu tokenów do Langfuse. Osobne ustawienie treści dodaje zapytania, odpowiedzi, instrukcje systemowe oraz dane wejściowe i wyniki narzędzi. Udostępnianie i zbieranie treści są początkowo wyłączone.',
+
   // Share cards (#5006).
   'share.button': 'Udostępnij',
   'share.modalTitle': 'Udostępnij tę chwilę',

@@ -112,3 +112,5 @@ mod env_overlay_context_tests;
 mod env_overlay_tests;
 #[path = "load_migration_tests.rs"]
 mod migration_tests;
+#[path = "load_observability_env_tests.rs"]
+mod observability_env_tests;

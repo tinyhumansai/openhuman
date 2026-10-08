@@ -3,6 +3,13 @@ import type { TranslationMap } from './types';
 // Simplified Chinese (简体中文) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  'privacy.whatLeaves.analytics.title': '崩溃报告和产品分析（可关闭）',
+  'privacy.whatLeaves.analytics.body':
+    'Sentry 崩溃报告以及 Google Analytics 的页面浏览和功能使用数据有助于改进应用。可在设置 → 隐私与安全中更改此选项。代理追踪共享是单独的选项，说明如下。',
+  'privacy.whatLeaves.traces.title': '代理运行追踪（同意后开启）',
+  'privacy.whatLeaves.traces.body':
+    '经你同意，OpenHuman 会通过其服务器将耗时和令牌使用数据发送到 Langfuse。单独的内容设置会加入提示词、回复、系统提示词以及工具输入和结果。共享和内容采集初始状态均为关闭。',
+
   // Share cards (#5006).
   'share.button': '分享',
   'share.modalTitle': '分享这一刻',

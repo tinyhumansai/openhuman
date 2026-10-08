@@ -3,6 +3,14 @@ import type { TranslationMap } from './types';
 // Spanish (Español) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  'privacy.whatLeaves.analytics.title':
+    'Informes de fallos y análisis del producto (se pueden desactivar)',
+  'privacy.whatLeaves.analytics.body':
+    'Los informes de fallos de Sentry, las visitas a páginas y el uso de funciones en Google Analytics nos ayudan a mejorar la aplicación. Cambia esta opción en Ajustes → Privacidad y seguridad. Compartir trazas de agentes es una opción independiente descrita a continuación.',
+  'privacy.whatLeaves.traces.title': 'Trazas de agentes (con consentimiento)',
+  'privacy.whatLeaves.traces.body':
+    'Con tu consentimiento, OpenHuman envía datos de tiempos y uso de tokens a Langfuse a través de su servidor. Una opción de contenido independiente añade solicitudes, respuestas, instrucciones del sistema y entradas y resultados de herramientas. Ambas opciones empiezan desactivadas.',
+
   // Share cards (#5006).
   'share.button': 'Compartir',
   'share.modalTitle': 'Comparte este momento',

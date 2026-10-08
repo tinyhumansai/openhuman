@@ -3,6 +3,13 @@ import type { TranslationMap } from './types';
 // Hindi (हिन्दी) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  'privacy.whatLeaves.analytics.title': 'क्रैश रिपोर्ट और उत्पाद विश्लेषण (बंद कर सकते हैं)',
+  'privacy.whatLeaves.analytics.body':
+    'Sentry की क्रैश रिपोर्ट और Google Analytics में पेज व्यू व सुविधाओं के उपयोग के आँकड़े ऐप को बेहतर बनाने में मदद करते हैं। यह विकल्प सेटिंग्स → गोपनीयता और सुरक्षा में बदलें। एजेंट ट्रेस साझा करना एक अलग विकल्प है, जिसका विवरण नीचे है।',
+  'privacy.whatLeaves.traces.title': 'एजेंट रन ट्रेस (सहमति पर)',
+  'privacy.whatLeaves.traces.body':
+    'आपकी सहमति से OpenHuman अपने सर्वर के माध्यम से समय और टोकन उपयोग के आँकड़े Langfuse को भेजता है। सामग्री के लिए अलग सेटिंग चालू करने पर प्रॉम्प्ट, जवाब, सिस्टम प्रॉम्प्ट और टूल के इनपुट व परिणाम भी शामिल होते हैं। साझा करना और सामग्री संग्रह, दोनों शुरू में बंद रहते हैं।',
+
   // Share cards (#5006).
   'share.button': 'साझा करें',
   'share.modalTitle': 'इस पल को साझा करें',

@@ -3,6 +3,13 @@ import type { TranslationMap } from './types';
 // Korean (한국어) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  'privacy.whatLeaves.analytics.title': '충돌 보고서 및 제품 분석 (해제 가능)',
+  'privacy.whatLeaves.analytics.body':
+    'Sentry 충돌 보고서와 Google Analytics의 페이지 조회 및 기능 사용 정보는 앱 개선에 도움이 됩니다. 설정 → 개인정보 및 보안에서 이 선택을 변경하세요. 에이전트 추적 공유는 아래에 설명된 별도 선택 사항입니다.',
+  'privacy.whatLeaves.traces.title': '에이전트 실행 추적 (동의 시 활성화)',
+  'privacy.whatLeaves.traces.body':
+    '사용자가 동의하면 OpenHuman은 자체 서버를 통해 실행 시간과 토큰 사용 데이터를 Langfuse로 보냅니다. 별도의 콘텐츠 설정을 켜면 프롬프트, 응답, 시스템 프롬프트, 도구 입력과 결과가 추가됩니다. 공유와 콘텐츠 수집은 처음에 모두 꺼져 있습니다.',
+
   // Share cards (#5006).
   'share.button': '공유',
   'share.modalTitle': '이 순간을 공유하세요',

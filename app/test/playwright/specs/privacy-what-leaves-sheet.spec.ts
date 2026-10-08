@@ -70,15 +70,25 @@ async function openSheetAndAssertDescribed(page: Page): Promise<void> {
 test.describe('Privacy — the "what leaves my computer" sheet', () => {
   test('opens as a described dialog carrying the honest list', async ({ page }) => {
     await bootIntoOnboardingWelcome(page, 'pw-what-leaves-open');
+    // The shared core retains saved choices. The isolated fresh-default and
+    // five-state export checks live in tests/json_rpc_e2e/privacy_consent.rs.
     await openSheetAndAssertDescribed(page);
 
     await expect(sheet(page)).toContainText(HEADLINE);
 
-    // The three items are the point of the sheet — a dialog that renders its
+    // The four items are the point of the sheet — a dialog that renders its
     // chrome but drops its content would otherwise satisfy the assertions above.
     await expect(sheet(page)).toContainText('Cloud AI Inference');
     await expect(sheet(page)).toContainText('Third-party integrations');
-    await expect(sheet(page)).toContainText('Crash Reports & Usage Data (opt-out)');
+    await expect(sheet(page)).toContainText('Crash reports and product analytics (opt-out)');
+    await expect(sheet(page)).toContainText('Agent run traces (opt-in)');
+    await expect(sheet(page)).toContainText(
+      'OpenHuman sends timing and token usage data to Langfuse through its backend.'
+    );
+    await expect(sheet(page)).toContainText(
+      'prompts, replies, system prompts, and tool inputs and results'
+    );
+    await expect(sheet(page)).toContainText('Sharing and content capture both start turned off.');
   });
 
   test('Escape closes it and returns the user to the step', async ({ page }) => {

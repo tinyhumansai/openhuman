@@ -229,6 +229,7 @@ if should_run_suite "auth"; then
   run "test/e2e/specs/auth-access-control.spec.ts"            "auth"                      "auth"
   run "test/e2e/specs/logout-relogin-onboarding.spec.ts"      "logout-relogin"            "auth"
   run "test/e2e/specs/onboarding-modes.spec.ts"               "onboarding-modes"          "auth"
+  run "test/e2e/specs/privacy-trace-disclosure.spec.ts"       "privacy-trace-disclosure"  "auth"
   run "test/e2e/specs/runtime-picker-login.spec.ts"           "runtime-picker-login"      "auth"
   _mini_summary "auth"
 fi

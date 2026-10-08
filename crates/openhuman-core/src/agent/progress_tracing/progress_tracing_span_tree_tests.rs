@@ -14,9 +14,13 @@ fn local_tracing_exporter_is_off_by_default() {
 }
 
 #[test]
-fn observability_default_shares_usage_but_keeps_local_exporter_off() {
+fn observability_default_keeps_both_exporters_and_content_off() {
     let obs = ObservabilityConfig::default();
-    assert!(obs.share_usage_data, "usage-data sharing is on by default");
+    assert!(!obs.share_usage_data, "trace sharing requires consent");
+    assert!(
+        !obs.agent_tracing.capture_content,
+        "content requires separate consent"
+    );
     assert!(!obs.agent_tracing.enabled, "local exporter stays opt-in");
 }
 
@@ -525,8 +529,9 @@ async fn export_run_trace_is_noop_when_disabled_or_empty() {
     disabled.observability.agent_tracing.enabled = false;
     export_run_trace(&disabled, &one_turn_spans()).await;
 
-    // No spans → no-op even with sharing on (the default).
-    let enabled = crate::config::Config::default();
+    // No spans → no-op even after opting in to sharing.
+    let mut enabled = crate::config::Config::default();
+    enabled.observability.share_usage_data = true;
     export_run_trace(&enabled, &[]).await;
 }
 

@@ -3,6 +3,14 @@ import type { TranslationMap } from './types';
 // French (Français) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  'privacy.whatLeaves.analytics.title':
+    'Rapports de plantage et analyses du produit (désactivables)',
+  'privacy.whatLeaves.analytics.body':
+    'Les rapports de plantage Sentry, les pages vues et l’utilisation des fonctionnalités dans Google Analytics nous aident à améliorer l’application. Modifiez ce choix dans Paramètres → Confidentialité et sécurité. Le partage des traces des agents est un choix distinct décrit ci-dessous.',
+  'privacy.whatLeaves.traces.title': 'Traces des agents (sur consentement)',
+  'privacy.whatLeaves.traces.body':
+    'Avec votre consentement, OpenHuman envoie les durées et les données d’utilisation des jetons à Langfuse via son serveur. Un réglage distinct ajoute les requêtes, les réponses, les instructions système ainsi que les entrées et résultats des outils. Le partage et la capture du contenu sont désactivés au départ.',
+
   // Share cards (#5006).
   'share.button': 'Partager',
   'share.modalTitle': 'Partagez ce moment',

@@ -1,4 +1,4 @@
-//! Env overrides for Sentry, analytics, and agent-tracing content capture.
+//! Env overrides for Sentry, analytics, and agent-tracing consent.
 
 use crate::config::schema::load::env::EnvLookup;
 use crate::config::schema::Config;
@@ -26,8 +26,16 @@ impl Config {
             }
         }
 
-        // Prompt/reply content is captured by default; operators can disable
-        // it independently of token and cost telemetry.
+        if let Some(flag) = env.get("OPENHUMAN_SHARE_USAGE_DATA") {
+            let normalized = flag.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "1" | "true" | "yes" | "on" => self.observability.share_usage_data = true,
+                "0" | "false" | "no" | "off" => self.observability.share_usage_data = false,
+                _ => {}
+            }
+        }
+
+        // Operators opt in to content independently of trace metadata sharing.
         if let Some(flag) = env.get("OPENHUMAN_AGENT_TRACING_CAPTURE_CONTENT") {
             let normalized = flag.trim().to_ascii_lowercase();
             match normalized.as_str() {

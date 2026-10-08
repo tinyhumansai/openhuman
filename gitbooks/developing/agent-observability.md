@@ -113,15 +113,26 @@ bearer verbatim; `--help` lists every `CAPTURE_*` knob.
 
 Everything above is about E2E artifacts on disk. For a real agent run, the
 core can export trace spans to Langfuse instead: when
-`observability.share_usage_data` is on (the default), a completed run's spans
+`observability.share_usage_data` is enabled by an explicit opt-in, a completed run's spans
 go to the OpenHuman backend's Langfuse ingestion proxy over the same session
 bearer every other backend call uses, and the backend forwards them to
 Langfuse with the project keys injected server-side. Clients never hold
 Langfuse credentials directly. Prompt and reply text ride along only while
-`observability.agent_tracing.capture_content` is also on; turning it off keeps
+`observability.agent_tracing.capture_content` is also enabled; turning it off keeps
 metadata (names, timings, token and cost figures) but drops content. See
 `crates/openhuman-core/src/agent/progress_tracing/langfuse.rs` and
 `crates/openhuman-core/src/config/schema/observability.rs`.
+
+Both settings default to `false`. To share metadata, set
+`share_usage_data = true` under `[observability]` in the user's `config.toml`.
+To also capture prompts, replies, system prompts and tool inputs/results, set
+`capture_content = true` under `[observability.agent_tracing]`. The local
+exporter has its own `enabled` switch and stays independent of backend sharing.
+Stored explicit choices are preserved when loading an existing configuration.
+
+For declarative installs, `OPENHUMAN_SHARE_USAGE_DATA` controls sharing and
+`OPENHUMAN_AGENT_TRACING_CAPTURE_CONTENT` controls content capture. Both accept
+`true`/`false`, `on`/`off`, `yes`/`no` and `1`/`0`, overriding the stored value.
 
 ## What is intentionally out of scope
 

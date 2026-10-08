@@ -3,6 +3,13 @@ import type { TranslationMap } from './types';
 // Bengali (বাংলা) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  'privacy.whatLeaves.analytics.title': 'ক্র্যাশ রিপোর্ট ও পণ্যের বিশ্লেষণ (বন্ধ করা যায়)',
+  'privacy.whatLeaves.analytics.body':
+    'Sentry-এর ক্র্যাশ রিপোর্ট এবং Google Analytics-এর পৃষ্ঠা দেখা ও ফিচার ব্যবহারের তথ্য অ্যাপ উন্নত করতে সাহায্য করে। সেটিংস → গোপনীয়তা ও নিরাপত্তায় এই পছন্দ পরিবর্তন করুন। এজেন্ট ট্রেস শেয়ার করা একটি আলাদা পছন্দ, যার বিবরণ নিচে আছে।',
+  'privacy.whatLeaves.traces.title': 'এজেন্ট রানের ট্রেস (সম্মতিতে)',
+  'privacy.whatLeaves.traces.body':
+    'আপনার সম্মতিতে OpenHuman নিজস্ব সার্ভারের মাধ্যমে সময় ও টোকেন ব্যবহারের তথ্য Langfuse-এ পাঠায়। বিষয়বস্তুর আলাদা সেটিং চালু করলে প্রম্পট, উত্তর, সিস্টেম প্রম্পট এবং টুলের ইনপুট ও ফলাফল যোগ হয়। শেয়ার করা ও বিষয়বস্তু সংগ্রহ, দুটিই শুরুতে বন্ধ থাকে।',
+
   // Share cards (#5006).
   'share.button': 'শেয়ার',
   'share.modalTitle': 'এই মুহূর্তটি শেয়ার করুন',

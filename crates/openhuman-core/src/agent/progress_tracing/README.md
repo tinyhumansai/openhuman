@@ -6,7 +6,7 @@ OpenTelemetry/Langfuse-style trace spans (`agent.turn` -> `agent.iteration` ->
 debugging long multi-agent runs (issue #3886). The module doc on
 `agent/progress_tracing.rs` has the full span-tree shape and the
 content-capture privacy gate (`observability.agent_tracing.capture_content`,
-default on; enforced once, in `SpanCollector`, so no exporter can leak
+default off; enforced once, in `SpanCollector`, so no exporter can leak
 content).
 
 ## Key files
@@ -21,7 +21,7 @@ content).
   exporter `export_spans`, and the two run-completion entry points
   `export_run_trace` / `export_run_trace_from_journal`. Each entry point runs
   two independent, best-effort paths: a Langfuse push when
-  `observability.share_usage_data` is on (the default), and local NDJSON
+  `observability.share_usage_data` is on (opt-in), and local NDJSON
   export to `export_path` or the app log when
   `observability.agent_tracing.enabled` is on (opt-in).
 - `otlp.rs`: the remote agent-turn exporter (the span-to-OTLP conversion is
@@ -31,7 +31,7 @@ content).
   model generations, and summarizes repeated internal tool discovery.
   It POSTs through the authenticated backend's
   `/telemetry/langfuse/otel/v1/traces` proxy; the backend supplies project
-  keys and authoritative user attribution. Export is on by default through
+  keys and authoritative user attribution. Export requires explicit consent through
   `observability.share_usage_data`; local NDJSON export remains optional.
 - `langfuse.rs` + `langfuse/` retain the legacy batch projection for
   compatibility tests and the flow-run exporter. Agent turns use `otlp.rs`.

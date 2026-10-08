@@ -3,6 +3,13 @@ import type { TranslationMap } from './types';
 // Arabic (العربية) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  'privacy.whatLeaves.analytics.title': 'تقارير الأعطال وتحليلات المنتج (يمكن إيقافها)',
+  'privacy.whatLeaves.analytics.body':
+    'تساعد تقارير أعطال Sentry ومشاهدات الصفحات واستخدام الميزات في Google Analytics على تحسين التطبيق. غيّر هذا الخيار في الإعدادات ← الخصوصية والأمان. مشاركة تتبعات الوكلاء خيار مستقل موضح أدناه.',
+  'privacy.whatLeaves.traces.title': 'تتبعات تشغيل الوكلاء (بموافقة)',
+  'privacy.whatLeaves.traces.body':
+    'بموافقتك، يرسل OpenHuman بيانات التوقيت واستخدام الرموز إلى Langfuse عبر خادمه. يضيف إعداد مستقل للمحتوى الطلبات والردود وتعليمات النظام ومدخلات الأدوات ونتائجها. تبدأ المشاركة وجمع المحتوى كلاهما في وضع الإيقاف.',
+
   // Share cards (#5006).
   'share.button': 'مشاركة',
   'share.modalTitle': 'شارك هذه اللحظة',

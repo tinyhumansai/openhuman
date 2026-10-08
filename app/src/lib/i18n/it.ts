@@ -3,6 +3,14 @@ import type { TranslationMap } from './types';
 // Italian (Italiano) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  'privacy.whatLeaves.analytics.title':
+    'Segnalazioni di arresti anomali e analisi del prodotto (disattivabili)',
+  'privacy.whatLeaves.analytics.body':
+    'Le segnalazioni Sentry, le visualizzazioni di pagina e l’uso delle funzionalità in Google Analytics ci aiutano a migliorare l’app. Modifica questa scelta in Impostazioni → Privacy e sicurezza. La condivisione delle tracce degli agenti è una scelta separata descritta sotto.',
+  'privacy.whatLeaves.traces.title': 'Tracce degli agenti (su consenso)',
+  'privacy.whatLeaves.traces.body':
+    'Con il tuo consenso, OpenHuman invia tempi e dati sull’uso dei token a Langfuse tramite il proprio server. Un’impostazione separata aggiunge richieste, risposte, istruzioni di sistema e input e risultati degli strumenti. Condivisione e acquisizione dei contenuti sono inizialmente disattivate.',
+
   // Share cards (#5006).
   'share.button': 'Condividi',
   'share.modalTitle': 'Condividi questo momento',

@@ -75,7 +75,7 @@ pub(crate) fn export_spans(config: &AgentTracingConfig, spans: &[TraceSpan]) {
 ///
 /// Two independent paths, both best-effort and never fatal to a turn:
 ///
-/// 1. **Usage-data sharing** (`observability.share_usage_data`, on by default):
+/// 1. **Usage-data sharing** (`observability.share_usage_data`, opt-in):
 ///    push the run's spans to the backend Langfuse proxy — endpoint derived from
 ///    the current backend host, authed with the session bearer (see
 ///    [`otlp::push_spans`]). A failure (no live session, network, rejected
@@ -144,7 +144,7 @@ pub(crate) async fn export_subagent_journal_trace(
     }
     // Check the push gates before reading the child's journal: without a live
     // session the push refuses anyway, and the read and observation build were
-    // pure cost — on every delegated turn, since usage sharing defaults on.
+    // unnecessary work on delegated turns after opting in to usage sharing.
     if !langfuse::journal_push_ready(config) {
         log::debug!(
             "[agent-tracing] child trace export skipped: push not possible run_id={journal_run_id}"

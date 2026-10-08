@@ -636,31 +636,6 @@ fn resolve_config_dir_for_workspace_workspace_basename_resolves_to_fresh_legacy_
 }
 
 #[test]
-fn env_overlay_toggles_agent_tracing_capture_content() {
-    // Serialize with the sibling env-overlay tests (TEST_ENV_LOCK note at the
-    // top of the file) so a concurrent test's env mutation can't race in.
-    let _g = env_lock();
-
-    // ON by default since #4498 (`default_capture_content() == true` — traces
-    // without content aren't actionable in Langfuse). This assertion was left
-    // asserting the pre-#4498 `false` default and is corrected here.
-    let mut cfg = Config::default();
-    assert!(cfg.observability.agent_tracing.capture_content);
-
-    // An explicit falsy env value turns it off.
-    cfg.apply_env_overlay_with(
-        &HashMapEnv::new().with("OPENHUMAN_AGENT_TRACING_CAPTURE_CONTENT", "off"),
-    );
-    assert!(!cfg.observability.agent_tracing.capture_content);
-
-    // A truthy value turns it back on.
-    cfg.apply_env_overlay_with(
-        &HashMapEnv::new().with("OPENHUMAN_AGENT_TRACING_CAPTURE_CONTENT", "true"),
-    );
-    assert!(cfg.observability.agent_tracing.capture_content);
-}
-
-#[test]
 fn env_overlay_runtime_pool_workers_and_enabled() {
     // Baseline: master switch on, both pools at the default worker count.
     let mut cfg = Config::default();

@@ -3,6 +3,13 @@ import type { TranslationMap } from './types';
 // German (Deutsch) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  'privacy.whatLeaves.analytics.title': 'Absturzberichte und Produktanalysen (abwählbar)',
+  'privacy.whatLeaves.analytics.body':
+    'Sentry-Absturzberichte sowie Seitenaufrufe und Funktionsnutzung in Google Analytics helfen uns, die App zu verbessern. Ändere diese Auswahl unter Einstellungen → Datenschutz und Sicherheit. Die Weitergabe von Agentenablaufdaten ist eine separate, unten beschriebene Auswahl.',
+  'privacy.whatLeaves.traces.title': 'Agentenablaufdaten (freiwillig)',
+  'privacy.whatLeaves.traces.body':
+    'Mit deiner Zustimmung sendet OpenHuman Zeitmessungen und Token-Nutzungsdaten über sein Backend an Langfuse. Eine separate Inhaltseinstellung ergänzt Eingaben, Antworten, Systemanweisungen sowie Werkzeugeingaben und Ergebnisse. Weitergabe und Inhaltserfassung sind anfangs beide ausgeschaltet.',
+
   // Share cards (#5006).
   'share.button': 'Teilen',
   'share.modalTitle': 'Diesen Moment teilen',

@@ -3,6 +3,14 @@ import type { TranslationMap } from './types';
 // Indonesian (Bahasa Indonesia) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  'privacy.whatLeaves.analytics.title':
+    'Laporan kerusakan dan analitik produk (dapat dinonaktifkan)',
+  'privacy.whatLeaves.analytics.body':
+    'Laporan kerusakan Sentry serta tampilan halaman dan penggunaan fitur di Google Analytics membantu kami meningkatkan aplikasi. Ubah pilihan ini di Pengaturan → Privasi & Keamanan. Berbagi jejak agen adalah pilihan terpisah yang dijelaskan di bawah.',
+  'privacy.whatLeaves.traces.title': 'Jejak proses agen (dengan persetujuan)',
+  'privacy.whatLeaves.traces.body':
+    'Dengan persetujuan Anda, OpenHuman mengirim data waktu dan penggunaan token ke Langfuse melalui servernya. Pengaturan konten terpisah menambahkan prompt, balasan, prompt sistem, serta masukan dan hasil alat. Berbagi dan perekaman konten awalnya sama-sama dinonaktifkan.',
+
   // Share cards (#5006).
   'share.button': 'Bagikan',
   'share.modalTitle': 'Bagikan momen ini',

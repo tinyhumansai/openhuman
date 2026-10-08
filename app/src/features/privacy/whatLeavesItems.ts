@@ -2,6 +2,8 @@ interface PrivacyLeaveItem {
   id: string;
   title: string;
   body: string;
+  titleKey?: string;
+  bodyKey?: string;
 }
 
 /**
@@ -22,8 +24,17 @@ export const WHAT_LEAVES_ITEMS: PrivacyLeaveItem[] = [
   },
   {
     id: 'sentry',
-    title: 'Crash Reports & Usage Data (opt-out)',
-    body: 'Anonymous crash reports (via Sentry) and anonymous usage analytics — page views and feature engagement (via Google Analytics) — help us fix bugs and improve the product. No personal data, messages, or credentials are ever included. Toggle anytime in Settings → Privacy & Security.',
+    title: 'Crash reports and product analytics (opt-out)',
+    body: 'Sentry crash reports and Google Analytics page views and feature usage help us improve the app. Change this choice in Settings → Privacy & Security. Agent trace sharing is a separate choice described below.',
+    titleKey: 'privacy.whatLeaves.analytics.title',
+    bodyKey: 'privacy.whatLeaves.analytics.body',
+  },
+  {
+    id: 'agent-traces',
+    title: 'Agent run traces (opt-in)',
+    body: 'With your consent, OpenHuman sends timing and token usage data to Langfuse through its backend. A separate content setting adds prompts, replies, system prompts, and tool inputs and results. Sharing and content capture both start turned off.',
+    titleKey: 'privacy.whatLeaves.traces.title',
+    bodyKey: 'privacy.whatLeaves.traces.body',
   },
 ];
 

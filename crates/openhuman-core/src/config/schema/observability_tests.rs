@@ -14,9 +14,11 @@ fn default_analytics_enabled_helper_returns_true() {
 }
 
 #[test]
-fn share_usage_data_is_on_by_default() {
-    assert!(default_share_usage_data());
-    assert!(ObservabilityConfig::default().share_usage_data);
+fn trace_sharing_and_content_capture_require_consent() {
+    assert!(!default_share_usage_data());
+    assert!(!ObservabilityConfig::default().share_usage_data);
+    assert!(!default_capture_content());
+    assert!(!AgentTracingConfig::default().capture_content);
 }
 
 #[test]
@@ -24,8 +26,8 @@ fn deserialize_missing_optional_fields_uses_defaults() {
     let cfg: ObservabilityConfig = serde_json::from_value(json!({})).unwrap();
     assert!(cfg.analytics_enabled, "analytics default must be true");
     assert!(
-        cfg.share_usage_data,
-        "usage-data sharing is on by default (consent to Langfuse push)"
+        !cfg.share_usage_data,
+        "trace sharing requires an explicit opt-in"
     );
     // The local exporter stays opt-in and vendor-neutral by default.
     assert!(
@@ -35,26 +37,41 @@ fn deserialize_missing_optional_fields_uses_defaults() {
     assert_eq!(cfg.agent_tracing.backend, AgentTracingBackend::Otel);
     assert!(cfg.agent_tracing.export_path.is_none());
     assert!(
-        cfg.agent_tracing.capture_content,
-        "content capture is on by default (deliberate product decision)"
+        !cfg.agent_tracing.capture_content,
+        "content capture requires a separate opt-in"
     );
 }
 
 #[test]
-fn capture_content_defaults_true_and_can_be_disabled() {
-    assert!(AgentTracingConfig::default().capture_content);
+fn capture_content_can_be_enabled_independently() {
+    assert!(!AgentTracingConfig::default().capture_content);
     let cfg: ObservabilityConfig = serde_json::from_value(json!({
-        "agent_tracing": { "capture_content": false }
+        "agent_tracing": { "capture_content": true }
     }))
     .unwrap();
+    assert!(cfg.agent_tracing.capture_content);
+    assert!(!cfg.share_usage_data);
+}
+
+#[test]
+fn trace_sharing_can_be_enabled_with_metadata_only() {
+    let cfg: ObservabilityConfig =
+        serde_json::from_value(json!({ "share_usage_data": true })).unwrap();
+    assert!(cfg.share_usage_data);
     assert!(!cfg.agent_tracing.capture_content);
 }
 
 #[test]
-fn share_usage_data_can_be_disabled() {
-    let cfg: ObservabilityConfig =
-        serde_json::from_value(json!({ "share_usage_data": false })).unwrap();
-    assert!(!cfg.share_usage_data);
+fn explicit_trace_consent_round_trips() {
+    let cfg: ObservabilityConfig = serde_json::from_value(json!({
+        "share_usage_data": true,
+        "agent_tracing": { "capture_content": true }
+    }))
+    .unwrap();
+    let saved = serde_json::to_string(&cfg).unwrap();
+    let restored: ObservabilityConfig = serde_json::from_str(&saved).unwrap();
+    assert!(restored.share_usage_data);
+    assert!(restored.agent_tracing.capture_content);
 }
 
 #[test]

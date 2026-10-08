@@ -18,10 +18,10 @@ pub struct ObservabilityConfig {
     pub analytics_enabled: bool,
 
     /// User consent to share agent-run usage data (structured trace spans)
-    /// with the OpenHuman backend's Langfuse. On by default; opting out stops
-    /// the export. Spans always carry metadata (names/kinds/timings/token &
-    /// cost figures); prompt/reply text and tool I/O ride along only while
-    /// [`AgentTracingConfig::capture_content`] is on (its default). Distinct
+    /// with the OpenHuman backend's Langfuse. Off by default; users opt in
+    /// to the export. Spans carry metadata (names/kinds/timings/token &
+    /// cost figures); prompt/reply text and tool I/O require a separate opt-in
+    /// through [`AgentTracingConfig::capture_content`]. Distinct
     /// from [`Self::analytics_enabled`] (Sentry / product analytics) so users
     /// can tune the two independently.
     #[serde(default = "default_share_usage_data")]
@@ -40,7 +40,7 @@ fn default_analytics_enabled() -> bool {
 }
 
 fn default_share_usage_data() -> bool {
-    true
+    false
 }
 
 /// Destination format for the agent tracing export. Vendor-neutral
@@ -67,7 +67,7 @@ pub enum AgentTracingBackend {
 ///
 /// Off by default and intentionally side-effect-free when disabled. Spans
 /// always carry metadata (names, counts, timings, token/cost figures) and —
-/// while [`Self::capture_content`] is on (its default) — the turn's
+/// after opting in to [`Self::capture_content`] — the turn's
 /// prompt/reply plus truncated tool arguments/results. Streamed deltas, raw
 /// error text, and file paths are never exported regardless of the flag,
 /// honoring the project's "never log secrets or full PII" rule for logs.
@@ -86,16 +86,15 @@ pub struct AgentTracingConfig {
     pub export_path: Option<String>,
 
     /// Include the turn's prompt (`input`), the model's reply (`output`), and
-    /// truncated tool arguments/results on exported spans. **On by default**
-    /// (deliberate product decision — traces without content are not actionable
-    /// in Langfuse); set to `false` to fall back to the metadata-only posture.
+    /// truncated tool arguments/results on exported spans. **Off by default**;
+    /// set to `true` to opt in to content capture separately from trace sharing.
     /// Token/cost figures are always exported (they carry no PII) regardless of
     /// this flag.
     pub capture_content: bool,
 }
 
 fn default_capture_content() -> bool {
-    true
+    false
 }
 
 impl Default for AgentTracingConfig {

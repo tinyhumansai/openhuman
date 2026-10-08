@@ -1,6 +1,13 @@
 import type { TranslationMap } from './types';
 
 const en: TranslationMap = {
+  'privacy.whatLeaves.analytics.title': 'Crash reports and product analytics (opt-out)',
+  'privacy.whatLeaves.analytics.body':
+    'Sentry crash reports and Google Analytics page views and feature usage help us improve the app. Change this choice in Settings → Privacy & Security. Agent trace sharing is a separate choice described below.',
+  'privacy.whatLeaves.traces.title': 'Agent run traces (opt-in)',
+  'privacy.whatLeaves.traces.body':
+    'With your consent, OpenHuman sends timing and token usage data to Langfuse through its backend. A separate content setting adds prompts, replies, system prompts, and tool inputs and results. Sharing and content capture both start turned off.',
+
   // Navigation
   'nav.home': 'Home',
   'nav.chat': 'Chat',

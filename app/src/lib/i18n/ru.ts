@@ -3,6 +3,13 @@ import type { TranslationMap } from './types';
 // Russian (Русский) translations. Keys mirror en.ts; missing/
 // English-identical values fall back to English via I18nContext.resolveEn().
 const messages: TranslationMap = {
+  'privacy.whatLeaves.analytics.title': 'Отчёты о сбоях и аналитика продукта (можно отключить)',
+  'privacy.whatLeaves.analytics.body':
+    'Отчёты Sentry о сбоях, просмотры страниц и использование функций в Google Analytics помогают улучшать приложение. Измените этот выбор в Настройки → Конфиденциальность и безопасность. Передача трассировок агентов настраивается отдельно, как описано ниже.',
+  'privacy.whatLeaves.traces.title': 'Трассировки агентов (с согласия)',
+  'privacy.whatLeaves.traces.body':
+    'С вашего согласия OpenHuman передаёт данные о времени и использовании токенов в Langfuse через свой сервер. Отдельная настройка содержимого добавляет запросы, ответы, системные инструкции, входные данные и результаты инструментов. Передача и сбор содержимого изначально выключены.',
+
   // Share cards (#5006).
   'share.button': 'Поделиться',
   'share.modalTitle': 'Поделитесь этим моментом',

@@ -8,6 +8,8 @@ mod tinyhumans_boot;
 
 #[path = "support/env_guard.rs"]
 mod env_guard;
+#[path = "json_rpc_e2e/privacy_consent.rs"]
+mod privacy_consent;
 #[path = "support/scripted_stack.rs"]
 mod scripted_stack;
 use env_guard::EnvVarGuard;
