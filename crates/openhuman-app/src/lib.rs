@@ -108,6 +108,7 @@ mod ptt_overlay;
 mod reset_reboot_schedule;
 mod session;
 mod stderr_panic_hook;
+mod widget_scheme;
 mod window_state;
 mod workspace_paths;
 
@@ -2878,6 +2879,7 @@ pub fn run() {
         // Native backstop: the main webview never loads a remote page; any
         // http(s) navigation away from the app is handed to the OS browser.
         .plugin(external_navigation::init())
+        .register_asynchronous_uri_scheme_protocol(widget_scheme::SCHEME, widget_scheme::handle)
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())

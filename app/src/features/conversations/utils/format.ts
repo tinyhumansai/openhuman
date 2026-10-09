@@ -1,3 +1,5 @@
+import { parseWorkspaceHref } from '../../../utils/workspaceLinks';
+
 export function formatRelativeTime(dateStr: string): string {
   const now = Date.now();
   const then = new Date(dateStr).getTime();
@@ -12,12 +14,76 @@ export function formatRelativeTime(dateStr: string): string {
 }
 
 export function isAllowedExternalHref(rawHref: string): boolean {
-  try {
-    const url = new URL(rawHref);
-    return url.protocol === 'http:' || url.protocol === 'https:' || url.protocol === 'mailto:';
-  } catch {
-    return false;
+  return classifyHref(rawHref) === 'external';
+}
+
+/**
+ * How a link in chat may be acted on:
+ * - `external`: `http(s)` / `mailto`, opened by the OS.
+ * - `handoff`: an app scheme such as `upi://` or `phonepe://`, meant for a
+ *   phone; shown as a QR code and never opened on this machine.
+ * - `workspace`: a workspace file reference.
+ * - `relative`: an in-page fragment or relative reference.
+ * - `blocked`: anything that could run script or reach the app itself.
+ *
+ * The blocked list matches the core's (`mcp/ui/links.rs`).
+ */
+export type HrefClass = 'external' | 'handoff' | 'workspace' | 'relative' | 'blocked';
+
+const BLOCKED_SCHEMES = new Set([
+  'javascript',
+  'data',
+  'vbscript',
+  'file',
+  'blob',
+  'about',
+  'tauri',
+  'ipc',
+  'asset',
+  'ohwidget',
+  'filesystem',
+  'chrome',
+  'chrome-extension',
+  'view-source',
+  'ws',
+  'wss',
+  'ftp',
+  'openhuman',
+]);
+
+const SCHEME_RE = /^([a-z][a-z0-9+.-]{0,31}):/i;
+const MAX_HREF_LENGTH = 2048;
+
+export function classifyHref(rawHref: string | null | undefined): HrefClass {
+  const href = (rawHref ?? '').trim();
+  if (!href) return 'blocked';
+  if (parseWorkspaceHref(href)) return 'workspace';
+  // Control characters (including tab/newline that browsers strip) never pass.
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f]/.test(href) || href.length > MAX_HREF_LENGTH) return 'blocked';
+  const match = SCHEME_RE.exec(href);
+  if (!match) return 'relative';
+  const scheme = match[1].toLowerCase();
+  if (BLOCKED_SCHEMES.has(scheme)) return 'blocked';
+  if (scheme === 'http' || scheme === 'https') {
+    try {
+      return new URL(href).hostname ? 'external' : 'blocked';
+    } catch {
+      return 'blocked';
+    }
   }
+  if (scheme === 'mailto') return href.length > 'mailto:'.length ? 'external' : 'blocked';
+  return href.slice(match[0].length).startsWith('//') && href.length > match[0].length + 2
+    ? 'handoff'
+    : 'blocked';
+}
+
+/**
+ * The `urlTransform` both chat markdown surfaces share: keeps workspace,
+ * external, handoff and relative links; blanks everything else.
+ */
+export function transformChatUrl(url: string): string {
+  return classifyHref(url) === 'blocked' ? '' : url;
 }
 
 /**

@@ -26,6 +26,7 @@ use crate::config::Config;
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
 use crate::mcp::host;
+use crate::mcp::ui::decorate::{MetaLookup, ToolInput, UiAwareTool};
 
 use super::connections;
 use super::types::ConnectedServerOverview;
@@ -50,10 +51,19 @@ pub fn deferred_connected_tools(
     config: Arc<Config>,
     servers: &[ConnectedServerOverview],
 ) -> Vec<Box<dyn Tool>> {
+    let lookup_config = Arc::clone(&config);
     server_tools(config, servers)
         .into_iter()
-        .map(|tool| Box::new(tool) as Box<dyn Tool>)
+        .map(|tool| ui_aware(&lookup_config, tool))
         .collect()
+}
+
+fn ui_aware(config: &Arc<Config>, tool: McpServerTool) -> Box<dyn Tool> {
+    Box::new(UiAwareTool::new(
+        Box::new(tool),
+        MetaLookup::Installed(Arc::clone(config)),
+        ToolInput::Direct,
+    ))
 }
 
 /// [`deferred_connected_tools`], plus a copy of any tool under the pre-readable
@@ -66,6 +76,7 @@ pub fn deferred_connected_tools_with_legacy(
     servers: &[ConnectedServerOverview],
     recorded: &HashSet<String>,
 ) -> Vec<Box<dyn Tool>> {
+    let lookup_config = Arc::clone(&config);
     let tools = server_tools(config, servers);
     let aliases: Vec<McpServerTool> = tools
         .iter()
@@ -84,7 +95,7 @@ pub fn deferred_connected_tools_with_legacy(
     tools
         .into_iter()
         .chain(aliases)
-        .map(|tool| Box::new(tool) as Box<dyn Tool>)
+        .map(|tool| ui_aware(&lookup_config, tool))
         .collect()
 }
 

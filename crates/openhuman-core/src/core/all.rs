@@ -359,11 +359,10 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         DomainGroup::Desktop,
         crate::desktop::dashboard::all_dashboard_registered_controllers(),
     );
-    // MCP client subsystem: Smithery registry browser, local server install/connect, tool dispatch
     push(
         &mut controllers,
         DomainGroup::Mcp,
-        crate::mcp::registry::all_mcp_registry_registered_controllers(),
+        crate::mcp::all_registered_controllers(),
     );
     // Agent definition and prompt inspection
     push(
@@ -837,6 +836,7 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "mcp_clients" => Some(
             "Browse the MCP registries, declare the user's servers in one mcp.json document, manage their connections and credentials, and expose their tools to the agent.",
         ),
+        "mcp_ui" => Some("Serve MCP tool widgets their documents and run their tool calls."),
         "decrypt" => Some("Decrypt secure values managed by secret storage."),
         "doctor" => Some("Run diagnostics for workspace and runtime health."),
         "hooks" => Some(

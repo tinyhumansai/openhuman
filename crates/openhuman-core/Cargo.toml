@@ -279,6 +279,9 @@ tinymcp = { path = "../../vendor/tinymcp/crates/tinymcp", default-features = fal
     # Server tools as `tinytools::Tool`s over the persistent tool cache. Needs
     # the root `[patch]` that redirects tinymcp's git tinytools to ours.
     "tools",
+    # Tool UI rules: widget templates, documents, link classification, and the
+    # widget tool-call policy, behind the `mcp_ui` host glue.
+    "ui",
 ] }
 tinymcp-bus = { path = "../../vendor/tinymcp/crates/tinymcp-bus", features = ["schemars"] }
 # The transport-free channel vocabulary: inbound envelopes, outbound intents,

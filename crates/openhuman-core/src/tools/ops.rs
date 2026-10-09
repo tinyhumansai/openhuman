@@ -695,6 +695,7 @@ pub fn all_tools_with_runtime(
     // feature; see the static-vs-dynamic note in AGENTS.md.
     #[cfg(feature = "mcp")]
     {
+        tools.push(crate::mcp::ui::show_ui_tool(root_config));
         let mcp_registry = {
             // Built from the converted configuration, which is the one place
             // the two vocabularies meet. A registry that cannot be built is
@@ -710,10 +711,8 @@ pub fn all_tools_with_runtime(
         if !mcp_registry.is_empty() {
             tools.push(Box::new(McpListServersTool::new(Arc::clone(&mcp_registry))));
             tools.push(Box::new(McpListToolsTool::new(Arc::clone(&mcp_registry))));
-            tools.push(Box::new(mcp_call_tool(
-                Arc::clone(&mcp_registry),
-                security.clone(),
-            )));
+            let call = Box::new(mcp_call_tool(Arc::clone(&mcp_registry), security.clone()));
+            tools.push(crate::mcp::ui::ui_aware_call(call, &mcp_registry));
             tracing::debug!(
                 count = mcp_registry.list().len(),
                 "[mcp_client] registered generic MCP bridge tools"

@@ -137,6 +137,19 @@ impl Middleware<(), crate::agent::tinyagents::host::OpenHumanRunContext>
         // JSON object carrying a `"kind"` discriminator, so an arbitrary
         // metadata shape a tool sets for its own bookkeeping doesn't leak onto
         // the wire as if it were a presentation contract.
+        if result
+            .metadata
+            .as_ref()
+            .and_then(|v| v.get("kind"))
+            .and_then(serde_json::Value::as_str)
+            == Some("mcp_result")
+        {
+            tracing::debug!(
+                tool = tool_name,
+                "[tinyagents::mw] dropped an undecorated mcp_result envelope"
+            );
+            result.metadata = None;
+        }
         let structured = result
             .metadata
             .clone()

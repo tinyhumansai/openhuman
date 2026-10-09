@@ -26,6 +26,8 @@ import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 
+import { ExternalSchemeLink } from '../../features/conversations/tools/mcpUi/LinkActions';
+import { classifyHref, transformChatUrl } from '../../features/conversations/utils/format';
 import { hasLatexContent, normalizeLatexDelimiters } from '../../utils/latex';
 import { extractLanguage, extractTextContent } from '../markdown/CodeBlock';
 import { CitationMarker, type CitationSource } from './elements/inline-citation';
@@ -90,6 +92,11 @@ const MATH_REMARK_PLUGINS = [remarkGfm, remarkMath];
 const HIGHLIGHT_REHYPE_PLUGINS = [rehypeHighlight];
 const MATH_REHYPE_PLUGINS = [rehypeHighlight, rehypeKatex];
 
+/** Chat links minus workspace references, which this surface cannot open. */
+function transformAssistantUrl(url: string): string {
+  return classifyHref(url) === 'workspace' ? '' : transformChatUrl(url);
+}
+
 const MarkdownTextImpl = () => {
   // Math is GATED, not always-on, and the gate is `hasLatexContent` rather than
   // "contains a $". `remark-math` would otherwise read "$10 vs $20" as an inline
@@ -140,6 +147,7 @@ const MarkdownTextImpl = () => {
         // normalised once rather than per frame.
         preprocess={preprocess}
         className="aui-md"
+        urlTransform={transformAssistantUrl}
         components={defaultComponents}
         defer
       />
@@ -297,6 +305,9 @@ const defaultComponents = memoizeMarkdownComponents({
     const citationIndex = citationMatch ? Number.parseInt(citationMatch[1], 10) - 1 : -1;
     const source = citationIndex >= 0 ? sources[citationIndex] : undefined;
     if (source) return <CitationMarker index={citationIndex} source={source} />;
+    if (href && classifyHref(href) === 'handoff') {
+      return <ExternalSchemeLink href={href}>{children}</ExternalSchemeLink>;
+    }
     return (
       <a
         className={cn('aui-md-a text-primary hover:text-primary/80 no-underline', className)}

@@ -276,6 +276,7 @@ export const EXACT_TOOL_SPECS: Record<string, ToolSpec> = {
   }),
   media_list_models: spec('checkMediaModels', ImageIcon, 'media'),
   generate_document: spec('createDocument', FileTextIcon, 'media', { chip: chip.text('title') }),
+  show_ui: spec('showView', AppWindowIcon, 'skill'),
   generate_presentation: spec('createPresentation', PresentationIcon, 'media', {
     chip: chip.text('title'),
   }),

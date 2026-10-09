@@ -71,3 +71,52 @@ async fn same_tool_calls_keep_completion_and_failure_records_by_call_id() {
     assert!(!recorded["echo-failure"].0);
     assert!(recorded["echo-failure"].1.is_some());
 }
+
+async fn capture_metadata(
+    metadata: serde_json::Value,
+) -> (Option<serde_json::Value>, Option<serde_json::Value>) {
+    let sink = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let failure_map = std::sync::Arc::new(std::sync::Mutex::new(Default::default()));
+    let middleware = ToolOutcomeCaptureMiddleware::new(sink, failure_map.clone());
+    let mut ctx = context();
+    let mut call = tinyinference_llm::tool::ToolCall {
+        id: "mcp-1".into(),
+        name: "mcp_shop_order".into(),
+        arguments: serde_json::json!({}),
+        invalid: None,
+    };
+    middleware
+        .before_tool(&mut ctx, &(), &mut call)
+        .await
+        .unwrap();
+    let identity = ToolInvocationIdentity::new("mcp-1", "mcp_shop_order");
+    let mut result = TaToolResult::success("ok");
+    result.metadata = Some(metadata);
+    middleware
+        .after_tool(&mut ctx, &(), &identity, &mut result)
+        .await
+        .unwrap();
+    let structured = failure_map.lock().unwrap()["mcp-1"].4.clone();
+    (structured, result.metadata)
+}
+
+#[tokio::test]
+async fn mcp_ui_presentation_is_forwarded() {
+    let (structured, kept) =
+        capture_metadata(serde_json::json!({"kind": "mcp_ui", "tool": "order", "links": []})).await;
+    assert_eq!(structured.unwrap()["kind"], "mcp_ui");
+    assert!(kept.is_some());
+}
+
+#[tokio::test]
+async fn raw_mcp_result_envelope_is_dropped() {
+    let (structured, kept) = capture_metadata(serde_json::json!({
+        "kind": "mcp_result",
+        "server": "shop",
+        "tool": "order",
+        "resources": [{"uri": "ui://x", "mimeType": "text/html", "text": "<html>"}]
+    }))
+    .await;
+    assert!(structured.is_none());
+    assert!(kept.is_none());
+}

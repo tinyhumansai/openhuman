@@ -241,11 +241,16 @@ impl Tool for ConfiguredMcpServerTool {
         if !safe.iter().any(|candidate| candidate.name == tool) {
             anyhow::bail!("MCP tool is no longer available or safe: {server}/{tool}");
         }
-        let result = self
+        let mut result = self
             .inner
-            .execute(args)
+            .execute(args.clone())
             .await
             .map_err(|error| anyhow::anyhow!(self.scrubber.scrub_error(&error)))?;
+        if let Some(metadata) = result.metadata.as_mut() {
+            crate::mcp::ui::decorate::scrub_strings(metadata, &|text| self.scrubber.scrub(text));
+        }
+        let tool_meta = current_registry.tool_meta(server, tool);
+        crate::mcp::ui::decorate_result(tool_meta.as_ref(), &args, &mut result);
         Ok(self.scrubber.scrub_result(result))
     }
 }

@@ -263,10 +263,34 @@ impl Tool for McpRegistryToolCallTool {
         let arguments = normalize_tool_arguments(args.get("arguments").cloned())
             .map(Value::Object)
             .map_err(|error| anyhow::anyhow!("mcp_registry_tool_call: {error}"))?;
-        emit!(
-            ops::mcp_clients_tool_call(&self.config, sid, tool_name, arguments).await,
-            "mcp_registry_tool_call"
+        let outcome = ops::mcp_clients_tool_call(
+            &self.config,
+            sid.clone(),
+            tool_name.clone(),
+            arguments.clone(),
         )
+        .await
+        .map_err(|e| anyhow::anyhow!("mcp_registry_tool_call: {e}"))?;
+        let mut result = ToolResult::success(serde_json::to_string(&outcome.value)?);
+        let raw = outcome.value.get("result").filter(|raw| raw.is_object());
+        if let Some(raw) = raw {
+            let tool_meta = match crate::mcp::host::for_config(&self.config) {
+                Ok(service) => {
+                    service
+                        .dynamic()
+                        .connections()
+                        .tool_meta(&sid, &tool_name)
+                        .await
+                }
+                Err(_) => None,
+            };
+            let view = crate::mcp::ui::resolve::view_from_raw_result(
+                &sid, &tool_name, tool_meta, arguments, raw,
+            );
+            result.metadata = crate::mcp::ui::resolve::presentation_from_view(&view)
+                .map(|presentation| presentation.to_metadata());
+        }
+        Ok(result)
     }
 }
 

@@ -7708,6 +7708,7 @@ dependencies = [
  "dirs 7.0.0",
  "futures-util",
  "parking_lot",
+ "regex",
  "reqwest",
  "rusqlite",
  "serde",

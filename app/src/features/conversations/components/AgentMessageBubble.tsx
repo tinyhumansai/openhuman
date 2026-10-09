@@ -1,5 +1,5 @@
 import { type ReactNode, useMemo } from 'react';
-import Markdown, { defaultUrlTransform } from 'react-markdown';
+import Markdown from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
 import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
@@ -10,7 +10,8 @@ import { hasLatexContent, normalizeLatexDelimiters } from '../../../utils/latex'
 import { openUrl } from '../../../utils/openUrl';
 import { openWorkspacePath } from '../../../utils/tauriCommands/workspacePaths';
 import { parseWorkspaceHref } from '../../../utils/workspaceLinks';
-import { isAllowedExternalHref } from '../utils/format';
+import { ExternalSchemeLink } from '../tools/mcpUi/LinkActions';
+import { classifyHref, isAllowedExternalHref, transformChatUrl } from '../utils/format';
 
 const GFM_REMARK_PLUGINS = [remarkGfm];
 const MATH_REMARK_PLUGINS = [remarkGfm, remarkMath];
@@ -19,11 +20,10 @@ const MATH_REMARK_PLUGINS = [remarkGfm, remarkMath];
 const HIGHLIGHT_REHYPE_PLUGINS = [rehypeHighlight];
 const MATH_REHYPE_PLUGINS = [rehypeHighlight, rehypeKatex];
 
-function transformMarkdownUrl(url: string): string {
-  return parseWorkspaceHref(url) ? url : defaultUrlTransform(url);
-}
-
 function MarkdownAnchor({ href, children }: { href?: string; children?: ReactNode }) {
+  if (href && classifyHref(href) === 'handoff') {
+    return <ExternalSchemeLink href={href}>{children}</ExternalSchemeLink>;
+  }
   return (
     <a
       href={href}
@@ -78,7 +78,7 @@ export function BubbleMarkdown({
     <div
       className={`text-sm prose prose-sm max-w-none prose-p:my-1 prose-pre:my-0 prose-code:text-xs prose-headings:font-semibold prose-ul:my-0 prose-ol:my-0 prose-li:my-0 ${proseTone} [&_ul]:my-0 [&_ol]:my-0 [&_ul]:pl-0 [&_ol]:pl-0 [&_ul]:list-inside [&_ol]:list-inside [&_li]:my-0 [&_li]:pl-0 [&_li_p]:inline [&_li_p]:m-0`}>
       <Markdown
-        urlTransform={transformMarkdownUrl}
+        urlTransform={transformChatUrl}
         components={markdownComponents}
         remarkPlugins={hasMath ? MATH_REMARK_PLUGINS : GFM_REMARK_PLUGINS}
         rehypePlugins={hasMath ? MATH_REHYPE_PLUGINS : HIGHLIGHT_REHYPE_PLUGINS}>

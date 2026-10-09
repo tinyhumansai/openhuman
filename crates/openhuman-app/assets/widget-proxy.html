@@ -1,0 +1,86 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: transparent;
+        overflow: hidden;
+      }
+      iframe {
+        border: 0;
+        display: block;
+        width: 100%;
+        height: 100%;
+        background: transparent;
+      }
+    </style>
+  </head>
+  <body>
+    <script>
+      (function () {
+        "use strict";
+        var host = window.parent;
+        if (!host || host === window) return;
+        var inner = null;
+        var theme = new URLSearchParams(location.search).get("theme");
+        if (theme !== "light" && theme !== "dark") theme = "";
+        if (theme) document.documentElement.style.colorScheme = theme;
+
+        function isRpc(data) {
+          return (
+            data !== null &&
+            typeof data === "object" &&
+            data.jsonrpc === "2.0" &&
+            (typeof data.method === "string" || "id" in data)
+          );
+        }
+
+        function mount(html) {
+          inner = document.createElement("iframe");
+          inner.setAttribute("sandbox", "allow-scripts allow-forms");
+          inner.setAttribute("referrerpolicy", "no-referrer");
+          inner.setAttribute("title", "widget");
+          inner.setAttribute("allowtransparency", "true");
+          if (theme) inner.style.colorScheme = theme;
+          inner.srcdoc = html;
+          document.body.appendChild(inner);
+        }
+
+        window.addEventListener("message", function (event) {
+          var data = event.data;
+          if (!isRpc(data)) return;
+          if (event.source === host) {
+            if (data.method === "ui/notifications/sandbox-resource-ready") {
+              var html = data.params && data.params.html;
+              if (inner || typeof html !== "string") return;
+              mount(html);
+              return;
+            }
+            if (inner && inner.contentWindow)
+              inner.contentWindow.postMessage(data, "*");
+            return;
+          }
+          if (inner && event.source === inner.contentWindow) {
+            host.postMessage(data, "*");
+          }
+        });
+
+        host.postMessage(
+          {
+            jsonrpc: "2.0",
+            method: "ui/notifications/sandbox-proxy-ready",
+            params: {},
+          },
+          "*",
+        );
+      })();
+    </script>
+  </body>
+</html>

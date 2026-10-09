@@ -30,6 +30,8 @@ const MAIN_WINDOW: &str = "main";
 ///   `windows_scheme` is `https` only when the window sets `useHttpsScheme`;
 ///   the other scheme or any other port is a different origin (e.g. a loopback
 ///   service) and is handed off;
+/// - `<windows_scheme>://ohwidget.localhost`, the widget sandbox origin on
+///   Windows;
 /// - the dev server origin, passed as `dev_url` only under `tauri dev`.
 pub(crate) fn navigation_handoff(
     label: &str,
@@ -42,10 +44,15 @@ pub(crate) fn navigation_handoff(
     }
     // `Url` drops a scheme's default port, so `port()` is `None` only for the
     // canonical origin.
-    let is_windows_app_origin = url.scheme() == windows_scheme
-        && url.host_str() == Some("tauri.localhost")
-        && url.port().is_none();
-    if is_windows_app_origin || dev_url.is_some_and(|dev| dev.origin() == url.origin()) {
+    let is_windows_local_origin = |host: &str| {
+        url.scheme() == windows_scheme && url.host_str() == Some(host) && url.port().is_none()
+    };
+    let is_windows_app_origin = is_windows_local_origin("tauri.localhost");
+    let is_windows_widget_origin = is_windows_local_origin("ohwidget.localhost");
+    if is_windows_app_origin
+        || is_windows_widget_origin
+        || dev_url.is_some_and(|dev| dev.origin() == url.origin())
+    {
         return None;
     }
     Some(url.clone())

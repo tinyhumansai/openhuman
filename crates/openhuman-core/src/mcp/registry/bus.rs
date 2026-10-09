@@ -44,6 +44,11 @@ impl EventHandler<DomainEvent> for McpClientEventSubscriber {
                     tool_count = %tool_count,
                     "[mcp-client] server connected"
                 );
+                crate::mcp::ui::discovery::spawn_log_installed(server_id.clone());
+            }
+
+            DomainEvent::McpServerReconnected { server_id, .. } => {
+                crate::mcp::ui::discovery::spawn_log_installed(server_id.clone());
             }
 
             DomainEvent::McpServerDisconnected { server_id, reason } => {

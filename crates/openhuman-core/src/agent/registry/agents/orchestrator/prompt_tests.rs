@@ -236,6 +236,8 @@ fn connected_mcp_block_lists_servers_and_direct_tool_route() {
     assert!(block.contains("## Connected MCP Servers"));
     assert!(block.contains("`tool_search`"));
     assert!(block.contains("call the matching MCP tool"));
+    assert!(block.contains("appears inline in its tool card"));
+    assert!(block.contains("payment, confirmation or sign-in link"));
     assert!(!block.contains("use_mcp_server"));
     assert!(block.contains("Tandem Docs"));
     assert!(block.contains("ac.tandem/docs-mcp"));

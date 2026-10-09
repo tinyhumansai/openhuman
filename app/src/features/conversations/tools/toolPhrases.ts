@@ -90,6 +90,7 @@ export const TOOL_PHRASES = {
   checkMediaModels: { active: 'Checking media models', done: 'Checked media models' },
   createDocument: { active: 'Creating document', done: 'Created document' },
   createPresentation: { active: 'Creating presentation', done: 'Created presentation' },
+  showView: { active: 'Showing a view', done: 'Showed a view' },
   generatePodcast: { active: 'Generating podcast', done: 'Generated podcast' },
   emailPodcast: { active: 'Emailing podcast', done: 'Emailed podcast' },
   createAndEmailPodcast: {

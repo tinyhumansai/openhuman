@@ -68,6 +68,7 @@ serde_json = "1"
 # `openhuman-rpc`'s own: `http-client` (the relay client), `server` (the
 # embedded JSON-RPC server and `host::desktop`) and `jev` (the Jev-backed
 # `tool_search` ranker the product ships).
+tinymcp = { path = "../../vendor/tinymcp/crates/tinymcp", default-features = false, features = ["ui"] }
 openhuman-rpc = { path = "../openhuman-rpc", default-features = false, features = [
     "http-client",
     "server",

@@ -82,3 +82,25 @@ fn other_webviews_are_left_to_their_own_handlers() {
         None
     );
 }
+
+#[test]
+fn widget_sandbox_origin_stays_in_the_main_webview() {
+    assert_eq!(
+        navigation_handoff(
+            "main",
+            &url("http://ohwidget.localhost/proxy"),
+            "http",
+            None
+        ),
+        None
+    );
+    assert_eq!(
+        navigation_handoff("main", &url("ohwidget://localhost/proxy"), "http", None),
+        None
+    );
+    let other_port = url("http://ohwidget.localhost:8080/proxy");
+    assert_eq!(
+        navigation_handoff("main", &other_port, "http", None),
+        Some(other_port)
+    );
+}

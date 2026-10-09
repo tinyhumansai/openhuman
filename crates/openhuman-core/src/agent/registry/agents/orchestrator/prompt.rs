@@ -469,7 +469,11 @@ fn format_connected_mcp_block(
         "## Connected MCP Servers\n\n\
          Their actions are searchable through `tool_search`. Search for the \
          action in plain words, then call the matching MCP tool with the \
-         schema the search returns.\n\n",
+         schema the search returns.\n\n\
+         A tool's own UI (a cart, a QR code, a checkout) appears inline in its \
+         tool card. Always repeat any payment, confirmation or sign-in link a \
+         tool result contains in your reply, and never say a QR code or widget \
+         is visible unless the tool card shows one.\n\n",
     );
     for s in servers {
         let name = if s.display_name.trim().is_empty() {
