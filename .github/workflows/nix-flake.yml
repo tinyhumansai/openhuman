@@ -36,9 +36,15 @@ jobs:
       # Submodules are required: the flake's `src` includes `vendor/`, and
       # without the submodule contents even evaluation-time source inspection
       # is incomplete.
+      #
+      # `persist-credentials: false`: this runs on `pull_request` and then
+      # *evaluates and enters* a flake the PR can edit (`shellHook` in
+      # `nix develop` is arbitrary code), so the checkout token must not be
+      # left in the local Git config for that code to reach.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: recursive
+          persist-credentials: false
 
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
         with:
