@@ -52,8 +52,12 @@ jobs:
             experimental-features = nix-command flakes
 
       # Every output must evaluate on every system the flake advertises.
+      #
+      # `path:.` (not a bare `nix flake check`, which would use the git copier)
+      # is required: the git copier drops the submodule contents this checkout
+      # just fetched, and the flake's `src` guard then stops evaluation.
       - name: Evaluate all outputs (all systems)
-        run: nix flake check --no-build --all-systems --show-trace
+        run: nix flake check "path:." --no-build --all-systems --show-trace
 
       # Prove the dev shell's inputs resolve (toolchain + system libraries).
       - name: Build dev shell inputs
