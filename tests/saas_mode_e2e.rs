@@ -4,10 +4,13 @@
 //! a safe one must serve nothing but its core built-ins behind the gateway
 //! bearer until per-user isolation opens domain families.
 
-use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+#[path = "support/saas.rs"]
+mod saas;
+
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use saas::*;
 use serde_json::{json, Value};
 
 
