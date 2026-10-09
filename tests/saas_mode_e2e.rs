@@ -13,7 +13,6 @@ use std::time::{Duration, Instant};
 use saas::*;
 use serde_json::{json, Value};
 
-
 #[test]
 fn an_unsafe_deployment_is_refused_before_it_binds() {
     let d = deployment(false);
@@ -62,7 +61,6 @@ fn saas_mode_without_an_operator_config_is_refused() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("--saas-config"), "{stderr}");
 }
-
 
 #[test]
 fn a_safe_deployment_serves_core_and_the_operator_plane_behind_the_gateway_bearer() {
@@ -171,7 +169,6 @@ fn a_safe_deployment_serves_core_and_the_operator_plane_behind_the_gateway_beare
     drop(server);
 }
 
-
 #[test]
 fn gateway_requests_run_under_the_named_users_agent() {
     let d = deployment(true);
@@ -275,7 +272,6 @@ fn gateway_requests_run_under_the_named_users_agent() {
     );
     drop(server);
 }
-
 
 #[test]
 fn each_user_sees_only_their_own_threads() {
