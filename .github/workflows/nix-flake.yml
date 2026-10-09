@@ -12,12 +12,20 @@ on:
       - "flake.lock"
       - "NIX.md"
       - ".github/workflows/nix-flake.yml"
+      # The flake's source is only valid while it matches the submodule pins;
+      # a bump to any of these changes what the dev shell and packages build.
+      - ".gitmodules"
+      - "vendor/**"
+      - "rust-toolchain.toml"
   push:
     branches: [main]
     paths:
       - "flake.nix"
       - "flake.lock"
       - ".github/workflows/nix-flake.yml"
+      - ".gitmodules"
+      - "vendor/**"
+      - "rust-toolchain.toml"
   workflow_dispatch: {}
 
 permissions:
@@ -51,13 +59,19 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
 
-      # Every output must evaluate on every system the flake advertises.
-      #
+      # Evaluation only — a bare `nix flake check` builds the `checks`
+      # derivations, and the core is a multi-hour Rust build. Inspecting the
+      # derivation paths proves every output (packages included) evaluates,
+      # without compiling anything.
       # `path:.` (not a bare `nix flake check`, which would use the git copier)
       # is required: the git copier drops the submodule contents this checkout
       # just fetched, and the flake's `src` guard then stops evaluation.
       - name: Evaluate all outputs (all systems)
-        run: nix flake check "path:." --no-build --all-systems --show-trace
+        run: |
+          nix flake check "path:." --no-build --all-systems --show-trace
+          for attr in openhuman-core openhuman-tui; do
+            nix eval "path:.#packages.x86_64-linux.${attr}.drvPath"
+          done
 
       # Prove the dev shell's inputs resolve (toolchain + system libraries).
       - name: Build dev shell inputs

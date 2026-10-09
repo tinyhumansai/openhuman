@@ -57,6 +57,26 @@ Pass one of:
 | `path:.` | the working tree verbatim (submodules included) | submodules already checked out and you want uncommitted edits visible |
 | `github:tinyhumansai/openhuman?submodules=1` | remote checkout + submodules | consuming without cloning |
 
+### Why the default can't hide `?submodules=1`
+
+It is worth stating plainly that the flake *cannot* make a bare `nix build .#openhuman-core`
+work, because two mechanisms that would normally fix it are both unavailable:
+
+* **`builtins.fetchGit { submodules = true; }`** on the flake's own source is
+  rejected in pure evaluation: `in pure evaluation mode, 'fetchGit' doesn't
+  fetch unlocked input`. (Re-fetching the flake's own store path by
+  `self.rev` also has no remote to fetch from.) The same call is refused for a
+  pinned remote url.
+* **One flake input per vendored repository** (`vendor/tinyagents`, …) does
+  normally evaluate, including in pure mode — but Nix fetches an input's
+  submodules only *one* level deep. `vendor/tinyagents` depends on
+  `vendor/tinyagents/vendor/tinytools`, which arrives empty, so the build fails
+  anyway.
+
+Given that, `?submodules=1` on the OpenHuman ref is the only form that yields a
+complete source in the Nix store, and the flake's job is to make forgetting it
+a clear, immediate error instead of a cargo failure minutes in.
+
 If you cloned without submodules, populate them first:
 
 ```bash
