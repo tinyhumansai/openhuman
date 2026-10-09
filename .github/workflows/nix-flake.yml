@@ -35,6 +35,11 @@ on:
         description: "Also build openhuman-core (multi-hour; needs a beefy runner)"
         type: boolean
         default: false
+  # Also build the core once a week on `main`, so the flake's build path is
+  # continuously validated. It runs on `main` only — never on a fork PR, whose
+  # flake would be the code being compiled.
+  schedule:
+    - cron: "0 6 * * 0"
 
 permissions:
   contents: read
@@ -82,7 +87,15 @@ jobs:
           done
 
       # Prove the dev shell's inputs resolve (toolchain + system libraries).
+      #
+      # `nix develop` runs the flake's `shellHook`, which a PR controls, so the
+      # read-scoped `GITHUB_TOKEN` GitHub injects into every step is blanked
+      # here: this step needs no API access, and the token would otherwise be
+      # readable from the environment by that code.
       - name: Build dev shell inputs
+        env:
+          GITHUB_TOKEN: ""
+          GH_TOKEN: ""
         run: nix develop "path:." --command bash -c 'rustc --version && node --version && pnpm --version'
 
       - name: flake.lock is up to date
@@ -96,7 +109,7 @@ jobs:
   # flake and the build would run that code.
   build:
     name: build openhuman-core
-    if: github.event_name == 'workflow_dispatch' && inputs.build_packages
+    if: (github.event_name == 'workflow_dispatch' && inputs.build_packages) || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 350
     steps:
