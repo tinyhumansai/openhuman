@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use super::types::{SecurityPolicy, TrustedAccess, POLICY_BLOCKED_MARKER};
 use super::types::{
-    ACCOUNT_CONFIG_FILE, ARTIFACTS_DIR, ARTIFACT_TOOL_RESULTS_DIR, WORKSPACE_INTERNAL_DIRS,
+    ACCOUNT_INTERNAL_FILES, ARTIFACTS_DIR, ARTIFACT_TOOL_RESULTS_DIR, WORKSPACE_INTERNAL_DIRS,
     WORKSPACE_INTERNAL_FILES,
 };
 
@@ -394,13 +394,35 @@ impl SecurityPolicy {
             (Ok(w), Ok(p)) => (w.as_path(), p.as_path()),
             _ => (self.workspace_dir.as_path(), path),
         };
-        // The account config (`<openhuman_dir>/config.toml`, the workspace's
-        // sibling) holds the autonomy policy itself and the files folders the
-        // artifact escape guard trusts (`files_dir_override`,
-        // `files_dir_history`, #5505). A trusted root over the account or data
-        // dir must not let the agent rewrite either.
+        // The account dir (`<openhuman_dir>/`, the workspace's parent) is
+        // reachable on purpose: a trusted root over it grants its files, and
+        // #5505 carved out `config.toml` alone because that one holds the
+        // autonomy policy and the folders the artifact escape guard trusts.
+        //
+        // Four more files there carry secrets or privilege and belong in the
+        // same carve-out. `.secret_key` is the keyring's on-disk encryption key
+        // and `auth-profiles.json` the credential profiles it decrypts —
+        // `is_always_forbidden` covers `~/.ssh` and friends but not these.
+        // `config.toml.bak` is the config one save behind, written by
+        // `config::schema::load::atomic_commit`. And `claude_code_settings.json`
+        // switches the Claude Code provider to `--permission-mode
+        // bypassPermissions` with its full native toolset (Bash, network) —
+        // calls that never reach the approval gate, because that provider runs
+        // its tools internally and never returns them to the harness.
+        //
+        // Matched by name within the account dir, which keeps every other file
+        // there reachable exactly as before.
         if let Some(account_dir) = ws.parent() {
-            if check_path == account_dir.join(ACCOUNT_CONFIG_FILE) {
+            if check_path.parent() == Some(account_dir)
+                && check_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| ACCOUNT_INTERNAL_FILES.contains(&name))
+            {
+                log::trace!(
+                    "[security:policy] account-dir core state is not agent surface (path={})",
+                    check_path.display()
+                );
                 return true;
             }
         }

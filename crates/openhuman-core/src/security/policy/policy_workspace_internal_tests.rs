@@ -279,3 +279,96 @@ async fn the_account_config_beside_the_workspace_is_internal() {
         .is_err());
     assert!(policy.validate_path(&notes.to_string_lossy()).await.is_ok());
 }
+
+/// #5505 carved out `config.toml` alone, leaving four siblings that carry
+/// secrets or privilege agent-reachable: the keyring's on-disk encryption key,
+/// the credential profiles it decrypts, the config one save behind, and the
+/// Claude Code `full_access` toggle (which switches that provider to
+/// `--permission-mode bypassPermissions` with its full native toolset, whose
+/// calls never reach the approval gate).
+#[test]
+fn account_dir_secrets_and_privilege_files_are_internal() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let account = tmp.path().join("users").join("u1");
+    let ws = account.join("workspace");
+    std::fs::create_dir_all(&ws).expect("create workspace");
+    let policy = SecurityPolicy {
+        workspace_dir: ws,
+        action_dir: tmp.path().join("projects"),
+        ..SecurityPolicy::default()
+    };
+
+    // Pinned before this change, and unchanged by it.
+    assert!(policy.is_workspace_internal_path(&account.join("config.toml")));
+    // Each of these was reachable before it.
+    for name in [
+        "config.toml.bak",
+        ".secret_key",
+        "auth-profiles.json",
+        "claude_code_settings.json",
+    ] {
+        assert!(
+            policy.is_workspace_internal_path(&account.join(name)),
+            "{name} must not be part of the agent's action surface"
+        );
+    }
+}
+
+/// The account dir stays reachable otherwise — that is deliberate (#5505), and
+/// the carve-out must not widen into a containment boundary. A same-named file
+/// elsewhere is likewise none of the policy's business.
+#[test]
+fn account_dir_carve_out_does_not_capture_unrelated_files() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let account = tmp.path().join("users").join("u1");
+    let ws = account.join("workspace");
+    let action = tmp.path().join("projects");
+    std::fs::create_dir_all(&ws).expect("create workspace");
+    std::fs::create_dir_all(&action).expect("create action dir");
+    let policy = SecurityPolicy {
+        workspace_dir: ws,
+        action_dir: action.clone(),
+        ..SecurityPolicy::default()
+    };
+
+    assert!(!policy.is_workspace_internal_path(&account.join("notes.txt")));
+    assert!(!policy.is_workspace_internal_path(&account.join("checkout")));
+    // A project of the user's own that happens to carry one of these names is
+    // not account state — the match is scoped to the account dir itself.
+    assert!(!policy.is_workspace_internal_path(&action.join("claude_code_settings.json")));
+    assert!(!policy.is_workspace_internal_path(&action.join("app").join(".secret_key")));
+}
+
+/// End to end through the gate every file tool goes through, with a trusted
+/// root over the account dir — the configuration the carve-out exists for.
+#[tokio::test]
+async fn trusted_root_over_the_account_dir_cannot_reach_the_keyring_key() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let account = tmp.path().join("users").join("u1");
+    let ws = account.join("workspace");
+    std::fs::create_dir_all(&ws).expect("create workspace");
+    let key = account.join(".secret_key");
+    std::fs::write(&key, "key material").expect("write key");
+    let settings = account.join("claude_code_settings.json");
+    std::fs::write(&settings, "{}").expect("write settings");
+    let policy = SecurityPolicy {
+        workspace_dir: ws,
+        action_dir: tmp.path().join("projects"),
+        workspace_only: false,
+        trusted_roots: vec![TrustedRoot {
+            path: account.to_string_lossy().into_owned(),
+            access: TrustedAccess::ReadWrite,
+        }],
+        ..SecurityPolicy::default()
+    };
+
+    for path in [&key, &settings] {
+        let shown = path.to_string_lossy();
+        assert!(!policy.is_path_string_allowed(&shown), "{shown}");
+        assert!(policy.validate_path(&shown).await.is_err(), "{shown}");
+        assert!(
+            policy.validate_parent_path(&shown).await.is_err(),
+            "{shown}"
+        );
+    }
+}

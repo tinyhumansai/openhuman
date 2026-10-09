@@ -194,9 +194,18 @@ pub(super) const WORKSPACE_INTERNAL_DIRS: &[&str] = &[
 /// internal state (see `is_workspace_internal_path`); only
 /// [`ARTIFACT_TOOL_RESULTS_DIR`] inside it stays agent-readable.
 pub(super) const ARTIFACTS_DIR: &str = "artifacts";
-/// The account config file, stored beside `workspace_dir` (see
-/// `is_workspace_internal_path`).
-pub(super) const ACCOUNT_CONFIG_FILE: &str = "config.toml";
+/// Files in the account dir (`workspace_dir`'s parent) that are core state
+/// rather than agent surface. That directory is otherwise reachable by design
+/// — a trusted root over it grants its files (#5505) — so this is the
+/// carve-out list, not a containment boundary. See `is_workspace_internal_path`
+/// for why each entry is on it.
+pub(super) const ACCOUNT_INTERNAL_FILES: &[&str] = &[
+    "config.toml",
+    "config.toml.bak",
+    ".secret_key",
+    "auth-profiles.json",
+    "claude_code_settings.json",
+];
 /// Where oversized tool outputs are persisted for the agent to read back.
 pub(super) const ARTIFACT_TOOL_RESULTS_DIR: &str = "tool-results";
 
