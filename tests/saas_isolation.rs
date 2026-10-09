@@ -376,18 +376,15 @@ fn files_containing(dir: &Path, needle: &str) -> Vec<PathBuf> {
 fn probe() {
     let s = Stack::new();
     s.chat(&s.alice, "t1", "ALICE-MARK-0 hello");
-    for _ in 0..10 {
-        std::thread::sleep(Duration::from_secs(2));
-        eprintln!("TS {}", s.call(&s.alice, "openhuman.threads_turn_state_get", json!({"thread_id":"t1"})));
-        eprintln!("QS {}", s.call(&s.alice, "openhuman.channel_web_queue_status", json!({"client_id":"c-alice","thread_id":"t1"})));
-    }
+    std::thread::sleep(Duration::from_secs(8));
     for r in s.proxy.requests() {
-        eprintln!("REQ {} {} {}", r.method, r.path, r.authorization);
         if r.is_inference() {
             let v: Value = serde_json::from_str(&r.body).unwrap();
-            eprintln!("KEYS {:?} tools={}", v.as_object().unwrap().keys().collect::<Vec<_>>(), v["tools"]);
+            let names: Vec<String> = v["tools"].as_array().map(|a| a.iter().map(|t| t["function"]["name"].as_str().unwrap_or("?").to_string()).collect()).unwrap_or_default();
+            eprintln!("TOOLS {:?}", names);
         }
     }
-    eprintln!("COSTS {}", std::fs::read_to_string(s.d.root.join("operator/workspace/state/costs.jsonl")).unwrap_or_default());
+    let (_, schema) = (0, s.client.get(format!("{}/schema", s.base)).bearer_auth(BEARER).send().unwrap().text().unwrap());
+    eprintln!("OPSCHEMA {}", schema.len());
     let _ = (&s.bob, BTreeSet::<u8>::new());
 }
