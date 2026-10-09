@@ -210,3 +210,15 @@ mod origin_intercept_tests;
 mod triage_tests;
 #[path = "gate_ttl_and_triage_tests.rs"]
 mod ttl_and_triage_tests;
+
+/// The boot line is where an operator learns whether the installed gate can
+/// park anything, so it must track `[autonomy] enabled` rather than assert a
+/// park unconditionally.
+#[test]
+fn arming_note_tracks_the_autonomy_master_switch() {
+    assert!(arming_note(true).contains("park for approval"));
+
+    let disabled = arming_note(false);
+    assert!(disabled.contains("nothing parks"), "{disabled}");
+    assert!(disabled.contains("[autonomy] enabled = true"), "{disabled}");
+}

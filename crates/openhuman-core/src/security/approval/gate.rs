@@ -411,6 +411,30 @@ fn publish_flow_gate_notification(
     });
 }
 
+/// What an installed gate will actually park, given the autonomy policy's
+/// master switch.
+///
+/// The gate is installed independently of `[autonomy] enabled`, but what
+/// *reaches* it is not. A tool declares itself external-effect through
+/// [`crate::security::SecurityPolicy::gate_decision`], which returns
+/// `GateDecision::Allow` for every [`crate::security::CommandClass`] while the
+/// policy is off — and off is the shipped default
+/// (`AutonomyConfig::enabled = false`). `shell`, `node_exec`, `npm_exec` and
+/// `python_exec` derive `external_effect_with_args` from exactly that call, so
+/// they report no external effect and the gate is never consulted for them.
+///
+/// The boot line is the one place an operator learns whether they are
+/// protected, so it must not claim a park that cannot happen.
+pub(crate) fn arming_note(autonomy_enabled: bool) -> &'static str {
+    if autonomy_enabled {
+        "Prompt-class external-effect tool calls park for approval in interactive chat turns"
+    } else {
+        "nothing parks yet: [autonomy] enabled = false (the shipped default) makes gate_decision() \
+         return Allow for every command class, so shell/node_exec/npm_exec/python_exec report no \
+         external effect and never reach the gate — set [autonomy] enabled = true to arm it"
+    }
+}
+
 #[cfg(test)]
 #[path = "gate_tests.rs"]
 mod tests;

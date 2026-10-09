@@ -334,8 +334,8 @@ pub(crate) async fn bootstrap_core_runtime(
         let _ =
             crate::security::approval::ApprovalGate::init_global(cfg.clone(), session_id.clone());
         log::info!(
-            "[runtime] approval gate installed (on by default; set OPENHUMAN_APPROVAL_GATE=0 to disable, session_id={session_id}) — \
-             Prompt-class external-effect tool calls park for approval in interactive chat turns"
+            "[runtime] approval gate installed (on by default; set OPENHUMAN_APPROVAL_GATE=0 to disable, session_id={session_id}) — {}",
+            crate::security::approval::gate::arming_note(cfg.autonomy.enabled)
         );
         // (The approval/plan-review surface bridge is registered unconditionally
         // above — it must run even when this gate-install branch is skipped.)
