@@ -21,6 +21,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use openhuman_core::user_agents::tools::{is_hard_denied, SaasToolGroup};
 use saas::*;
 use saas_backend::{Mock, Proxy, Seen};
 use serde_json::{json, Value};
@@ -52,15 +53,17 @@ impl User {
 }
 
 /// A SaaS core on a mock backend with alice and bob provisioned.
+/// Fields drop in order: the core stops first, then its backend, and the
+/// deployment directory goes last.
 struct Stack {
-    d: Deployment,
+    _server: Server,
+    proxy: Proxy,
+    _mock: Mock,
     base: String,
     client: reqwest::blocking::Client,
-    _mock: Mock,
-    proxy: Proxy,
     alice: User,
     bob: User,
-    _server: Server,
+    d: Deployment,
 }
 
 impl Stack {
@@ -376,9 +379,14 @@ fn fifty_interleaved_turns_leave_each_user_only_their_own_traces() {
                 .filter(|r| r.is_inference() && r.body.contains(marker.as_str()))
                 .count()
         };
-        if expected.iter().all(|m| calls(m) >= 2) || Instant::now() >= settle {
+        let missing: Vec<&String> = expected.iter().filter(|m| calls(m) < 2).collect();
+        if missing.is_empty() {
             break seen;
         }
+        assert!(
+            Instant::now() < settle,
+            "no turn call plus follow-up reached inference for: {missing:?}"
+        );
         std::thread::sleep(Duration::from_millis(200));
     };
     let inference: Vec<&Seen> = seen.iter().filter(|r| r.is_inference()).collect();
@@ -501,12 +509,15 @@ fn fifty_interleaved_turns_leave_each_user_only_their_own_traces() {
         })
         .collect();
     for (user, tools) in [&s.alice, &s.bob].iter().zip(&tool_sets) {
-        assert!(
-            !tools.is_empty(),
-            "{}'s turns declare a tool list",
-            user.name
-        );
         for tool in tools {
+            // The production deny sets: hard-denied names and prefixes, and
+            // every tool of an opt-in host group (nothing is opted in here).
+            assert!(
+                !is_hard_denied(tool) && SaasToolGroup::of_tool(tool).is_none(),
+                "{} is advertised a tool the deployment never grants: {tool}",
+                user.name
+            );
+            // Defence in depth: a name that merely sounds host-reaching.
             let host = tool.split('_').any(|part| HOST_REACHING.contains(&part));
             assert!(!host, "{} is advertised a host tool: {tool}", user.name);
         }
@@ -575,6 +586,12 @@ fn memory_is_per_user() {
     for request in memory {
         let text = format!("{} {}", request.path, request.body);
         let (a, b) = (text.contains(&s.alice.agent), text.contains(&s.bob.agent));
+        assert!(
+            a || b,
+            "a memory request names no agent's tree: {} {}",
+            request.method,
+            request.path
+        );
         assert!(
             !(a && b),
             "one memory request spans both trees: {}",
