@@ -258,6 +258,10 @@ impl SecurityPolicy {
             // effective enforcement mode correct without touching every caller.
             privacy_mode: crate::config::PrivacyMode::default(),
             workspace_dir: workspace_dir.to_path_buf(),
+            // The caller layers the real credential root on with
+            // `with_account_dir`; unset keeps the `workspace_dir`-parent
+            // inference every existing call site already relied on.
+            account_dir: None,
             action_dir: action_dir.to_path_buf(),
             workspace_only: autonomy_config.workspace_only,
             allowed_commands: autonomy_config.allowed_commands.clone(),
@@ -288,6 +292,21 @@ impl SecurityPolicy {
             self.privacy_mode
         );
         self.privacy_mode = privacy_mode;
+        self
+    }
+
+    /// Return a copy of this policy with the account / credential root set —
+    /// `config_path`'s parent, which is not always `workspace_dir`'s parent
+    /// (see [`SecurityPolicy::account_dir`]). Builder-style to match
+    /// [`with_privacy_mode`](Self::with_privacy_mode), so a call site reads as
+    /// `SecurityPolicy::from_config(..).with_account_dir(config.config_path.parent())`.
+    #[must_use]
+    pub fn with_account_dir(mut self, account_dir: Option<&Path>) -> Self {
+        self.account_dir = account_dir.map(Path::to_path_buf);
+        log::debug!(
+            "[openhuman:policy] account dir set on SecurityPolicy: {:?}",
+            self.account_dir
+        );
         self
     }
 

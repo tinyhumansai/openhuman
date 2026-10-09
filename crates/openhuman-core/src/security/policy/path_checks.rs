@@ -380,6 +380,49 @@ impl SecurityPolicy {
         Ok(result)
     }
 
+    /// The directories whose own entries are account-level core state.
+    ///
+    /// The configured credential root ([`SecurityPolicy::account_dir`],
+    /// `config_path`'s parent) when the host set it, plus `workspace_dir`'s
+    /// parent — the same directory in the default layout and the only thing
+    /// available when nothing was set. Both are checked: the union can only
+    /// refuse more, so a call site that never sets `account_dir` keeps exactly
+    /// the behaviour it had.
+    ///
+    /// Each is offered in raw and canonical form, and so is the parent they are
+    /// compared against ([`Self::dir_forms`]). Comparing one raw path with one
+    /// canonical path never matches: a symlinked account root resolves to its
+    /// backing directory, and on macOS canonicalization also rewrites `/var`
+    /// to `/private/var`. The requested file itself usually cannot be
+    /// canonicalized at all — it does not exist yet, which is exactly the
+    /// case that matters for creating one.
+    fn account_state_dirs(&self, ws: &Path) -> Vec<PathBuf> {
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        for candidate in [self.account_dir.as_deref(), ws.parent()]
+            .into_iter()
+            .flatten()
+        {
+            for form in Self::dir_forms(candidate) {
+                if !dirs.contains(&form) {
+                    dirs.push(form);
+                }
+            }
+        }
+        dirs
+    }
+
+    /// A directory as written and as the filesystem resolves it, so either side
+    /// of a comparison can be matched whichever form the caller supplied.
+    fn dir_forms(dir: &Path) -> Vec<PathBuf> {
+        let mut forms = vec![dir.to_path_buf()];
+        if let Ok(canonical) = dir.canonicalize() {
+            if canonical != forms[0] {
+                forms.push(canonical);
+            }
+        }
+        forms
+    }
+
     /// Returns `true` if `path` falls under one of the internal-state
     /// subdirectories or files within `workspace_dir`. Agent tools must not
     /// write to these locations — they contain memory DBs, session transcripts,
@@ -411,13 +454,28 @@ impl SecurityPolicy {
         // its tools internally and never returns them to the harness.
         //
         // Matched by name within the account dir, which keeps every other file
-        // there reachable exactly as before.
-        if let Some(account_dir) = ws.parent() {
-            if check_path.parent() == Some(account_dir)
-                && check_path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(|name| ACCOUNT_INTERNAL_FILES.contains(&name))
+        // there reachable exactly as before. Case-insensitively, because on
+        // Windows and a default case-insensitive macOS volume an agent that may
+        // create `CLAUDE_CODE_SETTINGS.JSON` creates the very file the
+        // provider later opens in lower case.
+        if let Some(parent) = check_path.parent() {
+            let is_account_file = check_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    ACCOUNT_INTERNAL_FILES
+                        .iter()
+                        .any(|entry| entry.eq_ignore_ascii_case(name))
+                });
+            // Resolve the parent that exists rather than the file that may
+            // not, so creating a protected name through a symlinked account
+            // root is refused too.
+            let parent_forms = Self::dir_forms(parent);
+            if is_account_file
+                && self
+                    .account_state_dirs(ws)
+                    .iter()
+                    .any(|dir| parent_forms.iter().any(|form| form == dir))
             {
                 log::trace!(
                     "[security:policy] account-dir core state is not agent surface (path={})",

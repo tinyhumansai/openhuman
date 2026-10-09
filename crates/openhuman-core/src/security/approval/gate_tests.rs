@@ -219,6 +219,11 @@ fn arming_note_tracks_the_autonomy_master_switch() {
     assert!(arming_note(true).contains("park for approval"));
 
     let disabled = arming_note(false);
-    assert!(disabled.contains("nothing parks"), "{disabled}");
+    // Scoped to the four command tools, and explicit that other
+    // external-effect tools still park — `ScheduleTool` returns `true` for
+    // every mutating action regardless of the policy.
+    assert!(disabled.contains("command tools do not park"), "{disabled}");
+    assert!(disabled.contains("still park"), "{disabled}");
     assert!(disabled.contains("[autonomy] enabled = true"), "{disabled}");
+    assert!(!disabled.contains("nothing parks"), "{disabled}");
 }

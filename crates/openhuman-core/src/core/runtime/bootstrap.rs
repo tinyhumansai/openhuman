@@ -225,7 +225,8 @@ pub(crate) async fn bootstrap_core_runtime(
                 &workspace_dir,
                 &action_dir,
             )
-            .with_privacy_mode(cfg.privacy.mode),
+            .with_privacy_mode(cfg.privacy.mode)
+            .with_account_dir(cfg.config_path.parent()),
         ),
         workspace_dir.clone(),
         action_dir,

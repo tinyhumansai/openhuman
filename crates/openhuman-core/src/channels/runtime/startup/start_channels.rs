@@ -155,7 +155,8 @@ async fn start_channels_inner(mut config: Config) -> Result<()> {
                 &config.workspace_dir,
                 &config.action_dir,
             )
-            .with_privacy_mode(config.privacy.mode),
+            .with_privacy_mode(config.privacy.mode)
+            .with_account_dir(config.config_path.parent()),
         ),
         config.workspace_dir.clone(),
         config.action_dir.clone(),

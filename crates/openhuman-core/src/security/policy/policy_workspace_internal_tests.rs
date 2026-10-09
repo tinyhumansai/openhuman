@@ -372,3 +372,110 @@ async fn trusted_root_over_the_account_dir_cannot_reach_the_keyring_key() {
         );
     }
 }
+
+/// The account root is not always `workspace_dir`'s parent: `RuntimeBuilder::
+/// workspace_dir` splits internal state from the credential root, and the
+/// legacy `<proj>/workspace` layout keeps config in a sibling
+/// `<proj>/.openhuman`. Inferring it from the workspace guards the wrong
+/// directory, leaving the credential key and the `full_access` toggle
+/// reachable.
+#[test]
+fn configured_account_root_is_guarded_when_it_is_not_the_workspace_parent() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let proj = tmp.path().join("proj");
+    let ws = proj.join("workspace");
+    let account = proj.join(".openhuman");
+    std::fs::create_dir_all(&ws).expect("create workspace");
+    std::fs::create_dir_all(&account).expect("create account dir");
+
+    let inferred = SecurityPolicy {
+        workspace_dir: ws.clone(),
+        action_dir: proj.join("code"),
+        ..SecurityPolicy::default()
+    };
+    // What the workspace-parent inference alone can see: nothing, because the
+    // real config root is a sibling the predicate never looks at.
+    assert!(!inferred.is_workspace_internal_path(&account.join(".secret_key")));
+
+    let configured = SecurityPolicy {
+        account_dir: Some(account.clone()),
+        ..inferred
+    };
+    for name in [
+        ".secret_key",
+        "auth-profiles.json",
+        "claude_code_settings.json",
+    ] {
+        assert!(
+            configured.is_workspace_internal_path(&account.join(name)),
+            "{name} in the configured account root must not be agent surface"
+        );
+    }
+    // The carve-out does not widen inside that root either.
+    assert!(!configured.is_workspace_internal_path(&account.join("notes.txt")));
+    // And the workspace-parent inference is still applied alongside it, so a
+    // call site that sets nothing keeps exactly the behaviour it had.
+    assert!(configured.is_workspace_internal_path(&proj.join("config.toml")));
+}
+
+/// On Windows and a default case-insensitive macOS volume, an agent allowed to
+/// create files in the account root can create `CLAUDE_CODE_SETTINGS.JSON`;
+/// the provider later opens the lower-case name and resolves the same file, so
+/// a case-sensitive match would let `{"full_access": true}` through.
+#[test]
+fn account_file_names_match_regardless_of_case() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let account = tmp.path().join("users").join("u1");
+    let ws = account.join("workspace");
+    std::fs::create_dir_all(&ws).expect("create workspace");
+    let policy = SecurityPolicy {
+        workspace_dir: ws,
+        action_dir: tmp.path().join("projects"),
+        ..SecurityPolicy::default()
+    };
+
+    for name in [
+        "CLAUDE_CODE_SETTINGS.JSON",
+        "Claude_Code_Settings.Json",
+        ".Secret_Key",
+        "CONFIG.TOML",
+        "Auth-Profiles.JSON",
+    ] {
+        assert!(
+            policy.is_workspace_internal_path(&account.join(name)),
+            "{name} must not be creatable in the account root"
+        );
+    }
+    // Not a blanket prefix match — an unrelated name is still reachable.
+    assert!(!policy.is_workspace_internal_path(&account.join("secret_key_notes.md")));
+}
+
+/// A symlinked account root must not expose creation of a protected file that
+/// does not exist yet. The canonicalization above this check drops the
+/// canonical workspace whenever the requested path cannot be canonicalized
+/// (which is the case for a file still to be created), so the account-root
+/// comparison has to resolve the *directory* rather than rely on the path.
+#[cfg(unix)]
+#[test]
+fn symlinked_account_root_still_guards_a_file_that_does_not_exist_yet() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let backing = tmp.path().join("backing");
+    let link = tmp.path().join("link");
+    std::fs::create_dir_all(backing.join("workspace")).expect("create backing workspace");
+    std::os::unix::fs::symlink(&backing, &link).expect("symlink the account root");
+
+    let policy = SecurityPolicy {
+        workspace_dir: link.join("workspace"),
+        action_dir: tmp.path().join("projects"),
+        ..SecurityPolicy::default()
+    };
+
+    // Requested through the symlink, and through the backing path it resolves
+    // to; neither may be creatable.
+    assert!(policy.is_workspace_internal_path(&link.join("claude_code_settings.json")));
+    assert!(
+        policy.is_workspace_internal_path(&backing.join("claude_code_settings.json")),
+        "the backing path of a symlinked account root must be guarded too"
+    );
+    assert!(policy.is_workspace_internal_path(&backing.join(".secret_key")));
+}
