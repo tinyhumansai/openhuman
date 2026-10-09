@@ -2,9 +2,12 @@ name: Nix flake
 
 # Validates `flake.nix` so it cannot rot: the lock file stays consistent, every
 # output evaluates on every supported system, and the dev shell's inputs
-# resolve. Deliberately evaluation-only — a full `nix build` of the core is a
-# multi-hour job on a hosted runner (the dependency graph is ~800 crates), so
-# that is left to users and self-hosted builders. See NIX.md.
+# resolve.
+#
+# The default job is evaluation-only on purpose: a full `nix build` of the core
+# is a multi-hour job (~800 crates + a bundled SQLite) that exceeds a hosted
+# runner's budget. The heavy build runs in the opt-in `build` job below, which
+# is meant for a self-hosted runner or a manual dispatch. See NIX.md.
 on:
   pull_request:
     paths:
@@ -26,7 +29,12 @@ on:
       - ".gitmodules"
       - "vendor/**"
       - "rust-toolchain.toml"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      build_packages:
+        description: "Also build openhuman-core (multi-hour; needs a beefy runner)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -81,3 +89,29 @@ jobs:
         run: |
           nix flake lock
           git diff --exit-code flake.lock
+
+  # The real build. Manual, or on a self-hosted runner where the multi-hour
+  # Rust compile is acceptable; it also populates the Nix store so later builds
+  # are fast. Left out of the pull_request path because a fork PR can edit the
+  # flake and the build would run that code.
+  build:
+    name: build openhuman-core
+    if: github.event_name == 'workflow_dispatch' && inputs.build_packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Build and smoke-test
+        run: |
+          nix build "path:.#openhuman-core" --print-build-logs
+          ./result/bin/openhuman-core --help > /dev/null
+          echo "openhuman-core built and runs"
