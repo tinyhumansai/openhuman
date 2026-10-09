@@ -88,18 +88,144 @@ impl Mock {
     }
 }
 
-fn authorization(row: &Value) -> String {
-    row.pointer("/headers/authorization")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string()
+/// One request the proxy saw.
+#[derive(Clone, Debug)]
+struct Seen {
+    method: String,
+    path: String,
+    authorization: String,
+    body: String,
 }
 
-fn is_inference(row: &Value) -> bool {
-    row["method"] == "POST"
-        && row["url"]
-            .as_str()
-            .is_some_and(|url| url.contains("/chat/completions"))
+impl Seen {
+    fn is_inference(&self) -> bool {
+        self.method == "POST" && self.path.contains("/chat/completions")
+    }
+}
+
+/// A recording pass-through in front of the mock. The mock redacts
+/// `Authorization` in its own log; the credential each request carried is the
+/// point of this suite, so it is captured here before forwarding.
+struct Proxy {
+    origin: String,
+    seen: std::sync::Arc<std::sync::Mutex<Vec<Seen>>>,
+}
+
+impl Proxy {
+    fn start(upstream: String) -> Self {
+        use std::io::{BufRead, BufReader, Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = std::sync::Arc::clone(&seen);
+        std::thread::spawn(move || {
+            let client = reqwest::blocking::Client::builder()
+                .timeout(Duration::from_secs(120))
+                .no_gzip()
+                .build()
+                .unwrap();
+            for stream in listener.incoming().flatten() {
+                let (client, upstream, log) = (client.clone(), upstream.clone(), log.clone());
+                std::thread::spawn(move || {
+                    let mut reader = BufReader::new(stream.try_clone().unwrap());
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                        return;
+                    }
+                    let mut parts = line.split_whitespace();
+                    let method = parts.next().unwrap_or("GET").to_string();
+                    let path = parts.next().unwrap_or("/").to_string();
+                    let mut headers = Vec::new();
+                    let (mut length, mut chunked) = (0usize, false);
+                    loop {
+                        let mut header = String::new();
+                        if reader.read_line(&mut header).unwrap_or(0) == 0 || header == "\r\n" {
+                            break;
+                        }
+                        if let Some((name, value)) = header.split_once(':') {
+                            let (name, value) = (name.trim().to_string(), value.trim().to_string());
+                            match name.to_ascii_lowercase().as_str() {
+                                "content-length" => length = value.parse().unwrap_or(0),
+                                "transfer-encoding" => chunked = value.contains("chunked"),
+                                _ => {}
+                            }
+                            headers.push((name, value));
+                        }
+                    }
+                    let mut body = Vec::new();
+                    if chunked {
+                        loop {
+                            let mut size = String::new();
+                            if reader.read_line(&mut size).unwrap_or(0) == 0 {
+                                break;
+                            }
+                            let size = usize::from_str_radix(size.trim(), 16).unwrap_or(0);
+                            let mut chunk = vec![0u8; size + 2];
+                            if reader.read_exact(&mut chunk).is_err() || size == 0 {
+                                break;
+                            }
+                            body.extend_from_slice(&chunk[..size]);
+                        }
+                    } else {
+                        body.resize(length, 0);
+                        let _ = reader.read_exact(&mut body);
+                    }
+                    let authorization = headers
+                        .iter()
+                        .find(|(n, _)| n.eq_ignore_ascii_case("authorization"))
+                        .map(|(_, v)| v.clone())
+                        .unwrap_or_default();
+                    log.lock().unwrap().push(Seen {
+                        method: method.clone(),
+                        path: path.clone(),
+                        authorization,
+                        body: String::from_utf8_lossy(&body).into_owned(),
+                    });
+
+                    let mut request = client.request(
+                        reqwest::Method::from_bytes(method.as_bytes()).unwrap(),
+                        format!("{upstream}{path}"),
+                    );
+                    for (name, value) in &headers {
+                        if !["host", "content-length", "connection", "transfer-encoding", "accept-encoding"]
+                            .contains(&name.to_ascii_lowercase().as_str())
+                        {
+                            request = request.header(name, value);
+                        }
+                    }
+                    let mut stream = stream;
+                    match request.body(body).send() {
+                        Ok(response) => {
+                            let status = response.status().as_u16();
+                            let content_type = response
+                                .headers()
+                                .get("content-type")
+                                .and_then(|v| v.to_str().ok())
+                                .unwrap_or("application/octet-stream")
+                                .to_string();
+                            let bytes = response.bytes().unwrap_or_default();
+                            let _ = write!(
+                                stream,
+                                "HTTP/1.1 {status} X\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                                bytes.len()
+                            );
+                            let _ = stream.write_all(&bytes);
+                        }
+                        Err(_) => {
+                            let _ = stream.write_all(
+                                b"HTTP/1.1 502 Bad Gateway\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                            );
+                        }
+                    }
+                });
+            }
+        });
+        Self { origin, seen }
+    }
+
+    fn requests(&self) -> Vec<Seen> {
+        self.seen.lock().unwrap().clone()
+    }
 }
 
 struct User {
@@ -113,7 +239,8 @@ struct Stack {
     d: Deployment,
     base: String,
     client: reqwest::blocking::Client,
-    mock: Mock,
+    _mock: Mock,
+    proxy: Proxy,
     alice: User,
     bob: User,
     _server: Server,
@@ -127,7 +254,8 @@ impl Stack {
             .build()
             .unwrap();
         let mock = Mock::start(&client);
-        let (server, base, client) = start_with_env(&d, &[("BACKEND_URL", &mock.origin)]);
+        let proxy = Proxy::start(mock.origin.clone());
+        let (server, base, client) = start_with_env(&d, &[("BACKEND_URL", &proxy.origin)]);
         let users = [("alice", ALICE_TOKEN), ("bob", BOB_TOKEN)].map(|(name, token)| {
             let agent = provision(&client, &base, name);
             let (_, body) = rpc_with(
@@ -145,7 +273,8 @@ impl Stack {
             d,
             base,
             client,
-            mock,
+            _mock: mock,
+            proxy,
             alice,
             bob,
             _server: server,
@@ -247,18 +376,18 @@ fn files_containing(dir: &Path, needle: &str) -> Vec<PathBuf> {
 fn probe() {
     let s = Stack::new();
     s.chat(&s.alice, "t1", "ALICE-MARK-0 hello");
-    std::thread::sleep(Duration::from_secs(20));
-    eprintln!("MSGS {}", s.call(&s.alice, "openhuman.threads_messages_list", json!({"thread_id":"t1"})));
-    eprintln!("LIST {}", s.call(&s.alice, "openhuman.threads_list", json!({})));
-    for row in s.mock.requests(&s.client) {
-        eprintln!("REQ {} {} {}", row["method"], row["url"], authorization(&row));
-        if is_inference(&row) {
-            eprintln!("BODY {}", row["body"]);
+    for _ in 0..10 {
+        std::thread::sleep(Duration::from_secs(2));
+        eprintln!("TS {}", s.call(&s.alice, "openhuman.threads_turn_state_get", json!({"thread_id":"t1"})));
+        eprintln!("QS {}", s.call(&s.alice, "openhuman.channel_web_queue_status", json!({"client_id":"c-alice","thread_id":"t1"})));
+    }
+    for r in s.proxy.requests() {
+        eprintln!("REQ {} {} {}", r.method, r.path, r.authorization);
+        if r.is_inference() {
+            let v: Value = serde_json::from_str(&r.body).unwrap();
+            eprintln!("KEYS {:?} tools={}", v.as_object().unwrap().keys().collect::<Vec<_>>(), v["tools"]);
         }
     }
-    for f in files_under(&s.d.root) {
-        eprintln!("FILE {}", f.strip_prefix(&s.d.root).unwrap().display());
-    }
-    let _ = BTreeSet::<u8>::new();
-    let _ = (&s.bob, &s.mock);
+    eprintln!("COSTS {}", std::fs::read_to_string(s.d.root.join("operator/workspace/state/costs.jsonl")).unwrap_or_default());
+    let _ = (&s.bob, BTreeSet::<u8>::new());
 }
