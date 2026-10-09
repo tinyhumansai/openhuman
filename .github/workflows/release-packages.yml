@@ -322,7 +322,7 @@ jobs:
               '## Tier 2 — Community-supported (PRs welcome, core team reviews)',
               '',
               '- [ ] **AUR (Arch Linux)** — add `PKGBUILD` pointing at the GitHub release tarball; list in `packages/`',
-              '- [ ] **Nix / nixpkgs** — upstream a `pkgs/tools/openhuman/default.nix` derivation; document local flake overlay as interim',
+              '- [x] **Nix (flake)** — `flake.nix` in-repo builds `openhuman-core` / `openhuman-tui` and provides a dev shell; see `NIX.md`. Upstreaming a `pkgs/tools/openhuman/default.nix` to nixpkgs is the remaining step.',
               '',
               '## Tier 3 — Planned (no timeline)',
               '',
