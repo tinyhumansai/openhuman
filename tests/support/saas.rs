@@ -207,6 +207,23 @@ pub fn user_rpc_with(
     (status, response.json().unwrap_or(Value::Null))
 }
 
+/// `GET path` for gateway user `user` (signed), e.g. `/schema`.
+pub fn user_get(
+    client: &reqwest::blocking::Client,
+    base: &str,
+    user: &str,
+    path: &str,
+) -> reqwest::blocking::Response {
+    use openhuman_core::user_agents::gateway::{sign, USER_HEADER, USER_SIG_HEADER};
+    client
+        .get(format!("{base}{path}"))
+        .bearer_auth(BEARER)
+        .header(USER_HEADER, user)
+        .header(USER_SIG_HEADER, sign(BEARER, user, now()))
+        .send()
+        .expect("GET")
+}
+
 /// Provision `user` through the operator plane and return their agent id.
 pub fn provision(client: &reqwest::blocking::Client, base: &str, user: &str) -> String {
     let (_, body) = rpc_with(
