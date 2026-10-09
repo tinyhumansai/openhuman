@@ -128,7 +128,7 @@ impl Stack {
             .unwrap();
         let mock = Mock::start(&client);
         let (server, base, client) = start_with_env(&d, &[("BACKEND_URL", &mock.origin)]);
-        let mut users = [("alice", ALICE_TOKEN), ("bob", BOB_TOKEN)].map(|(name, token)| {
+        let users = [("alice", ALICE_TOKEN), ("bob", BOB_TOKEN)].map(|(name, token)| {
             let agent = provision(&client, &base, name);
             let (_, body) = rpc_with(
                 &client,
@@ -140,8 +140,7 @@ impl Stack {
             assert!(body.get("result").is_some(), "credential for {name}: {body}");
             User { name, token, agent }
         });
-        let bob = users.pop().unwrap();
-        let alice = users.pop().unwrap();
+        let [alice, bob] = users;
         Self {
             d,
             base,
