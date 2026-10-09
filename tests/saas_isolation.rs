@@ -202,6 +202,20 @@ fn is_unknown_method(body: &Value) -> bool {
         .is_some_and(|e| e.to_string().contains("unknown method"))
 }
 
+/// Every `<tag><n>` marker in `body`, whole (`ALICE-MARK-1` is not `ALICE-MARK-10`).
+fn markers_in(body: &str, tag: &str) -> BTreeSet<String> {
+    body.match_indices(tag)
+        .map(|(at, _)| {
+            let digits: String = body[at + tag.len()..]
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .collect();
+            format!("{tag}{digits}")
+        })
+        .filter(|marker| marker.len() > tag.len())
+        .collect()
+}
+
 /// Tool names a model request declares.
 fn tool_names(request: &Seen) -> Vec<String> {
     let body: Value = serde_json::from_str(&request.body).unwrap_or(Value::Null);
@@ -349,36 +363,47 @@ fn fifty_interleaved_turns_leave_each_user_only_their_own_traces() {
     );
 
     // 3. Each model request carried the credential of the user whose text it
-    //    holds, and never both users' text.
-    let seen = s.proxy.requests();
+    //    holds, never both users' text, and every scheduled turn shows up.
+    //    Follow-up suggestions are a second model call per turn, made after the
+    //    turn completes; give them a bounded moment to land so a wrong
+    //    credential on one cannot slip past the snapshot.
+    let expected: BTreeSet<String> = turns.iter().map(|(_, _, m)| m.clone()).collect();
+    let settle = Instant::now() + Duration::from_secs(30);
+    let seen = loop {
+        let seen = s.proxy.requests();
+        let calls = |marker: &String| {
+            seen.iter()
+                .filter(|r| r.is_inference() && r.body.contains(marker.as_str()))
+                .count()
+        };
+        if expected.iter().all(|m| calls(m) >= 2) || Instant::now() >= settle {
+            break seen;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    };
     let inference: Vec<&Seen> = seen.iter().filter(|r| r.is_inference()).collect();
-    let mut by_user = [0usize; 2];
+    let mut observed: BTreeSet<String> = BTreeSet::new();
     for request in &inference {
         let (alice, bob) = (
             request.body.contains("ALICE-MARK-"),
             request.body.contains("BOB-MARK-"),
         );
         assert!(!(alice && bob), "one model request holds both users' text");
-        if alice {
-            assert_eq!(
-                request.authorization,
-                s.alice.bearer(),
-                "alice's text under another credential"
-            );
-            by_user[0] += 1;
-        }
-        if bob {
-            assert_eq!(
-                request.authorization,
-                s.bob.bearer(),
-                "bob's text under another credential"
-            );
-            by_user[1] += 1;
+        for (hit, user, tag) in [(alice, &s.alice, "ALICE-MARK-"), (bob, &s.bob, "BOB-MARK-")] {
+            if hit {
+                assert_eq!(
+                    request.authorization,
+                    user.bearer(),
+                    "{}'s text under another credential",
+                    user.name
+                );
+                observed.extend(markers_in(&request.body, tag));
+            }
         }
     }
-    assert!(
-        by_user.iter().all(|n| *n >= TURNS / 2),
-        "every turn reaches inference: {by_user:?}"
+    assert_eq!(
+        observed, expected,
+        "every scheduled turn reaches inference, and only those"
     );
     // No backend call of any kind rode a credential that is not a user's.
     for request in &seen {
@@ -441,8 +466,26 @@ fn fifty_interleaved_turns_leave_each_user_only_their_own_traces() {
     // 6. Tool surface: no allowlist, so the same closed set for both users and
     //    nothing that reaches the host.
     const HOST_REACHING: &[&str] = &[
-        "shell", "bash", "exec", "file", "files", "patch", "browser", "computer", "desktop",
-        "terminal", "git", "mcp", "cron", "sandbox",
+        "shell",
+        "bash",
+        "exec",
+        "file",
+        "files",
+        "patch",
+        "browser",
+        "computer",
+        "desktop",
+        "terminal",
+        "git",
+        "mcp",
+        "cron",
+        "sandbox",
+        "http",
+        "request",
+        "fetch",
+        "web",
+        "composio",
+        "integration",
     ];
     let tool_sets: Vec<BTreeSet<String>> = [&s.alice, &s.bob]
         .iter()

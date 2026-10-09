@@ -77,13 +77,26 @@ impl Seen {
 pub struct Proxy {
     pub origin: String,
     seen: std::sync::Arc<std::sync::Mutex<Vec<Seen>>>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    addr: std::net::SocketAddr,
+}
+
+impl Drop for Proxy {
+    /// Stop accepting: flag the acceptor, then connect once to wake it.
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        let _ = std::net::TcpStream::connect(self.addr);
+    }
 }
 
 impl Proxy {
     pub fn start(upstream: String) -> Self {
         use std::io::{BufRead, BufReader, Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let addr = listener.local_addr().unwrap();
+        let origin = format!("http://{addr}");
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stopped = std::sync::Arc::clone(&stop);
         let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let log = std::sync::Arc::clone(&seen);
         std::thread::spawn(move || {
@@ -93,6 +106,9 @@ impl Proxy {
                 .build()
                 .unwrap();
             for stream in listener.incoming().flatten() {
+                if stopped.load(std::sync::atomic::Ordering::SeqCst) {
+                    break;
+                }
                 let (client, upstream, log) = (client.clone(), upstream.clone(), log.clone());
                 std::thread::spawn(move || {
                     let mut reader = BufReader::new(stream.try_clone().unwrap());
@@ -127,7 +143,8 @@ impl Proxy {
                             if reader.read_line(&mut size).unwrap_or(0) == 0 {
                                 break;
                             }
-                            let size = usize::from_str_radix(size.trim(), 16).unwrap_or(0);
+                            let size = size.split(';').next().unwrap_or("").trim();
+                            let size = usize::from_str_radix(size, 16).unwrap_or(0);
                             let mut chunk = vec![0u8; size + 2];
                             if reader.read_exact(&mut chunk).is_err() || size == 0 {
                                 break;
@@ -194,7 +211,12 @@ impl Proxy {
                 });
             }
         });
-        Self { origin, seen }
+        Self {
+            origin,
+            seen,
+            stop,
+            addr,
+        }
     }
 
     pub fn requests(&self) -> Vec<Seen> {
