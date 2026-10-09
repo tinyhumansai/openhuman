@@ -85,7 +85,15 @@ they build exactly the `Cargo.lock` in the tree.
 
 ### `formatter`
 
-`nix fmt` runs `nixfmt-rfc-style` over the Nix files.
+`nix fmt` runs `nixfmt` over the Nix files.
+
+## CI
+
+[`.github/workflows/nix-flake.yml`](./.github/workflows/nix-flake.yml) keeps the
+flake honest without a multi-hour build: it runs `nix flake check --no-build
+--all-systems`, builds the dev shell's inputs, and asserts `flake.lock` is
+current. A full `nix build` of the core is left to users and self-hosted
+builders.
 
 ## Notes & caveats
 

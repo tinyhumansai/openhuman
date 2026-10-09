@@ -1,0 +1,59 @@
+name: Nix flake
+
+# Validates `flake.nix` so it cannot rot: the lock file stays consistent, every
+# output evaluates on every supported system, and the dev shell's inputs
+# resolve. Deliberately evaluation-only — a full `nix build` of the core is a
+# multi-hour job on a hosted runner (the dependency graph is ~800 crates), so
+# that is left to users and self-hosted builders. See NIX.md.
+on:
+  pull_request:
+    paths:
+      - "flake.nix"
+      - "flake.lock"
+      - "NIX.md"
+      - ".github/workflows/nix-flake.yml"
+  push:
+    branches: [main]
+    paths:
+      - "flake.nix"
+      - "flake.lock"
+      - ".github/workflows/nix-flake.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nix-flake-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  flake:
+    name: flake check (evaluation)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # Submodules are required: the flake's `src` includes `vendor/`, and
+      # without the submodule contents even evaluation-time source inspection
+      # is incomplete.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: recursive
+
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      # Every output must evaluate on every system the flake advertises.
+      - name: Evaluate all outputs (all systems)
+        run: nix flake check --no-build --all-systems --show-trace
+
+      # Prove the dev shell's inputs resolve (toolchain + system libraries).
+      - name: Build dev shell inputs
+        run: nix develop "path:." --command bash -c 'rustc --version && node --version && pnpm --version'
+
+      - name: flake.lock is up to date
+        run: |
+          nix flake lock
+          git diff --exit-code flake.lock
