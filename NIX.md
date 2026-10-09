@@ -116,10 +116,14 @@ they build exactly the `Cargo.lock` in the tree.
 ## CI
 
 [`.github/workflows/nix-flake.yml`](./.github/workflows/nix-flake.yml) keeps the
-flake honest without a multi-hour build: it runs `nix flake check --no-build
---all-systems`, builds the dev shell's inputs, and asserts `flake.lock` is
-current. A full `nix build` of the core is left to users and self-hosted
-builders.
+flake honest. The default `flake check (evaluation)` job runs `nix flake check
+--no-build --all-systems`, asserts each package's derivation path, builds the
+dev shell's inputs, and checks `flake.lock` is current.
+
+A second `build openhuman-core` job runs the real `nix build` plus a smoke test,
+but it is opt-in (`workflow_dispatch` with `build_packages: true`) and meant for
+a self-hosted runner: the core is a multi-hour Rust build a hosted runner cannot
+finish, and on `pull_request` it would compile a fork's flake.
 
 ## Notes & caveats
 
