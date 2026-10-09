@@ -36,7 +36,9 @@ use serde_json::{json, Value};
 use tempfile::tempdir;
 
 use openhuman_core::agent::harness::AgentDefinitionRegistry;
+use openhuman_core::config::RuntimeConfig;
 use openhuman_core::core::auth::{init_rpc_token, CORE_TOKEN_ENV_VAR};
+use openhuman_core::sandbox::grants::resolve_local_jail_grants;
 use openhuman_rpc::server::build_core_http_router;
 
 const TEST_RPC_TOKEN: &str = "json-rpc-e2e-local-token";
@@ -5158,4 +5160,413 @@ async fn a_wrong_tool_guess_is_retried_not_treated_as_an_auth_blocker_inner() {
     );
 
     stack.shutdown();
+}
+
+/// The real sandboxed orchestrator shell receives the host toolchain homes,
+/// can run Cargo and use its call-local scratch directory, and remains confined
+/// to its configured action directory.
+#[cfg(target_os = "linux")]
+#[test]
+fn sandboxed_shell_forwards_host_toolchain_homes_and_confines_writes() {
+    run_on_agent_stack(
+        "sandboxed_shell_forwards_host_toolchain_homes_and_confines_writes",
+        sandboxed_shell_forwards_host_toolchain_homes_and_confines_writes_inner,
+    );
+}
+
+#[cfg(target_os = "linux")]
+async fn sandboxed_shell_forwards_host_toolchain_homes_and_confines_writes_inner() {
+    let _lock = env_lock();
+
+    // Give this real orchestrator turn a private action directory and make the
+    // host sandbox switch explicit. Capture host toolchain inputs before the
+    // stack fixture replaces HOME, then stage their real executables externally.
+    let action_dir = tempdir().expect("action directory");
+    let outside_dir = tempdir().expect("outside directory");
+    let github_actions = std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true");
+    let host_home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let host_path = std::env::var_os("PATH");
+    let find_host_tool = |name: &str| {
+        host_path.as_ref().and_then(|path| {
+            std::env::split_paths(path)
+                .map(|dir| dir.join(name))
+                .find(|candidate| candidate.is_file())
+        })
+    };
+    let host_cargo_path = find_host_tool("cargo");
+    let host_rustup_path = find_host_tool("rustup");
+    let host_rustup_home = std::env::var_os("RUSTUP_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| host_home.as_ref().map(|home| home.join(".rustup")));
+    let host_cargo_home = std::env::var_os("CARGO_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| host_home.as_ref().map(|home| home.join(".cargo")));
+    let mut missing_prerequisites = Vec::new();
+    if host_home.is_none() {
+        missing_prerequisites.push("HOME is unset".to_owned());
+    }
+    if host_cargo_path.is_none() {
+        missing_prerequisites.push("no cargo executable is present on PATH".to_owned());
+    }
+    if host_rustup_path.is_none() {
+        missing_prerequisites.push("no rustup executable is present on PATH".to_owned());
+    }
+    if !host_rustup_home
+        .as_ref()
+        .is_some_and(|home| home.join("settings.toml").is_file())
+    {
+        missing_prerequisites
+            .push("Rustup settings.toml is absent from the selected RUSTUP_HOME".to_owned());
+    }
+    if !missing_prerequisites.is_empty() {
+        let reason = missing_prerequisites.join("; ");
+        if github_actions {
+            panic!("pinned GitHub Actions agent-shell E2E requires initialized Rustup/Cargo prerequisites: {reason}");
+        }
+        eprintln!("SKIP: agent-shell custom toolchain fixture prerequisites unavailable: {reason}");
+        return;
+    }
+    let host_home = host_home.expect("prerequisite check established host HOME");
+    let host_rustup_home = host_rustup_home.expect("prerequisite check established Rustup home");
+    let host_cargo_home = host_cargo_home.expect("HOME or CARGO_HOME is required");
+    // Rustup proxies dispatch by executable name: retain the PATH-selected
+    // Cargo name for invocation; staging resolves file targets separately.
+    let host_cargo_path = host_cargo_path.expect("prerequisite check found Cargo on PATH");
+    let host_rustup_path = host_rustup_path.expect("prerequisite check found Rustup on PATH");
+    assert!(
+        host_rustup_home.is_absolute(),
+        "host RUSTUP_HOME must be absolute"
+    );
+    assert!(
+        host_cargo_home.is_absolute(),
+        "host CARGO_HOME must be absolute"
+    );
+    let host_settings = std::fs::read_to_string(host_rustup_home.join("settings.toml"))
+        .expect("host Rustup settings must exist");
+    let active_toolchain = host_settings
+        .lines()
+        .find_map(|line| {
+            let (key, value) = line.split_once('=')?;
+            (key.trim() == "default_toolchain").then(|| value.trim().trim_matches('"').to_owned())
+        })
+        .filter(|name| !name.is_empty())
+        .expect("host Rustup settings must select a default toolchain");
+    let host_toolchain_cargo = host_rustup_home
+        .join("toolchains")
+        .join(&active_toolchain)
+        .join("bin/cargo");
+    let host_toolchain_rustc = host_rustup_home
+        .join("toolchains")
+        .join(&active_toolchain)
+        .join("bin/rustc");
+    assert!(
+        host_toolchain_cargo.is_file(),
+        "the selected host toolchain must contain its real Cargo executable"
+    );
+    assert!(
+        host_toolchain_rustc.is_file(),
+        "the selected host toolchain must contain its real rustc executable"
+    );
+    let host_active_toolchain = std::process::Command::new(&host_rustup_path)
+        .args(["show", "active-toolchain"])
+        .current_dir(action_dir.path())
+        .env("RUSTUP_HOME", &host_rustup_home)
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .output()
+        .expect("run host Rustup to verify the captured selection");
+    assert!(
+        host_active_toolchain.status.success(),
+        "host Rustup could not select its default toolchain: {}",
+        String::from_utf8_lossy(&host_active_toolchain.stderr)
+    );
+    let host_active_toolchain = String::from_utf8_lossy(&host_active_toolchain.stdout)
+        .trim()
+        .to_owned();
+    assert!(
+        host_active_toolchain.starts_with(&active_toolchain),
+        "host Rustup selection disagrees with settings.toml: {host_active_toolchain}"
+    );
+    let host_cargo_version = std::process::Command::new(&host_cargo_path)
+        .arg("--version")
+        .current_dir(action_dir.path())
+        .env("RUSTUP_HOME", &host_rustup_home)
+        .env("CARGO_HOME", &host_cargo_home)
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .output()
+        .expect("run host Cargo to capture its version");
+    assert!(
+        host_cargo_version.status.success(),
+        "host Cargo version command failed: {}",
+        String::from_utf8_lossy(&host_cargo_version.stderr)
+    );
+    let host_cargo_version = String::from_utf8_lossy(&host_cargo_version.stdout)
+        .trim()
+        .to_owned();
+    assert!(
+        host_cargo_version.starts_with("cargo "),
+        "host Cargo returned an unexpected version string: {host_cargo_version}"
+    );
+
+    // Stage only real selection metadata and executable files outside HOME
+    // and system roots; the real compiler itself is never built or downloaded.
+    let staged_root = tempdir().expect("external toolchain fixture");
+    let staged_root_path = staged_root
+        .path()
+        .canonicalize()
+        .expect("external toolchain fixture path");
+    let canonical_host_home = host_home.canonicalize().expect("host HOME exists");
+    assert!(
+        !staged_root_path.starts_with(&canonical_host_home)
+            && ["/usr/local", "/opt"]
+                .iter()
+                .all(|root| !staged_root_path.starts_with(root)),
+        "custom toolchain fixture must be outside host HOME and existing system grants"
+    );
+    let rustup_home = staged_root.path().join("rustup-home");
+    let cargo_home = staged_root.path().join("cargo-home");
+    let cargo_bin = cargo_home.join("bin");
+    std::fs::create_dir_all(&rustup_home).expect("create external Rustup home");
+    std::fs::create_dir_all(&cargo_bin).expect("create external Cargo bin");
+    std::fs::copy(
+        host_rustup_home.join("settings.toml"),
+        rustup_home.join("settings.toml"),
+    )
+    .expect("copy real Rustup selection metadata");
+    // Rustup initializes these control directories even for read-only queries.
+    // Prepare the existing-install layout before the jail makes the home read-only.
+    for directory in ["downloads", "tmp", "update-hashes"] {
+        std::fs::create_dir_all(rustup_home.join(directory))
+            .expect("create Rustup control-directory fixture");
+    }
+    if let Ok(entries) = std::fs::read_dir(host_rustup_home.join("update-hashes")) {
+        for entry in entries {
+            let entry = entry.expect("read installed Rustup update-hash metadata");
+            if entry
+                .file_type()
+                .expect("Rustup metadata file type")
+                .is_file()
+            {
+                std::fs::copy(
+                    entry.path(),
+                    rustup_home.join("update-hashes").join(entry.file_name()),
+                )
+                .expect("copy installed Rustup update-hash metadata");
+            }
+        }
+    }
+    let stage_executable = |source: &Path, destination: std::path::PathBuf| {
+        let source = source
+            .canonicalize()
+            .expect("host toolchain executable must resolve");
+        if std::fs::hard_link(&source, &destination).is_err() {
+            std::fs::copy(&source, &destination).expect("copy real toolchain executable");
+        }
+    };
+    let staged_toolchain_bin = rustup_home
+        .join("toolchains")
+        .join(&active_toolchain)
+        .join("bin");
+    std::fs::create_dir_all(&staged_toolchain_bin)
+        .expect("create staged selected toolchain bin directory");
+    stage_executable(&host_toolchain_cargo, staged_toolchain_bin.join("cargo"));
+    stage_executable(&host_toolchain_rustc, staged_toolchain_bin.join("rustc"));
+    stage_executable(&host_cargo_path, cargo_bin.join("cargo"));
+    stage_executable(&host_rustup_path, cargo_bin.join("rustup"));
+    std::fs::write(
+        cargo_home.join("config.toml"),
+        "[term]\ncolor = \"never\"\n",
+    )
+    .expect("write harmless Cargo config fixture");
+    std::fs::create_dir_all(cargo_home.join("registry")).expect("create Cargo registry cache");
+    std::fs::create_dir_all(cargo_home.join("git")).expect("create Cargo git cache");
+    let cargo_registry_marker = cargo_home.join("registry/agent-shell-write.txt");
+    let cargo_git_marker = cargo_home.join("git/agent-shell-write.txt");
+
+    let cargo_bin = cargo_bin
+        .canonicalize()
+        .expect("custom Cargo bin directory must exist");
+    let marker_name = format!("agent-harness-shell-{}.txt", std::process::id());
+    let marker_path = action_dir.path().join(&marker_name);
+    let outside_path = outside_dir.path().join("must-stay-unwritable.txt");
+    let expected_toolchain = shell_single_quote(&host_active_toolchain);
+    let expected_cargo_version = shell_single_quote(&host_cargo_version);
+    let command = format!(
+        "set -eu; export PATH={cargo_bin}:$PATH; printf 'RUSTUP_HOME=%s\\nCARGO_HOME=%s\\n' \"$RUSTUP_HOME\" \"$CARGO_HOME\"; printf 'CARGO_EXE=%s\\n' \"$(command -v cargo)\"; active_toolchain=$(rustup show active-toolchain); test -n \"$active_toolchain\"; test \"$active_toolchain\" = {expected_toolchain}; printf 'RUSTUP_ACTIVE_TOOLCHAIN=%s\\n' \"$active_toolchain\"; cargo_version=$(cargo --version); test -n \"$cargo_version\"; test \"$cargo_version\" = {expected_cargo_version}; printf 'CARGO_VERSION=%s\\n' \"$cargo_version\"; printf 'cache-write\\n' > \"$CARGO_HOME/registry/agent-shell-write.txt\"; printf 'cache-write\\n' > \"$CARGO_HOME/git/agent-shell-write.txt\"; printf 'CARGO_CACHE_WRITE=ok\\n'; printf 'workspace-write-ok\\n' > '{marker_name}'; test \"$(cat '{marker_name}')\" = workspace-write-ok; printf 'WORKSPACE_WRITE=ok\\n'; if printf 'outside-write\\n' > {outside_path}; then printf 'OUTSIDE_WRITE=allowed\\n'; else printf 'OUTSIDE_WRITE=blocked\\n'; fi; scratch=$(mktemp); test -f \"$scratch\"; printf 'MKTEMP=ok\\n'; rm -f \"$scratch\"",
+        cargo_bin = shell_single_quote(&cargo_bin.to_string_lossy()),
+        outside_path = shell_single_quote(&outside_path.to_string_lossy()),
+    );
+    reset_script(vec![
+        tool_call_completion("shell", json!({ "command": command, "category": "write" })),
+        text_completion("SANDBOXED_SHELL_TURN_COMPLETED"),
+    ]);
+
+    let _action_dir_guard = EnvVarGuard::set_to_path("OPENHUMAN_ACTION_DIR", action_dir.path());
+    let _sandbox_guard = EnvVarGuard::set("OPENHUMAN_SANDBOX", "on");
+    let _rustup_home_guard = EnvVarGuard::set_to_path("RUSTUP_HOME", &rustup_home);
+    let _cargo_home_guard = EnvVarGuard::set_to_path("CARGO_HOME", &cargo_home);
+    let stack = boot_stack().await;
+    let fixture_home = stack
+        ._tmp
+        .path()
+        .canonicalize()
+        .expect("private fixture HOME exists");
+    assert!(
+        !staged_root_path.starts_with(&fixture_home),
+        "custom toolchain fixture must be outside private HOME"
+    );
+    let grants = resolve_local_jail_grants(
+        Some(stack._tmp.path()),
+        &RuntimeConfig::default().local_jail,
+    );
+    let is_covered_by = |path: &Path, roots: &[std::path::PathBuf]| {
+        let canonical = path.canonicalize().expect("custom toolchain path exists");
+        roots.iter().any(|grant| canonical.starts_with(grant))
+    };
+    assert!(
+        is_covered_by(&rustup_home, &grants.read_only),
+        "explicit custom RUSTUP_HOME must be read-only admitted"
+    );
+    assert!(
+        is_covered_by(&cargo_bin, &grants.read_only),
+        "explicit custom CARGO_HOME/bin must be read-only admitted"
+    );
+    assert!(
+        is_covered_by(&cargo_home.join("config.toml"), &grants.read_only),
+        "explicit custom Cargo config must be read-only admitted"
+    );
+    assert!(
+        is_covered_by(&cargo_home.join("registry"), &grants.read_write)
+            && is_covered_by(&cargo_home.join("git"), &grants.read_write),
+        "explicit custom Cargo caches must be read-write admitted"
+    );
+    assert!(
+        !is_covered_by(&cargo_home, &grants.read_only)
+            && !is_covered_by(&cargo_home, &grants.read_write),
+        "Cargo home root must retain selective child grants"
+    );
+    assert!(
+        !stack._tmp.path().join(".rustup").exists() && !stack._tmp.path().join(".cargo").exists(),
+        "custom homes must be admitted directly without private-HOME aliases"
+    );
+    let mut events = spawn_sse_collector(format!(
+        "{}/events?client_id=harness-sandboxed-shell",
+        stack.rpc_base
+    ))
+    .await;
+    let request_id = send_web_chat(
+        &stack.rpc_base,
+        920,
+        "harness-sandboxed-shell",
+        "thread-sandboxed-shell",
+        "Run the requested shell check.",
+    )
+    .await;
+    let (terminal, results) =
+        collect_turn_tool_results_request(&mut events, Duration::from_secs(120), Some(&request_id))
+            .await;
+    assert_eq!(
+        terminal.get("event").and_then(Value::as_str),
+        Some("chat_done"),
+        "sandboxed shell turn should complete: {terminal}"
+    );
+    let shell_result = results
+        .iter()
+        .find(|frame| frame.get("tool_call_id").and_then(Value::as_str) == Some("call_shell"))
+        .unwrap_or_else(|| panic!("missing shell tool_result event: {results:?}"));
+    assert_eq!(
+        shell_result.get("success"),
+        Some(&json!(true)),
+        "shell command should succeed: {shell_result}"
+    );
+    assert!(marker_path.is_file(), "workspace write did not persist");
+    assert!(
+        cargo_registry_marker.is_file() && cargo_git_marker.is_file(),
+        "the custom Cargo cache grants did not permit shell writes"
+    );
+    assert!(
+        !outside_path.exists(),
+        "the local jail allowed a write outside action_dir: {}",
+        outside_path.display()
+    );
+
+    // The second model request must carry the actual shell result. This proves
+    // the assertions observe the real tool response returned through the agent
+    // loop, rather than a scripted model answer or an out-of-band probe.
+    let requests = with_captured(|captured| captured.clone());
+    assert!(
+        requests.len() >= 2,
+        "shell result was not sent to the model"
+    );
+    let call_id = "call_shell";
+    let marker = format!("<tool_result id=\"{call_id}\">");
+    let model_saw_result = requests.iter().skip(1).any(|request| {
+        request
+            .pointer("/body/messages")
+            .and_then(Value::as_array)
+            .is_some_and(|messages| {
+                messages.iter().any(|message| {
+                    if message.get("role").and_then(Value::as_str) == Some("tool")
+                        && message.get("tool_call_id").and_then(Value::as_str) == Some(call_id)
+                    {
+                        let content = message
+                            .get("content")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default();
+                        return shell_result_contains_all_markers(
+                            content,
+                            &rustup_home,
+                            &cargo_home,
+                            &cargo_bin,
+                        );
+                    }
+                    message
+                        .get("content")
+                        .and_then(Value::as_str)
+                        .and_then(|content| {
+                            content
+                                .split_once(&marker)
+                                .and_then(|(_, result)| result.split_once("</tool_result>"))
+                                .map(|(result, _)| {
+                                    shell_result_contains_all_markers(
+                                        result,
+                                        &rustup_home,
+                                        &cargo_home,
+                                        &cargo_bin,
+                                    )
+                                })
+                        })
+                        .unwrap_or(false)
+                })
+            })
+    });
+    assert!(
+        model_saw_result,
+        "the subsequent model request did not contain the successful shell result: {}",
+        serde_json::to_string_pretty(&requests).unwrap_or_default()
+    );
+
+    stack.shutdown();
+}
+
+#[cfg(target_os = "linux")]
+fn shell_result_contains_all_markers(
+    result: &str,
+    rustup_home: &std::path::Path,
+    cargo_home: &std::path::Path,
+    cargo_bin: &std::path::Path,
+) -> bool {
+    result.contains(format!("RUSTUP_HOME={}", rustup_home.display()).as_str())
+        && result.contains(format!("CARGO_HOME={}", cargo_home.display()).as_str())
+        && result.contains(format!("CARGO_EXE={}", cargo_bin.join("cargo").display()).as_str())
+        && result.contains("RUSTUP_ACTIVE_TOOLCHAIN=")
+        && result.contains("cargo ")
+        && result.contains("CARGO_CACHE_WRITE=ok")
+        && result.contains("WORKSPACE_WRITE=ok")
+        && result.contains("OUTSIDE_WRITE=blocked")
+        && result.contains("MKTEMP=ok")
+}
+
+#[cfg(target_os = "linux")]
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }

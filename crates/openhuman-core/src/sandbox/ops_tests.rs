@@ -50,6 +50,13 @@ fn resolve_sandbox_policy_sandboxed_remote_uses_docker() {
     assert_eq!(policy.backend, SandboxBackendKind::Docker);
     assert!(!policy.allow_network);
     assert!(policy.docker_overrides.is_some());
+    assert_eq!(
+        policy.env_passthrough,
+        ["PATH", "HOME", "TERM", "LANG", "LC_ALL", "LC_CTYPE", "USER", "SHELL", "TMPDIR"]
+            .map(str::to_owned)
+            .to_vec(),
+        "Docker keeps its established general environment allowlist"
+    );
 }
 
 #[test]
@@ -517,6 +524,7 @@ fn host_has(program: &str) -> bool {
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn landlock_jail_runs_cargo_and_mktemp_but_blocks_writes_outside() {
+    let _env = crate::config::test_env::EnvVarGuard::locked_async().await;
     if !landlock_in_force() {
         return;
     }
@@ -658,3 +666,7 @@ fn sandbox_off_value_keeps_sandbox_on_otherwise() {
         assert!(!sandbox_off_value(v), "{v:?} must leave the sandbox on");
     }
 }
+
+#[cfg(unix)]
+#[path = "ops_toolchain_tests.rs"]
+mod toolchain_homes;

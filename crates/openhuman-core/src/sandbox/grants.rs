@@ -30,6 +30,9 @@ const HOME_READ_ONLY_DIRS: &[&str] = &[".rustup", ".nvm", ".npm"];
 /// holds registry credentials and so cannot be granted whole.
 const CARGO_READ_ONLY_FILES: &[&str] = &["config.toml", "config", "env"];
 
+/// Cargo credential locations excluded by the selective Cargo-home helper.
+const CARGO_CREDENTIAL_PATHS: &[&str] = &["credentials", "credentials.toml"];
+
 /// Git config files read at startup, relative to `$HOME`.
 const GITCONFIG_FILES: &[&str] = &[".gitconfig", ".config/git/config", ".config/git/ignore"];
 
@@ -56,6 +59,7 @@ pub fn resolve_local_jail_grants(home: Option<&Path>, cfg: &LocalJailConfig) -> 
                 b.read_only(&h.join(dir), "toolchain");
             }
         }
+        b.add_host_toolchain_homes();
         for dir in SYSTEM_TOOLCHAIN_DIRS {
             b.read_only(Path::new(dir), "toolchain");
         }
@@ -167,19 +171,169 @@ impl<'a> Builder<'a> {
         }
     }
 
-    /// Grant only the parts of `~/.cargo` that jailed Cargo needs. The root is
+    /// Known Cargo roots, including their canonical targets when available.
+    /// This is intentionally local to Rust-home grants: system and explicit
+    /// extra grants retain their existing policy.
+    fn cargo_roots(&self) -> Vec<PathBuf> {
+        let mut roots = Vec::new();
+        if let Some(home) = self.home {
+            roots.push(home.join(".cargo"));
+        }
+        if let Ok(raw) = std::env::var("CARGO_HOME") {
+            let configured = PathBuf::from(raw);
+            if configured.is_absolute() {
+                roots.push(configured);
+            }
+        }
+        let mut normalized = Vec::new();
+        for root in roots {
+            let root = root.canonicalize().unwrap_or(root);
+            if !normalized.contains(&root) {
+                normalized.push(root);
+            }
+        }
+        normalized
+    }
+
+    fn rustup_roots(&self) -> Vec<PathBuf> {
+        let mut roots = Vec::new();
+        if let Some(home) = self.home {
+            roots.push(home.join(".rustup"));
+        }
+        if let Ok(raw) = std::env::var("RUSTUP_HOME") {
+            let configured = PathBuf::from(raw);
+            if configured.is_absolute() {
+                roots.push(configured);
+            }
+        }
+        let mut normalized = Vec::new();
+        for root in roots {
+            let root = root.canonicalize().unwrap_or(root);
+            if !normalized.contains(&root) {
+                normalized.push(root);
+            }
+        }
+        normalized
+    }
+
+    /// Cargo's piecewise grants may include children of Cargo roots, but may
+    /// not collapse through a symlink onto a root or credentials. A custom
+    /// Rustup root is broader and therefore may overlap neither.
+    fn cargo_grant_overlaps(
+        candidate: &Path,
+        roots: &[PathBuf],
+        strict_root: bool,
+        writable: bool,
+    ) -> bool {
+        roots.iter().any(|root| {
+            (candidate == root || root.starts_with(candidate))
+                || (strict_root && candidate.starts_with(root))
+        }) || roots.iter().any(|root| {
+            CARGO_CREDENTIAL_PATHS.iter().any(|name| {
+                let credential = root.join(name);
+                let credential = credential.canonicalize().unwrap_or(credential);
+                candidate == credential
+                    || candidate.starts_with(&credential)
+                    || credential.starts_with(candidate)
+            })
+        }) || (writable
+            && roots.iter().any(|root| {
+                std::iter::once("bin")
+                    .chain(CARGO_READ_ONLY_FILES.iter().copied())
+                    .any(|name| {
+                        let protected = root.join(name);
+                        let protected = protected.canonicalize().unwrap_or(protected);
+                        candidate == protected
+                            || candidate.starts_with(&protected)
+                            || protected.starts_with(candidate)
+                    })
+            }))
+    }
+
+    /// Admit explicitly selected host Rust homes when the built-in toolchain
+    /// grants are enabled. Match `ops`' Unicode environment-value semantics;
+    /// jail admission additionally requires absolute paths to existing dirs.
+    fn add_host_toolchain_homes(&mut self) {
+        if let Ok(raw) = std::env::var("RUSTUP_HOME") {
+            let rustup = PathBuf::from(raw);
+            if rustup.is_absolute() && rustup.is_dir() {
+                if let Some(path) = self.admit(&rustup, "RUSTUP_HOME") {
+                    if !Self::cargo_grant_overlaps(&path, &self.cargo_roots(), true, false) {
+                        self.record_read_only(path);
+                    }
+                }
+            }
+        }
+
+        if let Ok(raw) = std::env::var("CARGO_HOME") {
+            let cargo = PathBuf::from(raw);
+            if cargo.is_absolute() {
+                self.add_cargo_home(&cargo);
+            }
+        }
+    }
+
+    /// Grant only the parts of a Cargo home that jailed Cargo needs. Its root is
     /// never writable: `bin` and Cargo configuration run later outside the
     /// jail, so writable access there would persist an escape for host tools.
     fn add_cargo_home(&mut self, cargo: &Path) {
+        let Ok(cargo) = cargo.canonicalize() else {
+            return;
+        };
         if !cargo.is_dir() {
             return;
         }
-        tracing::debug!("[sandbox:grants] granting ~/.cargo parts with host code read-only");
-        self.read_only(&cargo.join("bin"), "toolchain");
-        self.read_write(&cargo.join("registry"), "toolchain");
-        self.read_write(&cargo.join("git"), "toolchain");
+        tracing::debug!("[sandbox:grants] granting Cargo home parts with host code read-only");
+        self.cargo_read_only(&cargo.join("bin"), "toolchain");
+        self.cargo_read_write(&cargo.join("registry"), "toolchain");
+        self.cargo_read_write(&cargo.join("git"), "toolchain");
         for f in CARGO_READ_ONLY_FILES {
-            self.read_only(&cargo.join(f), "toolchain");
+            self.cargo_read_only(&cargo.join(f), "toolchain");
+        }
+    }
+
+    fn cargo_read_only(&mut self, path: &Path, source: &str) {
+        if let Some(path) = self.admit(path, source) {
+            if !Self::cargo_grant_overlaps(&path, &self.cargo_roots(), false, false) {
+                self.record_read_only(path);
+            }
+        }
+    }
+
+    fn cargo_read_write(&mut self, path: &Path, source: &str) {
+        if let Some(path) = self.admit(path, source) {
+            if Self::cargo_grant_overlaps(&path, &self.cargo_roots(), false, true) {
+                return;
+            }
+            if self.overlaps_rustup_home(&path) {
+                tracing::warn!(
+                    source,
+                    path = %path.display(),
+                    "[sandbox:grants] refused: writable Cargo cache overlaps a Rustup home"
+                );
+                return;
+            }
+            self.record_read_write(path);
+        }
+    }
+
+    fn overlaps_rustup_home(&self, candidate: &Path) -> bool {
+        self.rustup_roots().iter().any(|root| {
+            candidate == root || candidate.starts_with(root) || root.starts_with(candidate)
+        })
+    }
+
+    fn record_read_only(&mut self, path: PathBuf) {
+        if self.seen.insert(path.clone()) {
+            self.grants.read_only.push(path);
+        }
+    }
+
+    fn record_read_write(&mut self, path: PathBuf) {
+        self.grants.read_only.retain(|grant| grant != &path);
+        self.seen.insert(path.clone());
+        if !self.grants.read_write.contains(&path) {
+            self.grants.read_write.push(path);
         }
     }
 
