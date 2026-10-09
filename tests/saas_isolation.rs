@@ -22,10 +22,18 @@ use std::time::{Duration, Instant};
 
 use saas::*;
 use serde_json::{json, Value};
-
-/// JWT-shaped (the mock decodes the bearer) and distinct per user.
-const ALICE_TOKEN: &str = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJhbGljZS1tb2NrIiwiZXhwIjo0MTAyNDQ0ODAwfQ.e2e";
-const BOB_TOKEN: &str = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJib2ItbW9jayIsImV4cCI6NDEwMjQ0NDgwMH0.e2e";
+/// A JWT-shaped session token (the mock decodes the bearer), distinct per user.
+/// Built at run time so no token literal sits in the source.
+fn token_for(user: &str) -> String {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
+    use base64::Engine;
+    let claims = json!({ "sub": format!("{user}-mock"), "exp": 4_102_444_800u64 });
+    format!(
+        "{}.{}.e2e",
+        B64.encode(r#"{"alg":"none","typ":"JWT"}"#),
+        B64.encode(claims.to_string())
+    )
+}
 
 const TURNS: usize = 50;
 
@@ -70,21 +78,6 @@ impl Mock {
             std::thread::sleep(Duration::from_millis(100));
         }
         mock
-    }
-
-    /// Every request the mock has logged: `{method, url, body, headers}`.
-    fn requests(&self, client: &reqwest::blocking::Client) -> Vec<Value> {
-        let body: Value = client
-            .get(format!("{}/__admin/requests", self.origin))
-            .send()
-            .expect("read the mock request log")
-            .json()
-            .expect("request log json");
-        body.get("data")
-            .unwrap_or(&body)
-            .as_array()
-            .cloned()
-            .unwrap_or_default()
     }
 }
 
@@ -187,8 +180,14 @@ impl Proxy {
                         format!("{upstream}{path}"),
                     );
                     for (name, value) in &headers {
-                        if !["host", "content-length", "connection", "transfer-encoding", "accept-encoding"]
-                            .contains(&name.to_ascii_lowercase().as_str())
+                        if ![
+                            "host",
+                            "content-length",
+                            "connection",
+                            "transfer-encoding",
+                            "accept-encoding",
+                        ]
+                        .contains(&name.to_ascii_lowercase().as_str())
                         {
                             request = request.header(name, value);
                         }
@@ -230,7 +229,7 @@ impl Proxy {
 
 struct User {
     name: &'static str,
-    token: &'static str,
+    token: String,
     agent: String,
 }
 
@@ -262,16 +261,20 @@ impl Stack {
         let mock = Mock::start(&client);
         let proxy = Proxy::start(mock.origin.clone());
         let (server, base, client) = start_with_env(&d, &[("BACKEND_URL", &proxy.origin)]);
-        let users = [("alice", ALICE_TOKEN), ("bob", BOB_TOKEN)].map(|(name, token)| {
+        let users = ["alice", "bob"].map(|name| {
+            let token = token_for(name);
             let agent = provision(&client, &base, name);
             let (_, body) = rpc_with(
                 &client,
                 &base,
                 Some(BEARER),
                 "openhuman.user_agents_set_credential",
-                json!({ "agent_id": agent, "kind": "session", "token": token }),
+                json!({ "agent_id": agent, "kind": "session", "token": &token }),
             );
-            assert!(body.get("result").is_some(), "credential for {name}: {body}");
+            assert!(
+                body.get("result").is_some(),
+                "credential for {name}: {body}"
+            );
             User { name, token, agent }
         });
         let [alice, bob] = users;
@@ -328,7 +331,9 @@ impl Stack {
                 "openhuman.threads_turn_state_get",
                 json!({ "thread_id": thread }),
             );
-            let state = body.pointer("/result/data/turnState").unwrap_or(&Value::Null);
+            let state = body
+                .pointer("/result/data/turnState")
+                .unwrap_or(&Value::Null);
             match state["lifecycle"].as_str() {
                 Some("completed") => return,
                 Some("failed" | "error" | "cancelled" | "interrupted") => {
@@ -412,7 +417,11 @@ fn the_same_thread_id_is_two_separate_conversations() {
         assert!(body.get("result").is_some(), "{} upsert: {body}", user.name);
     }
     let deadline = Instant::now() + Duration::from_secs(120);
-    s.chat(&s.alice, "shared", "ALICE-MARK-shared please remember apples");
+    s.chat(
+        &s.alice,
+        "shared",
+        "ALICE-MARK-shared please remember apples",
+    );
     s.chat(&s.bob, "shared", "BOB-MARK-shared please remember pears");
     s.await_turn(&s.alice, "shared", deadline);
     s.await_turn(&s.bob, "shared", deadline);
@@ -424,7 +433,10 @@ fn the_same_thread_id_is_two_separate_conversations() {
         // threads_list shows each only their own `shared`.
         let list = s.call(me, "openhuman.threads_list", json!({}));
         assert_eq!(thread_ids(&list), vec!["shared".to_string()], "{list}");
-        assert!(list.to_string().contains(&format!("{}'s", me.name)), "{list}");
+        assert!(
+            list.to_string().contains(&format!("{}'s", me.name)),
+            "{list}"
+        );
         assert!(
             !list.to_string().contains(&format!("{}'s", other.name)),
             "{} sees {}'s thread: {list}",
@@ -449,7 +461,11 @@ fn the_same_thread_id_is_two_separate_conversations() {
         );
         for transcript in &transcripts {
             let text = std::fs::read_to_string(transcript).unwrap_or_default();
-            assert!(text.contains(mark), "{} transcript lacks their message", me.name);
+            assert!(
+                text.contains(mark),
+                "{} transcript lacks their message",
+                me.name
+            );
             assert!(
                 !text.contains(other_mark),
                 "{}'s transcript holds {}'s message",
@@ -463,7 +479,8 @@ fn the_same_thread_id_is_two_separate_conversations() {
         assert!(db.is_file(), "{}: {} missing", me.name, db.display());
     }
     assert_ne!(
-        s.agent_dir(&s.alice).join("workspace/session_db/sessions.db"),
+        s.agent_dir(&s.alice)
+            .join("workspace/session_db/sessions.db"),
         s.agent_dir(&s.bob).join("workspace/session_db/sessions.db"),
     );
 
@@ -496,10 +513,17 @@ fn fifty_interleaved_turns_leave_each_user_only_their_own_traces() {
 
     // 2. No file in either agent's home holds the other user's markers, and
     //    the operator's holds none.
-    for (me, other_tag, my_tag) in [(&s.alice, "BOB-MARK-", "ALICE-MARK-"), (&s.bob, "ALICE-MARK-", "BOB-MARK-")] {
+    for (me, other_tag, my_tag) in [
+        (&s.alice, "BOB-MARK-", "ALICE-MARK-"),
+        (&s.bob, "ALICE-MARK-", "BOB-MARK-"),
+    ] {
         let home = s.agent_dir(me);
         let leaked = files_containing(&home, other_tag);
-        assert!(leaked.is_empty(), "{}'s home holds {other_tag}: {leaked:?}", me.name);
+        assert!(
+            leaked.is_empty(),
+            "{}'s home holds {other_tag}: {leaked:?}",
+            me.name
+        );
         assert!(
             !files_containing(&home, my_tag).is_empty(),
             "{}'s own markers are on disk (the scan is not vacuous)",
@@ -507,7 +531,10 @@ fn fifty_interleaved_turns_leave_each_user_only_their_own_traces() {
         );
     }
     let operator = files_containing(&s.operator_dir(), "-MARK-");
-    assert!(operator.is_empty(), "user text under operator/: {operator:?}");
+    assert!(
+        operator.is_empty(),
+        "user text under operator/: {operator:?}"
+    );
 
     // 3. Each model request carried the credential of the user whose text it
     //    holds, and never both users' text.
@@ -521,11 +548,19 @@ fn fifty_interleaved_turns_leave_each_user_only_their_own_traces() {
         );
         assert!(!(alice && bob), "one model request holds both users' text");
         if alice {
-            assert_eq!(request.authorization, s.alice.bearer(), "alice's text under another credential");
+            assert_eq!(
+                request.authorization,
+                s.alice.bearer(),
+                "alice's text under another credential"
+            );
             by_user[0] += 1;
         }
         if bob {
-            assert_eq!(request.authorization, s.bob.bearer(), "bob's text under another credential");
+            assert_eq!(
+                request.authorization,
+                s.bob.bearer(),
+                "bob's text under another credential"
+            );
             by_user[1] += 1;
         }
     }
@@ -538,12 +573,19 @@ fn fifty_interleaved_turns_leave_each_user_only_their_own_traces() {
         let known = request.authorization.is_empty()
             || request.authorization == s.alice.bearer()
             || request.authorization == s.bob.bearer();
-        assert!(known, "{} {} used an unknown credential", request.method, request.path);
+        assert!(
+            known,
+            "{} {} used an unknown credential",
+            request.method, request.path
+        );
     }
 
     // 5. Usage rows: every turn's cost record names the user's own agent.
     let thread_owner = |thread: &str| -> Option<&User> {
-        turns.iter().find(|(_, t, _)| t == thread).map(|(u, _, _)| *u)
+        turns
+            .iter()
+            .find(|(_, t, _)| t == thread)
+            .map(|(u, _, _)| *u)
     };
     let mut recorded: BTreeSet<String> = BTreeSet::new();
     let until = Instant::now() + Duration::from_secs(60);
@@ -594,22 +636,30 @@ fn fifty_interleaved_turns_leave_each_user_only_their_own_traces() {
         .iter()
         .map(|user| {
             let mut all = BTreeSet::new();
-            for request in inference.iter().filter(|r| r.authorization == user.bearer()) {
+            for request in inference
+                .iter()
+                .filter(|r| r.authorization == user.bearer())
+            {
                 all.extend(tool_names(request));
             }
             all
         })
         .collect();
     for (user, tools) in [&s.alice, &s.bob].iter().zip(&tool_sets) {
-        assert!(!tools.is_empty(), "{}'s turns declare a tool list", user.name);
+        assert!(
+            !tools.is_empty(),
+            "{}'s turns declare a tool list",
+            user.name
+        );
         for tool in tools {
-            let host = tool
-                .split('_')
-                .any(|part| HOST_REACHING.contains(&part));
+            let host = tool.split('_').any(|part| HOST_REACHING.contains(&part));
             assert!(!host, "{} is advertised a host tool: {tool}", user.name);
         }
     }
-    assert_eq!(tool_sets[0], tool_sets[1], "both users see the same default tools");
+    assert_eq!(
+        tool_sets[0], tool_sets[1],
+        "both users see the same default tools"
+    );
 }
 
 #[test]
@@ -629,25 +679,52 @@ fn memory_is_per_user() {
         (&s.alice, &s.bob, "Quillon", "Tessaly"),
         (&s.bob, &s.alice, "Tessaly", "Quillon"),
     ] {
-        let items = s.call(me, "openhuman.memory_items_list", json!({})).to_string();
-        assert!(items.contains(mine), "{} cannot list their own fact: {items}", me.name);
-        assert!(!items.contains(theirs), "{} lists {}'s fact: {items}", me.name, other.name);
+        let items = s
+            .call(me, "openhuman.memory_items_list", json!({}))
+            .to_string();
+        assert!(
+            items.contains(mine),
+            "{} cannot list their own fact: {items}",
+            me.name
+        );
+        assert!(
+            !items.contains(theirs),
+            "{} lists {}'s fact: {items}",
+            me.name,
+            other.name
+        );
 
         let recall = s
-            .call(me, "openhuman.memory_recall", json!({ "question": "which pet do I keep?" }))
+            .call(
+                me,
+                "openhuman.memory_recall",
+                json!({ "question": "which pet do I keep?" }),
+            )
             .to_string();
-        assert!(!recall.contains(theirs), "{} recalls {}'s fact: {recall}", me.name, other.name);
+        assert!(
+            !recall.contains(theirs),
+            "{} recalls {}'s fact: {recall}",
+            me.name,
+            other.name
+        );
     }
 
     // On the wire too: every memory request that names an agent's tree carries
     // that agent's own credential and never the other's tree.
     let seen = s.proxy.requests();
-    let memory: Vec<&Seen> = seen.iter().filter(|r| r.path.starts_with("/memory")).collect();
+    let memory: Vec<&Seen> = seen
+        .iter()
+        .filter(|r| r.path.starts_with("/memory"))
+        .collect();
     assert!(!memory.is_empty(), "memory reached the backend");
     for request in memory {
         let text = format!("{} {}", request.path, request.body);
         let (a, b) = (text.contains(&s.alice.agent), text.contains(&s.bob.agent));
-        assert!(!(a && b), "one memory request spans both trees: {}", request.path);
+        assert!(
+            !(a && b),
+            "one memory request spans both trees: {}",
+            request.path
+        );
         if a {
             assert_eq!(request.authorization, s.alice.bearer(), "{}", request.path);
         }
@@ -672,22 +749,41 @@ fn operator_only_methods_are_absent_from_a_users_surface() {
 
     // Dispatch: refused as unknown, with or without valid params.
     for method in operator_only {
-        for params in [json!({}), json!({ "user_id": "mallory", "thread_id": "shared" })] {
+        for params in [
+            json!({}),
+            json!({ "user_id": "mallory", "thread_id": "shared" }),
+        ] {
             let body = s.call(&s.alice, method, params);
-            assert!(is_unknown_method(&body), "{method} must not dispatch for a user: {body}");
+            assert!(
+                is_unknown_method(&body),
+                "{method} must not dispatch for a user: {body}"
+            );
         }
     }
     // The operator, by contrast, does have the operator plane.
-    let (_, body) = rpc(&s.client, &s.base, Some(BEARER), "openhuman.user_agents_list");
+    let (_, body) = rpc(
+        &s.client,
+        &s.base,
+        Some(BEARER),
+        "openhuman.user_agents_list",
+    );
     assert!(body.get("result").is_some(), "{body}");
 
     // /schema: the user's listing omits them and keeps what a user may call.
-    let schema = user_get(&s.client, &s.base, "alice", "/schema").text().unwrap();
+    let schema = user_get(&s.client, &s.base, "alice", "/schema")
+        .text()
+        .unwrap();
     for method in operator_only {
         let short = method.trim_start_matches("openhuman.");
-        assert!(!schema.contains(short), "{method} is listed in a user's /schema");
+        assert!(
+            !schema.contains(short),
+            "{method} is listed in a user's /schema"
+        );
     }
-    assert!(schema.contains("threads_list"), "a user's /schema lists their own surface");
+    assert!(
+        schema.contains("threads_list"),
+        "a user's /schema lists their own surface"
+    );
     let operator_schema = s
         .client
         .get(format!("{}/schema", s.base))
@@ -717,15 +813,69 @@ fn the_gateway_refuses_every_malformed_or_unauthorised_request() {
     type Case<'a> = (&'a str, Option<&'a str>, Vec<HeaderValue>, Vec<String>, u16);
     let user = |name: &str| HeaderValue::from_str(name).unwrap();
     let cases: Vec<Case> = vec![
-        ("no bearer", None, vec![user("alice")], vec![valid("alice")], 401),
-        ("wrong bearer", Some("not-the-token"), vec![user("alice")], vec![valid("alice")], 401),
-        ("no signature", Some(BEARER), vec![user("alice")], vec![], 401),
-        ("garbage signature", Some(BEARER), vec![user("alice")], vec!["t=1,v1=00".into()], 401),
-        ("another user's signature", Some(BEARER), vec![user("bob")], vec![valid("alice")], 401),
-        ("stale signature", Some(BEARER), vec![user("alice")], vec![stale], 401),
-        ("unprovisioned user", Some(BEARER), vec![user("mallory")], vec![valid("mallory")], 403),
-        ("two user headers", Some(BEARER), vec![user("alice"), user("bob")], vec![valid("alice")], 400),
-        ("unreadable user header", Some(BEARER), vec![unreadable], vec![valid("alice")], 400),
+        (
+            "no bearer",
+            None,
+            vec![user("alice")],
+            vec![valid("alice")],
+            401,
+        ),
+        (
+            "wrong bearer",
+            Some("not-the-token"),
+            vec![user("alice")],
+            vec![valid("alice")],
+            401,
+        ),
+        (
+            "no signature",
+            Some(BEARER),
+            vec![user("alice")],
+            vec![],
+            401,
+        ),
+        (
+            "garbage signature",
+            Some(BEARER),
+            vec![user("alice")],
+            vec!["t=1,v1=00".into()],
+            401,
+        ),
+        (
+            "another user's signature",
+            Some(BEARER),
+            vec![user("bob")],
+            vec![valid("alice")],
+            401,
+        ),
+        (
+            "stale signature",
+            Some(BEARER),
+            vec![user("alice")],
+            vec![stale],
+            401,
+        ),
+        (
+            "unprovisioned user",
+            Some(BEARER),
+            vec![user("mallory")],
+            vec![valid("mallory")],
+            403,
+        ),
+        (
+            "two user headers",
+            Some(BEARER),
+            vec![user("alice"), user("bob")],
+            vec![valid("alice")],
+            400,
+        ),
+        (
+            "unreadable user header",
+            Some(BEARER),
+            vec![unreadable],
+            vec![valid("alice")],
+            400,
+        ),
     ];
     for name in ["alice", "bob"] {
         provision(&s.client, &s.base, name);
