@@ -247,8 +247,9 @@ fn files_containing(dir: &Path, needle: &str) -> Vec<PathBuf> {
 fn probe() {
     let s = Stack::new();
     s.chat(&s.alice, "t1", "ALICE-MARK-0 hello");
-    s.await_reply(&s.alice, "t1", Instant::now() + Duration::from_secs(60));
-    eprintln!("MSGS {:#?}", s.messages(&s.alice, "t1"));
+    std::thread::sleep(Duration::from_secs(20));
+    eprintln!("MSGS {}", s.call(&s.alice, "openhuman.threads_messages_list", json!({"thread_id":"t1"})));
+    eprintln!("LIST {}", s.call(&s.alice, "openhuman.threads_list", json!({})));
     for row in s.mock.requests(&s.client) {
         eprintln!("REQ {} {} {}", row["method"], row["url"], authorization(&row));
         if is_inference(&row) {
