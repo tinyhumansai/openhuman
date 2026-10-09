@@ -37,10 +37,16 @@ dependencies to those paths with `[patch]` tables, so the submodule contents are
 not optional — without them cargo cannot even resolve the graph.
 
 Nix's flake-source copier deliberately **drops git submodule contents** unless
-asked for them. A bare `nix build .#openhuman-core` therefore fails with:
+asked for them. A bare `nix build .#openhuman-core` therefore fails — the flake
+detects the missing `vendor/` and stops with an explicit message naming the ref
+to use, rather than letting cargo report `failed to read
+.../vendor/tinyagents/Cargo.toml` much later:
 
 ```
-error: Path 'vendor' in the repository "..." is not tracked by Git.
+error: OpenHuman's vendor/ submodules are missing from the flake source.
+...
+  nix build "git+file://$PWD?submodules=1#openhuman-core"
+  nix build path:.#openhuman-core
 ```
 
 Pass one of:

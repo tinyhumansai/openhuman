@@ -133,10 +133,34 @@
           ++ lib.optionals isLinux [ mold ];
 
         commonArgs = {
-          # Keep every tracked file plus submodule contents: the core's build.rs
-          # globs `tests/`, and the vendored crates carry C sources (bundled
-          # SQLite) that a `.rs`/`.toml`-only filter would drop.
-          src = ./.;
+          # Guard the well-known footgun: Nix's flake-source copier drops git
+          # submodule contents unless the ref asks for them, and the `vendor/`
+          # crates are required to resolve the graph. Without this, a bare
+          # `nix build` fails deep inside cargo with "failed to read
+          # .../vendor/tinyagents/Cargo.toml"; with it, the failure names the
+          # fix up front. (A `builtins.fetchGit { submodules = true; }` here
+          # would fix it properly, but fetchGit is not allowed in pure
+          # evaluation, and one flake input per submodule is fragile —
+          # `vendor/tinyagents/vendor/tinytools` already resists it.)
+          src =
+            if !(builtins.pathExists ./vendor/tinyagents/Cargo.toml) then
+              throw ''
+                OpenHuman's vendor/ submodules are missing from the flake source.
+
+                Nix's flake-source copier drops git submodule contents unless the
+                ref asks for them. Use one of:
+
+                  nix build "git+file://$PWD?submodules=1#openhuman-core"
+                  nix build path:.#openhuman-core        # submodules already on disk
+
+                To populate them in this checkout first:
+
+                  bash scripts/ci/checkout-submodules.sh
+
+                See NIX.md.
+              ''
+            else
+              ./.;
           inherit version;
           strictDeps = true;
 
