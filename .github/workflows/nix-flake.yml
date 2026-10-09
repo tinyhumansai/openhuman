@@ -130,6 +130,12 @@ jobs:
             experimental-features = nix-command flakes
 
       - name: Build and smoke-test
+        # A manually dispatched run can target a non-main ref, so treat the
+        # flake and the built binary as untrusted here too and blank the
+        # runner's token.
+        env:
+          GITHUB_TOKEN: ""
+          GH_TOKEN: ""
         run: |
           nix build "path:.#openhuman-core" --print-build-logs
           ./result/bin/openhuman-core --help > /dev/null
