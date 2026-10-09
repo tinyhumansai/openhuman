@@ -186,6 +186,10 @@ name = "saas_mode_e2e"
 path = "../../tests/saas_mode_e2e.rs"
 
 [[test]]
+name = "saas_isolation"
+path = "../../tests/saas_isolation.rs"
+
+[[test]]
 name = "composio_list_tools_stack_overflow_regression"
 path = "../../tests/composio_list_tools_stack_overflow_regression.rs"
 
