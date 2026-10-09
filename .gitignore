@@ -89,6 +89,11 @@ coverage/
 app/public/generated/remotion/
 app/test/e2e/artifacts/
 
+# Nix
+/result
+/result-*
+.direnv/
+
 tauri.key
 tauri.key.pub
 /target/

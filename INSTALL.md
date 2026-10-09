@@ -53,6 +53,26 @@ The script checks the file it downloads, but the script itself is not signed. It
 
 A Homebrew cask also exists (`brew install --cask openhuman`). It can lag a release behind, so prefer the download or the script above.
 
+## Nix (flake)
+
+A `flake.nix` is included for Nix users. It provides a dev shell with the pinned
+Rust/Node toolchain and the system libraries the core links, plus builds for the
+two terminal hosts (`openhuman-core`, `openhuman-tui`). The desktop app is not
+packaged by the flake.
+
+```bash
+# Build and run the core straight from a checkout
+nix build "git+file://$PWD?submodules=1#openhuman-core"
+./result/bin/openhuman-core --help
+
+# Dev shell
+nix develop "git+file://$PWD?submodules=1"
+```
+
+The `?submodules=1` is required: OpenHuman vendors its `tiny*` crates under
+`vendor/` as git submodules and Nix's flake copier drops submodule contents by
+default. See [NIX.md](./NIX.md) for details.
+
 ## Troubleshooting
 
 The AppImage can crash on launch under Wayland, miss host libraries such as `libgbm.so.1`, or fail on Arch-based distros with `sharun: Interpreter not found!`. See [#2463](https://github.com/tinyhumansai/openhuman/issues/2463) for the cause and workarounds. On Debian and Ubuntu, the `.deb` avoids these problems because apt resolves the dependencies.
