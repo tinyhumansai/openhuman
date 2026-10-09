@@ -120,10 +120,10 @@ flake honest. The default `flake check (evaluation)` job runs `nix flake check
 --no-build --all-systems`, asserts each package's derivation path, builds the
 dev shell's inputs, and checks `flake.lock` is current.
 
-A second `build openhuman-core` job runs the real `nix build` plus a smoke test,
-but it is opt-in (`workflow_dispatch` with `build_packages: true`) and meant for
-a self-hosted runner: the core is a multi-hour Rust build a hosted runner cannot
-finish, and on `pull_request` it would compile a fork's flake.
+A second `build openhuman-core` job runs the real `nix build` plus a smoke test
+whenever the flake changes on `main` (push or the weekly schedule), and on an
+explicit `workflow_dispatch`. It is kept off `pull_request`: on a fork PR the
+flake being built is the PR's own code.
 
 ## Notes & caveats
 

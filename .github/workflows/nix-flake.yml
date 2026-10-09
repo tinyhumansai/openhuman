@@ -109,7 +109,13 @@ jobs:
   # flake and the build would run that code.
   build:
     name: build openhuman-core
-    if: (github.event_name == 'workflow_dispatch' && inputs.build_packages) || github.event_name == 'schedule'
+    # `main` (push/schedule) is trusted, so building the flake there is safe.
+    # A fork PR is not: its flake is the code being compiled, so the build only
+    # runs there on an explicit dispatch.
+    if: >-
+      github.event_name == 'push' ||
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && inputs.build_packages)
     runs-on: ubuntu-latest
     timeout-minutes: 350
     steps:
