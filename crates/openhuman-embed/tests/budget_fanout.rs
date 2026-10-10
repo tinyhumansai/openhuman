@@ -222,3 +222,73 @@ async fn borrowed_branch_futures_overlap_within_the_declared_bound() {
         vec![Ok(10), Ok(20), Err("branch failed"), Ok(40), Ok(50), Ok(60)]
     );
 }
+
+#[tokio::test]
+async fn gateway_buyer_charge_settles_before_the_next_call() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model": "fixture",
+            "choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15,
+                      "buyer_cost_micro": 10, "cost": 0}
+        })))
+        .mount(&server)
+        .await;
+    let policy = policy(150);
+    let client = completer(&server).budget(policy.clone());
+    let response = client.complete(request("fixture")).await.unwrap();
+    assert_eq!(response.usage.unwrap().cost_usd, Some(0.00001));
+    assert_eq!(policy.ledger.snapshot().spent.cost_micros, 10);
+    client.complete(request("fixture")).await.unwrap();
+    assert_eq!(policy.ledger.snapshot().spent.cost_micros, 20);
+    assert_eq!(server.received_requests().await.unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn gateway_charge_precedence_and_unknown_cost_keep_budget_conservative() {
+    for (charge, expected) in [
+        (json!({"buyer_cost_micro": 6.4, "cost": 0}), 7),
+        (json!({"buyer_cost_micro": 0, "cost": 1}), 0),
+        (json!({"cost": 0.0000064}), 7),
+        (json!({"buyer_cost_micro": -1, "cost": 0}), 100),
+        (json!({"buyer_cost_micro": null, "cost": 0}), 100),
+        (json!({"buyer_cost_micro": "invalid", "cost": 0}), 100),
+        (json!({"cost": -1}), 100),
+        (json!({"cost": 1e20}), 100),
+        (json!({}), 100),
+    ] {
+        let server = MockServer::start().await;
+        let mut usage = json!({"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15});
+        usage
+            .as_object_mut()
+            .unwrap()
+            .extend(charge.as_object().unwrap().clone());
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "model": "fixture",
+                "choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+                "usage": usage
+            })))
+            .mount(&server)
+            .await;
+        let policy = policy(1_000);
+        completer(&server)
+            .budget(policy.clone())
+            .complete(request("fixture"))
+            .await
+            .unwrap();
+        assert_eq!(
+            policy.ledger.snapshot().spent.cost_micros,
+            expected,
+            "{charge}"
+        );
+        assert_eq!(
+            policy.ledger.snapshot().spent.tokens,
+            15,
+            "token accounting must survive {charge}"
+        );
+    }
+}

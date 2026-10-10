@@ -17,7 +17,7 @@ impl ModelBudget {
     /// Apply the policy below retries and fallback selection.
     pub(crate) fn wrap(&self, model: Arc<dyn ChatModel<()>>) -> Arc<dyn ChatModel<()>> {
         Arc::new(tinyinference_llm::model::budget::BudgetedModel::new(
-            model,
+            Arc::new(super::budget_charge::GatewayChargeModel::new(model)),
             self.ledger.clone(),
             self.call,
         ))

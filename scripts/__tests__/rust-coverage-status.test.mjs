@@ -115,3 +115,20 @@ test("an integration target with all required product features runs", () => {
   assert.equal(result.status, 0, result.output);
   assert.match(result.output, /RAN-TARGET/);
 });
+
+
+test("headless Embed coverage gets an isolated disposable encryption key", () => {
+  const result = withRunnerFunctions(
+    ["llvm_cov_product_facade", "llvm_cov_embed"],
+    [
+      'PRODUCT_FEATURES="channels"',
+      'export OPENHUMAN_KEYRING_MASTER_KEY=operator-key',
+      'export OPENHUMAN_KEYRING_MASTER_KEY_FILE=operator-file',
+      'bash() { [[ "${OPENHUMAN_KEYRING_MASTER_KEY:-}" =~ ^[0-9a-f]{64}$ ]] || return 9; [[ -z "${OPENHUMAN_KEYRING_MASTER_KEY_FILE:-}" ]] || return 10; echo DISPOSABLE-KEY; }',
+    ].join("\n"),
+    'llvm_cov_embed --no-report -p openhuman-embed; [[ "$OPENHUMAN_KEYRING_MASTER_KEY" == operator-key ]]; [[ "$OPENHUMAN_KEYRING_MASTER_KEY_FILE" == operator-file ]]; echo PARENT-UNCHANGED',
+  );
+  assert.equal(result.status, 0, result.output);
+  assert.match(result.output, /DISPOSABLE-KEY/);
+  assert.match(result.output, /PARENT-UNCHANGED/);
+});

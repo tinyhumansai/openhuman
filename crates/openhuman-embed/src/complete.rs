@@ -322,27 +322,25 @@ impl CompletionResponse {
             .and_then(|raw| raw.get("model"))
             .and_then(Value::as_str)
             .map(str::to_string);
-        // A relay may report its own upstream `cost: 0` while the buyer pays
-        // `buyer_cost_micro`. That actual bill precedes normalized estimates.
-        let cost_usd = raw
-            .as_ref()
-            .and_then(|raw| raw.pointer("/usage/buyer_cost_micro"))
-            .and_then(Value::as_f64)
-            .map(|micro| micro / 1_000_000.0)
-            .or_else(|| {
-                raw.as_ref()
-                    .and_then(|raw| raw.pointer("/usage/cost"))
-                    .and_then(Value::as_f64)
-            })
-            .or_else(|| {
+        // Presence chooses the authoritative bill. Malformed billing must
+        // remain unknown instead of falling through to a provider estimate.
+        let raw_cost = raw.as_ref().and_then(|raw| {
+            if let Some(managed) = raw.pointer("/openhuman_usage_meta/charged_amount_usd") {
+                Some(managed.as_f64())
+            } else if let Some(buyer) = raw.pointer("/usage/buyer_cost_micro") {
+                Some(buyer.as_f64().map(|micro| micro / 1_000_000.0))
+            } else {
+                raw.pointer("/usage/cost").map(Value::as_f64)
+            }
+        });
+        let cost_usd = raw_cost
+            .unwrap_or_else(|| {
                 response
                     .usage
                     .as_ref()
                     .and_then(|usage| usage.charged_amount)
                     .map(|amount| amount.micros as f64 / 1_000_000.0)
             })
-            // Invalid authoritative charges stay unknown, rather than being
-            // replaced by a lower-priority estimate or crediting the budget.
             .filter(|cost| cost.is_finite() && *cost >= 0.0);
         let usage = match response.usage {
             Some(usage) => Some(CompletionUsage {
