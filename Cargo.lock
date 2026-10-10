@@ -4634,6 +4634,7 @@ dependencies = [
  "tinyagents-graph",
  "tinyagents-harness",
  "tinyagents-session",
+ "tinyagents-tasks",
  "tinybus",
  "tinychannels",
  "tinycomputer-bus",

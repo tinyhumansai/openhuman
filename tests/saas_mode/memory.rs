@@ -321,19 +321,12 @@ fn profiles_round_trip_their_own_memory_and_never_anothers() {
     }
 
     // On the wire: every memory request carried one profile's credential,
-    // and named only scopes inside that profile's root.
-    //
-    // One known exception, read-only: forgetting by id. TinyMemory's
-    // `ForgetTarget::Ids` is unscoped by contract (ids are not namespaced;
-    // a confined caller reads them through `get` in its reach first, which
-    // `memory::ops::forget` does), so the engine then sweeps every scope
-    // from the tree's root looking for the ids' events. On a shared engine
-    // that sweep lists and reads other profiles' scopes with the caller's
-    // credential. Nothing read there reaches the caller, and nothing there
-    // is forgotten: an item id is a fingerprint of the item and its
-    // namespace, so no other tree holds it (checked above: everyone keeps
-    // their canary). Only the sweep's listings may leave the root; its
-    // forget, like every other write, must not.
+    // and named only scopes inside that profile's root. No exception for
+    // forgetting by id: with a reach, `memory::ops::forget` hands the ids to
+    // the engine's `forget_within`, which looks for their events inside that
+    // reach only. A sweep from the tree's root (the unscoped
+    // `ForgetTarget::Ids`) would list and read every other profile's scopes
+    // with the caller's credential, and fails here.
     let requests = s.mock.requests();
     assert!(!requests.is_empty());
     let owners: std::collections::HashMap<String, String> = profiles
@@ -352,14 +345,15 @@ fn profiles_round_trip_their_own_memory_and_never_anothers() {
             panic!("request {index}, {method} {path}, carried no profile's credential")
         });
         seen.insert(bearer.clone());
-        let sweeping = sweep.contains(&index)
-            && method == "GET"
-            && matches!(path.as_str(), "/memory/scopes" | "/memory/events")
-            && bearer == &credential_id(&token(attacker));
+        let forgetting = if sweep.contains(&index) {
+            " (during the forget)"
+        } else {
+            ""
+        };
         for scope in scopes {
             assert!(
-                inside(scope, root) || (sweeping && inside(scope, "app:tinymemory")),
-                "request {index}, {method} {path} with {root}'s credential, named {scope}"
+                inside(scope, root),
+                "request {index}{forgetting}, {method} {path} with {root}'s credential, named {scope}"
             );
         }
     }

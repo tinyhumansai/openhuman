@@ -306,6 +306,8 @@ serde = { version = "1", features = ["derive"] }
 tempfile = "3"
 tinyinference-llm = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-llm" }
 tinytools = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinytools" }
+# The completion log a detached sub-agent leaves, for the SaaS delivery-recovery e2e.
+tinyagents-tasks = { path = "../../vendor/tinyagents/crates/tinyagents-tasks" }
 toml = "1.0"
 tracing = "0.1"
 # The TinyComputer contract, for the live computer-use e2e (`computer_bali_live_e2e`).
