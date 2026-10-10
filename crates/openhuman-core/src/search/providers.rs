@@ -27,7 +27,7 @@ pub struct ResolvedProvider {
     pub managed_available: bool,
     /// Whether the direct route has what it needs (a key, or a SearXNG URL).
     pub key_configured: bool,
-    /// Whether the direct route also works without a key (see [`key_optional`]).
+    /// Whether the direct route also works without a key (see [`key_optional()`]).
     pub key_optional: bool,
     /// Enabled, search is on, and the chosen route is reachable.
     pub usable: bool,
