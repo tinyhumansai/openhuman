@@ -13,7 +13,7 @@ impl Turn {
     /// Run the turn.
     ///
     /// Establishes the origin and progress scopes described in the module docs,
-    /// then dispatches through [`call`](crate::call::call) so the
+    /// then dispatches through the shared call handler so the
     /// `{result, logs}` envelope, [`DomainSet`](openhuman_core::core::runtime::DomainSet)
     /// gating and error classification are handled the same way as every other
     /// facade method.
@@ -228,7 +228,9 @@ impl Turn {
                             native.cancel();
                             Err(CoreError::DeadlineExceeded { method: AGENT_CHAT })
                         },
-                        outcome = Box::pin(self.send_inner(&meter.usage)) => outcome,
+                        outcome = Box::pin(self.send_inner(&meter.usage)) => {
+                            controlled_outcome(outcome, &native, token.as_ref(), &cancellation, deadline)
+                        },
                     }
                 })
                 .await;
@@ -512,3 +514,33 @@ impl Turn {
         Ok(())
     }
 }
+
+// Classify the result at the control boundary after a native dispatch poll.
+fn controlled_outcome<T>(
+    outcome: Result<T, CoreError>,
+    native: &crate::CancellationToken,
+    token: Option<&crate::CancellationToken>,
+    cancellation: &crate::TurnCancellation,
+    deadline: Option<tokio::time::Instant>,
+) -> Result<T, CoreError> {
+    // The native session runtime currently crosses the RPC boundary as this
+    // cancellation error. Only that interrupted dispatch needs classification;
+    // completed replies and unrelated failures retain their original result.
+    let interrupted = native.is_cancelled()
+        && matches!(&outcome, Err(CoreError::Rpc { method, message })
+            if *method == AGENT_CHAT && message == "session turn cancelled");
+    if !interrupted {
+        return outcome;
+    }
+    if token.is_some_and(|token| token.is_cancelled()) || cancellation.is_cancelled() {
+        Err(CoreError::TurnCancelled { method: AGENT_CHAT })
+    } else if deadline.is_some_and(|deadline| tokio::time::Instant::now() >= deadline) {
+        Err(CoreError::DeadlineExceeded { method: AGENT_CHAT })
+    } else {
+        outcome
+    }
+}
+
+#[cfg(test)]
+#[path = "turn_control_tests.rs"]
+mod tests;

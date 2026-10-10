@@ -1,7 +1,9 @@
 //! Title: Linux agent fleet memory and latency
 //! Summary: Measure retained runtime-owned agents using loopback inference and two worker threads.
 //! Run: offline on Linux; use a fresh constrained cgroup for release measurements.
+//! Profile: release
 //! Feature: default
+//! Default features: disabled
 
 #![recursion_limit = "512"]
 

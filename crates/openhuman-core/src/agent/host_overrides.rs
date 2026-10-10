@@ -17,6 +17,8 @@ pub use tinyagents_harness::cancel::CancellationToken;
 pub struct HostOverrides {
     /// Parent runtime adapters; local hook registration never edits this parent.
     pub parent: Option<Arc<HostOverrides>>,
+    /// Approval registration barrier owned by this agent instance.
+    pub approval_scope: Option<Arc<crate::security::approval::ApprovalScope>>,
     post_turn_hooks: RwLock<BTreeMap<String, Arc<dyn PostTurnHook>>>,
     tool_hooks: RwLock<BTreeMap<String, Arc<dyn ToolHook>>>,
     /// Native inference used by this agent instead of config-routed inference.
@@ -38,6 +40,13 @@ impl std::fmt::Debug for HostOverrides {
 }
 
 impl HostOverrides {
+    /// Resolve the instance barrier inherited by derived turn contexts.
+    pub fn approval_scope(&self) -> Option<Arc<crate::security::approval::ApprovalScope>> {
+        self.approval_scope
+            .clone()
+            .or_else(|| self.parent.as_ref().and_then(|p| p.approval_scope()))
+    }
+
     /// Add or replace an agent-local post-turn hook by name; `None` removes it.
     pub fn post_turn_hook(&self, name: &str, hook: Option<Arc<dyn PostTurnHook>>) {
         let mut hooks = self

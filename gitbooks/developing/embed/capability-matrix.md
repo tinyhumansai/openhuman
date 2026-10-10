@@ -25,7 +25,7 @@ This matrix comes from the default-feature compiled capability-report example. R
 | `skills` | Yes |
 | `storage-file` | No |
 | `storage-mongodb` | No |
-| `storage-sqlite` | No |
+| `storage-sqlite` | Yes |
 | `tinymemes` | Yes |
 | `voice` | No |
 | `web3` | No |

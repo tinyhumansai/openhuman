@@ -26,6 +26,7 @@ impl ApprovalSubscription {
         agent_id: &str,
         handler: Arc<dyn ApprovalHandler>,
         removed: tokio::sync::watch::Receiver<bool>,
+        lifecycle: Arc<super::lifecycle::ApprovalState>,
     ) -> Self {
         let cancellation = CancellationToken::new();
         let subscriber = Arc::new(Handler {
@@ -33,6 +34,7 @@ impl ApprovalSubscription {
             handler,
             cancellation: cancellation.clone(),
             removed,
+            lifecycle,
         });
         Self {
             _subscription: BUS.subscribe(subscriber),
@@ -45,6 +47,7 @@ struct Handler {
     handler: Arc<dyn ApprovalHandler>,
     cancellation: CancellationToken,
     removed: tokio::sync::watch::Receiver<bool>,
+    lifecycle: Arc<super::lifecycle::ApprovalState>,
 }
 #[async_trait::async_trait]
 impl EventHandler<DomainEvent> for Handler {
@@ -63,7 +66,8 @@ impl EventHandler<DomainEvent> for Handler {
         if agent_id.as_deref() != Some(&self.agent_id) || *self.removed.borrow() {
             return;
         }
-        let approvals = Approvals::new(&self.agent_id, self.removed.clone());
+        let approvals =
+            Approvals::new(&self.agent_id, self.removed.clone(), self.lifecycle.clone());
         let Ok(pending) = approvals.pending() else {
             return;
         };

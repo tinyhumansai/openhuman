@@ -82,7 +82,10 @@ fn identity_from_tool(context: &ToolHookContext) -> TurnIdentity {
     TurnIdentity {
         session_id: context.session_id.clone(),
         agent_id: context.agent_id.clone(),
-        cwd: string_field(&context.arguments, "cwd"),
+        cwd: context
+            .cwd
+            .as_ref()
+            .map(|cwd| cwd.to_string_lossy().into_owned()),
         ..TurnIdentity::default()
     }
 }

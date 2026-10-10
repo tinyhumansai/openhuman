@@ -20,6 +20,7 @@ use tinytools::ToolTimeout;
 
 mod command_environment;
 pub use command_environment::CommandEnvironment;
+mod group_exit;
 mod process_cleanup;
 pub use process_cleanup::ProcessCleanup;
 
@@ -344,7 +345,18 @@ async fn collect_command_output(
         _ = async { let _ = cancellation.wait_for(|cancelled| *cancelled).await; } => {
             group.kill();
             child.start_kill()?;
-            child.wait().await?
+            // Pipe EOF and the shell's exit can precede a descendant's exit.
+            // Keep the leader unreaped while checking the reserved group.
+            let stopped = match group.0 {
+                Some(pid) => group_exit::wait(pid).await,
+                None => Ok(()),
+            };
+            let status = child.wait().await?;
+            // Disarm before propagating a check error after reaping: its PID
+            // could now be reused, including while unwinding this function.
+            group.0 = None;
+            stopped?;
+            status
         }
         result = child.wait() => result?,
     };

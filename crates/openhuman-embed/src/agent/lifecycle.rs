@@ -2,6 +2,7 @@
 //! flight, and the teardown of the per-agent state the core keeps for it.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::sync::{watch, Notify};
@@ -11,17 +12,52 @@ use crate::CoreError;
 /// Turn admission and in-flight accounting for one agent.
 pub(crate) struct Lifecycle {
     removed: watch::Sender<bool>,
-    removal_claimed: AtomicBool,
+    approvals: Arc<ApprovalState>,
     in_flight: AtomicUsize,
     idle: Notify,
     torn_down: AtomicBool,
+}
+
+/// Serializes live approval decisions with the instance's removal claim.
+#[derive(Debug, Default)]
+pub(crate) struct ApprovalState {
+    claimed: AtomicBool,
+    decisions: Mutex<()>,
+    scope: Arc<openhuman_core::security::approval::ApprovalScope>,
+}
+
+impl ApprovalState {
+    pub(crate) fn with_live<T>(&self, decide: impl FnOnce() -> T) -> Option<T> {
+        let _decision = self
+            .decisions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self.scope.is_closed() || self.claimed.load(Ordering::SeqCst) {
+            None
+        } else {
+            Some(decide())
+        }
+    }
+
+    fn claim_removal(&self, reason: &str) -> bool {
+        // Publish closing before either mutex can block. Admission and all
+        // approval surfaces share that irreversible, nonblocking observation.
+        // Accepted core work finishes before the denial snapshot; accepted
+        // facade work finishes before this caller can claim that snapshot.
+        self.scope.close(reason);
+        let _decision = self
+            .decisions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        !self.claimed.swap(true, Ordering::SeqCst)
+    }
 }
 
 impl Lifecycle {
     pub(crate) fn new() -> Self {
         Self {
             removed: watch::Sender::new(false),
-            removal_claimed: AtomicBool::new(false),
+            approvals: Arc::new(ApprovalState::default()),
             in_flight: AtomicUsize::new(0),
             idle: Notify::new(),
             torn_down: AtomicBool::new(false),
@@ -30,14 +66,29 @@ impl Lifecycle {
 
     /// Stops admitting turns and ends the ones in flight; returns whether this
     /// caller claimed removal before another caller.
-    pub(crate) fn mark_removed(&self) -> bool {
-        if self.removal_claimed.swap(true, Ordering::SeqCst) {
+    pub(crate) fn mark_removed(&self, reason: &str) -> bool {
+        self.mark_removed_with(reason, || {})
+    }
+
+    /// Claim removal and settle owned approvals before waking in-flight turns.
+    pub(crate) fn mark_removed_with(&self, reason: &str, before_notify: impl FnOnce()) -> bool {
+        if !self.approvals.claim_removal(reason) {
             return false;
         }
+        before_notify();
         // A cancelled turn can retain the watch read while its future drops.
         // Only the first claimant writes; repeated teardown never waits on it.
         self.removed.send_replace(true);
         true
+    }
+
+    pub(crate) fn approval_state(&self) -> Arc<ApprovalState> {
+        self.approvals.clone()
+    }
+
+    /// The same instance barrier captured by every request at the shared gate.
+    pub(crate) fn approval_scope(&self) -> Arc<openhuman_core::security::approval::ApprovalScope> {
+        self.approvals.scope.clone()
     }
 
     /// Bind handles to this agent instance, even after its public id is reused.
@@ -58,7 +109,9 @@ impl Lifecycle {
             agent_id: agent_id.to_string(),
         };
         let mut watcher = self.removed.subscribe();
-        if *watcher.borrow_and_update() {
+        // Claiming removal closes admission immediately; waking existing turns
+        // waits until their approvals have been settled with the removal reason.
+        if self.approvals.scope.is_closed() || *watcher.borrow_and_update() {
             log::debug!("[embed][agent] turn refused: agent removed id={agent_id}");
             return Err(removed());
         }

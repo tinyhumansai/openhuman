@@ -259,3 +259,50 @@ async fn cancellation_reaps_the_leader_when_an_escaped_descendant_holds_its_pipe
         "escaped descendant blocked cancellation acknowledgement"
     );
 }
+
+/// Closed output pipes do not prove that a signalled descendant has exited.
+#[tokio::test]
+async fn cleanup_acknowledgement_waits_for_descendants_that_closed_their_output() {
+    for _ in 0..16 {
+        let scratch = tempfile::tempdir().unwrap();
+        let pidfile = scratch.path().join("closed-output.pid");
+        let mut cmd = tokio::process::Command::new("/bin/sh");
+        cmd.args(["-c", &format!(
+            "pids=''; for i in 1 2 3 4 5 6 7 8; do sleep 30 >/dev/null 2>&1 & pids=\"$pids $!\"; done; echo \"$pids\" > {}; wait", pidfile.display()
+        )]);
+        let cleanup = ProcessCleanup::default();
+        let mut run = Box::pin(cleanup.scope(output_unbounded(&mut cmd)));
+        let pids = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                tokio::select! {
+                    result = &mut run => panic!("command ended before cancellation: {result:?}"),
+                    _ = tokio::time::sleep(Duration::from_millis(1)) => {}
+                }
+                if let Ok(text) = std::fs::read_to_string(&pidfile) {
+                    let pids: Vec<u32> = text
+                        .split_whitespace()
+                        .filter_map(|pid| pid.parse().ok())
+                        .collect();
+                    if pids.len() == 8 {
+                        break pids;
+                    }
+                }
+            }
+        })
+        .await
+        .unwrap();
+        drop(run);
+        tokio::time::timeout(Duration::from_secs(5), cleanup.wait())
+            .await
+            .unwrap();
+        for pid in pids {
+            if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+                let (_, fields) = stat.rsplit_once(") ").unwrap();
+                assert!(
+                    fields.starts_with('Z') || fields.starts_with('X'),
+                    "descendant still active after cleanup acknowledgement: {stat}"
+                );
+            }
+        }
+    }
+}

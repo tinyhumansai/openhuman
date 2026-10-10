@@ -40,3 +40,23 @@ test("all example runs share the same required feature graph", () => {
   });
   assert.deepEqual(featureArguments, ["mcp,skills", "mcp,skills"]);
 });
+
+
+test("fleet measurements retain their declared release and minimal-feature invocation", () => {
+  const examples = discoverExamples().filter(({name}) => name === "linux_fleet" || name === "mcp");
+  const fleet = examples.find(({name}) => name === "linux_fleet");
+  assert.equal(fleet.profile, "release");
+  assert.equal(fleet.defaultFeatures, false);
+  const calls = new Map();
+  runExamples({examples, environment: {}, run(_command, args) {
+    const name = args[args.indexOf("--example") + 1];
+    calls.set(name, args);
+    return {status: 0, stdout: `EXAMPLE_OK ${name}\n`, stderr: ""};
+  }});
+  assert.ok(calls.get("linux_fleet").includes("--release"));
+  assert.ok(calls.get("linux_fleet").includes("--no-default-features"));
+  assert.equal(calls.get("linux_fleet").includes("--features"), false);
+  assert.equal(calls.get("mcp").includes("--release"), false);
+  assert.equal(calls.get("mcp").includes("--no-default-features"), false);
+  assert.ok(calls.get("mcp").includes("mcp"));
+});

@@ -113,7 +113,10 @@ impl Runtime {
                 .and_then(|weak| weak.upgrade())
                 .ok_or_else(|| AgentError::UnknownId(id.to_string()))?
         };
-        if !inner.lifecycle.mark_removed() {
+        if !inner
+            .lifecycle
+            .mark_removed_with("agent_removed", || inner.deny_approvals("agent_removed"))
+        {
             return Err(AgentError::UnknownId(id.to_string()));
         }
         let mut removal = RemovalSlot {
@@ -123,7 +126,6 @@ impl Runtime {
         };
         let inner = &removal.inner;
         log::debug!("[embed][runtime] removing agent id={id} purge={purge}");
-        inner.deny_approvals("agent_removed");
         if !inner.lifecycle.wait_idle(REMOVE_IDLE_WAIT).await {
             log::warn!(
                 "[embed][runtime] agent id={id} still had turns unwinding after {}s",
