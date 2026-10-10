@@ -64,6 +64,7 @@ fn builtin_cloud_provider_defaults_cover_phase_one_presets() {
             "https://api-inference.modelscope.cn/v1",
             AuthStyle::Bearer,
         ),
+        ("llmtr", "LLMTR", "https://llmtr.com/v1", AuthStyle::Bearer),
     ] {
         let mut entry = CloudProviderCreds {
             id: format!("p_{slug}"),

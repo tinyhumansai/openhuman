@@ -19,11 +19,11 @@ Supported routes:
 - Local: a runtime you install and run (Ollama, LM Studio, MLX, OMLX). Address it as `ollama:<model>`, `lmstudio:<model>`, `mlx:<model>` or `omlx:<model>`, and set the endpoint in `[local_ai] base_url`. OpenHuman does not install the runtime or download models. You pull them yourself.
 - A local OpenAI-compatible endpoint: any server that speaks the OpenAI chat API. Use `local-openai:<model>`, or register it with its own slug and endpoint.
 - Claude Code / Claude Agent SDK: a provider slug that runs your installed Claude Code CLI instead of calling a hosted API.
-- 26 bring-your-own-key slugs, each with a preset endpoint so you only need a key: `openai`, `anthropic`, `google`, `openrouter`, `orcarouter`, `groq`,
+- 27 bring-your-own-key slugs, each with a preset endpoint so you only need a key: `openai`, `anthropic`, `google`, `openrouter`, `orcarouter`, `groq`,
   `mistral`, `deepseek`, `together`, `fireworks`, `cerebras`, `xai`,
   `moonshot`, `gmi`, `huggingface`, `nvidia`, `zai`, `minimax`, `stepfun`,
   `kilocode`, `deepinfra`, `novita`, `venice`, `vercel-ai-gateway`, `sumopod`,
-  `modelscope`.
+  `modelscope`, `llmtr`.
 
 Provider definitions live under `crates/openhuman-core/src/inference/provider/`
 (`factory.rs` turns a `<slug>:<model>` string into a client, and `types.rs` holds the provider shapes). Setup and the local-model capability table are in [Local models and bring your own key](../features/model-routing/local-and-byok-models.md). Routing and fallback order are in [Automatic model routing](../features/model-routing/README.md).

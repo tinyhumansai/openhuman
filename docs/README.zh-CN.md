@@ -260,7 +260,7 @@ OpenHuman 完成任务用时不到中位数的一半，token 少用 2.6 倍，�
 | 工具 | [原生工具](https://tinyhumans.gitbook.io/openhuman/features/native-tools)：Shell 和编码、网页抓取、文档、图像和视频生成、定时任务 |
 | MCP 与技能 | [MCP 服务器和技能包](https://tinyhumans.gitbook.io/openhuman/features/integrations/mcp-and-skills) |
 | OAuth 集成 | [通过 Composio 接入 119 个应用](https://tinyhumans.gitbook.io/openhuman/features/integrations)，并有[触发器](https://tinyhumans.gitbook.io/openhuman/features/integrations/triggers)，在事件发生时启动智能体 |
-| 模型 | [本地模型（Ollama、LM Studio、MLX）和 26 个提供商的 BYOK](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-and-byok-models)，并支持[自动模型路由](https://tinyhumans.gitbook.io/openhuman/features/model-routing) |
+| 模型 | [本地模型（Ollama、LM Studio、MLX）和 27 个提供商的 BYOK](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-and-byok-models)，并支持[自动模型路由](https://tinyhumans.gitbook.io/openhuman/features/model-routing) |
 | 渠道 | [14 个消息渠道](https://tinyhumans.gitbook.io/openhuman/features/channels)可作为智能体的前端：Telegram、Discord、iMessage、电子邮件等 |
 | 工作流 | [持久化的工作流图](https://tinyhumans.gitbook.io/openhuman/features/workflows)：定时、事件或手动触发，审批步骤，暂停后可继续 |
 | 安全 | [审批关卡](https://tinyhumans.gitbook.io/openhuman/features/approval-gate)、[沙箱执行](https://tinyhumans.gitbook.io/openhuman/features/privacy-and-security)（系统隔离或 Docker）、仅本地运行的[隐私模式](https://tinyhumans.gitbook.io/openhuman/features/privacy-mode)、存放在[系统密钥环](https://tinyhumans.gitbook.io/openhuman/features/os-keyring-and-secret-storage)中的密钥 |

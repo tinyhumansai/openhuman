@@ -1336,6 +1336,38 @@ describe('AIPanel', () => {
     );
   });
 
+  it('connects LLMTR with its native endpoint and provider:llmtr key', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+
+    renderWithProviders(<AIPanel />);
+
+    await openProviderConnectDialog('llmtr');
+    const dialog = await screen.findByRole('dialog', { name: /Connect LLMTR/i });
+    const keyInput = within(dialog).getByLabelText(/API key/i);
+    expect(keyInput).toHaveAttribute('placeholder', 'llmtr-...');
+    fireEvent.change(keyInput, { target: { value: 'llmtr-test' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Save$/i }));
+
+    await waitFor(() =>
+      expect(vi.mocked(setCloudProviderKey)).toHaveBeenCalledWith('llmtr', 'llmtr-test')
+    );
+    await waitFor(() => expect(vi.mocked(listProviderModels)).toHaveBeenCalledWith('llmtr'));
+    await waitFor(() => expect(vi.mocked(saveAISettings)).toHaveBeenCalled());
+
+    const [, nextSettings] = vi.mocked(saveAISettings).mock.calls[0];
+    expect(nextSettings.cloudProviders).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          slug: 'llmtr',
+          label: 'LLMTR',
+          endpoint: 'https://llmtr.com/v1',
+          auth_style: 'bearer',
+          has_api_key: true,
+        }),
+      ])
+    );
+  });
+
   it('connects MiniMax via its OpenAI-compatible /v1 endpoint with bearer auth', async () => {
     vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
 

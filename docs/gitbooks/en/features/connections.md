@@ -28,7 +28,7 @@ The second group has mostly one tab per engine family. Each works the same way: 
 
 | Tab | Covers |
 | --- | --- |
-| LLM | Model providers: the managed route, your own keys for 26 built-in providers, and local servers (Ollama, LM Studio, MLX, any OpenAI-compatible endpoint). See [Model routing](model-routing/README.md). |
+| LLM | Model providers: the managed route, your own keys for 27 built-in providers, and local servers (Ollama, LM Studio, MLX, any OpenAI-compatible endpoint). See [Model routing](model-routing/README.md). |
 | Composio | Your own connector-platform key, if you prefer it to the managed route. |
 | Voice agents | Speech-to-text and text-to-speech providers, routing per workload, and the dictation hotkey. |
 | Embeddings | The embedding provider behind memory and tool search. |
