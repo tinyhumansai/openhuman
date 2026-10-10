@@ -17,7 +17,10 @@ fn defaults_select_tinyhumans_with_logging_and_recall_on() {
     assert_eq!(config.recall.build_delay_secs, DEFAULT_BUILD_DELAY_SECS);
     assert_eq!(config.agent_id, None);
     assert_eq!(config.root, None);
-    assert_eq!(config.recall.team_limit, 0, "no team section by default");
+    assert_eq!(
+        config.recall.team_limit, 3,
+        "three other-agent turns per pack"
+    );
     assert!(
         config.split_github_by_repo,
         "one scope per repository by default"

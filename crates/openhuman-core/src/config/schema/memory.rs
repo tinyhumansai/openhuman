@@ -18,7 +18,7 @@
 //! learnings_limit = 8
 //! brain_limit = 6
 //! history_limit = 6
-//! team_limit = 0                   # other agents' turns; 0 leaves the section out
+//! team_limit = 3                   # other agents' turns; 0 leaves the section out
 //! build_beliefs_every = 10         # turns between belief builds; 0 turns them off
 //! pre_turn_timeout_ms = 5000
 //! date_hint = false                # a model call works out which days a turn is about
@@ -298,8 +298,9 @@ pub struct MemoryRecallConfig {
     pub brain_limit: u32,
     /// This agent's earlier turns.
     pub history_limit: u32,
-    /// Other agents' turns under the same root; `0`, the default, leaves the
-    /// section out (with pooled chats there is no such section either way).
+    /// Other agents' turns under the same root; `0` leaves the section out.
+    /// With pooled chats, this reads the shared conversation node while
+    /// excluding this agent's own turns.
     pub team_limit: u32,
     /// Turns between belief builds of an agent's conversations; `0` turns
     /// them off.
@@ -326,7 +327,7 @@ impl Default for MemoryRecallConfig {
             learnings_limit: 8,
             brain_limit: 6,
             history_limit: 6,
-            team_limit: 0,
+            team_limit: 3,
             build_beliefs_every: 10,
             pre_turn_timeout_ms: DEFAULT_PRE_TURN_TIMEOUT_MS,
             date_hint: false,

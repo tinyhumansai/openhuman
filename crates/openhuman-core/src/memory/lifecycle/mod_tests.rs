@@ -9,11 +9,8 @@ fn the_policy_mirrors_the_recall_config() {
     let default = policy(&recall);
     assert_eq!(
         default,
-        RecallPolicy {
-            team_limit: 0,
-            ..RecallPolicy::default()
-        },
-        "the defaults agree with TinyMemory's, except that OpenHuman leaves the team section out"
+        RecallPolicy::default(),
+        "the defaults agree with TinyMemory's"
     );
 
     recall.build_beliefs_every = 0;
