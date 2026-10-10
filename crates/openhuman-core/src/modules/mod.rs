@@ -40,30 +40,52 @@
 //! - [`schemas`] — the `modules` RPC surface.
 //! - [`boot`] — what happens at startup.
 
+#[cfg(feature = "modules")]
 pub mod boot;
+#[cfg(feature = "modules")]
 pub mod browser;
+#[cfg(feature = "modules")]
 pub(crate) mod browser_sites;
+#[cfg(feature = "modules")]
 pub mod browser_task;
+#[cfg(feature = "modules")]
 mod browser_task_report;
+pub mod client;
+#[cfg(feature = "modules")]
 pub mod computer;
+#[cfg(feature = "modules")]
 pub mod computer_config;
+#[cfg(feature = "modules")]
 pub mod connectors;
+#[cfg(feature = "modules")]
 pub mod desktop;
 #[cfg(feature = "documents")]
+#[cfg(feature = "modules")]
 pub mod documents;
+mod failure;
+#[cfg(feature = "modules")]
 pub mod host;
+#[cfg(feature = "modules")]
 pub mod ops;
 pub mod registry;
+#[cfg(feature = "modules")]
 pub mod runtime;
+#[cfg(feature = "modules")]
 pub mod schemas;
+#[cfg(feature = "modules")]
 pub mod search;
+#[cfg(feature = "modules")]
 mod tokenjuice_host;
 pub mod types;
 #[cfg(feature = "voice")]
+#[cfg(feature = "modules")]
 pub mod voice;
 #[cfg(feature = "web3")]
+#[cfg(feature = "modules")]
 pub mod wallet;
 
+#[cfg(feature = "modules")]
 pub use ops::{ensure_loaded, ensure_loaded_within, state_of, LoadError};
+#[cfg(feature = "modules")]
 pub use schemas::{all_controller_schemas, all_registered_controllers};
 pub use types::{LoadPolicy, ModuleRecord, ModuleState, ModuleStatus, PlatformAsset};

@@ -30,7 +30,7 @@
 //! count — see `registry/records_*.rs`. This file only wires them into
 //! [`ALL`] and answers [`find`].
 
-#[cfg(test)]
+#[cfg(all(test, feature = "modules"))]
 #[path = "registry_tests.rs"]
 mod tests;
 

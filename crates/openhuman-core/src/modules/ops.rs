@@ -150,6 +150,9 @@ pub async fn ensure_loaded_within(
     within: Option<Duration>,
 ) -> Result<(), LoadError> {
     if !config.modules.enabled {
+        if let Some(record) = registry::find(id) {
+            super::failure::report(record, super::failure::Reason::Disabled);
+        }
         return Err(LoadError::Failed(format!(
             "module '{id}' is unavailable: modules are disabled in configuration"
         )));
@@ -236,7 +239,12 @@ async fn start_resolution(
 ///
 /// [`report_error`]: crate::core::observability::report_error
 pub(super) fn report_resolution_failure(id: &str, reason: &str) {
-    crate::core::observability::report_error(reason, "modules", "resolve", &[("module", id)]);
+    // Loader errors can include download URLs or user paths. Keep their detail
+    // in the operation's returned error, never in the terminal Sentry report.
+    let _ = reason;
+    if let Some(record) = registry::find(id) {
+        super::failure::report(record, super::failure::Reason::ResolutionFailed);
+    }
 }
 
 /// Do the actual work of getting `record` serving.

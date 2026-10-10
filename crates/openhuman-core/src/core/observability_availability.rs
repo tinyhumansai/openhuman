@@ -44,7 +44,10 @@ pub fn is_backend_unavailable_message(msg: &str) -> bool {
 /// events (TAURI-RUST-117K / -118J / -117Y / -113J / -113T / -113D / -113N /
 /// -113Q / -113X).
 ///
-/// Anchors, all produced by module loading and nothing else:
+/// Anchors, produced by module loading or the shared module client:
+///
+/// - `MODULE_CALL_REPORTED:` — the shared client already emitted a sanitized
+///   report; product callers must not report its returned error again;
 ///
 /// - [`crate::tools::status::MODULE_FAULT_MARKER`] — every terminal load
 ///   failure from `modules::ops` and tinybus' `load_first_admitted` carries it;
@@ -57,8 +60,11 @@ pub fn is_backend_unavailable_message(msg: &str) -> bool {
 /// policy and workflows use it for failures that must keep paging.
 pub fn is_module_unavailable_message(msg: &str) -> bool {
     let lower = msg.to_ascii_lowercase();
-    msg.contains(crate::tools::status::MODULE_FAULT_MARKER)
+    msg.contains("MODULE_CALL_REPORTED:")
+        || msg.contains(crate::tools::status::MODULE_FAULT_MARKER)
         || (lower.contains("module '") && lower.contains("could not be loaded"))
+        || (lower.contains("module '")
+            && lower.contains("is unavailable: modules are disabled in configuration"))
         || lower.contains("the memory module failed to load")
 }
 

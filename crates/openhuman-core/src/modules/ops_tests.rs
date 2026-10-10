@@ -349,10 +349,28 @@ fn a_failed_resolution_is_reported_once_with_the_module_id() {
     // report is the one Sentry event per broken install. Every later caller's
     // re-report is demoted as `ModuleUnavailable`; this one must not be.
     let events = sentry::test::with_captured_events(|| {
-        ops::report_resolution_failure("tinyconnectors", REFUSED_LOAD);
+        ops::report_resolution_failure(
+            "tinyconnectors",
+            "private-test-token /home/private-user/document.txt",
+        );
     });
     assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(
+        events[0].message.as_deref(),
+        Some("loadable module operation failed")
+    );
+    let captured = format!("{:?}", events[0]);
+    assert!(!captured.contains("private-test-token"));
+    assert!(!captured.contains("/home/private-user"));
     let tags = &events[0].tags;
+    assert_eq!(
+        tags.get("reason_code").map(String::as_str),
+        Some("resolution_failed")
+    );
+    assert_eq!(
+        tags.get("version").map(String::as_str),
+        Some(registry::find("tinyconnectors").unwrap().version)
+    );
     assert_eq!(tags.get("domain").map(String::as_str), Some("modules"));
     assert_eq!(tags.get("operation").map(String::as_str), Some("resolve"));
     assert_eq!(
@@ -439,4 +457,14 @@ fn a_marked_bus_startup_failure_is_classified_as_module_unavailable() {
     ));
     // Idempotent: an already-marked error is not annotated twice.
     assert_eq!(ops::mark_terminal(marked.clone()), marked);
+}
+
+#[tokio::test]
+async fn disabled_modules_are_reported_then_demoted_at_product_boundaries() {
+    let mut config = Config::default();
+    config.modules.enabled = false;
+    let reason = ops::ensure_loaded(&config, "tinyjuice").await.unwrap_err();
+    assert!(crate::core::observability::is_module_unavailable_message(
+        &reason
+    ));
 }

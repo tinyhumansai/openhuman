@@ -673,4 +673,13 @@
 #                      the file driver backs `file:` URLs), which adds the
 #                      first-party tinystoragedrivers-file crate (one package,
 #                      one name; no external crate, native builds unchanged).
-flows:339:317:2
+# 339/317/2 2026-10-10 Pre-core module registry vocabulary adds tinycomputer-bus
+#                      to loader-disabled builds. Only its pure contract is
+#                      added (one package/name); no native or implementation
+#                      dependency is introduced. This foundation is additive,
+#                      not a dependency-shedding claim.
+# 340/318/2 2026-10-10 Combining both independent additions above: measured
+#                      with dep-sim --cut-nothing on current upstream main.
+#                      Two existing native builds; no shedding claimed.
+
+flows:340:318:2
