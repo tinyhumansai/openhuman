@@ -73,11 +73,14 @@ impl Agent {
                 .map(|entry| entry.name),
         );
         let config = &self.inner.config;
-        let security = Arc::new(openhuman_core::security::SecurityPolicy::from_config(
-            &config.autonomy,
-            &config.workspace_dir,
-            &config.action_dir,
-        ));
+        let security = Arc::new(
+            openhuman_core::security::SecurityPolicy::from_config(
+                &config.autonomy,
+                &config.workspace_dir,
+                &config.action_dir,
+            )
+            .with_account_dir(config.config_path.parent()),
+        );
         occupied.extend(
             openhuman_core::tools::ops::all_tools(
                 Arc::new(config.clone()),

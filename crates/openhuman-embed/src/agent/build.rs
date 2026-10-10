@@ -217,7 +217,8 @@ pub(crate) fn instantiate(runtime: &Runtime, spec: AgentSpec) -> Result<AgentInn
                 &config.workspace_dir,
                 &config.action_dir,
             )
-            .with_privacy_mode(config.privacy.mode),
+            .with_privacy_mode(config.privacy.mode)
+            .with_account_dir(config.config_path.parent()),
         )),
         approvals_disabled: !access.approval_gate_enabled(),
         definitions,

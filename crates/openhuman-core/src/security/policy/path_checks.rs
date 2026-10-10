@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use super::types::{SecurityPolicy, TrustedAccess, POLICY_BLOCKED_MARKER};
 use super::types::{
-    ACCOUNT_CONFIG_FILE, ARTIFACTS_DIR, ARTIFACT_TOOL_RESULTS_DIR, WORKSPACE_INTERNAL_DIRS,
+    ACCOUNT_INTERNAL_FILES, ARTIFACTS_DIR, ARTIFACT_TOOL_RESULTS_DIR, WORKSPACE_INTERNAL_DIRS,
     WORKSPACE_INTERNAL_FILES,
 };
 
@@ -380,6 +380,49 @@ impl SecurityPolicy {
         Ok(result)
     }
 
+    /// The directories whose own entries are account-level core state.
+    ///
+    /// The configured credential root ([`SecurityPolicy::account_dir`],
+    /// `config_path`'s parent) when the host set it, plus `workspace_dir`'s
+    /// parent — the same directory in the default layout and the only thing
+    /// available when nothing was set. Both are checked: the union can only
+    /// refuse more, so a call site that never sets `account_dir` keeps exactly
+    /// the behaviour it had.
+    ///
+    /// Each is offered in raw and canonical form, and so is the parent they are
+    /// compared against ([`Self::dir_forms`]). Comparing one raw path with one
+    /// canonical path never matches: a symlinked account root resolves to its
+    /// backing directory, and on macOS canonicalization also rewrites `/var`
+    /// to `/private/var`. The requested file itself usually cannot be
+    /// canonicalized at all — it does not exist yet, which is exactly the
+    /// case that matters for creating one.
+    fn account_state_dirs(&self, ws: &Path) -> Vec<PathBuf> {
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        for candidate in [self.account_dir.as_deref(), ws.parent()]
+            .into_iter()
+            .flatten()
+        {
+            for form in Self::dir_forms(candidate) {
+                if !dirs.contains(&form) {
+                    dirs.push(form);
+                }
+            }
+        }
+        dirs
+    }
+
+    /// A directory as written and as the filesystem resolves it, so either side
+    /// of a comparison can be matched whichever form the caller supplied.
+    fn dir_forms(dir: &Path) -> Vec<PathBuf> {
+        let mut forms = vec![dir.to_path_buf()];
+        if let Ok(canonical) = dir.canonicalize() {
+            if canonical != forms[0] {
+                forms.push(canonical);
+            }
+        }
+        forms
+    }
+
     /// Returns `true` if `path` falls under one of the internal-state
     /// subdirectories or files within `workspace_dir`. Agent tools must not
     /// write to these locations — they contain memory DBs, session transcripts,
@@ -394,13 +437,50 @@ impl SecurityPolicy {
             (Ok(w), Ok(p)) => (w.as_path(), p.as_path()),
             _ => (self.workspace_dir.as_path(), path),
         };
-        // The account config (`<openhuman_dir>/config.toml`, the workspace's
-        // sibling) holds the autonomy policy itself and the files folders the
-        // artifact escape guard trusts (`files_dir_override`,
-        // `files_dir_history`, #5505). A trusted root over the account or data
-        // dir must not let the agent rewrite either.
-        if let Some(account_dir) = ws.parent() {
-            if check_path == account_dir.join(ACCOUNT_CONFIG_FILE) {
+        // The account dir (`<openhuman_dir>/`, the workspace's parent) is
+        // reachable on purpose: a trusted root over it grants its files, and
+        // #5505 carved out `config.toml` alone because that one holds the
+        // autonomy policy and the folders the artifact escape guard trusts.
+        //
+        // Four more files there carry secrets or privilege and belong in the
+        // same carve-out. `.secret_key` is the keyring's on-disk encryption key
+        // and `auth-profiles.json` the credential profiles it decrypts —
+        // `is_always_forbidden` covers `~/.ssh` and friends but not these.
+        // `config.toml.bak` is the config one save behind, written by
+        // `config::schema::load::atomic_commit`. And `claude_code_settings.json`
+        // switches the Claude Code provider to `--permission-mode
+        // bypassPermissions` with its full native toolset (Bash, network) —
+        // calls that never reach the approval gate, because that provider runs
+        // its tools internally and never returns them to the harness.
+        //
+        // Matched by name within the account dir, which keeps every other file
+        // there reachable exactly as before. Case-insensitively, because on
+        // Windows and a default case-insensitive macOS volume an agent that may
+        // create `CLAUDE_CODE_SETTINGS.JSON` creates the very file the
+        // provider later opens in lower case.
+        if let Some(parent) = check_path.parent() {
+            let is_account_file = check_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    ACCOUNT_INTERNAL_FILES
+                        .iter()
+                        .any(|entry| entry.eq_ignore_ascii_case(name))
+                });
+            // Resolve the parent that exists rather than the file that may
+            // not, so creating a protected name through a symlinked account
+            // root is refused too.
+            let parent_forms = Self::dir_forms(parent);
+            if is_account_file
+                && self
+                    .account_state_dirs(ws)
+                    .iter()
+                    .any(|dir| parent_forms.iter().any(|form| form == dir))
+            {
+                log::trace!(
+                    "[security:policy] account-dir core state is not agent surface (path={})",
+                    check_path.display()
+                );
                 return true;
             }
         }

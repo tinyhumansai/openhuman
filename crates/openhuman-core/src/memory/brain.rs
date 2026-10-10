@@ -310,7 +310,8 @@ async fn ingest_path(config: &Config, path: &str) -> MemoryResult<std::path::Pat
         &config.autonomy,
         &config.workspace_dir,
         &config.action_dir,
-    );
+    )
+    .with_account_dir(config.config_path.parent());
     policy.validate_path(path.trim()).await.map_err(|error| {
         tracing::warn!("[memory:brain] ingest path refused by the security policy");
         MemoryError::invalid(format!("cannot read the file: {error}"))

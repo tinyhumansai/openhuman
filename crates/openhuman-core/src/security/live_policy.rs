@@ -25,6 +25,11 @@ struct LiveState {
     policy: RwLock<Arc<SecurityPolicy>>,
     workspace_dir: RwLock<PathBuf>,
     action_dir: RwLock<PathBuf>,
+    /// Stored account / credential root so an autonomy-only [`reload_from`]
+    /// preserves it. `from_config` cannot infer it (see
+    /// [`SecurityPolicy::account_dir`]), so without this a reload would
+    /// silently fall back to guarding `workspace_dir`'s parent.
+    account_dir: RwLock<Option<PathBuf>>,
     /// Stored Privacy Mode so an autonomy-only [`reload_from`] preserves the
     /// active mode (autonomy config carries no privacy field) and a later
     /// [`reload_privacy`] can swap it without rebuilding from a full `Config`.
@@ -47,6 +52,7 @@ pub fn install(
         policy: RwLock::new(Arc::clone(&policy)),
         workspace_dir: RwLock::new(workspace_dir.clone()),
         action_dir: RwLock::new(action_dir.clone()),
+        account_dir: RwLock::new(policy.account_dir.clone()),
         privacy_mode: RwLock::new(policy.privacy_mode),
         generation: AtomicU64::new(0),
     });
@@ -64,6 +70,11 @@ pub fn install(
     // first install, so re-seed here on every install too.
     if let Ok(mut guard) = state.privacy_mode.write() {
         *guard = policy.privacy_mode;
+    }
+    // Same reasoning as the privacy mode above: re-seed on every install, not
+    // just the first, or a reload rebuilds without the account root.
+    if let Ok(mut guard) = state.account_dir.write() {
+        *guard = policy.account_dir.clone();
     }
     log::debug!(
         "[privacy][live_policy] installed policy with privacy_mode={:?}",
@@ -218,9 +229,15 @@ pub fn reload_from(autonomy_config: &crate::config::AutonomyConfig) {
     // privacy mode so an autonomy-only change does not silently reset egress
     // posture (autonomy config carries no privacy field).
     let stored_privacy = state.privacy_mode.read().map(|g| *g).unwrap_or_default();
+    let stored_account = state
+        .account_dir
+        .read()
+        .map(|g| g.clone())
+        .unwrap_or_default();
     let rebuilt = Arc::new(
         SecurityPolicy::from_config(autonomy_config, &workspace, &action)
-            .with_privacy_mode(stored_privacy),
+            .with_privacy_mode(stored_privacy)
+            .with_account_dir(stored_account.as_deref()),
     );
     if let Ok(mut guard) = state.policy.write() {
         *guard = rebuilt;
