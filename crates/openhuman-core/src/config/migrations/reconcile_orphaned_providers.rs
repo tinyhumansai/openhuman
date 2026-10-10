@@ -108,7 +108,9 @@ pub fn run(config: &mut Config) -> anyhow::Result<MigrationStats> {
         // lmstudio:, mlx:, omlx:, local-openai:) resolve without a
         // cloud_providers entry — leave them alone. Keep this in sync with the
         // local provider prefixes the factory accepts.
-        if s.is_empty()
+        // Only embeddings accept `none` as an explicit opt-out.
+        if (workload == "embeddings" && s == "none")
+            || s.is_empty()
             || s == "cloud"
             || s == PROVIDER_OPENHUMAN
             || s.starts_with(OLLAMA_PROVIDER_PREFIX)

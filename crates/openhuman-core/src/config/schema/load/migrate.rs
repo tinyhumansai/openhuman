@@ -164,7 +164,15 @@ pub(crate) fn migrate_cloud_provider_slugs(config: &mut Config) {
     rewrite(&mut config.coding_provider);
     rewrite(&mut config.vision_provider);
     rewrite(&mut config.memory_provider);
-    rewrite(&mut config.embeddings_provider);
+    // Embeddings have a deliberate opt-out, not a cloud-provider slug.
+    // Preserve it on every load, including whitespace the settings RPC trims.
+    if !config
+        .embeddings_provider
+        .as_deref()
+        .is_some_and(|provider| provider.trim() == "none")
+    {
+        rewrite(&mut config.embeddings_provider);
+    }
 
     fn normalize_provider_endpoint(url: &str) -> String {
         url.trim().trim_end_matches('/').to_ascii_lowercase()
