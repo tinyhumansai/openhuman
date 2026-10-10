@@ -276,6 +276,15 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
             : "pnpm --filter openhuman-app compile",
         },
         {
+          // The Playwright/WDIO specs sit outside app/tsconfig.json, so `tsc`
+          // above never sees them; a type error in a spec would otherwise
+          // surface only as a runtime failure after a full browser run (#6566).
+          name: "tsc-e2e",
+          when: areas.frontend,
+          needs: ["pnpm-install"],
+          run: "pnpm --filter openhuman-app typecheck:e2e",
+        },
+        {
           name: "prettier",
           when: areas.frontend,
           needs: ["pnpm-install"],
