@@ -1,0 +1,286 @@
+{
+  "implementationPackages": [
+    "tinyjuice",
+    "tinyconnectors",
+    "tinyconnectors-sync",
+    "tinymcp",
+    "tinychannels",
+    "tinychannels-runtime",
+    "tinyhosts",
+    "tinybox-core",
+    "tinybox-jail",
+    "tinybox-docker",
+    "tinybox-host",
+    "tinybox-ssh",
+    "tinycomputer-accessibility",
+    "tinyvoice",
+    "tinyruntime-pyserver",
+    "tinywallet-crypto",
+    "tinywallet-web3",
+    "tinywallet-x402",
+    "pdf-extract",
+    "calamine",
+    "tinybox-linux",
+    "tinybox-microvm",
+    "tinybox-sync",
+    "tinydocs",
+    "tinydocs-core",
+    "tinydocs-extract",
+    "tinysearch",
+    "tinysearch-core",
+    "tinyruntime",
+    "cpal"
+  ],
+  "implementationPrefixes": [
+    "tinyjuice-",
+    "tinyconnectors-",
+    "tinymcp-",
+    "tinychannels-",
+    "tinyhosts-",
+    "tinybox-",
+    "tinywallet-",
+    "tinycomputer-",
+    "tinyvoice-",
+    "tinyruntime-",
+    "tinydocs-",
+    "tinysearch-"
+  ],
+  "contracts": [
+    {
+      "name": "tinyjuice-bus",
+      "manifest": "vendor/tinyjuice/crates/tinyjuice-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinyjuice"
+    },
+    {
+      "name": "tinyconnectors-bus",
+      "manifest": "vendor/tinyconnectors/crates/tinyconnectors-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinyconnectors"
+    },
+    {
+      "name": "tinymcp-bus",
+      "manifest": "vendor/tinymcp/crates/tinymcp-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinymcp"
+    },
+    {
+      "name": "tinychannels-bus",
+      "manifest": "vendor/tinychannels/crates/tinychannels-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinychannels"
+    },
+    {
+      "name": "tinywallet-bus",
+      "manifest": "vendor/tinywallet/crates/tinywallet-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinywallet"
+    },
+    {
+      "name": "tinycomputer-bus",
+      "manifest": "vendor/tinycomputer/crates/tinycomputer-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinycomputer"
+    },
+    {
+      "name": "tinyvoice-bus",
+      "manifest": "vendor/tinyvoice/crates/tinyvoice-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinyvoice"
+    },
+    {
+      "name": "tinyruntime-bus",
+      "manifest": "vendor/tinyruntime/crates/tinyruntime-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinyruntime"
+    },
+    {
+      "name": "tinydocs-bus",
+      "manifest": "vendor/tinydocs/crates/tinydocs-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinydocs"
+    },
+    {
+      "name": "tinysearch-bus",
+      "manifest": "vendor/tinysearch/crates/tinysearch-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinysearch"
+    }
+  ],
+  "pendingContracts": [
+    {
+      "name": "tinybox-bus",
+      "manifest": "vendor/tinybox/crates/tinybox-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinybox",
+      "reason": "Sandbox execution, shell analysis and pre-core gateways need a bus contract."
+    },
+    {
+      "name": "tinyhosts-bus",
+      "manifest": "vendor/tinyhosts/crates/tinyhosts-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinyhosts",
+      "reason": "Hosting contract crate has not been published."
+    }
+  ],
+  "exceptions": [
+    {
+      "scope": "hosts",
+      "package": "tinyjuice",
+      "reason": "HTML extraction, REPL execution and schema vocabulary still call the implementation."
+    },
+    {
+      "scope": "hosts",
+      "package": "tinyconnectors",
+      "reason": "Argument preparation, provider errors and trigger archives still call the implementation."
+    },
+    {
+      "scope": "hosts",
+      "package": "tinyconnectors-sync",
+      "reason": "Argument preparation, provider errors and trigger archives still call the implementation."
+    },
+    {
+      "scope": "hosts",
+      "package": "tinymcp",
+      "reason": "Protocol servers and supervisor operations still call the implementation."
+    },
+    {
+      "scope": "hosts",
+      "package": "tinychannels",
+      "reason": "Providers, relay, pairing and delivery lifecycles still call the implementation."
+    },
+    {
+      "scope": "hosts",
+      "package": "tinychannels-runtime",
+      "reason": "Providers, relay, pairing and delivery lifecycles still call the implementation."
+    },
+    {
+      "scope": "hosts",
+      "package": "tinyhosts",
+      "reason": "Hosting contract crate has not been published."
+    },
+    {
+      "scope": "hosts",
+      "package": "tinybox-core",
+      "reason": "Sandbox execution, shell analysis and pre-core gateways need a bus contract."
+    },
+    {
+      "scope": "hosts",
+      "package": "tinybox-jail",
+      "reason": "Sandbox execution, shell analysis and pre-core gateways need a bus contract."
+    },
+    {
+      "scope": "hosts",
+      "package": "tinybox-docker",
+      "reason": "Sandbox execution, shell analysis and pre-core gateways need a bus contract."
+    },
+    {
+      "scope": "hosts",
+      "package": "tinybox-host",
+      "reason": "Sandbox execution, shell analysis and pre-core gateways need a bus contract."
+    },
+    {
+      "scope": "hosts",
+      "package": "tinybox-ssh",
+      "reason": "Sandbox execution, shell analysis and pre-core gateways need a bus contract."
+    },
+    {
+      "scope": "hosts",
+      "package": "tinycomputer-accessibility",
+      "reason": "Focus, paste, permission and Globe-listener operations need bus members."
+    },
+    {
+      "scope": "hosts",
+      "package": "tinyvoice",
+      "reason": "Capture and hotkey lifecycles need module operations."
+    },
+    {
+      "scope": "hosts",
+      "package": "tinyruntime-pyserver",
+      "reason": "Python-worker lifecycle needs module operations."
+    },
+    {
+      "scope": "hosts",
+      "package": "tinywallet-crypto",
+      "reason": "Validation, transaction construction, web3 and x402 need module operations."
+    },
+    {
+      "scope": "hosts",
+      "package": "tinywallet-web3",
+      "reason": "Validation, transaction construction, web3 and x402 need module operations."
+    },
+    {
+      "scope": "hosts",
+      "package": "tinywallet-x402",
+      "reason": "Validation, transaction construction, web3 and x402 need module operations."
+    },
+    {
+      "scope": "hosts",
+      "package": "pdf-extract",
+      "reason": "Memory documents-office still enables local PDF extraction."
+    },
+    {
+      "scope": "hosts",
+      "package": "calamine",
+      "reason": "Memory documents-office still enables local XLSX parsing."
+    },
+    {
+      "scope": "tinychannels-bus",
+      "package": "anyhow",
+      "reason": "Channel trait, relay signing and pairing implementations remain in the contract; move them to the module."
+    },
+    {
+      "scope": "tinychannels-bus",
+      "package": "async-trait",
+      "reason": "Channel trait, relay signing and pairing implementations remain in the contract; move them to the module."
+    },
+    {
+      "scope": "tinychannels-bus",
+      "package": "base64",
+      "reason": "Channel trait, relay signing and pairing implementations remain in the contract; move them to the module."
+    },
+    {
+      "scope": "tinychannels-bus",
+      "package": "hex",
+      "reason": "Channel trait, relay signing and pairing implementations remain in the contract; move them to the module."
+    },
+    {
+      "scope": "tinychannels-bus",
+      "package": "hmac",
+      "reason": "Channel trait, relay signing and pairing implementations remain in the contract; move them to the module."
+    },
+    {
+      "scope": "tinychannels-bus",
+      "package": "parking_lot",
+      "reason": "Channel trait, relay signing and pairing implementations remain in the contract; move them to the module."
+    },
+    {
+      "scope": "tinychannels-bus",
+      "package": "rand",
+      "reason": "Channel trait, relay signing and pairing implementations remain in the contract; move them to the module."
+    },
+    {
+      "scope": "tinychannels-bus",
+      "package": "sha2",
+      "reason": "Channel trait, relay signing and pairing implementations remain in the contract; move them to the module."
+    },
+    {
+      "scope": "tinychannels-bus",
+      "package": "tokio",
+      "reason": "Channel trait, relay signing and pairing implementations remain in the contract; move them to the module."
+    },
+    {
+      "scope": "tinychannels-bus",
+      "package": "tracing",
+      "reason": "Channel trait, relay signing and pairing implementations remain in the contract; move them to the module."
+    },
+    {
+      "scope": "tinychannels-bus",
+      "package": "uuid",
+      "reason": "Channel trait, relay signing and pairing implementations remain in the contract; move them to the module."
+    },
+    {
+      "scope": "tinywallet-bus",
+      "package": "tinywallet-crypto",
+      "reason": "Compatibility behavioral re-exports still link implementation; move vocabulary into the contract."
+    },
+    {
+      "scope": "tinywallet-bus",
+      "package": "tinywallet-x402",
+      "reason": "Compatibility behavioral re-exports still link implementation; move vocabulary into the contract."
+    },
+    {
+      "scope": "hosts",
+      "package": "cpal",
+      "reason": "Voice capture and the accessibility microphone probe still link host audio-device access."
+    }
+  ]
+}

@@ -122,7 +122,6 @@ pub mod fanout;
 mod harness;
 pub mod identity;
 pub mod memory;
-#[cfg(feature = "modules")]
 pub mod modules;
 mod permission;
 pub use permission::PermissionFuture;

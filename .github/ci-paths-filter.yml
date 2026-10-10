@@ -143,6 +143,8 @@ scripts:
   - '.github/workflows/ci-*.yml'
   - '.github/ci-paths-filter.yml'
   - 'scripts/ci/self-hosted/**'
+  - 'scripts/ci/check-module-boundaries.mjs'
+  - 'scripts/ci/module-boundaries.json'
   - 'scripts/mock-api/**'
   - 'scripts/*.mjs'
   - 'scripts/__tests__/**'

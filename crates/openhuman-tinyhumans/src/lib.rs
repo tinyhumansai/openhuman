@@ -62,7 +62,6 @@ pub mod embed {
         schema_for_rpc_method, PickListenPortError, HTTP_SERVER_COMPILED_IN, VOICE_COMPILED_IN,
     };
     // The curated facades (each is an explicit list inside embed).
-    #[cfg(feature = "modules")]
     pub use openhuman_embed::modules;
     pub use openhuman_embed::{
         artifacts, chat_surface, config, identity, memory, process, seams, session_store,
