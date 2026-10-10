@@ -690,7 +690,11 @@ async fn recover_on_open_rescans_a_workspace_already_recovered() {
     forget_workspace_for_test(w);
     assert_eq!(recover_on_boot(w), 1);
     assert_eq!(recover_on_boot(w), 0, "boot recovery claims once");
-    assert_eq!(recover_on_open(w), 1, "a re-open scans again");
+    assert_eq!(
+        recover_on_open(w, DrainFence::none()),
+        1,
+        "a re-open scans again"
+    );
 }
 
 #[tokio::test]

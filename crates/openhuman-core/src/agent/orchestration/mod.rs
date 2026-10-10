@@ -24,6 +24,7 @@ pub(crate) mod completion_notice;
 pub(crate) mod completion_owners;
 pub(crate) mod completion_target;
 pub(crate) mod delegation;
+pub(crate) mod delivery_drain;
 pub use delegation::open_delegation_checkpointer;
 pub(crate) mod fleet_tools;
 mod ops;

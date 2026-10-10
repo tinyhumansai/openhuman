@@ -40,14 +40,22 @@ fn params(message_id: &str, text: &str) -> RelayInboundParams {
 struct Seen {
     histories: Vec<Vec<(String, String)>>,
     origins: Vec<AgentTurnOrigin>,
+    /// Whether the relayed thread was busy (for background delivery) while
+    /// the turn ran.
+    busy: Vec<bool>,
 }
 
 #[tokio::test]
 async fn a_relayed_turn_runs_as_an_external_channel_and_keeps_its_thread() {
     let seen = Arc::new(Mutex::new(Seen::default()));
     let stub_seen = Arc::clone(&seen);
+    let relayed_thread = params("m1", "x").thread_id();
     let _bus = mock_agent_run_turn(move |req: AgentTurnRequest| {
         let mut seen = stub_seen.lock().unwrap();
+        seen.busy
+            .push(crate::agent::orchestration::busy_guard::is_busy(
+                &relayed_thread,
+            ));
         seen.histories.push(
             req.history
                 .iter()
@@ -77,6 +85,15 @@ async fn a_relayed_turn_runs_as_an_external_channel_and_keeps_its_thread() {
 
     let seen = seen.lock().unwrap();
     assert_eq!(seen.histories.len(), 2, "one agent turn per message");
+    assert_eq!(
+        seen.busy,
+        vec![true, true],
+        "a relayed turn marks its thread busy, so a background result waits"
+    );
+    assert!(
+        !crate::agent::orchestration::busy_guard::is_busy(&params("m1", "x").thread_id()),
+        "the thread is idle once the turn ends"
+    );
     for origin in &seen.origins {
         match origin {
             AgentTurnOrigin::ExternalChannel {
