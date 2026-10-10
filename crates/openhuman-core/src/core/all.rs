@@ -403,12 +403,6 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         DomainGroup::Platform,
         crate::core::subsystem::all_subsystems_registered_controllers(),
     );
-    // One-time first-run initialization (Python/Node provisioning)
-    push(
-        &mut controllers,
-        DomainGroup::Agent,
-        crate::agent::harness_init::all_harness_init_registered_controllers(),
-    );
     // Diagnostic tools
     push(
         &mut controllers,

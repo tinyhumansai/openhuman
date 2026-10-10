@@ -373,7 +373,7 @@ fn root_problem(root: &Path, home: Option<&Path>) -> Option<String> {
     None
 }
 
-fn service_flags(s: &ServiceSet) -> [(&'static str, bool); 12] {
+fn service_flags(s: &ServiceSet) -> [(&'static str, bool); 11] {
     [
         ("rpc_http", s.rpc_http),
         ("socketio", s.socketio),
@@ -382,7 +382,6 @@ fn service_flags(s: &ServiceSet) -> [(&'static str, bool); 12] {
         ("login_gated", s.login_gated),
         ("update_scheduler", s.update_scheduler),
         ("memory_queue", s.memory_queue),
-        ("harness_init", s.harness_init),
         ("skill_catalog_refresh", s.skill_catalog_refresh),
         ("mcp_boot", s.mcp_boot),
         ("integrations", s.integrations),

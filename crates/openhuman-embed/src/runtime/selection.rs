@@ -134,7 +134,6 @@ impl RuntimeBuilder {
         let mut builder = Self::new().modules(modules).weight(WeightClass::Full);
         let domains = builder.domains.unwrap();
         builder.services = Some(ServiceSet {
-            harness_init: true,
             cron: domains.automation,
             channels: domains.channels,
             integrations: domains.integrations,
@@ -213,7 +212,6 @@ impl RuntimeBuilder {
         self.domains = Some(d);
         self.tool_groups = Some(g);
         self.services = Some(ServiceSet {
-            harness_init: d.agent,
             skill_catalog_refresh: d.skills,
             mcp_boot: d.mcp,
             ..ServiceSet::none()

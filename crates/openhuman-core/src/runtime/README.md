@@ -16,7 +16,7 @@ answers and adapts them onto the types the rest of the core already uses
 
 ```text
  tools/impl/system (node_exec, npm_exec, python_exec, shell)
- skills runtime, agent harness_init, flows oh: backend, tokenjuice ml
+ skills runtime, flows oh: backend, tokenjuice ml
         |                 |                 |                |
         v                 v                 v                v
   runtime::node     runtime::python    runtime::pool   runtime::python_server

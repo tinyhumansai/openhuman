@@ -228,7 +228,6 @@ fn make_info(
         ("login_gated", services.login_gated),
         ("update_scheduler", services.update_scheduler),
         ("memory_queue", services.memory_queue),
-        ("harness_init", services.harness_init),
         ("skill_catalog_refresh", services.skill_catalog_refresh),
         ("mcp_boot", services.mcp_boot),
         ("integrations", services.integrations),

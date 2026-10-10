@@ -46,8 +46,6 @@ client, no archive crates, no `walkdir`, no `fs2`: those went with the pipeline.
   non-blocking `try_cached()` for `PATH` injection.
 - `crates/openhuman-core/src/skills/runtime/ops.rs`: resolves an interpreter for
   Python-backed skills.
-- `crates/openhuman-core/src/agent/harness_init/registry.rs`: the Python init step uses
-  `probe_installed()` to decide whether provisioning is visible work.
 
 ## Notes / gotchas
 

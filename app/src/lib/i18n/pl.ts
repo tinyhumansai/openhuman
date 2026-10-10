@@ -3444,24 +3444,7 @@ const messages: TranslationMap = {
   'chat.files.error.reveal_failed':
     'Nie udało się pokazać pliku. Mógł zostać przeniesiony lub usunięty poza OpenHuman.',
 
-  'harnessInit.title': 'Trwa konfiguracja',
-
   'announcement.gotIt': 'Rozumiem',
-  'harnessInit.subtitle':
-    'OpenHuman przygotowuje komponenty potrzebne przy pierwszym uruchomieniu.',
-  'harnessInit.stepPython': 'Środowisko uruchomieniowe Python',
-  'harnessInit.stepNode': 'Środowisko uruchomieniowe Node.js',
-  'harnessInit.statePending': 'Oczekiwanie',
-  'harnessInit.stateRunning': 'Instalowanie…',
-  'harnessInit.stateDone': 'Gotowe',
-  'harnessInit.stateSkipped': 'Pominięto',
-  'harnessInit.stateFailed': 'Niepowodzenie',
-  'harnessInit.failedMessage':
-    'Niektóre kroki konfiguracji nie zostały ukończone. Możesz spróbować ponownie lub kontynuować: OpenHuman użyje wbudowanego rozwiązania zastępczego.',
-  'harnessInit.retry': 'Spróbuj ponownie',
-  'harnessInit.continueAnyway': 'Kontynuuj mimo to',
-  'harnessInit.runInBackground': 'Uruchom w tle',
-  'harnessInit.backgroundHint': 'Możesz dalej korzystać z OpenHuman, dopóki to się nie zakończy.',
 
   'keyring.consent.title': 'Bezpieczne przechowywanie niedostępne',
   'keyring.consent.description':

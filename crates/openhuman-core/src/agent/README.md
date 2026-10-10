@@ -320,7 +320,6 @@ Persistence, setup and RPC:
 | `artifacts/` | Agent-generated artifact storage and the `ai` RPC namespace ([README](artifacts/README.md)) |
 | `session_db/` | `run_ledger` RPC over `tinyagents_session::run_ledger` |
 | `session_import/` | One-time import of legacy session files and the optional live dual-write ([README](session_import/README.md)) |
-| `harness_init/` | First-run provisioning (Python, spaCy, Kompress, Node) ([README](harness_init/README.md)) |
 | [`schemas.rs`](./schemas.rs) | The `agent` namespace controllers |
 
 ## Key types and entry points
@@ -364,7 +363,6 @@ All controllers register under `DomainGroup::Agent` in [`core/all.rs`](../core/a
 | `agent` | [`tinyagents/replay/`](./tinyagents/replay/) | `runs_active`, `run_status`, `run_events` (read-only journal replay) |
 | `agent` | [`tinyagents/run_mode.rs`](./tinyagents/run_mode.rs) | `set_run_mode`, `get_run_mode` |
 | `agent_registry` | `registry/` | `list`, `available_tools`, `get`, `upsert_custom`, `create_custom`, `update`, `set_enabled`, `remove` |
-| `harness_init` | `harness_init/` | `status`, `run` |
 | `plan_review` | `plan_review/` | `decide` |
 | `ai` | `artifacts/` | `list_artifacts`, `get_artifact`, `delete_artifact`, `regenerate` |
 | `run_ledger` | `session_db/` | `list`, `get`, `events` |

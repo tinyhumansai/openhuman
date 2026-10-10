@@ -122,7 +122,7 @@ stderr is drained continuously by a background task and only logged at
 (`pip install spacy click`, `python -m spacy download en_core_web_sm`),
 tracked by a versioned ready marker (`SPACY_READY_MARKER_VERSION`) so a
 package-set change forces re-provisioning; `spacy_provisioned` is a cheap,
-network-free check used by `harness_init`. `extract` sends `spacy.extract` and
+network-free readiness check. `extract` sends `spacy.extract` and
 returns the shared `tinymemory_api::host::SpacyResponse` type. Called from
 `modules::memory_host` for the memory tree's query extractor.
 
@@ -144,9 +144,7 @@ don't race the same venv build.
 is returned by `status()` and reflects the cache directly: `Empty` reports
 `disabled`, `Failed` reports the last error, `Ready` reports each backend's
 `ready` flag from the worker's handshake `backends` list. There is no public
-RPC method for this; `crates/openhuman-core/src/agent/harness_init/registry.rs`
-reads `status().running` to decide whether the `runtime_python_server` init
-step is done.
+RPC method for this.
 
 ## Persistence
 
@@ -172,8 +170,6 @@ sent, not here.
 
 ## Used by
 
-- `crates/openhuman-core/src/agent/harness_init/registry.rs`: the `runtime_python_server`
-  and `kompress` init steps.
 - `crates/openhuman-core/src/inference/tokenjuice/ml/mod.rs`: `request_kompress` for
   plain-text compression.
 

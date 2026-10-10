@@ -51,10 +51,9 @@ pub struct LocalAiConfig {
     pub vision_model_id: String,
     #[serde(default = "default_embedding_model_id")]
     pub embedding_model_id: String,
+    /// Speech recognition model selector exposed by voice settings.
     #[serde(default = "default_stt_model_id")]
     pub stt_model_id: String,
-    #[serde(default = "default_stt_download_url")]
-    pub stt_download_url: Option<String>,
     /// Legacy voice STT routing string. `"cloud"` (the default) means "use
     /// `voice_server.stt_engine`"; a third-party `"<slug>[:<model>]"` overrides
     /// the engine outright. The local `"whisper"` value it once accepted is
@@ -68,22 +67,6 @@ pub struct LocalAiConfig {
     /// local Piper via the `PIPER_BIN` env var.
     #[serde(default = "default_tts_provider")]
     pub tts_provider: String,
-    #[serde(default = "default_tts_download_url")]
-    pub tts_download_url: Option<String>,
-    #[serde(default = "default_tts_config_download_url")]
-    pub tts_config_download_url: Option<String>,
-    #[serde(default = "default_quantization")]
-    pub quantization: String,
-    #[serde(default = "default_preload_vision_model")]
-    pub preload_vision_model: bool,
-    #[serde(default = "default_preload_embedding_model")]
-    pub preload_embedding_model: bool,
-    #[serde(default = "default_preload_stt_model")]
-    pub preload_stt_model: bool,
-    #[serde(default = "default_preload_tts_voice")]
-    pub preload_tts_voice: bool,
-    #[serde(default = "default_download_url")]
-    pub download_url: Option<String>,
     #[serde(default = "default_autosummary_debounce_ms")]
     pub autosummary_debounce_ms: u64,
     #[serde(default)]
@@ -125,18 +108,9 @@ impl std::fmt::Debug for LocalAiConfig {
             .field("vision_model_id", &self.vision_model_id)
             .field("embedding_model_id", &self.embedding_model_id)
             .field("stt_model_id", &self.stt_model_id)
-            .field("stt_download_url", &self.stt_download_url)
             .field("stt_provider", &self.stt_provider)
             .field("tts_voice_id", &self.tts_voice_id)
             .field("tts_provider", &self.tts_provider)
-            .field("tts_download_url", &self.tts_download_url)
-            .field("tts_config_download_url", &self.tts_config_download_url)
-            .field("quantization", &self.quantization)
-            .field("preload_vision_model", &self.preload_vision_model)
-            .field("preload_embedding_model", &self.preload_embedding_model)
-            .field("preload_stt_model", &self.preload_stt_model)
-            .field("preload_tts_voice", &self.preload_tts_voice)
-            .field("download_url", &self.download_url)
             .field("autosummary_debounce_ms", &self.autosummary_debounce_ms)
             .field("selected_tier", &self.selected_tier)
             .field("opt_in_confirmed", &self.opt_in_confirmed)
@@ -175,7 +149,7 @@ fn default_embedding_model_id() -> String {
 }
 
 fn default_stt_model_id() -> String {
-    "ggml-base-q5_1.bin".to_string()
+    "whisper-1".to_string()
 }
 
 fn default_tts_voice_id() -> String {
@@ -188,51 +162,6 @@ fn default_stt_provider() -> String {
 
 fn default_tts_provider() -> String {
     "cloud".to_string()
-}
-
-fn default_stt_download_url() -> Option<String> {
-    Some(
-        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin?download=true"
-            .to_string(),
-    )
-}
-
-fn default_tts_download_url() -> Option<String> {
-    Some(
-        "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx?download=true"
-            .to_string(),
-    )
-}
-
-fn default_tts_config_download_url() -> Option<String> {
-    Some(
-        "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json?download=true"
-            .to_string(),
-    )
-}
-
-fn default_quantization() -> String {
-    "q4".to_string()
-}
-
-fn default_preload_vision_model() -> bool {
-    false
-}
-
-fn default_preload_embedding_model() -> bool {
-    true
-}
-
-fn default_preload_stt_model() -> bool {
-    false
-}
-
-fn default_preload_tts_voice() -> bool {
-    false
-}
-
-fn default_download_url() -> Option<String> {
-    None
 }
 
 fn default_autosummary_debounce_ms() -> u64 {
@@ -284,18 +213,9 @@ impl Default for LocalAiConfig {
             vision_model_id: default_vision_model_id(),
             embedding_model_id: default_embedding_model_id(),
             stt_model_id: default_stt_model_id(),
-            stt_download_url: default_stt_download_url(),
             stt_provider: default_stt_provider(),
             tts_voice_id: default_tts_voice_id(),
             tts_provider: default_tts_provider(),
-            tts_download_url: default_tts_download_url(),
-            tts_config_download_url: default_tts_config_download_url(),
-            quantization: default_quantization(),
-            preload_vision_model: default_preload_vision_model(),
-            preload_embedding_model: default_preload_embedding_model(),
-            preload_stt_model: default_preload_stt_model(),
-            preload_tts_voice: default_preload_tts_voice(),
-            download_url: default_download_url(),
             autosummary_debounce_ms: default_autosummary_debounce_ms(),
             selected_tier: None,
             opt_in_confirmed: false,

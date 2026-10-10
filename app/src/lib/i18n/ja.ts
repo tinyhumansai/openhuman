@@ -3993,24 +3993,7 @@ const messages: TranslationMap = {
   'chat.files.error.delete_failed': 'ファイルを削除できませんでした。もう一度お試しください。',
   'chat.files.error.reveal_failed':
     'ファイルを表示できませんでした。OpenHuman の外部で移動または削除された可能性があります。',
-
-  // First-run initialization (harness_init)
-  'harnessInit.title': 'セットアップ中',
   'announcement.gotIt': '了解',
-  'harnessInit.subtitle': 'OpenHuman は初回起動時に必要なコンポーネントを準備しています。',
-  'harnessInit.stepPython': 'Python ランタイム',
-  'harnessInit.stepNode': 'Node.js ランタイム',
-  'harnessInit.statePending': '待機中',
-  'harnessInit.stateRunning': 'インストール中…',
-  'harnessInit.stateDone': '準備完了',
-  'harnessInit.stateSkipped': 'スキップ済み',
-  'harnessInit.stateFailed': '失敗',
-  'harnessInit.failedMessage':
-    '一部のセットアップ手順が完了しませんでした。再試行するか、続行できます。OpenHuman は組み込みのフォールバックを使用します。',
-  'harnessInit.retry': '再試行',
-  'harnessInit.continueAnyway': '続行',
-  'harnessInit.runInBackground': 'バックグラウンドで実行',
-  'harnessInit.backgroundHint': 'この処理が完了するまで OpenHuman を引き続き使用できます。',
 
   // Keyring consent & security
   'keyring.consent.title': '安全なストレージが利用できません',

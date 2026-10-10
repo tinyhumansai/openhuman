@@ -116,7 +116,7 @@ fn presets_report_consistent_module_weight_and_optional_gates() {
         assert!(full.modules.contains(&module));
     }
     assert!(full.services.contains(&"cron".into()));
-    assert!(lean.services.iter().all(|s| s == "harness_init"));
+    assert!(lean.services.is_empty());
     assert!(!lean.domains.contains(&"modules".into()));
     assert!(!lean.domains.contains(&"flows".into()));
     for info in [

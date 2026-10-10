@@ -26,10 +26,9 @@
 /// of a family to name. That made two things wrong which are now fixed:
 ///
 /// - `harness()` claimed "agent + memory + threads + config + security" but
-///   silently dropped `agent::{harness_init, artifacts, learning}`,
+///   silently dropped `agent::{artifacts, learning}`,
 ///   `security::{credentials, devices}`, `config::workspace`,
 ///   `memory::people` and `skills::webhooks`, all of which sat in `Platform`.
-///   An agent harness that does not register `harness_init` is a latent bug.
 /// - `embedded()` had to set `platform: true` purely to reach credentials and
 ///   config, which dragged in the desktop and hosted-backend surfaces it has no
 ///   use for. Those are now `Desktop` and `Hosted` and stay off.

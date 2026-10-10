@@ -556,7 +556,7 @@ fn env_overlay_ignores_removed_local_ai_tier_var() {
 }
 
 /// A config.toml written while OpenHuman still downloaded local models carries
-/// tier, quantization, preload, binary-path and download-URL keys under
+/// tier, quantization, preload, binary-path, model-id and download-URL keys under
 /// `[local_ai]`. Those keys are no longer read, but such a file must still
 /// load with the user's endpoint and model choices intact.
 #[test]
@@ -593,6 +593,23 @@ tts_config_download_url = "https://example.invalid/voice.onnx.json"
     );
     assert_eq!(cfg.local_ai.chat_model_id, "llama3.1:8b");
     assert_eq!(cfg.local_ai.embedding_model_id, "bge-m3");
+    let saved = toml::to_string(&cfg).expect("updated config serializes");
+    for retired in [
+        "quantization",
+        "preload_vision_model",
+        "preload_embedding_model",
+        "preload_stt_model",
+        "preload_tts_voice",
+        "download_url",
+        "stt_download_url",
+        "tts_download_url",
+        "tts_config_download_url",
+    ] {
+        assert!(
+            !saved.contains(retired),
+            "retired config key {retired} must not be written back"
+        );
+    }
 
     // The runtime projection carries only endpoint and model settings.
     let runtime = crate::inference::local_runtime_config(&cfg);

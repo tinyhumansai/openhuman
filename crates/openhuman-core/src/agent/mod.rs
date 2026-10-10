@@ -28,7 +28,6 @@ pub mod debug;
 pub mod error;
 pub mod goals;
 pub mod harness;
-pub mod harness_init;
 pub mod hooks;
 /// Host-registered agents the core's own drivers (cron, workflow nodes) can
 /// resolve by id, with their definition, host tools and context.

@@ -117,8 +117,6 @@ crate: those went with the machinery.
 - `crates/openhuman-core/src/tools/impl/system/{node_exec,npm_exec,shell}.rs`: hold an
   `Arc<NodeBootstrap>`; the exec tools call `resolve()`, `shell` uses the
   non-blocking `try_cached()`.
-- `crates/openhuman-core/src/agent/harness_init/registry.rs`: the `node_runtime` init step
-  uses `probe_installed()` to decide whether provisioning is visible work.
 - `crates/openhuman-core/src/core/all.rs`: registers the `javascript.*` controllers.
 
 ## Notes / gotchas

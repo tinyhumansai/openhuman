@@ -3456,24 +3456,7 @@ const messages: TranslationMap = {
     'Procedure riutilizzabili ed eseguibili: un obiettivo e i passi per raggiungerlo.',
   'activity.tabs.alerts': 'Avvisi',
 
-  'harnessInit.title': 'Preparazione in corso',
-
   'announcement.gotIt': 'Ho capito',
-  'harnessInit.subtitle': 'OpenHuman sta preparando i componenti necessari al primo avvio.',
-  'harnessInit.stepPython': 'Ambiente di esecuzione Python',
-  'harnessInit.stepNode': 'Ambiente di esecuzione Node.js',
-  'harnessInit.statePending': 'In attesa',
-  'harnessInit.stateRunning': 'Installazione…',
-  'harnessInit.stateDone': 'Pronto',
-  'harnessInit.stateSkipped': 'Saltato',
-  'harnessInit.stateFailed': 'Non riuscito',
-  'harnessInit.failedMessage':
-    "Alcuni passaggi di configurazione non sono stati completati. Puoi riprovare o continuare: OpenHuman userà un'alternativa integrata.",
-  'harnessInit.retry': 'Riprova',
-  'harnessInit.continueAnyway': 'Continua comunque',
-  'harnessInit.runInBackground': 'Esegui in background',
-  'harnessInit.backgroundHint':
-    'Puoi continuare a usare OpenHuman mentre questa operazione termina.',
 
   'keyring.consent.title': 'Archivio sicuro non disponibile',
   'keyring.consent.description':

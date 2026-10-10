@@ -277,7 +277,6 @@ all consumers import the owner directly, not that behavior is dropped.
 | `file_state/` | Keep | OpenHuman parallel-write safety policy; pass explicit context rather than task-local scope. |
 | `git_attribution/` | Delete | Obsolete host feature; removed independently before this migration. |
 | `harness/` | Split then shrink | Move generic definitions, recursion, parsing, filtering, graph and loop helpers to TinyAgents; keep public OpenHuman session facade only until live callers use the crate harness, then replace it with host construction/routing. |
-| `harness_init/` | Keep | Product dependency provisioning/startup service. |
 | `learning/` | Keep | Product learning/profile policy behind `LearningSink`. Generic post-turn callback timing moves to harness. |
 | `library/` | Keep | Product-facing safe definition projection/RPC DTO. |
 | `orchestration/` | Split | Move generic graph lifecycle/delegation/selection; keep worktrees, workflow business rules, delivery, RPC, ledgers, and host tools. |

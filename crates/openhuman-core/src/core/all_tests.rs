@@ -1282,7 +1282,6 @@ fn carved_out_families_report_their_own_group() {
         // Mis-tagged before the realignment: these live inside a named family
         // directory but answered `Platform`, so `harness()` registered nothing
         // for them despite claiming to enable their family.
-        ("harness_init", DomainGroup::Agent),
         ("ai", DomainGroup::Agent),
         ("auth", DomainGroup::Security),
         ("devices", DomainGroup::Security),
@@ -1328,7 +1327,6 @@ fn platform_holds_only_kernel_surfaces() {
                     | "dashboard"
                     | "notification"
                     | "sandbox"
-                    | "harness_init"
                     | "ai"
                     | "auth"
                     | "devices"
@@ -1340,21 +1338,12 @@ fn platform_holds_only_kernel_surfaces() {
     }
 }
 
-/// `harness()` claims agent + memory + threads + config + security. Before the
-/// realignment it silently dropped several of their namespaces into `Platform`,
-/// most damagingly `harness_init` — an agent harness that never runs harness
-/// init. This asserts the claim is now true.
+/// `harness()` claims agent + memory + threads + config + security. This
+/// asserts the enabled families are registered.
 #[test]
 fn harness_preset_registers_the_families_it_claims() {
     let harness = crate::core::runtime::DomainSet::harness();
-    for ns in [
-        "harness_init",
-        "ai",
-        "auth",
-        "devices",
-        "workspace",
-        "memory",
-    ] {
+    for ns in ["ai", "auth", "devices", "workspace", "memory"] {
         let group =
             group_for_namespace(ns).unwrap_or_else(|| panic!("namespace `{ns}` is not registered"));
         assert!(
@@ -1414,7 +1403,7 @@ fn embedded_preset_excludes_desktop_and_hosted() {
 // `tool_group()` (tools/ops.rs), `StoreInitPlan` and `DomainSubscriberPlan`.
 // Adding a variant compiles cleanly while leaving a tool ungated or a store
 // unkeyed — both of which actually happened during the realignment (#5332):
-// `harness_init` stayed in Platform, and `people`'s store keyed on a different
+// `people`'s store keyed on a different
 // group than its controllers, which would have served an RPC surface with no
 // store behind it. These tests close that gap.
 

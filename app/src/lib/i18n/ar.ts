@@ -3324,23 +3324,7 @@ const messages: TranslationMap = {
     'إجراءات قابلة لإعادة الاستخدام والتشغيل: هدف مع الخطوات للوصول إليه.',
   'activity.tabs.alerts': 'التنبيهات',
 
-  'harnessInit.title': 'جارٍ الإعداد',
-
   'announcement.gotIt': 'حسناً',
-  'harnessInit.subtitle': 'يقوم OpenHuman بتجهيز المكونات التي يحتاجها عند التشغيل الأول.',
-  'harnessInit.stepPython': 'بيئة تشغيل Python',
-  'harnessInit.stepNode': 'بيئة تشغيل Node.js',
-  'harnessInit.statePending': 'في الانتظار',
-  'harnessInit.stateRunning': 'جارٍ التثبيت…',
-  'harnessInit.stateDone': 'جاهز',
-  'harnessInit.stateSkipped': 'تم التخطي',
-  'harnessInit.stateFailed': 'فشل',
-  'harnessInit.failedMessage':
-    'لم تكتمل بعض خطوات الإعداد. يمكنك إعادة المحاولة أو المتابعة: سيستخدم OpenHuman بديلاً مدمجاً.',
-  'harnessInit.retry': 'إعادة المحاولة',
-  'harnessInit.continueAnyway': 'المتابعة على أي حال',
-  'harnessInit.runInBackground': 'التشغيل في الخلفية',
-  'harnessInit.backgroundHint': 'يمكنك مواصلة استخدام OpenHuman حتى ينتهي هذا.',
 
   'keyring.consent.title': 'التخزين الآمن غير متاح',
   'keyring.consent.description':

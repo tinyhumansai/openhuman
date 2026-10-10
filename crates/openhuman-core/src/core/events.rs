@@ -1222,21 +1222,6 @@ pub enum DomainEvent {
     },
     /// A component restart was observed.
     HealthRestarted { component: String },
-    /// A one-time harness-init step changed state (pending → running → done /
-    /// failed / skipped). Surfaced to the frontend initialization screen.
-    HarnessInitProgress {
-        step_id: String,
-        state: String,
-        message: Option<String>,
-        percent: Option<u8>,
-    },
-    /// The harness-init run reached a terminal state. `failed_required` is true
-    /// only when a *required* step failed (no required steps today).
-    HarnessInitCompleted {
-        overall: String,
-        failed_required: bool,
-    },
-
     // ── Keyring ─────────────────────────────────────────────────────────
     /// The OS keyring is unavailable and no user consent for local fallback
     /// has been recorded. Published once (deduplicated) when a secret
@@ -1439,9 +1424,7 @@ impl DomainEvent {
             | Self::AgentPathsChanged
             | Self::ActiveWorkspaceChanged { .. }
             | Self::HealthChanged { .. }
-            | Self::HealthRestarted { .. }
-            | Self::HarnessInitProgress { .. }
-            | Self::HarnessInitCompleted { .. } => "system",
+            | Self::HealthRestarted { .. } => "system",
 
             Self::KeyringConsentRequired | Self::KeyringDecryptFailed { .. } => "keyring",
 
@@ -1568,8 +1551,6 @@ impl DomainEvent {
             Self::ActiveWorkspaceChanged { .. } => "ActiveWorkspaceChanged",
             Self::HealthChanged { .. } => "HealthChanged",
             Self::HealthRestarted { .. } => "HealthRestarted",
-            Self::HarnessInitProgress { .. } => "HarnessInitProgress",
-            Self::HarnessInitCompleted { .. } => "HarnessInitCompleted",
             Self::KeyringConsentRequired => "KeyringConsentRequired",
             Self::KeyringDecryptFailed { .. } => "KeyringDecryptFailed",
             Self::SessionExpired { .. } => "SessionExpired",

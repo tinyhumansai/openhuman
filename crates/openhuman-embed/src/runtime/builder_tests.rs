@@ -59,7 +59,6 @@ fn default_services_start_no_background_writers() {
     // own schedule. A library call that started them would become a background
     // process the caller never asked for.
     let services = default_services();
-    assert!(services.harness_init, "the agent harness must be prepared");
     assert!(!services.cron);
     assert!(!services.login_gated);
     assert!(!services.memory_sync);
@@ -91,7 +90,7 @@ async fn a_blank_api_key_is_refused_before_the_slot_is_claimed() {
 }
 
 #[test]
-fn only_services_beyond_harness_init_start_background_work() {
+fn only_selected_services_start_background_work() {
     assert!(!requests_background_services(default_services()));
     assert!(!requests_background_services(ServiceSet::none()));
     assert!(requests_background_services(ServiceSet {
