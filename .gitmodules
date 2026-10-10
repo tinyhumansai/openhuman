@@ -32,9 +32,6 @@
 	path = vendor/tinybox
 	url = https://github.com/tinyhumansai/tinybox
 	branch = main
-[submodule "vendor/tinyruntime"]
-	path = vendor/tinyruntime
-	url = https://github.com/tinyhumansai/tinyruntime.git
 [submodule "vendor/tinydocs"]
 	path = vendor/tinydocs
 	url = https://github.com/tinyhumansai/tinydocs

@@ -245,9 +245,6 @@ const messages: TranslationMap = {
   'settings.tokenUsage.codeDesc': 'Сохранять сигнатуры, сворачивать тела функций.',
   'settings.tokenUsage.html': 'HTML',
   'settings.tokenUsage.htmlDesc': 'Удалить разметку до читаемого текста.',
-  'settings.tokenUsage.ml': 'ML-компрессор текста',
-  'settings.tokenUsage.mlDesc':
-    'Локальная модель ModernBERT для обычного текста (требуется среда выполнения Python).',
   'settings.tokenUsage.ccrTitle': 'Кэш и восстановление (CCR)',
   'settings.tokenUsage.ccrDesc':
     'Сжатые оригиналы кэшируются, чтобы агент мог получить полный текст по запросу.',
@@ -3438,8 +3435,6 @@ const messages: TranslationMap = {
 
   'announcement.gotIt': 'Понятно',
   'harnessInit.subtitle': 'OpenHuman готовит компоненты, необходимые при первом запуске.',
-  'harnessInit.stepPython': 'Среда выполнения Python',
-  'harnessInit.stepNode': 'Среда выполнения Node.js',
   'harnessInit.statePending': 'Ожидание',
   'harnessInit.stateRunning': 'Установка…',
   'harnessInit.stateDone': 'Готово',

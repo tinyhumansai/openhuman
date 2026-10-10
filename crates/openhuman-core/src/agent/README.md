@@ -320,7 +320,7 @@ Persistence, setup and RPC:
 | `artifacts/` | Agent-generated artifact storage and the `ai` RPC namespace ([README](artifacts/README.md)) |
 | `session_db/` | `run_ledger` RPC over `tinyagents_session::run_ledger` |
 | `session_import/` | One-time import of legacy session files and the optional live dual-write ([README](session_import/README.md)) |
-| `harness_init/` | First-run provisioning (Python, spaCy, Kompress, Node) ([README](harness_init/README.md)) |
+| `harness_init/` | Startup initialization and progress reporting ([README](harness_init/README.md)) |
 | [`schemas.rs`](./schemas.rs) | The `agent` namespace controllers |
 
 ## Key types and entry points

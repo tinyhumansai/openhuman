@@ -72,8 +72,8 @@ pub enum DomainGroup {
     /// Background initiative: scheduled cron jobs (`cron/`). Pairs with
     /// `ServiceSet::cron`.
     Automation,
-    /// Code-execution substrate: the managed Node/Python runtimes, the worker
-    /// pool, and the sandbox/CWD-jail confinement (`runtime/`, `sandbox/`).
+    /// Code-execution substrate: tool execution and sandbox/CWD-jail confinement
+    /// (`tools/`, `sandbox/`).
     Runtimes,
     /// Desktop-shell-facing surfaces a headless or embedded host has no use for
     /// (`desktop/`).

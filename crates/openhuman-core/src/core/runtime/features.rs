@@ -15,7 +15,6 @@ pub fn compiled_features() -> std::collections::BTreeMap<String, bool> {
         ("modules", cfg!(feature = "modules")),
         ("voice", cfg!(feature = "voice")),
         ("web3", cfg!(feature = "web3")),
-        ("runtime-node", cfg!(feature = "runtime-node")),
         ("media", cfg!(feature = "media")),
         ("flows", cfg!(feature = "flows")),
         ("skills", cfg!(feature = "skills")),

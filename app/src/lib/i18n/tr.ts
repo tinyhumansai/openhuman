@@ -142,9 +142,6 @@ const messages: TranslationMap = {
   'settings.tokenUsage.codeDesc': 'İmzaları korur, fonksiyon gövdelerini daraltır.',
   'settings.tokenUsage.html': 'HTML',
   'settings.tokenUsage.htmlDesc': 'İşaretlemeyi temizleyip okunabilir metne dönüştürür.',
-  'settings.tokenUsage.ml': 'ML metin sıkıştırıcı',
-  'settings.tokenUsage.mlDesc':
-    'Düz metin için yerel ModernBERT modeli (Python çalışma ortamı gerektirir).',
   'settings.tokenUsage.ccrTitle': 'Önbellek ve kurtarma (CCR)',
   'settings.tokenUsage.ccrDesc':
     'Sıkıştırılan orijinaller önbelleğe alınır, böylece ajan gerektiğinde tam metni getirebilir.',
@@ -3652,8 +3649,6 @@ const messages: TranslationMap = {
   'harnessInit.title': 'Hazırlık yapılıyor',
   'announcement.gotIt': 'Anladım',
   'harnessInit.subtitle': 'OpenHuman, ilk açılışta ihtiyaç duyduğu bileşenleri hazırlıyor.',
-  'harnessInit.stepPython': 'Python çalışma zamanı',
-  'harnessInit.stepNode': 'Node.js çalışma zamanı',
   'harnessInit.statePending': 'Bekliyor',
   'harnessInit.stateRunning': 'Yükleniyor…',
   'harnessInit.stateDone': 'Hazır',

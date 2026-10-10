@@ -79,7 +79,6 @@ function submodulesPresent() {
     "vendor/tinywallet",
     "vendor/tinyjuice",
     "vendor/tinyvoice",
-    "vendor/tinyruntime",
     "vendor/tinymcp",
     "vendor/tinyconnectors",
   ];

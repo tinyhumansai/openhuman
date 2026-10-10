@@ -67,17 +67,6 @@ Capability {
         privacy: None,
     },
 Capability {
-        id: "local_ai.python_runtime_installer",
-        name: "Managed Python Runtime",
-        domain: "runtime_python",
-        category: CapabilityCategory::LocalAI,
-        description:
-            "Download and reuse an OpenHuman-managed CPython runtime for Python-backed local integrations such as MCP servers, with a system-Python override reserved for development.",
-        how_to: "Configured by the core `runtime_python` module; future UI surfaces can expose install state and overrides.",
-        status: CapabilityStatus::Beta,
-        privacy: MODEL_DOWNLOAD,
-    },
-Capability {
         id: "settings.configure_ai",
         name: "Configure AI",
         domain: "settings",

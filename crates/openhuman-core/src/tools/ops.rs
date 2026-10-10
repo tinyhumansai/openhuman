@@ -2,15 +2,11 @@ use super::*;
 
 use crate::agent::host_runtime::{NativeRuntime, RuntimeAdapter};
 use crate::config::{Config, DelegateAgentConfig};
-use crate::runtime::javascript::NodeBootstrap;
-use crate::runtime::python::PythonBootstrap;
 use crate::security::{AuditLogger, SecurityPolicy};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tinyagents_harness::tools::{self as harness_tools, CurrentTimeTool, ResolveTimeTool};
 use tinytools::Tool;
-#[cfg(test)]
-use tinytools::ToolResult;
 use tinytools_std::detect_tools::DetectToolsTool;
 use tinytools_std::filesystem::{
     ApplyPatchTool, CsvExportTool, EditFileTool, FileReadTool, FileWriteTool, GitOperationsTool,
@@ -83,57 +79,10 @@ pub fn all_tools_with_runtime(
     root_config: &crate::config::Config,
     approval_workspace_root: Option<&std::path::Path>,
 ) -> Vec<Box<dyn Tool>> {
-    // One shared snapshot of this session's configuration for both language
-    // clients. They each hand it to the `tinyruntime` module on every call —
-    // the module holds no configuration of its own — so the two must not be
-    // able to disagree about which version this session asked for. The
-    // registry is assembled under `config`, so the bootstraps share that same
-    // Arc rather than a separately-cloned `root_config` — one configuration
-    // snapshot for everything this session builds.
-    let shared_config = Arc::clone(&config);
-
-    // Build a session-scoped managed Node.js bootstrap once, so ShellTool,
-    // NodeExecTool, and NpmExecTool all share the same memoised resolution
-    // state. Disabled when `node.enabled = false` — in that case shell skips
-    // PATH injection and node/npm tools are not registered.
-    // `runtime-node` off => never construct a bootstrap: the stub resolves to
-    // nothing anyway, and this keeps the shell's PATH-injection branch dead
-    // rather than a silent per-invocation no-op.
-    let node_bootstrap: Option<Arc<NodeBootstrap>> = if cfg!(feature = "runtime-node")
-        && root_config.node.enabled
-    {
-        tracing::debug!(
-            version = %root_config.node.version,
-            prefer_system = root_config.node.prefer_system,
-            "[tools::ops] node runtime enabled — constructing shared NodeBootstrap"
-        );
-        Some(Arc::new(NodeBootstrap::new(Arc::clone(&shared_config))))
-    } else {
-        tracing::debug!(
-            "[tools::ops] node runtime disabled — shell PATH injection + node_exec/npm_exec suppressed"
-        );
-        None
-    };
-    let python_bootstrap: Option<Arc<PythonBootstrap>> = if root_config.runtime_python.enabled {
-        tracing::debug!(
-            minimum_version = %root_config.runtime_python.minimum_version,
-            prefer_system = root_config.runtime_python.prefer_system,
-            "[tools::ops] python runtime enabled — constructing shared PythonBootstrap"
-        );
-        Some(Arc::new(PythonBootstrap::new(Arc::clone(&shared_config))))
-    } else {
-        tracing::debug!(
-            "[tools::ops] python runtime disabled — shell python/pip PATH injection suppressed"
-        );
-        None
-    };
-
-    let shell: Box<dyn Tool> = Box::new(ShellTool::with_language_bootstraps(
+    let shell: Box<dyn Tool> = Box::new(ShellTool::new(
         security.clone(),
         Arc::clone(&runtime),
         Arc::clone(&audit),
-        node_bootstrap.as_ref().map(Arc::clone),
-        python_bootstrap.as_ref().map(Arc::clone),
     ));
 
     let file_write: Box<dyn Tool> = match approval_workspace_root {
@@ -573,10 +522,8 @@ pub fn all_tools_with_runtime(
     // `juice_find` / `juice_extract` / `juice_summarize`: only while a handle can name them.
     tools.extend(crate::inference::tokenjuice::repl_tools_for(root_config));
 
-    // Presentation generation (#2778). Native-Rust engine (ppt-rs
-    // backed) as of the #2780-follow-up rust-engine refactor — no
-    // managed Python venv, no first-call install latency. Always
-    // registered.
+    // Presentation generation (#2778), backed by the native Rust engine.
+    // Always registered.
     #[cfg(feature = "documents")]
     tools.push(Box::new(PresentationTool::for_config(
         root_config,
@@ -785,40 +732,6 @@ pub fn all_tools_with_runtime(
     // They call the backend deBridge proxy per-invocation and error gracefully
     // when the user is not signed in, so they register unconditionally.
     tools.extend(crate::web3::all_web3_agent_tools());
-
-    // Managed Node.js exec tools — gated on `root_config.node.enabled`.
-    // Both share the same `NodeBootstrap` as ShellTool so the download +
-    // extract + install pipeline runs at most once per session.
-    #[cfg(feature = "runtime-node")]
-    if let Some(bootstrap) = node_bootstrap.as_ref() {
-        tools.push(Box::new(NodeExecTool::new(
-            security.clone(),
-            Arc::clone(&runtime),
-            Arc::clone(bootstrap),
-            root_config.runtime_pool.clone(),
-            root_config.workspace_dir.clone(),
-        )));
-        tools.push(Box::new(NpmExecTool::new(
-            security.clone(),
-            Arc::clone(&runtime),
-            Arc::clone(bootstrap),
-        )));
-        tracing::debug!("[tools::ops] registered node_exec + npm_exec");
-    }
-
-    // Managed Python exec tool — gated on `root_config.runtime_python.enabled`.
-    // Shares the same `PythonBootstrap` as ShellTool. Inline code routes through
-    // the shared runtime pool (#5106) when enabled.
-    if let Some(bootstrap) = python_bootstrap.as_ref() {
-        tools.push(Box::new(PythonExecTool::new(
-            security.clone(),
-            Arc::clone(&runtime),
-            Arc::clone(bootstrap),
-            root_config.runtime_pool.clone(),
-            root_config.workspace_dir.clone(),
-        )));
-        tracing::debug!("[tools::ops] registered python_exec");
-    }
 
     // Image metadata is always available for user-provided images.
     tools.push(Box::new(ImageInfoTool::new(security.clone())));

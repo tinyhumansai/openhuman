@@ -246,9 +246,6 @@ const messages: TranslationMap = {
   'settings.tokenUsage.codeDesc': 'Pertahankan tanda tangan, lipat badan fungsi.',
   'settings.tokenUsage.html': 'HTML',
   'settings.tokenUsage.htmlDesc': 'Hapus markup menjadi teks yang dapat dibaca.',
-  'settings.tokenUsage.ml': 'Kompresor teks ML',
-  'settings.tokenUsage.mlDesc':
-    'Model ModernBERT lokal untuk teks biasa (memerlukan runtime Python).',
   'settings.tokenUsage.ccrTitle': 'Cache & pemulihan (CCR)',
   'settings.tokenUsage.ccrDesc':
     'Naskah asli yang dipadatkan di-cache sehingga agen dapat mengambil teks lengkap sesuai permintaan.',
@@ -3426,8 +3423,6 @@ const messages: TranslationMap = {
   'announcement.gotIt': 'Mengerti',
   'harnessInit.subtitle':
     'OpenHuman sedang menyiapkan komponen yang dibutuhkan saat pertama kali dijalankan.',
-  'harnessInit.stepPython': 'Runtime Python',
-  'harnessInit.stepNode': 'Runtime Node.js',
   'harnessInit.statePending': 'Menunggu',
   'harnessInit.stateRunning': 'Memasang…',
   'harnessInit.stateDone': 'Siap',

@@ -28,7 +28,7 @@ impl SecurityPolicy {
     /// by one bulk ingest — want the tier refusal and nothing else. That is the
     /// same shape the ~15 acting tools which gate on bare [`Self::can_act`]
     /// already use (e.g. `tinytools_std::filesystem::FileWriteTool`,
-    /// `tools/impl/system/python_exec.rs`, `cron/scheduler.rs`).
+    /// `cron/scheduler.rs`).
     pub fn enforce_write_tier(&self, operation_name: &str) -> Result<(), String> {
         if !self.can_act() {
             log::warn!(

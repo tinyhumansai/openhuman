@@ -242,9 +242,6 @@ const messages: TranslationMap = {
   'settings.tokenUsage.codeDesc': 'স্বাক্ষর রাখুন, ফাংশন বডি সংকুচিত করুন।',
   'settings.tokenUsage.html': 'HTML',
   'settings.tokenUsage.htmlDesc': 'পঠনযোগ্য টেক্সটে মার্কআপ সরিয়ে ফেলুন।',
-  'settings.tokenUsage.ml': 'ML টেক্সট সংকোচক',
-  'settings.tokenUsage.mlDesc':
-    'সাধারণ টেক্সটের জন্য স্থানীয় ModernBERT মডেল (Python রানটাইম প্রয়োজন)।',
   'settings.tokenUsage.ccrTitle': 'ক্যাশ ও পুনরুদ্ধার (CCR)',
   'settings.tokenUsage.ccrDesc':
     'সংকুচিত মূল কপিগুলি ক্যাশ করা হয় যাতে এজেন্ট চাহিদামতো সম্পূর্ণ টেক্সট আনতে পারে।',
@@ -3397,8 +3394,6 @@ const messages: TranslationMap = {
   'harnessInit.title': 'সেটআপ করা হচ্ছে',
   'announcement.gotIt': 'বুঝেছি',
   'harnessInit.subtitle': 'প্রথম চালুর সময় OpenHuman প্রয়োজনীয় উপাদানগুলো প্রস্তুত করছে।',
-  'harnessInit.stepPython': 'Python রানটাইম',
-  'harnessInit.stepNode': 'Node.js রানটাইম',
   'harnessInit.statePending': 'অপেক্ষমাণ',
   'harnessInit.stateRunning': 'ইনস্টল করা হচ্ছে…',
   'harnessInit.stateDone': 'প্রস্তুত',

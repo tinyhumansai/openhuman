@@ -125,8 +125,8 @@ async fn an_identical_failing_command_repeated_unchanged_still_halts() {
 }
 
 const MODULE_FAULT: &str =
-    "Failed to resolve command runtime: module 'tinyruntime' could not be loaded \
-     from the installer bundle: module `ubuntu-22.04-x86_64` refused: module directory is owned by \
+    "Failed to resolve command runtime: module 'sample-runtime' could not be loaded \
+     from the installer bundle: module `linux-x64` refused: module directory is owned by \
      another user. This is terminal for the running process; restart the app to try again";
 
 #[test]

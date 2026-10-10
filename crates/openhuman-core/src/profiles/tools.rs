@@ -105,9 +105,6 @@ pub const HARD_DENIED: &[&str] = &[
     "create_skill",
     "git_operations",
     "delegate",
-    "node_exec",
-    "npm_exec",
-    "python_exec",
     "curl",
     "pushover",
 ];

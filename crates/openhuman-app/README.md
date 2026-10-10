@@ -281,7 +281,7 @@ the chain to the core. Because default features are off, every product gate
 must be listed by hand:
 `channels`, `media`, `inference`, `voice`, `web3`, `documents`, `modules`,
 `flows`, `skills`, `mcp`, `crash-reporting`, `http-server`, `scheduler-gate`,
-`file-logging`, `runtime-node`, `hosting`. A gate missing here disappears from
+`file-logging`, `hosting`. A gate missing here disappears from
 the shipped app with no build error. [`scripts/ci/check-feature-forwarding.mjs`](../../scripts/ci/check-feature-forwarding.mjs)
 compares the list with [`scripts/ci/product-features.txt`](../../scripts/ci/product-features.txt), and `lib.rs` has two
 `const _: () = assert!(...)` guards (`VOICE_COMPILED_IN`,

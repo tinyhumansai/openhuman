@@ -97,7 +97,7 @@ impl Tool for ArchetypeDelegationTool {
     /// child's lifetime is already bounded internally — by its `max_iterations`,
     /// the run cancellation token, and each inner tool's own timeout — so it
     /// governs its own duration, exactly like the sibling `spawn_parallel_agents`
-    /// fan-out and the long-running scripting tools (`shell`, `node_exec`).
+    /// fan-out and the long-running shell tool.
     fn timeout_policy(&self, _args: &serde_json::Value) -> ToolTimeout {
         ToolTimeout::Unbounded
     }

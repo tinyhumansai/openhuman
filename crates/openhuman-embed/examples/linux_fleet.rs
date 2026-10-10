@@ -57,7 +57,6 @@ async fn measure(count: usize) -> anyhow::Result<()> {
         .mount(&mock).await;
     let mut config = openhuman_embed::RuntimeConfig::default();
     config.local_ai.runtime_enabled = false;
-    config.runtime_python.enabled = false;
     config.memory.conversations.enabled = false;
     config.agent.session_dual_write = false;
     config.agent.session_shadow_reads = false;

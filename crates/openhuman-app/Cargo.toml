@@ -88,7 +88,6 @@ openhuman-rpc = { path = "../openhuman-rpc", default-features = false, features 
     "http-server",
     "scheduler-gate",
     "file-logging",
-    "runtime-node",
     "hosting",
     "tinymemes",
     "storage-sqlite",

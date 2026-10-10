@@ -23,8 +23,8 @@ function snapshot(overrides: Partial<HarnessInitSnapshot> = {}): HarnessInitSnap
     finishedAt: null,
     steps: [
       {
-        id: 'python_runtime',
-        label: 'Python runtime',
+        id: 'generic_step',
+        label: 'Initialization check',
         required: false,
         state: 'running',
         message: null,

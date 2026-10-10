@@ -4724,8 +4724,6 @@ dependencies = [
  "tinymemory-api",
  "tinymemory-integrations",
  "tinymemory-tools",
- "tinyruntime-bus",
- "tinyruntime-pyserver",
  "tinysearch-bus",
  "tinyskills",
  "tinystoragedrivers",
@@ -8044,25 +8042,6 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "tinymemory-api",
-]
-
-[[package]]
-name = "tinyruntime-bus"
-version = "0.2.12"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "tinyruntime-pyserver"
-version = "0.2.12"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
 ]
 
 [[package]]

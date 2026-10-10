@@ -79,7 +79,7 @@ fn settings() -> &'static ToolTimeoutSettings {
 /// reach already-assembled harnesses on their next tool call.
 ///
 /// Long-running tools opt out through their own policy rather than here:
-/// scripting tools (`shell`, `node_exec`, …) are `Unbounded` unless the call
+/// the scripting tool (`shell`) are `Unbounded` unless the call
 /// passes `timeout_secs`, media generation carries its own budget, and
 /// `composio_connect` / `browser` size theirs to the approval park they wait
 /// on inside `execute`.
@@ -177,7 +177,7 @@ pub fn tool_execution_timeout_secs() -> u64 {
 }
 
 /// Resolve an **explicit** per-call timeout request for a tool that is
-/// otherwise unbounded (the scripting tools: `shell`, `node_exec`, `npm_exec`).
+/// otherwise unbounded (the scripting tool: `shell`).
 ///
 /// Unlike most tools — which inherit the global config-driven timeout so a hung
 /// network/MCP call can't wedge a session — scripting tools run with **no**

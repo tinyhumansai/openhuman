@@ -333,21 +333,3 @@ async fn full_domain_set_keeps_platform_tools() {
         assert!(names.iter().any(|n| n == name), "missing `{name}`");
     }
 }
-
-/// `node_exec` / `npm_exec` are absent when the managed Node runtime is
-/// compiled out — absent, not present-and-erroring, so the model is never shown
-/// a tool it cannot use.
-#[test]
-#[cfg(not(feature = "runtime-node"))]
-fn default_tools_omits_node_tools_when_runtime_node_off() {
-    let tmp = TempDir::new().unwrap();
-    let cfg = integration_test_config(&tmp, "http://127.0.0.1:1");
-    let tools = integration_tools_for_config(&tmp, &cfg);
-    let names = tool_names(&tools);
-    for absent in ["node_exec", "npm_exec"] {
-        assert!(
-            !names.iter().any(|n| n == absent),
-            "`{absent}` must not be registered with runtime-node compiled out"
-        );
-    }
-}

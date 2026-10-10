@@ -278,22 +278,7 @@
 #                      and drops the path dependency, keeping only
 #                      `tinymcp-bus` — at which point the MCP transport stack
 #                      leaves the always-on graph entirely. Lower it in that PR.
-#                      (2) Language runtimes moved behind the `tinyruntime`
-#                      TinyBus module (+1 package, +1 NAME: `tinyruntime-bus`,
-#                      the wire contract for the runtime router). It lands on the
-#                      always-on path and cannot be gated: `ShellTool` holds an
-#                      `Option<Arc<NodeBootstrap>>` as a FIELD and
-#                      `tools/impl/system/shell.rs` is kernel, so the toolchain
-#                      clients in `runtime/` are always compiled and name the
-#                      contract's payload types. `tinyruntime-bus` is
-#                      deliberately dependency-light — `serde` and `serde_json`,
-#                      both already in this profile, and nothing else. What it
-#                      buys is a much larger shed elsewhere: downloading,
-#                      verifying and unpacking language toolchains left this
-#                      repository entirely, taking `xz2` AND its static liblzma C
-#                      build with it, so `runtime-node = []` as a result. The
-#                      two native packages are unchanged.
-#   283/265/2  2026-08-21  tinymemory bumped past its #76/#77 line (-2 packages,
+#  283/265/2  2026-08-21  tinymemory bumped past its #76/#77 line (-2 packages,
 #                      +1 NAME). The name is `tinymemory-bus`, and it is a
 #                      RAISE, so: tinymemory#74 moved the wire vocabulary —
 #                      member names, payload types, the error-name table — out
@@ -473,7 +458,7 @@
 #                      limit to paper over inherited growth is what this file
 #                      exists to prevent.
 #   302/279/2  2026-08-09  `memory-git` gate (-3 packages / -3 names / -2 NATIVE),
-#                      measured on top of the runtime-node entry below.
+#                      measured on the then-current dependency graph.
 #
 #                      *** THE SPEC TARGET IS REACHED. *** Two native builds
 #                      remain — `libsqlite3-sys` and `ring` — which is exactly
@@ -504,17 +489,6 @@
 #                      written. Default (full-feature) profile moved 356 -> 353.
 #                      Verified with `scripts/assert-shed.sh flows git2
 #                      libgit2-sys libz-sys`.
-#   305/282/4  2026-08-09  runtime-node gate, measured on top of the
-#                      upstream/main merge below (307/284/5 -> 305/282/4).
-#                      `xz2` + its static liblzma C build are exclusive to
-#                      runtime::node::extractor's .tar.xz path, so gating the
-#                      managed Node toolchain removes them: -2 packages, -2
-#                      names, and lzma-sys leaves the NATIVE list (5 -> 4) —
-#                      the first native toolchain build removed by the gating
-#                      program. Remaining native: libgit2-sys, libsqlite3-sys,
-#                      libz-sys, ring — the target keeps the last two.
-#                      Measured with `scripts/kernel-floor.sh flows`, and
-#                      `scripts/dep-sim.py --cut-nothing` agrees (282 names).
 #   307/284/5  2026-08-09  merge upstream/main + PR #5446 memory-subsystem work.
 #                      Measured, not derived: `scripts/kernel-floor.sh flows`
 #                      reports 307/284/5 on this merge. +3 names over the
@@ -673,4 +647,6 @@
 #                      the file driver backs `file:` URLs), which adds the
 #                      first-party tinystoragedrivers-file crate (one package,
 #                      one name; no external crate, native builds unchanged).
-flows:339:317:2
+# 337/315/2 2026-10-10 remove the managed runtime and ML compression stacks;
+#                      two unique packages and names leave the flows graph.
+flows:337:315:2

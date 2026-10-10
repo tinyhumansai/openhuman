@@ -12,8 +12,8 @@ function snapshot(overrides: Partial<HarnessInitSnapshot> = {}): HarnessInitSnap
     finishedAt: null,
     steps: [
       {
-        id: 'python_runtime',
-        label: 'Python runtime',
+        id: 'first_check',
+        label: 'First check',
         required: false,
         state: 'done',
         message: null,
@@ -21,8 +21,8 @@ function snapshot(overrides: Partial<HarnessInitSnapshot> = {}): HarnessInitSnap
         updatedAt: null,
       },
       {
-        id: 'kompress',
-        label: 'Compression runtime',
+        id: 'second_check',
+        label: 'Second check',
         required: false,
         state: 'running',
         message: null,
@@ -30,8 +30,8 @@ function snapshot(overrides: Partial<HarnessInitSnapshot> = {}): HarnessInitSnap
         updatedAt: null,
       },
       {
-        id: 'node_runtime',
-        label: 'Node.js runtime',
+        id: 'third_check',
+        label: 'Third check',
         required: false,
         state: 'pending',
         message: null,
@@ -49,9 +49,9 @@ describe('InitProgressScreen', () => {
       <InitProgressScreen snapshot={snapshot()} onRetry={vi.fn()} onContinue={vi.fn()} />
     );
 
-    expect(screen.getByText('Python runtime')).toBeInTheDocument();
-    expect(screen.getByText('Compression runtime')).toBeInTheDocument();
-    expect(screen.getByText('Node.js runtime')).toBeInTheDocument();
+    expect(screen.getByText('First check')).toBeInTheDocument();
+    expect(screen.getByText('Second check')).toBeInTheDocument();
+    expect(screen.getByText('Third check')).toBeInTheDocument();
     expect(screen.getByText('Ready')).toBeInTheDocument();
     expect(screen.getByText('Installing…')).toBeInTheDocument();
     expect(screen.getByText('Waiting')).toBeInTheDocument();
@@ -78,11 +78,11 @@ describe('InitProgressScreen', () => {
       overall: 'failed',
       steps: [
         {
-          id: 'kompress',
-          label: 'Compression runtime',
+          id: 'second_check',
+          label: 'Second check',
           required: false,
           state: 'failed',
-          message: 'pip install timed out',
+          message: 'Initialization step failed',
           percent: null,
           updatedAt: null,
         },
@@ -93,7 +93,7 @@ describe('InitProgressScreen', () => {
       <InitProgressScreen snapshot={failed} onRetry={onRetry} onContinue={onContinue} />
     );
 
-    expect(screen.getByText('pip install timed out')).toBeInTheDocument();
+    expect(screen.getByText('Initialization step failed')).toBeInTheDocument();
     expect(screen.getByTestId('harness-init-continue-anyway')).toBeInTheDocument();
     expect(screen.queryByTestId('harness-init-background')).not.toBeInTheDocument();
 

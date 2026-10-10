@@ -92,7 +92,7 @@ impl RuntimeAdapter for NativeRuntime {
         // actionable message naming the path, instead of an opaque OS error 267
         // (ERROR_DIRECTORY) from CreateProcessW on Windows / a raw ENOENT on
         // Unix when the process is spawned. Covers all three shell-family tools
-        // (shell / node_exec / npm_exec) since they all route through here.
+        // (shell) since it routes through here.
         // (#3353, Fix 2)
         crate::config::ensure_usable_cwd(workspace_dir)?;
         cmd.current_dir(workspace_dir);

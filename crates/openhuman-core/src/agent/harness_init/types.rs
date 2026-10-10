@@ -33,7 +33,7 @@ impl StepState {
 /// Per-step status surfaced to the UI.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StepStatus {
-    /// Stable identifier, e.g. `"python_runtime"`.
+    /// Stable step identifier.
     pub id: String,
     /// Human-readable label (the UI may prefer its own i18n key by `id`).
     pub label: String,

@@ -1,10 +1,7 @@
 use super::shell_platform::{
-    command_param_description, command_with_runtime_path, python_utf8_env, shell_child_env,
-    shell_description,
+    command_param_description, python_utf8_env, shell_child_env, shell_description,
 };
 use crate::agent::host_runtime::RuntimeAdapter;
-use crate::runtime::javascript::NodeBootstrap;
-use crate::runtime::python::PythonBootstrap;
 use crate::security::{AuditLogger, CommandExecutionLog, GateDecision, SecurityPolicy};
 use async_trait::async_trait;
 use serde_json::json;
@@ -44,19 +41,6 @@ pub struct ShellTool {
     security: Arc<SecurityPolicy>,
     runtime: Arc<dyn RuntimeAdapter>,
     audit: Arc<AuditLogger>,
-    /// Optional managed Node.js bootstrap. When provided **and** a prior
-    /// `NodeBootstrap::resolve()` has already succeeded, every shell invocation
-    /// transparently prepends the managed `bin/` dir to `PATH` — so skills
-    /// shelling out to `node`/`npm`/`npx`/`corepack` resolve to the managed
-    /// toolchain. Non-blocking: never triggers a download for unrelated
-    /// commands (we use `try_cached()`).
-    node_bootstrap: Option<Arc<NodeBootstrap>>,
-    /// Optional managed Python bootstrap. Unlike Node PATH injection, Python
-    /// shell support is the primary execution surface for skills, so
-    /// Python-looking commands resolve this lazily before spawn. That keeps
-    /// `pip install foo` and `python3 -m foo` on one interpreter instead of
-    /// mixing arbitrary host `pip` and `python3` binaries.
-    python_bootstrap: Option<Arc<PythonBootstrap>>,
 }
 
 impl ShellTool {
@@ -69,28 +53,6 @@ impl ShellTool {
             security,
             runtime,
             audit,
-            node_bootstrap: None,
-            python_bootstrap: None,
-        }
-    }
-
-    /// Attach managed language runtimes used by shell-invoked skills. Node is
-    /// injected only after a dedicated node/npm tool resolved it; Python is
-    /// resolved lazily for python/pip commands because shell is currently the
-    /// user-facing Python skill execution path.
-    pub fn with_language_bootstraps(
-        security: Arc<SecurityPolicy>,
-        runtime: Arc<dyn RuntimeAdapter>,
-        audit: Arc<AuditLogger>,
-        node_bootstrap: Option<Arc<NodeBootstrap>>,
-        python_bootstrap: Option<Arc<PythonBootstrap>>,
-    ) -> Self {
-        Self {
-            security,
-            runtime,
-            audit,
-            node_bootstrap,
-            python_bootstrap,
         }
     }
 
@@ -385,21 +347,12 @@ impl ShellTool {
         // Clear the environment to prevent leaking API keys and other secrets
         // (CWE-200), then re-add only safe, functional variables.
         let action_dir = self.effective_action_dir_for_context(context);
-        let runtime_path = self.runtime_path_for_command(command).await;
-        let execution_command = command_with_runtime_path(
-            command,
-            runtime_path.as_deref(),
-            self.runtime.shell_flavor(),
-        );
-        let mut cmd = match self
-            .runtime
-            .build_shell_command(&execution_command, &action_dir)
-        {
+        let mut cmd = match self.runtime.build_shell_command(command, &action_dir) {
             Ok(cmd) => cmd,
             Err(e) => {
                 return (
                     true,
-                    ToolResult::error(format!("Failed to build runtime command: {e}")),
+                    ToolResult::error(format!("Failed to build shell command: {e}")),
                 );
             }
         };
@@ -433,11 +386,6 @@ impl ShellTool {
                 scratch_dir = %scratch_dir.display(),
                 "[shell] scratch dir missing — leaving TMPDIR/TMP/TEMP as inherited"
             );
-        }
-
-        if let Some(path) = runtime_path {
-            tracing::debug!(path = %path, "[shell] applying managed runtime PATH");
-            cmd.env("PATH", path);
         }
 
         // No default deadline — only a caller-supplied `timeout_secs` bounds the
@@ -530,14 +478,6 @@ impl ShellTool {
         );
 
         let mut extra_env = std::collections::HashMap::new();
-        // A managed runtime's PATH names host directories, which a SaaS
-        // container cannot see.
-        if super::shell_saas::passes_runtime_path_with(crate::core::runtime::is_saas()) {
-            if let Some(path) = self.runtime_path_for_command(command).await {
-                extra_env.insert("PATH".into(), path.into());
-            }
-        }
-
         // Apply the same Git config hardening to local and sandboxed shells.
         extra_env.extend(tinytools_std::filesystem::shell_git_env());
         // And the same Python UTF-8 defaults the native path sets.
@@ -559,22 +499,7 @@ impl ShellTool {
             "[shell] starting sandboxed command"
         );
 
-        let runtime_path = extra_env
-            .get(std::ffi::OsStr::new("PATH"))
-            .and_then(|path| path.to_str());
-        let execution_command = command_with_runtime_path(
-            command,
-            runtime_path,
-            crate::agent::platform_shell::ShellFlavor::current(),
-        );
-        match sandbox::execute_in_sandbox(
-            &policy,
-            &execution_command,
-            action_dir,
-            extra_env,
-            effective,
-        )
-        .await
+        match sandbox::execute_in_sandbox(&policy, command, action_dir, extra_env, effective).await
         {
             Ok(result) => {
                 let tool_result = if result.timed_out {
@@ -605,144 +530,6 @@ impl ShellTool {
             ),
         }
     }
-
-    /// The `PATH` to run `command` under when it needs a managed runtime, or
-    /// `None` to keep the inherited one.
-    ///
-    /// A runtime that cannot be resolved (its module refused or faulted, the
-    /// download failed) leaves the inherited `PATH` in place rather than
-    /// failing the command: the host's own interpreter may well run it, and if
-    /// none exists the command fails with its own `command not found`. Failing
-    /// here instead blocked every `python …` command for the rest of the run
-    /// once the runtime module had faulted, even with a working `python3` on
-    /// the host. This fallback is safe because commands still pass through
-    /// `check_gated_command` and sandbox policy, and the child already inherits
-    /// `PATH` through `SAFE_ENV_VARS`.
-    async fn runtime_path_for_command(&self, command: &str) -> Option<String> {
-        let mut prepend_dirs = Vec::new();
-
-        // Node injection preserves the existing contract: shell only sees the
-        // managed Node bin directory after a previous node/npm tool resolved it.
-        if let Some(bootstrap) = self.node_bootstrap.as_ref() {
-            if let Some(resolved) = bootstrap.try_cached() {
-                tracing::debug!(
-                    bin_dir = %resolved.bin_dir.display(),
-                    version = %resolved.version,
-                    "[shell] prepending managed node bin to PATH"
-                );
-                prepend_dirs.push(resolved.bin_dir);
-            }
-        }
-
-        if shell_command_needs_python_runtime(command) {
-            if let Some(bootstrap) = self.python_bootstrap.as_ref() {
-                match bootstrap.resolve().await {
-                    Ok(resolved) => {
-                        tracing::debug!(
-                            bin_dir = %resolved.bin_dir.display(),
-                            python_bin = %resolved.python_bin.display(),
-                            version = %resolved.version,
-                            source = ?resolved.source,
-                            "[shell] prepending python runtime bin to PATH"
-                        );
-                        prepend_dirs.push(resolved.bin_dir);
-                    }
-                    Err(error) => {
-                        log_python_runtime_unavailable(
-                            bootstrap.config().runtime_python.enabled,
-                            &error,
-                        );
-                    }
-                }
-            }
-        }
-
-        if prepend_dirs.is_empty() {
-            None
-        } else {
-            Some(prepend_path_dirs(
-                prepend_dirs.iter().map(|p| p.as_path()),
-                &crate::tools::timeout::CommandEnvironment::var("PATH").unwrap_or_default(),
-            ))
-        }
-    }
-}
-
-fn log_python_runtime_unavailable(enabled: bool, error: &anyhow::Error) {
-    if enabled {
-        tracing::warn!(
-            error = %error,
-            "[shell] python runtime unavailable — running on the inherited PATH"
-        );
-    } else {
-        tracing::debug!(
-            error = %error,
-            "[shell] python runtime disabled — running on the inherited PATH"
-        );
-    }
-}
-
-fn prepend_path_dirs<'a>(
-    dirs: impl IntoIterator<Item = &'a std::path::Path>,
-    host_path: &str,
-) -> String {
-    let sep = if cfg!(windows) { ";" } else { ":" };
-    let mut parts: Vec<String> = dirs
-        .into_iter()
-        .map(|path| path.to_string_lossy().into_owned())
-        .collect();
-    if !host_path.is_empty() {
-        parts.push(host_path.to_string());
-    }
-    parts.join(sep)
-}
-
-fn shell_command_needs_python_runtime(command: &str) -> bool {
-    let lower = command.to_ascii_lowercase();
-    lower
-        .split([';', '&', '|', '\n', '\r'])
-        .any(segment_starts_with_python_command)
-}
-
-fn segment_starts_with_python_command(segment: &str) -> bool {
-    let tokens = segment.split_whitespace().peekable();
-    for token in tokens {
-        let token = token.trim_matches(|ch| matches!(ch, '(' | ')' | '<' | '>'));
-        if token.is_empty() {
-            continue;
-        }
-        if token.contains('=') && !token.starts_with('-') {
-            continue;
-        }
-        if matches!(token, "sudo" | "command" | "time" | "env") {
-            continue;
-        }
-        return is_python_executable_token(token);
-    }
-    false
-}
-
-fn is_python_executable_token(token: &str) -> bool {
-    let executable = token.rsplit('/').next().unwrap_or(token);
-    matches!(
-        executable,
-        "python"
-            | "python3"
-            | "py"
-            | "pip"
-            | "pip3"
-            | "python.exe"
-            | "python3.exe"
-            | "pip.exe"
-            | "pip3.exe"
-    ) || versioned_executable(executable, "python3.")
-        || versioned_executable(executable, "pip3.")
-}
-
-fn versioned_executable(executable: &str, prefix: &str) -> bool {
-    executable
-        .strip_prefix(prefix)
-        .is_some_and(|suffix| !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()))
 }
 
 #[cfg(test)]

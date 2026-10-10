@@ -24,12 +24,6 @@ export interface TokenjuiceSettings {
   search_enabled: boolean;
   code_enabled: boolean;
   html_enabled: boolean;
-  ml_compression_enabled: boolean;
-  ml_model_id: string;
-  ml_target_ratio: number;
-  ml_sidecar_idle_timeout_secs: number;
-  ml_max_input_chars: number;
-  ml_device: string;
 }
 
 /** Partial update — only present fields are changed. */

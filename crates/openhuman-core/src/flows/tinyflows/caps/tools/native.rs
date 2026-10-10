@@ -43,7 +43,7 @@ impl ToolBackend for NativeToolBackend {
             ));
         }
 
-        let class = crate::runtime::node::ops::classify_tool_call(ctx.config, tool_name, &args)
+        let class = crate::tools::native_ops::classify_tool_call(ctx.config, tool_name, &args)
             .map_err(EngineError::Capability)?;
         let tier_decision = super::super::enforce_node_tier_gate(ctx.security, class, "tool_call")?;
         let summary = crate::security::approval::summarize_action(tool_name, &args);
@@ -61,7 +61,7 @@ impl ToolBackend for NativeToolBackend {
             "[flows] tool_call: dispatching NATIVE OpenHuman tool"
         );
         let exec_result =
-            crate::runtime::node::ops::execute_tool(ctx.config, tool_name, args, false)
+            crate::tools::native_ops::execute_tool(ctx.config, tool_name, args, false)
                 .await
                 .map_err(EngineError::Capability)
                 .and_then(|outcome| {

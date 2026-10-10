@@ -35,8 +35,6 @@
 //!   assembles transactions while the signing key stays in this process.
 //! - [`host`] — the module broker, connection and loader.
 //! - [`ops`] — resolving, loading, and reporting status.
-//! - [`runtime`] — calling `tinyruntime`: resolving a language runtime and
-//!   running code on it.
 //! - [`schemas`] — the `modules` RPC surface.
 //! - [`boot`] — what happens at startup.
 
@@ -54,7 +52,6 @@ pub mod documents;
 pub mod host;
 pub mod ops;
 pub mod registry;
-pub mod runtime;
 pub mod schemas;
 pub mod search;
 mod tokenjuice_host;
