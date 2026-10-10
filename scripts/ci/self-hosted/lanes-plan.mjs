@@ -233,6 +233,11 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           run: "node scripts/ci/check-crate-chain.mjs",
         },
         {
+          name: "module-boundaries",
+          when: rust || areas.scripts,
+          run: "bash scripts/ci-cancel-aware.sh node scripts/ci/check-module-boundaries.mjs",
+        },
+        {
           name: "module-pins",
           when: true,
           run: "bash scripts/ci/fetch-submodule-tags.sh && node scripts/ci/check-module-pins.mjs",

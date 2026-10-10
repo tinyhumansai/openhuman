@@ -254,6 +254,20 @@ no host file in this folder.
 - `ops::set_bundled_releases_dir` (`ops.rs`) is called by the desktop host
   before the core starts.
 
+## Calls before core startup
+
+Hosts obtain `ModuleClient` through `openhuman_rpc::embed::modules`. Construct
+it with explicit configuration, and set bundled-artifact discovery before the
+first call. Construction starts nothing; calls use the same process-wide lazy
+loader as the core and require neither a core runtime nor a signed-in session.
+The client preserves argument tuple arity and offers confidential calls that
+require recipient attestation. A failed load or call returns a sanitized
+`ModuleCallError` and never executes an implementation library as a fallback.
+
+Stateful adapters must call the module's close, cancellation and shutdown
+members to release its resources. Keeping a native library mapped does not
+remove that obligation.
+
 ## RPC surface
 
 All methods are in the `modules` namespace ([`schemas.rs`](./schemas.rs)), wired into the
@@ -315,8 +329,10 @@ loadable:
 
   Never redeclare a contract type here, and call members through the
   contract's constants rather than string literals. Contract crates stay
-  synchronous and free of I/O. Shared wire behavior belongs in the contract;
-  runtime, configuration and security policy stay in this host.
+  synchronous and free of I/O. Serialized types, errors, identifiers, versions,
+  schemas and static tool declarations belong in the contract. Component
+  algorithms execute inside the compiled module; configuration, execution
+  policy and approvals stay in this host.
 - Policy stays here even where the work moved into a module. For connectors
   that means egress policy (`crate::security::egress`, applied before
   `Execute`), route selection, and webhook delivery; scope enforcement belongs
@@ -337,9 +353,12 @@ loadable:
 
 ## Gotchas
 
-- `lib.rs` gates the whole folder on the `modules` feature, which is in both
-  the contributor default set and the shipped product set. `documents`,
-  `voice` and `web3` each imply `modules` and turn on their host file here.
+- The registry, configuration types and shared `ModuleClient` are available
+  without the `modules` feature. The loader and capability adapters are gated
+  on `modules`, which is in both the contributor default set and the shipped
+  product set. A client compiled without the loader returns an explicit
+  unavailable error on a call. `documents`, `voice` and `web3` each imply
+  `modules` and turn on their host file here.
   Never enable `modules` directly on the unconditional `tinybus` dependency;
   it is forwarded from this crate's own feature (`modules =
   ["tinybus/modules", ...]`), so a build without `modules` does not pull in
@@ -376,3 +395,10 @@ minimal build small.
 - [Loadable modules](../../../../gitbooks/developing/loadable-modules.md)
 - [tinybus submodule](../../../../vendor/tinybus/README.md)
 - [Architecture overview](../../../../gitbooks/developing/architecture.md)
+
+The connector host consumes verified release v0.14.0 (contract 1.13). The
+argument/default/filter/classification and trigger-archive adapters call bus
+members; no normal or build edge reaches `tinyconnectors` or its sync library.
+Provider messages remain product output, while terminal bus reports contain
+only the module/version/stage/platform/reason vocabulary. Credential-bearing
+configuration and direct reads use attested confidential calls.

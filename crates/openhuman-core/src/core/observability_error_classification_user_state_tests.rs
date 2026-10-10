@@ -703,3 +703,23 @@ fn unrelated_could_not_be_loaded_errors_still_reach_sentry() {
         );
     }
 }
+
+#[test]
+fn connector_provider_output_is_already_reported_without_affecting_other_modules() {
+    for message in [
+        "[composio:error:auth] reconnect the provider",
+        "Composio v3 connected_accounts failed: HTTP 401: Invalid API key",
+        "ListConnectionsDirect: ai.tinyhumans.tinybus.Error.Failed: Composio v3 connected_accounts failed: HTTP 401: Invalid API key",
+    ] {
+        assert_eq!(expected_error_kind(message), Some(ExpectedErrorKind::ModuleUnavailable));
+    }
+    for message in [
+        "Execute: ai.tinyhumans.tinybus.Error.Failed: private module failure",
+        "unrelated operation mentioned [composio:error:auth] in its payload",
+    ] {
+        assert_ne!(
+            expected_error_kind(message),
+            Some(ExpectedErrorKind::ModuleUnavailable)
+        );
+    }
+}

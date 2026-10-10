@@ -491,6 +491,9 @@ impl CoreRuntime {
     /// to stop either: the user runs Ollama / LM Studio / MLX themselves and
     /// OpenHuman never spawns it.
     pub async fn exit_cleanup(&self) {
+        if let Err(error) = crate::integrations::composio::trigger_history::close_global().await {
+            log::warn!("[composio][history] archive shutdown failed: {error}");
+        }
         log::debug!("[core] shutdown: exit cleanup done (no owned local runtime to stop)");
     }
 

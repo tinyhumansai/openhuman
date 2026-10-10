@@ -119,27 +119,28 @@ pub(crate) fn backend_mode_without_session(config: &Config) -> bool {
     }
 }
 
-/// Defense-in-depth Sentry funnel for composio op-layer errors.
+/// Report host-side Composio faults without provider content or credentials.
 ///
-/// The shared [`crate::integrations::IntegrationClient`]
-/// (which fronts every `client.list_*` / `client.execute_tool` /
-/// `client.authorize` call) already reports its own failures under
-/// `domain="integrations"` with `failure="non_2xx" | "transport"` tags,
-/// and the Sentry `before_send` filter (`is_transient_integrations_failure`)
-/// drops the transient subset. This helper re-classifies the same
-/// anyhow chain at the **op layer** under `domain="composio"` so:
-///
-/// 1. Future call sites that bypass `IntegrationClient` still funnel through
-///    the same classifier.
-/// 2. Op-layer-specific failures get tagged consistently rather than
-///    reaching Sentry as bare `Err(String)` returned via RPC.
+/// Module failures have already emitted a sanitized terminal event at the bus
+/// boundary. Recognize their established wire/presentation forms rather than
+/// modifying user-visible messages or reporting them again. Host failures keep
+/// only the existing failure/status classification and a static message.
 pub(crate) fn report_composio_op_error<E: std::fmt::Display + ?Sized>(operation: &str, err: &E) {
     let rendered = format!("{err:#}");
+    let reported_member = tinyconnectors_bus::METHODS.iter().any(|member| {
+        rendered
+            .strip_prefix(member)
+            .is_some_and(|tail| tail.starts_with(": ai.tinyhumans.tinybus.Error.Failed: "))
+    });
+    if reported_member || crate::core::observability::is_module_unavailable_message(&rendered) {
+        // Bus failures are reported once, with sanitized module metadata.
+        return;
+    }
     let failure_tag = classify_composio_failure_tag(rendered.as_str());
     if failure_tag == "non_2xx" {
         if let Some(status) = extract_backend_returned_status(&rendered) {
             crate::core::observability::report_error_or_expected(
-                rendered.as_str(),
+                "connector operation failed",
                 "composio",
                 operation,
                 &[("failure", failure_tag), ("status", status.as_str())],
@@ -148,7 +149,7 @@ pub(crate) fn report_composio_op_error<E: std::fmt::Display + ?Sized>(operation:
         }
     }
     crate::core::observability::report_error_or_expected(
-        rendered.as_str(),
+        "connector operation failed",
         "composio",
         operation,
         &[("failure", failure_tag)],

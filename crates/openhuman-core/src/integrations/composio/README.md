@@ -63,7 +63,7 @@ triggers) from a real transport failure.
 | [`crates/openhuman-core/src/integrations/composio/identity_store.rs`](./identity_store.rs) | Persists connected-account identities in `<workspace>/integrations/composio_identities.json`. |
 | [`crates/openhuman-core/src/integrations/composio/file_store.rs`](./file_store.rs) | Atomic JSON file helpers for the identity and user-scope files under `<workspace>/integrations/`. With a storage backend configured the same values are `composio_state` documents under the acting agent's scope ([`file_store_documents.rs`](./file_store_documents.rs)) and the files are not used. |
 | [`crates/openhuman-core/src/integrations/composio/direct_auth/mod.rs`](./direct_auth/mod.rs) | Direct-mode API-key health tracking: a process-local consecutive-401-failure counter (keyed by a non-logged key fingerprint) that short-circuits repeated invalid-key polling. |
-| [`crates/openhuman-core/src/integrations/composio/trigger_history.rs`](./trigger_history.rs) | Process-global `OnceLock` handle to `tinyconnectors::triggers::TriggerArchive` (`init_global`/`global`). |
+| [`crates/openhuman-core/src/integrations/composio/trigger_history.rs`](./trigger_history.rs) | Lazy host lifecycle owner of a module-side opaque archive handle (`init_global`/`global`). |
 | [`crates/openhuman-core/src/integrations/composio/bus.rs`](./bus.rs) + `bus/` | Trigger, connection-created and config-changed subscribers, and their registration. |
 | [`crates/openhuman-core/src/integrations/composio/providers/mod.rs`](./providers/mod.rs) | Re-exports the curated catalogs, scope verdicts, identity vocabulary and run types from `contract/`. |
 | [`crates/openhuman-core/src/integrations/composio/contract/`](./contract/) | The Composio vocabulary: catalogs, scopes, profiles, run shapes, task shapes. Plain data and pure functions. |
@@ -146,7 +146,7 @@ Published from `ops/` via `crate::core::bus::BUS.publish` (`crate::core::events:
 
 ## Persistence
 
-- **Trigger history** (`trigger_history.rs`): JSONL records under `<workspace>/state/triggers/YYYY-MM-DD.jsonl`, partitioned by UTC day, written by `tinyconnectors::triggers::TriggerArchive` (exclusive file lock on append) behind a process-global `OnceLock` handle. Exposed via `composio.list_trigger_history`.
+- **Trigger history** (`trigger_history.rs`): JSONL records under `<workspace>/state/triggers/YYYY-MM-DD.jsonl`, partitioned by UTC day, written inside the TinyConnectors module (exclusive file lock on append). The host keeps an opaque lease, closes it on sign-out/shutdown, and releases the old lease before switching user directories. Exposed via `composio.list_trigger_history`.
 - **Direct-mode API key**: stored in the encrypted keychain (via `credentials`); never logged/returned. `direct_auth/mod.rs` additionally tracks a process-local (non-persisted) consecutive-401 counter for the same key.
 - **Connected identities**: `<workspace>/integrations/composio_identities.json` (`identity_store.rs`). **User scope prefs**: `<workspace>/integrations/composio_user_scopes.json` (`ops::user_scopes`). Both written atomically (temp file + rename) under one process-wide lock (`file_store.rs`).
 - **Integrations cache**: warmed in the background after app startup/sign-in, then kept for the process lifetime. Connection create/delete, config changes, and a divergent `list_connections` response invalidate it; the change paths eagerly re-warm it. Idle time does not trigger a backend fetch on a chat turn (`connected_integrations.rs`).
@@ -199,3 +199,10 @@ Published from `ops/` via `crate::core::bus::BUS.publish` (`crate::core::events:
 - [Parent module README](../README.md)
 - [Third-party integrations](../../../../../gitbooks/features/integrations/README.md)
 - [tinyconnectors](../../../../../vendor/tinyconnectors/README.md)
+
+Connector argument preparation, calendar defaults, task-window filtering and
+provider classification use the v0.14.0 module's contract 1.13 operations. The
+host supplies configuration and policy context; it links only
+`tinyconnectors-bus`. Trigger history opens lazily through `OpenArchive`, with
+`RecordTrigger`, `ReadArchive` and `CloseArchive` handling all filesystem work.
+Cancelling an archive-open caller does not discard its eventual resource handle.

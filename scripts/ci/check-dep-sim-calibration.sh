@@ -110,11 +110,12 @@ cd "$(dirname "$0")/../.."
 # 315 -> 316 on 2026-10-09: cron and flows on the storage ports add the
 # first-party tinyflows-drivers crate (one package, one name; no new
 # external crate).
-# 316 -> 317 on 2026-10-10: storage-file is always on, adding the
-# first-party tinystoragedrivers-file crate (one package, one name; no new
-# external crate).
-# This matches the current `flows:339:317:2` entry in
+# 316 -> 317: storage-file adds the first-party file driver.
+# 317 -> 318: pre-core registry vocabulary adds the pure tinycomputer-bus.
+
+# This matches the current `flows:335:313:2` entry in
 # scripts/kernel-floor.limits; its preceding entries are historical.
-EXPECTED_NAMES=317
+# 318 -> 313: connector implementation cut (-8) and explicit flows loader (+3).
+EXPECTED_NAMES=313
 
 exec python3 scripts/dep-sim.py --cut-nothing --expect-names "${EXPECTED_NAMES}"

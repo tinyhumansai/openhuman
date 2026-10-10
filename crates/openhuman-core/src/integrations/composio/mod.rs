@@ -53,10 +53,11 @@ pub mod identity;
 pub mod identity_store;
 pub mod module_client;
 pub mod ops;
+pub(crate) mod processing;
 pub mod providers;
 pub mod schemas;
 pub mod tools;
-pub mod trigger_history;
+pub(crate) mod trigger_history;
 pub mod types;
 
 pub use crate::agent::prompts::types::ConnectedIntegration;

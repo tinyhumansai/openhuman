@@ -6,7 +6,7 @@
 //! concept. `CURRENT_AGENT_SANDBOX_MODE` carries the calling agent's sandbox
 //! mode; [`TASK_RECENCY_WINDOW`] carries an optional "only data newer than
 //! `now - window`" hint that the `composio_execute` handler applies to a
-//! curated set of task-fetch slugs (see `tinyconnectors::execute::apply_window_args`).
+//! curated set of task-fetch slugs (see `tinyconnectors-bus::PrepareArguments`).
 //!
 //! Why a task-local instead of a `Tool::execute` argument: the tool trait is
 //! invoked from many call sites (CLI, JSON-RPC, tests, agent loops). A

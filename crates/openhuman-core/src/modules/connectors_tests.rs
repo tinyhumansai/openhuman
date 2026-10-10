@@ -196,3 +196,54 @@ async fn reconciling_the_route_of_a_module_that_is_not_serving_loads_nothing() {
     // one that was serving stays serving.
     assert_eq!(crate::modules::ops::state_of(MODULE_ID), before);
 }
+
+#[test]
+fn unclassified_connector_faults_do_not_expose_remote_content() {
+    let error = tinybus::Error::MethodFailed {
+        name: "private-provider".into(),
+        message: "secret-token /home/private-user/document.txt".into(),
+    };
+    let message = super::bus_failure(methods::EXECUTE, &error);
+    assert!(message.contains("MODULE_CALL_REPORTED: module execution failed"));
+    assert!(!message.contains("secret-token"));
+    assert!(!message.contains("/home/private-user"));
+}
+
+#[cfg(feature = "crash-reporting")]
+#[test]
+fn classified_provider_errors_remain_product_output_and_emit_one_sanitized_event() {
+    let provider_message =
+        "[composio:error:auth] private-test-token /home/private-user/document.txt";
+    let error = tinybus::Error::MethodFailed {
+        name: "ai.tinyhumans.tinybus.Error.Failed".into(),
+        message: provider_message.into(),
+    };
+    let events = sentry::test::with_captured_events(|| {
+        let message = super::bus_failure(methods::EXECUTE, &error);
+        assert_eq!(message, provider_message);
+        crate::core::observability::report_error_or_expected(&message, "rpc", "invoke_method", &[]);
+    });
+    assert_eq!(events.len(), 1);
+    let captured = format!("{:?}", events[0]);
+    assert!(!captured.contains("private-test-token"));
+    assert!(!captured.contains("/home/private-user"));
+    assert_eq!(
+        events[0].tags.get("module").map(String::as_str),
+        Some(MODULE_ID)
+    );
+    assert_eq!(
+        events[0].tags.get("reason_code").map(String::as_str),
+        Some("module_fault")
+    );
+}
+
+#[test]
+fn direct_auth_refusals_preserve_the_provider_status_and_prevent_duplicate_reports() {
+    let error =
+        tinybus::Error::failed("Composio v3 connected_accounts failed: HTTP 401: Invalid API key");
+    let message = super::bus_failure(methods::LIST_CONNECTIONS_DIRECT, &error);
+    assert!(message.contains("HTTP 401: Invalid API key"));
+    assert!(crate::core::observability::is_module_unavailable_message(
+        &message
+    ));
+}

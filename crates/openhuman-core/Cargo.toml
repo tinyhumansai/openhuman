@@ -230,14 +230,7 @@ tinymemory-integrations = { path = "../../vendor/tinymemory/crates/tinymemory-in
 # of it.
 #
 tinyconnectors-bus = { path = "../../vendor/tinyconnectors/crates/tinyconnectors-bus" }
-# tinyconnectors — the connector module's implementation crate, linked as a
-# plain Rust library (never as the loaded module) for its pure, host-agnostic
-# helpers: failure classification, action-argument preparation, the daily
-# trigger archive, calendar defaults and the task-recency window.
-# `default-features = false` drops the `module` feature, so no TinyBus adapter or
-# ABI export is compiled into the host (and no second copy of `tinybus` enters
-# the graph). Live connector calls still go over the bus to the loaded module.
-tinyconnectors = { path = "../../vendor/tinyconnectors/crates/tinyconnectors", default-features = false }
+
 
 
 # tinymcp — the Model Context Protocol client, extracted out of this tree
@@ -320,7 +313,9 @@ tinychannels = { version = "0.1", features = ["relay-websocket"], optional = tru
 # never loads a module. The kernel-floor ratchet catches exactly that, and did.
 tinybus = { path = "../../vendor/tinybus/crates/tinybus", default-features = false, features = ["macros", "uds"] }
 tinysearch-bus = { path = "../../vendor/tinysearch/crates/tinysearch-bus" }
-tinycomputer-bus = { path = "../../vendor/tinycomputer/crates/tinycomputer-bus", optional = true }
+# Registry vocabulary is available even when the loader is disabled, so the
+# pre-core client can identify and report an unavailable module safely.
+tinycomputer-bus = { path = "../../vendor/tinycomputer/crates/tinycomputer-bus" }
 # Desktop accessibility middleware, linked as a plain library (not through the
 # tinycomputer module): the voice pipeline needs focus lookup, paste validation,
 # permission checks and the Globe key synchronously and in-process. Deps are
@@ -831,7 +826,7 @@ tinymemes = ["dep:tinymemes"]
 # A loaded module is trusted in-process code with this process's privileges, and
 # tinybus never unloads one. See `crates/openhuman-core/src/modules/` before adding an entry
 # to the registry.
-modules = ["tinybus/modules", "dep:tinycomputer-bus"]
+modules = ["tinybus/modules"]
 # Voice + audio_toolkit domains: STT/TTS providers, the standalone dictation
 # server, always-on listening, and podcast audio generation/email delivery.
 # Default-ON — the desktop app always ships with voice. Slim / headless builds
@@ -952,7 +947,7 @@ media = ["tinyagents-harness/media"]
 # runtime `DomainSet::flows` flag (#4796): the feature narrows the compile-time
 # surface, `DomainSet` gates it at runtime.
 # NOTE: this gate does NOT drop `tinyagents` itself — 26+ domains consume it.
-flows = ["dep:tinyflows", "dep:tinyflows-catalog", "dep:tinyflows-copilot", "tinyflows-drivers/catalog", "tinyflows-sqlite/catalog"]
+flows = ["modules", "dep:tinyflows", "dep:tinyflows-catalog", "dep:tinyflows-copilot", "tinyflows-drivers/catalog", "tinyflows-sqlite/catalog"]
 # Skills domains: `openhuman::skills` (metadata/discovery/install),
 # `openhuman::skill_runtime` (SKILL.md execution + the skill_executor agent),
 # and `openhuman::skill_registry` (remote catalogs + the skill_setup agent).

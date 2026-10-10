@@ -347,11 +347,18 @@ impl ComposioActionTool {
             iana = %iana,
             "[composio][per-action] applying calendar query defaults pre-dispatch"
         );
-        let args = tinyconnectors::execute::apply_calendar_query_defaults(
+        let args = match super::processing::prepare(
+            &live_config,
             &self.action_name,
             Some(args),
-            &iana,
-        );
+            Some(iana),
+            None,
+        )
+        .await
+        {
+            Ok(args) => args,
+            Err(error) => return (live_config, Ok(ToolResult::error(error))),
+        };
 
         let started = std::time::Instant::now();
         // Allow the agent to override the baked-in connection_id via args
