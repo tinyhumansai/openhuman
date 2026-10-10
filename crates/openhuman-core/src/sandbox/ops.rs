@@ -25,8 +25,8 @@ use std::time::Duration;
 /// prevents Windows paths from being passed into Linux Docker containers.
 ///
 /// They were missing when this defect was found, and it survived the first
-/// round of fixes because the four tool launchers (`shell`, `node_exec`,
-/// `npm_exec`, `python_exec`) each carry their own copy of the allow-list and
+/// round of fixes because the tool launchers now share the shell and flows code-runner paths rather than
+/// carrying separate copies of the allow-list and
 /// had already been patched: the built-in `orchestrator` runs with
 /// `sandbox_mode = "sandboxed"`, and all four tools divert to
 /// [`crate::sandbox`] *before* reaching those lists, so the host spawn paths

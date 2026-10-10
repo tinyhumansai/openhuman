@@ -249,9 +249,6 @@ const messages: TranslationMap = {
   'settings.tokenUsage.codeDesc': 'Mantieni le firme, comprimi i corpi delle funzioni.',
   'settings.tokenUsage.html': 'HTML',
   'settings.tokenUsage.htmlDesc': 'Rimuovi il markup per ottenere testo leggibile.',
-  'settings.tokenUsage.ml': 'Compressore di testo ML',
-  'settings.tokenUsage.mlDesc':
-    'Modello ModernBERT locale per testo semplice (richiede l’ambiente di esecuzione Python).',
   'settings.tokenUsage.ccrTitle': 'Cache e recupero (CCR)',
   'settings.tokenUsage.ccrDesc':
     'Gli originali compattati vengono memorizzati nella cache così l’agente può recuperare il testo completo su richiesta.',
@@ -3460,8 +3457,6 @@ const messages: TranslationMap = {
 
   'announcement.gotIt': 'Ho capito',
   'harnessInit.subtitle': 'OpenHuman sta preparando i componenti necessari al primo avvio.',
-  'harnessInit.stepPython': 'Ambiente di esecuzione Python',
-  'harnessInit.stepNode': 'Ambiente di esecuzione Node.js',
   'harnessInit.statePending': 'In attesa',
   'harnessInit.stateRunning': 'Installazione…',
   'harnessInit.stateDone': 'Pronto',

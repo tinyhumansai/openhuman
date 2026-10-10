@@ -236,8 +236,6 @@ const messages: TranslationMap = {
   'settings.tokenUsage.codeDesc': 'الاحتفاظ بالتواقيع وطيّ أجسام الدوال.',
   'settings.tokenUsage.html': 'HTML',
   'settings.tokenUsage.htmlDesc': 'إزالة الترميز لإظهار نص قابل للقراءة.',
-  'settings.tokenUsage.ml': 'ضاغط النص بالتعلّم الآلي',
-  'settings.tokenUsage.mlDesc': 'نموذج ModernBERT محلي للنص العادي (يتطلب بيئة تشغيل Python).',
   'settings.tokenUsage.ccrTitle': 'التخزين المؤقت والاسترجاع (CCR)',
   'settings.tokenUsage.ccrDesc':
     'يتم تخزين النسخ الأصلية المضغوطة مؤقتًا حتى يتمكّن الوكيل من جلب النص الكامل عند الطلب.',
@@ -3328,8 +3326,6 @@ const messages: TranslationMap = {
 
   'announcement.gotIt': 'حسناً',
   'harnessInit.subtitle': 'يقوم OpenHuman بتجهيز المكونات التي يحتاجها عند التشغيل الأول.',
-  'harnessInit.stepPython': 'بيئة تشغيل Python',
-  'harnessInit.stepNode': 'بيئة تشغيل Node.js',
   'harnessInit.statePending': 'في الانتظار',
   'harnessInit.stateRunning': 'جارٍ التثبيت…',
   'harnessInit.stateDone': 'جاهز',

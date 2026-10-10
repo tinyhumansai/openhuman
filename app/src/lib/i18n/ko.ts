@@ -241,8 +241,6 @@ const messages: TranslationMap = {
   'settings.tokenUsage.codeDesc': '시그니처는 유지하고 함수 본문은 접습니다.',
   'settings.tokenUsage.html': 'HTML',
   'settings.tokenUsage.htmlDesc': '마크업을 제거하여 읽기 쉬운 텍스트로 만듭니다.',
-  'settings.tokenUsage.ml': 'ML 텍스트 압축기',
-  'settings.tokenUsage.mlDesc': '일반 텍스트용 로컬 ModernBERT 모델(Python 런타임 필요).',
   'settings.tokenUsage.ccrTitle': '캐시 및 복구(CCR)',
   'settings.tokenUsage.ccrDesc':
     '압축된 원본이 캐시되어 에이전트가 필요할 때 전체 텍스트를 가져올 수 있습니다.',
@@ -3364,8 +3362,6 @@ const messages: TranslationMap = {
 
   'announcement.gotIt': '확인',
   'harnessInit.subtitle': 'OpenHuman이 처음 실행에 필요한 구성 요소를 준비하고 있습니다.',
-  'harnessInit.stepPython': 'Python 런타임',
-  'harnessInit.stepNode': 'Node.js 런타임',
   'harnessInit.statePending': '대기 중',
   'harnessInit.stateRunning': '설치 중…',
   'harnessInit.stateDone': '준비됨',

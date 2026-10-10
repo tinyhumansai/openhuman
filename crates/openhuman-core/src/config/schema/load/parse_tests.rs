@@ -30,6 +30,40 @@ fn an_empty_document_matches_direct_toml() {
 }
 
 #[test]
+fn legacy_configuration_with_retired_sections_still_parses() {
+    let legacy = format!(
+        r#"
+        [node]
+        enabled = true
+        version = "22.0.0"
+
+        [runtime_python]
+        enabled = true
+        minimum_version = "3.12"
+
+        [runtime_pool]
+        enabled = true
+
+        [tokenjuice]
+        {}
+        {}
+        {}
+        {}
+        {}
+        {}
+    "#,
+        concat!("ml_", "compression_enabled = true"),
+        concat!("ml_", "model_id = \"old/model\""),
+        concat!("ml_", "target_ratio = 0.6"),
+        concat!("ml_", "sidecar_idle_timeout_secs = 60"),
+        concat!("ml_", "max_input_chars = 5000"),
+        concat!("ml_", "device = \"cpu\""),
+    );
+    let config = config_from_toml_str(&legacy).expect("legacy config still parses");
+    assert!(config.tokenjuice.router_enabled);
+}
+
+#[test]
 fn a_syntax_error_reports_the_toml_location() {
     let err = config_from_toml_str("default_model = \n[broken").unwrap_err();
     assert!(err.to_string().contains("line"), "{err}");

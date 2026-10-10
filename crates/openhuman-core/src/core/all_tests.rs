@@ -1490,36 +1490,6 @@ fn memory_controllers_form_one_contiguous_run_in_aggregator_order() {
     );
 }
 
-// ---- runtime-node gate -----------------------------------------------------
-
-#[test]
-#[cfg(feature = "runtime-node")]
-fn javascript_controllers_registered_when_feature_on() {
-    let ns: Vec<&str> = all_controller_schemas()
-        .iter()
-        .map(|s| s.namespace)
-        .collect();
-    assert!(
-        ns.contains(&"javascript"),
-        "runtime-node ON must register the `javascript` namespace"
-    );
-}
-
-/// The half that proves the gate removes anything: absent, not
-/// registered-and-failing.
-#[test]
-#[cfg(not(feature = "runtime-node"))]
-fn javascript_controllers_absent_when_feature_off() {
-    let ns: Vec<&str> = all_controller_schemas()
-        .iter()
-        .map(|s| s.namespace)
-        .collect();
-    assert!(
-        !ns.contains(&"javascript"),
-        "runtime-node OFF must not register the `javascript` namespace"
-    );
-}
-
 #[path = "all_extensions_tests.rs"]
 mod extensions_tests;
 

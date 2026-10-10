@@ -51,8 +51,7 @@ pub struct DockerRuntimeConfig {
     pub allowed_workspace_roots: Vec<String>,
 }
 
-/// `[shell]` — behaviour of the shell-family tools (`shell`, `node_exec`,
-/// `npm_exec`, monitor) when they spawn child processes.
+/// `[shell]` — behaviour of the shell-family tools (`shell`, monitor) when they spawn child processes.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct ShellConfig {

@@ -229,8 +229,6 @@ const messages: TranslationMap = {
   'settings.tokenUsage.codeDesc': '保留签名，折叠函数主体。',
   'settings.tokenUsage.html': 'HTML',
   'settings.tokenUsage.htmlDesc': '去除标记，转为可读文本。',
-  'settings.tokenUsage.ml': 'ML 文本压缩器',
-  'settings.tokenUsage.mlDesc': '用于纯文本的本地 ModernBERT 模型（需要 Python 运行时）。',
   'settings.tokenUsage.ccrTitle': '缓存与恢复（CCR）',
   'settings.tokenUsage.ccrDesc': '压缩后的原文会被缓存，以便代理可按需获取完整文本。',
   'settings.tokenUsage.ccrEnabled': '保留原文以便恢复',
@@ -3206,8 +3204,6 @@ const messages: TranslationMap = {
 
   'announcement.gotIt': '知道了',
   'harnessInit.subtitle': 'OpenHuman 正在准备首次启动所需的组件。',
-  'harnessInit.stepPython': 'Python 运行时',
-  'harnessInit.stepNode': 'Node.js 运行时',
   'harnessInit.statePending': '等待中',
   'harnessInit.stateRunning': '正在安装…',
   'harnessInit.stateDone': '就绪',

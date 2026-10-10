@@ -30,7 +30,7 @@ pub struct SandboxPolicy {
     /// local jail's output capture, lives under it so nothing appears in
     /// `workspace_root` while a command runs.
     pub state_dir: PathBuf,
-    /// Additional read-only mounts (e.g. `/usr/lib`, managed node).
+    /// Additional read-only mounts (e.g. `/usr/lib`).
     pub read_only_mounts: Vec<PathBuf>,
     /// Additional read-write mounts (e.g. `~/.cargo`). Local jail only.
     #[serde(default)]

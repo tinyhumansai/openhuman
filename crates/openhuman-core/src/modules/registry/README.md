@@ -23,7 +23,6 @@ values for a family of related modules:
 - [`records_extra.rs`](./records_extra.rs): `TINYBOX`, `TINYCHANNELS`, `TINYHOSTS`.
 - [`records_mcp_connectors.rs`](./records_mcp_connectors.rs): `TINYCONNECTORS`, `TINYMCP`.
 - `records_juice.rs`: `TINYJUICE`.
-- [`records_runtime.rs`](./records_runtime.rs): `TINYRUNTIME`, `TINYRUNTIME_NODEJS`, `TINYRUNTIME_PYTHON`.
 - [`records_search.rs`](./records_search.rs): `TINYSEARCH`.
 - [`records_voice.rs`](./records_voice.rs): `TINYVOICE`.
 

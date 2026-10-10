@@ -1,25 +1,6 @@
 {
   "$comment": [
-    "Provider modules released from their OWN repositories on their own version line",
-    "(so their version can never equal a vendor/ tag). See scripts/ci/check-module-pins.mjs.",
-    "",
-    "`version` is the provider release the registry record must name; `built_against` is the",
-    "full commit of the shared source submodule (vendor/tinyruntime) that release was built",
-    "from, i.e. the provider repository's own pin at that tag. check-module-pins.mjs fails",
-    "when the host's gitlink moves off `built_against`: re-release the provider and update",
-    "this file together with the registry record. Take `built_against` from",
-    "`gh api repos/<repo>/contents/vendor/tinyruntime?ref=v<version>`."
+    "Provider modules released from their own repositories on their own version line. See scripts/ci/check-module-pins.mjs."
   ],
-  "providers": {
-    "tinyruntime-nodejs": {
-      "repo": "tinyhumansai/tinyruntime-nodejs",
-      "version": "0.2.7",
-      "built_against": "e685357099722a25c0d61e1678df69b71a049033"
-    },
-    "tinyruntime-python": {
-      "repo": "tinyhumansai/tinyruntime-python",
-      "version": "0.2.7",
-      "built_against": "e685357099722a25c0d61e1678df69b71a049033"
-    }
-  }
+  "providers": {}
 }

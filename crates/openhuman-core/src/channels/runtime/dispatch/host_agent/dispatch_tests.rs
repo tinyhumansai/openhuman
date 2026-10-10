@@ -89,7 +89,6 @@ fn config(tmp: &tempfile::TempDir, agent_id: Option<&str>) -> Config {
         ..Config::default()
     };
     config.local_ai.runtime_enabled = false;
-    config.runtime_python.enabled = false;
     config.memory.conversations.enabled = false;
     config.agent.session_dual_write = false;
     config.agent.session_shadow_reads = false;

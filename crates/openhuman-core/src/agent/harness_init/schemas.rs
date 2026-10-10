@@ -34,7 +34,7 @@ fn step_status_type() -> TypeSchema {
             FieldSchema {
                 name: "id",
                 ty: TypeSchema::String,
-                comment: "Stable step identifier (e.g. 'python_runtime').",
+                comment: "Stable step identifier.",
                 required: true,
             },
             FieldSchema {

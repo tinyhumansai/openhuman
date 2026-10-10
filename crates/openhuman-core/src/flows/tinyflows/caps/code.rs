@@ -21,7 +21,7 @@ use crate::security::{CommandClass, SecurityPolicy};
 /// [`CodeRunner`] adapter running sandboxed user code via
 /// `crates/openhuman-core/src/sandbox/ops.rs` (`resolve_sandbox_policy` +
 /// `execute_in_sandbox`), modeled on
-/// `crates/openhuman-core/src/tools/impl/system/node_exec.rs::run_sandboxed`.
+/// the shell tool sandbox runner.
 ///
 /// **Mismatch handled here:** the sandbox runs a shell command string, not a
 /// `(language, source, input)` triple. `source` is treated as a function body
@@ -31,7 +31,7 @@ use crate::security::{CommandClass, SecurityPolicy};
 /// (`tinyflows::nodes::integration::code` — e.g. `"source": "return 1;"`).
 ///
 /// Requires `node`/`python3` on the `PATH` the sandbox backend runs under;
-/// there is no managed toolchain wiring here (unlike `node_exec`'s
+/// there is no managed toolchain wiring here (the same as shell
 /// `NodeBootstrap`).
 ///
 /// **Phase 2 — autonomy-tier gating:** a `code` node runs arbitrary user code
@@ -223,7 +223,7 @@ pub(crate) fn python_harness(source: &str) -> String {
 }
 
 /// POSIX single-quote shell escaping, mirroring
-/// `tools/impl/system/node_exec.rs::shell_quote`.
+/// the shell quoting helper.
 pub(crate) fn shell_quote(s: &str) -> String {
     let escaped = s.replace('\'', "'\\''");
     format!("'{escaped}'")

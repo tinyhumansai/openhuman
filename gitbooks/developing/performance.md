@@ -64,7 +64,7 @@ Note that the smallest figure here, 15.2 MiB, is private memory in a slim runnin
 
 Cargo features (`media`, `skills`, `flows`, `mcp`, `channels`, `http-server`, `scheduler-gate`, `file-logging`, `modules` and more) decide what compiles in. Beyond that, several domains ship as loadable native `cdylib` modules that are not linked into the core binary at all.
 
-The compiled registry pins fourteen records across twelve module names, because `tinyruntime` ships as a router plus two language providers. The modules are `tinycomputer`, `tinysearch`, `tinydocs`, `tinywallet`, `tinyjuice`, `tinyvoice`, `tinyruntime` (with its Node and Python providers), `tinymcp`, `tinyconnectors`, `tinybox`, `tinychannels` and `tinyhosts`. Each sits behind a small `*-bus` contract crate. A module loads into the same process and shares its privileges, so the admission checks (ABI, manifest, dependency, digest) matter more than for an ordinary dependency. See [Loadable modules](loadable-modules.md).
+The compiled registry pins eleven module names: `tinycomputer`, `tinysearch`, `tinydocs`, `tinywallet`, `tinyjuice`, `tinyvoice`, `tinymcp`, `tinyconnectors`, `tinybox`, `tinychannels` and `tinyhosts`. Each sits behind a small `*-bus` contract crate. A module loads into the same process and shares its privileges, so the admission checks (ABI, manifest, dependency, digest) matter more than for an ordinary dependency. See [Loadable modules](loadable-modules.md).
 
 ## The dependency-floor ratchet
 

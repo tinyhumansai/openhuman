@@ -2,21 +2,14 @@ import { useT } from '../../lib/i18n/I18nContext';
 import type { HarnessInitSnapshot, HarnessInitStep } from '../../services/harnessInitService';
 import { CheckIcon, CloseIcon, Spinner } from '../ui/icons';
 
-/** Map a known step id to its i18n label key; fall back to the server label. */
-function stepLabel(t: (key: string) => string, step: HarnessInitStep): string {
-  switch (step.id) {
-    case 'python_runtime':
-      return t('harnessInit.stepPython');
-    case 'node_runtime':
-      return t('harnessInit.stepNode');
-    default:
-      return step.label;
-  }
+/** Use the step label supplied by the core. */
+function stepLabel(step: HarnessInitStep): string {
+  return step.label;
 }
 
 function StepRow({ step }: { step: HarnessInitStep }) {
   const { t } = useT();
-  const label = stepLabel(t, step);
+  const label = stepLabel(step);
 
   let icon: React.ReactNode;
   let stateText: string;

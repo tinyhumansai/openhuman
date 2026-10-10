@@ -224,7 +224,7 @@ impl Tool for SpawnParallelAgentsTool {
     /// each worker's research is cut short. The fan-out is already bounded
     /// internally — by `max_concurrency`, the run cancellation token, and each
     /// sub-agent's own iteration/turn caps — so it governs its own lifetime,
-    /// like the long-running scripting tools (`shell`, `node_exec`).
+    /// like the long-running shell tool.
     fn timeout_policy(&self, _args: &serde_json::Value) -> ToolTimeout {
         ToolTimeout::Unbounded
     }

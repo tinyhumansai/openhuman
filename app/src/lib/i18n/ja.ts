@@ -161,9 +161,6 @@ const messages: TranslationMap = {
   'settings.tokenUsage.codeDesc': 'シグネチャを保持し、関数本体を折りたたみます。',
   'settings.tokenUsage.html': 'HTML',
   'settings.tokenUsage.htmlDesc': 'マークアップを除去し、読みやすいテキストに変換します。',
-  'settings.tokenUsage.ml': 'MLテキスト圧縮器',
-  'settings.tokenUsage.mlDesc':
-    'プレーンテキスト用のローカルModernBERTモデル（Pythonランタイムが必要）。',
   'settings.tokenUsage.ccrTitle': 'キャッシュと復元（CCR）',
   'settings.tokenUsage.ccrDesc':
     '圧縮された元データをキャッシュし、エージェントが必要に応じて全文を取得できるようにします。',
@@ -3998,8 +3995,6 @@ const messages: TranslationMap = {
   'harnessInit.title': 'セットアップ中',
   'announcement.gotIt': '了解',
   'harnessInit.subtitle': 'OpenHuman は初回起動時に必要なコンポーネントを準備しています。',
-  'harnessInit.stepPython': 'Python ランタイム',
-  'harnessInit.stepNode': 'Node.js ランタイム',
   'harnessInit.statePending': '待機中',
   'harnessInit.stateRunning': 'インストール中…',
   'harnessInit.stateDone': '準備完了',

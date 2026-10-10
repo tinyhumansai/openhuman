@@ -1,17 +1,7 @@
-//! `harness_init` — first-class orchestration of one-time, first-run setup.
+//! Startup initialization and progress reporting for the frontend.
 //!
-//! On a fresh install several provisioning steps (managed Python runtime,
-//! Kompress/torch, managed Node runtime) used to run lazily on
-//! first use, with no user-visible feedback. This domain runs them eagerly at
-//! core startup (spawned non-blocking after the RPC server is ready), tracks
-//! per-step progress in an in-memory snapshot, and exposes it over
-//! `openhuman.harness_init_status` / `openhuman.harness_init_run` for the
-//! frontend initialization screen.
-//!
-//! Steps delegate to the existing idempotent provisioning code
-//! (`crate::runtime::python`, `crate::runtime::python_server` for
-//! Kompress, `crate::runtime::node`) — this module orchestrates and reports,
-//! it does not reimplement downloads.
+//! Language runtimes are provided by the host on `PATH`; this domain does not
+//! install Node.js or Python.
 
 pub mod bus;
 pub mod ops;

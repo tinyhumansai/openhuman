@@ -5,9 +5,9 @@ use crate::agent::host_runtime::{NativeRuntime, RuntimeAdapter};
 use crate::config::Config;
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
-use crate::runtime::node::types::{ExecuteToolOutcome, RuntimeToolSummary};
 use crate::security::{CommandClass, SecurityPolicy};
 use crate::tools;
+use crate::tools::native_ops_types::{ExecuteToolOutcome, RuntimeToolSummary};
 use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolScope};
 use tracing::{debug, trace};
 
@@ -79,7 +79,7 @@ fn command_class_for_tool(
 pub fn build_runtime_tools(config: &Config) -> Result<Vec<Box<dyn Tool>>, String> {
     debug!(
         workspace = %config.workspace_dir.display(),
-        "[runtime_node::ops] build_runtime_tools: start"
+        "[native_ops] build_runtime_tools: start"
     );
     let security = Arc::new(SecurityPolicy::from_config(
         &config.autonomy,
@@ -93,7 +93,7 @@ pub fn build_runtime_tools(config: &Config) -> Result<Vec<Box<dyn Tool>>, String
     )
     .map_err(|e| e.to_string())?;
     let runtime: Arc<dyn RuntimeAdapter> = Arc::new(NativeRuntime::new());
-    trace!("[runtime_node::ops] build_runtime_tools: tools::ops::all_tools_with_runtime");
+    trace!("[native_ops] build_runtime_tools: tools::ops::all_tools_with_runtime");
     let built = tools::ops::all_tools_with_runtime(
         Arc::new(config.clone()),
         &security,
@@ -108,22 +108,19 @@ pub fn build_runtime_tools(config: &Config) -> Result<Vec<Box<dyn Tool>>, String
     );
     debug!(
         tool_count = built.len(),
-        "[runtime_node::ops] build_runtime_tools: done"
+        "[native_ops] build_runtime_tools: done"
     );
     Ok(built)
 }
 
 pub fn list_tools(config: &Config) -> Result<Vec<RuntimeToolSummary>, String> {
-    debug!("[runtime_node::ops] list_tools: start");
+    debug!("[native_ops] list_tools: start");
     let mut summaries: Vec<RuntimeToolSummary> = build_runtime_tools(config)?
         .into_iter()
         .map(|tool| summarize_tool(tool.as_ref()))
         .collect();
     summaries.sort_by(|a, b| a.name.cmp(&b.name));
-    debug!(
-        count = summaries.len(),
-        "[runtime_node::ops] list_tools: done"
-    );
+    debug!(count = summaries.len(), "[native_ops] list_tools: done");
     Ok(summaries)
 }
 
@@ -132,7 +129,7 @@ pub fn classify_tool_call(
     tool_name: &str,
     args: &serde_json::Value,
 ) -> Result<CommandClass, String> {
-    debug!(tool_name, "[runtime_node::ops] classify_tool_call: start");
+    debug!(tool_name, "[native_ops] classify_tool_call: start");
     let security =
         SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
     let tools = build_runtime_tools(config)?;
@@ -140,10 +137,7 @@ pub fn classify_tool_call(
         .into_iter()
         .find(|tool| tool.name() == tool_name)
         .ok_or_else(|| {
-            debug!(
-                tool_name,
-                "[runtime_node::ops] classify_tool_call: tool not found"
-            );
+            debug!(tool_name, "[native_ops] classify_tool_call: tool not found");
             format!("unknown tool `{tool_name}`")
         })?;
     let class = command_class_for_tool(&security, tool.as_ref(), args);
@@ -152,7 +146,7 @@ pub fn classify_tool_call(
         ?class,
         permission = %tool.permission_level_with_args(args),
         external_effect = tool.external_effect_with_args(args),
-        "[runtime_node::ops] classify_tool_call: done"
+        "[native_ops] classify_tool_call: done"
     );
     Ok(class)
 }
@@ -165,29 +159,26 @@ pub async fn execute_tool(
 ) -> Result<ExecuteToolOutcome, String> {
     debug!(
         tool_name,
-        prefer_markdown, "[runtime_node::ops] execute_tool: start"
+        prefer_markdown, "[native_ops] execute_tool: start"
     );
     let tools = build_runtime_tools(config)?;
     trace!(
         tool_count = tools.len(),
         tool_name,
-        "[runtime_node::ops] execute_tool: runtime tools built"
+        "[native_ops] execute_tool: runtime tools built"
     );
     let tool = tools
         .into_iter()
         .find(|tool| tool.name() == tool_name)
         .ok_or_else(|| {
-            debug!(
-                tool_name,
-                "[runtime_node::ops] execute_tool: tool not found"
-            );
+            debug!(tool_name, "[native_ops] execute_tool: tool not found");
             format!("unknown tool `{tool_name}`")
         })?;
 
     let started = Instant::now();
     debug!(
         tool_name,
-        "[runtime_node::ops] execute_tool: publish ToolExecutionStarted"
+        "[native_ops] execute_tool: publish ToolExecutionStarted"
     );
     BUS.publish(DomainEvent::ToolExecutionStarted {
         tool_name: tool_name.to_string(),
@@ -196,7 +187,7 @@ pub async fn execute_tool(
 
     trace!(
         tool_name,
-        "[runtime_node::ops] execute_tool: dispatch execute_with_options"
+        "[native_ops] execute_tool: dispatch execute_with_options"
     );
     let execution = tool
         .execute_with_options(args, ToolCallOptions { prefer_markdown })
@@ -205,7 +196,7 @@ pub async fn execute_tool(
             debug!(
                 tool_name,
                 error = %error,
-                "[runtime_node::ops] execute_tool: tool execution failed"
+                "[native_ops] execute_tool: tool execution failed"
             );
             format!("tool `{tool_name}` failed: {error:#}")
         });
@@ -217,7 +208,7 @@ pub async fn execute_tool(
         .unwrap_or(false);
     debug!(
         tool_name,
-        success, elapsed_ms, "[runtime_node::ops] execute_tool: publish ToolExecutionCompleted"
+        success, elapsed_ms, "[native_ops] execute_tool: publish ToolExecutionCompleted"
     );
     BUS.publish(DomainEvent::ToolExecutionCompleted {
         tool_name: tool_name.to_string(),
@@ -231,7 +222,7 @@ pub async fn execute_tool(
         tool_name,
         success = !result.is_error,
         elapsed_ms,
-        "[runtime_node::ops] execute_tool: returning outcome"
+        "[native_ops] execute_tool: returning outcome"
     );
     Ok(ExecuteToolOutcome {
         tool_name: tool_name.to_string(),

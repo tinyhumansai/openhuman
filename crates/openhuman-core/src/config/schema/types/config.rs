@@ -411,20 +411,6 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_embeddings: Option<CustomEmbeddingsConfig>,
 
-    /// Node.js managed runtime configuration (skills that need `node`/`npm`).
-    #[serde(default)]
-    pub node: NodeConfig,
-
-    /// Python managed runtime configuration (Python-backed MCP servers and
-    /// other Python subprocess integrations).
-    #[serde(default)]
-    pub runtime_python: RuntimePythonConfig,
-
-    /// Shared language-runtime pool (long-lived `node`/`python` workers reused
-    /// across skill runs and `node_exec` instead of one child per run, #5106).
-    #[serde(default)]
-    pub runtime_pool: RuntimePoolConfig,
-
     /// TokenJuice content-router / compaction configuration.
     #[serde(default)]
     pub tokenjuice: TokenjuiceConfig,

@@ -245,9 +245,6 @@ const messages: TranslationMap = {
   'settings.tokenUsage.codeDesc': 'हस्ताक्षर रखें, फ़ंक्शन बॉडी को संक्षिप्त करें।',
   'settings.tokenUsage.html': 'HTML',
   'settings.tokenUsage.htmlDesc': 'पठनीय टेक्स्ट के लिए मार्कअप हटाएँ।',
-  'settings.tokenUsage.ml': 'ML टेक्स्ट कंप्रेसर',
-  'settings.tokenUsage.mlDesc':
-    'सादे टेक्स्ट के लिए स्थानीय ModernBERT मॉडल (Python रनटाइम आवश्यक)।',
   'settings.tokenUsage.ccrTitle': 'कैश और पुनर्प्राप्ति (CCR)',
   'settings.tokenUsage.ccrDesc':
     'संपीड़ित मूल प्रतियाँ कैश की जाती हैं ताकि एजेंट माँग पर पूरा टेक्स्ट प्राप्त कर सके।',
@@ -3400,8 +3397,6 @@ const messages: TranslationMap = {
 
   'announcement.gotIt': 'समझ गया',
   'harnessInit.subtitle': 'OpenHuman पहली बार शुरू होने पर आवश्यक घटक तैयार कर रहा है।',
-  'harnessInit.stepPython': 'Python रनटाइम',
-  'harnessInit.stepNode': 'Node.js रनटाइम',
   'harnessInit.statePending': 'प्रतीक्षारत',
   'harnessInit.stateRunning': 'इंस्टॉल हो रहा है…',
   'harnessInit.stateDone': 'तैयार',

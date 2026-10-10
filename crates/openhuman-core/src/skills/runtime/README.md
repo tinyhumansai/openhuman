@@ -9,7 +9,7 @@ Responsibilities:
 
 - Start a skill run in the background and cancel an in-flight one.
 - List recent runs and read run-log slices.
-- Resolve the reusable Node/Python runtimes before script-backed skills run.
+- Probe Node.js and Python availability on the host PATH for script-backed skills.
 
 A run is an `orchestrator` `Agent` built per run
 (`Agent::from_config_for_agent(&config, "orchestrator")`),
@@ -26,8 +26,7 @@ one spawn path.
 
 It reuses, rather than duplicates:
 
-- `crate::runtime::node` (`NodeBootstrap`) and `crate::runtime::python`
-  (`PythonBootstrap`) for interpreter resolution.
+- the host `node` and `python3` commands for runtime availability probes.
 - `crate::skills::registry` for skill lookup and required-input checks,
   `crate::skills::preflight` for the `[github]` gate, `crate::skills::run_log`
   for log paths, cancellation tokens, and run scanning, and
