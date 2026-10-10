@@ -141,3 +141,40 @@ fn an_empty_role_uses_the_module_default_order() {
     let order = role_order(&config, Role::Search);
     assert_eq!(order.first().map(String::as_str), Some("exa"));
 }
+
+#[test]
+fn keenable_is_usable_without_a_key_once_selected() {
+    let mut config = config_with(&[("keenable", SearchProviderSettings::direct())]);
+    let resolved = resolve_with(&config, false);
+    let keenable = find(&resolved, "keenable").clone();
+    assert!(keenable.usable);
+    assert!(keenable.key_optional);
+    assert!(!keenable.key_configured);
+    assert_eq!(keenable.status(true), ProviderStatus::Ready);
+    assert_eq!(
+        effective_role_providers(&resolved, &config, Role::Search),
+        vec!["keenable".to_string()]
+    );
+    assert_eq!(
+        effective_role_providers(&resolved, &config, Role::Contents),
+        vec!["keenable".to_string()]
+    );
+
+    config.search.keenable.api_key = Some("k".into());
+    assert!(find(&resolve_with(&config, false), "keenable").key_configured);
+}
+
+#[test]
+fn keenable_stays_off_until_selected_and_is_the_only_key_optional_provider() {
+    let resolved = resolve_with(&Config::default(), true);
+    let keenable = find(&resolved, "keenable").clone();
+    assert!(!keenable.enabled);
+    assert!(!keenable.usable);
+    assert_eq!(keenable.status(true), ProviderStatus::Disabled);
+    let optional: Vec<&str> = resolved
+        .iter()
+        .filter(|p| p.key_optional)
+        .map(|p| p.id)
+        .collect();
+    assert_eq!(optional, vec!["keenable"]);
+}

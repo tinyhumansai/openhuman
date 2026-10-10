@@ -1044,6 +1044,9 @@ const messages: TranslationMap = {
   'settings.search.addProviderAria': 'Hubungkan {provider}',
   'settings.search.detailOwnKey': 'Kunci API milik Anda',
   'settings.search.detailNoKey': 'Belum ada kunci API',
+  'settings.search.detailKeyOptional': 'Tidak perlu kunci API',
+  'settings.search.optionalKeyHint':
+    'Opsional: {provider} bisa dipakai tanpa kunci. Kunci menaikkan batas lajunya.',
   'settings.search.detailNoUrl': 'Belum ada URL instans',
   'settings.search.deepResearchBadge': 'Riset mendalam',
   'settings.search.rowActions': 'Opsi {provider}',

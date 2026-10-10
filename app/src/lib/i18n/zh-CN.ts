@@ -947,6 +947,8 @@ const messages: TranslationMap = {
   'settings.search.addProviderAria': '连接 {provider}',
   'settings.search.detailOwnKey': '你自己的 API 密钥',
   'settings.search.detailNoKey': '尚未添加 API 密钥',
+  'settings.search.detailKeyOptional': '无需 API 密钥',
+  'settings.search.optionalKeyHint': '可选：{provider} 无需密钥即可使用，填写密钥可提高速率限制。',
   'settings.search.detailNoUrl': '尚未设置实例 URL',
   'settings.search.deepResearchBadge': '深度研究',
   'settings.search.rowActions': '{provider} 选项',

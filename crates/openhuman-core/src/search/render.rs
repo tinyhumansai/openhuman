@@ -28,6 +28,7 @@ pub fn provider_label(provider: &str) -> String {
         "tavily" => "Tavily".into(),
         "seltz" => "Seltz".into(),
         "searxng" => "SearXNG".into(),
+        "keenable" => "Keenable".into(),
         other => other.to_string(),
     }
 }

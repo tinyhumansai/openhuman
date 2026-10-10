@@ -1201,6 +1201,9 @@ const en: TranslationMap = {
   'settings.search.addProviderAria': 'Connect {provider}',
   'settings.search.detailOwnKey': 'Your own API key',
   'settings.search.detailNoKey': 'No API key yet',
+  'settings.search.detailKeyOptional': 'No API key needed',
+  'settings.search.optionalKeyHint':
+    'Optional: {provider} works without a key. A key raises its rate limits.',
   'settings.search.detailNoUrl': 'No instance URL yet',
   'settings.search.deepResearchBadge': 'Deep research',
   'settings.search.rowActions': '{provider} options',

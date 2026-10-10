@@ -188,3 +188,37 @@ fn search_off_disables_the_module_and_every_provider() {
     assert!(payload.providers.values().all(|provider| !provider.enabled));
     assert!(configured_tool_specs(&config).is_empty());
 }
+
+#[test]
+fn keenable_is_offered_without_a_key_and_gets_one_when_stored() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = config_in(dir.path());
+    select(
+        &mut config,
+        &[("keenable", SearchProviderSettings::direct())],
+    );
+    let payload = module_config(&config);
+    let keenable = &payload.providers["keenable"];
+    assert!(keenable.enabled);
+    assert_eq!(keenable.route, ProviderRoute::Direct);
+    assert!(keenable.credential.is_none());
+    let names: Vec<String> = configured_tool_specs(&config)
+        .into_iter()
+        .map(|spec| spec.name)
+        .collect();
+    assert_eq!(
+        names,
+        vec![
+            "web_search_tool".to_string(),
+            "web_contents_tool".to_string()
+        ]
+    );
+
+    config.search.keenable.api_key = Some("test-secret".into());
+    let payload = module_config(&config);
+    assert_eq!(
+        payload.providers["keenable"].credential.as_deref(),
+        Some("test-secret")
+    );
+    assert!(!format!("{payload:?}").contains("test-secret"));
+}

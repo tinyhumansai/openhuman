@@ -102,10 +102,12 @@ export const hasBaseUrl = (provider: SearchProviderInfo) => provider.base_url !=
 
 /**
  * Whether turning the provider on over its direct route first needs input:
- * a key it has not got, or an instance URL that is empty.
+ * a key it has not got (unless the key is optional), or an instance URL that
+ * is empty.
  */
 export const directNeedsSetup = (provider: SearchProviderInfo) =>
-  (provider.takes_key && !provider.key_configured) || (hasBaseUrl(provider) && !provider.base_url);
+  (provider.takes_key && !provider.key_configured && !provider.key_optional) ||
+  (hasBaseUrl(provider) && !provider.base_url);
 
 const SWATCH_ICONS: Record<string, IconType> = {
   gemini: SiGooglegemini,
@@ -123,6 +125,7 @@ const SWATCH_TONES: Record<string, string> = {
   querit: 'bg-[#0F766E]',
   seltz: 'bg-[#DB2777]',
   searxng: 'bg-[#3050FF]',
+  keenable: 'bg-[#005CFF]',
 };
 
 /**

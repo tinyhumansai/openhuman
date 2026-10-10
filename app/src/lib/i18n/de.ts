@@ -1065,6 +1065,9 @@ const messages: TranslationMap = {
   'settings.search.addProviderAria': '{provider} verbinden',
   'settings.search.detailOwnKey': 'Eigener API-Schlüssel',
   'settings.search.detailNoKey': 'Noch kein API-Schlüssel',
+  'settings.search.detailKeyOptional': 'Kein API-Schlüssel nötig',
+  'settings.search.optionalKeyHint':
+    'Optional: {provider} funktioniert ohne Schlüssel. Ein Schlüssel hebt die Ratenlimits an.',
   'settings.search.detailNoUrl': 'Noch keine Instanz-URL',
   'settings.search.deepResearchBadge': 'Tiefenrecherche',
   'settings.search.rowActions': 'Optionen für {provider}',

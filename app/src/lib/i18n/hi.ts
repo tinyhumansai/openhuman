@@ -1029,6 +1029,9 @@ const messages: TranslationMap = {
   'settings.search.addProviderAria': '{provider} कनेक्ट करें',
   'settings.search.detailOwnKey': 'आपकी अपनी API कुंजी',
   'settings.search.detailNoKey': 'अभी कोई API कुंजी नहीं',
+  'settings.search.detailKeyOptional': 'API कुंजी की ज़रूरत नहीं',
+  'settings.search.optionalKeyHint':
+    'वैकल्पिक: {provider} बिना कुंजी के भी काम करता है। कुंजी जोड़ने से दर सीमा बढ़ जाती है।',
   'settings.search.detailNoUrl': 'अभी कोई इंस्टेंस URL नहीं',
   'settings.search.deepResearchBadge': 'गहन शोध',
   'settings.search.rowActions': '{provider} विकल्प',

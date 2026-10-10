@@ -1182,6 +1182,9 @@ const messages: TranslationMap = {
   'settings.search.addProviderAria': '{provider} を接続',
   'settings.search.detailOwnKey': '独自の API キー',
   'settings.search.detailNoKey': 'API キーが未設定です',
+  'settings.search.detailKeyOptional': 'API キーは不要です',
+  'settings.search.optionalKeyHint':
+    '任意: {provider} はキーなしでも使えます。キーを設定するとレート制限が緩和されます。',
   'settings.search.detailNoUrl': 'インスタンス URL が未設定です',
   'settings.search.deepResearchBadge': 'ディープリサーチ',
   'settings.search.rowActions': '{provider} のオプション',

@@ -1006,6 +1006,9 @@ const messages: TranslationMap = {
   'settings.search.addProviderAria': 'ربط {provider}',
   'settings.search.detailOwnKey': 'مفتاح API الخاص بك',
   'settings.search.detailNoKey': 'لا يوجد مفتاح API بعد',
+  'settings.search.detailKeyOptional': 'لا يلزم مفتاح API',
+  'settings.search.optionalKeyHint':
+    'اختياري: يعمل {provider} بدون مفتاح، والمفتاح يرفع حدود الاستخدام.',
   'settings.search.detailNoUrl': 'لا يوجد عنوان URL للمثيل بعد',
   'settings.search.deepResearchBadge': 'بحث معمّق',
   'settings.search.rowActions': 'خيارات {provider}',

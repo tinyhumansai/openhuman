@@ -1053,6 +1053,9 @@ const messages: TranslationMap = {
   'settings.search.addProviderAria': 'Collega {provider}',
   'settings.search.detailOwnKey': 'La tua chiave API',
   'settings.search.detailNoKey': 'Nessuna chiave API',
+  'settings.search.detailKeyOptional': 'Nessuna chiave API necessaria',
+  'settings.search.optionalKeyHint':
+    'Facoltativa: {provider} funziona senza chiave. Una chiave alza i limiti di utilizzo.',
   'settings.search.detailNoUrl': "Nessun URL dell'istanza",
   'settings.search.deepResearchBadge': 'Ricerca approfondita',
   'settings.search.rowActions': 'Opzioni di {provider}',

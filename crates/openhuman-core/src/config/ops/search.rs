@@ -65,7 +65,8 @@ pub struct SearchSettingsPatch {
 /// Providers shown in settings. `gemini_deep_research` rides on the Gemini
 /// key and is reported under `gemini` rather than as its own row.
 const LISTED_PROVIDERS: &[&str] = &[
-    "exa", "gemini", "tinyfish", "parallel", "brave", "tavily", "querit", "seltz", "searxng",
+    "exa", "gemini", "tinyfish", "parallel", "brave", "tavily", "querit", "keenable", "seltz",
+    "searxng",
 ];
 
 fn label(provider: &str) -> String {
@@ -83,6 +84,7 @@ fn docs_url(provider: &str) -> Option<&'static str> {
         "seltz" => Some("https://seltz.ai/"),
         "searxng" => Some("https://docs.searxng.org/"),
         "tinyfish" => Some("https://agent.tinyfish.ai/api-keys"),
+        "keenable" => Some("https://keenable.ai/console"),
         _ => None,
     }
 }
@@ -338,6 +340,7 @@ pub(crate) fn search_settings_json_with(config: &Config, managed_available: bool
                 "managed_available": p.managed_available,
                 "key_configured": p.key_configured,
                 "takes_key": p.id != "searxng",
+                "key_optional": p.key_optional,
                 "usable": p.usable,
                 "status": p.status(search_enabled),
                 "roles": p.roles,

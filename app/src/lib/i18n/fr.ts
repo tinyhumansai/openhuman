@@ -1063,6 +1063,9 @@ const messages: TranslationMap = {
   'settings.search.addProviderAria': 'Connecter {provider}',
   'settings.search.detailOwnKey': 'Votre propre clé API',
   'settings.search.detailNoKey': 'Pas encore de clé API',
+  'settings.search.detailKeyOptional': 'Aucune clé API requise',
+  'settings.search.optionalKeyHint':
+    'Facultatif : {provider} fonctionne sans clé. Une clé relève ses limites de débit.',
   'settings.search.detailNoUrl': "Pas encore d'URL d'instance",
   'settings.search.deepResearchBadge': 'Recherche approfondie',
   'settings.search.rowActions': 'Options de {provider}',

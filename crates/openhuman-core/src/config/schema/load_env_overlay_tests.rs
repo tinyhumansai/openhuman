@@ -184,6 +184,31 @@ fn env_overlay_web_search_limits_validated() {
 }
 
 #[test]
+fn env_overlay_keenable_api_key_supports_alias_precedence_and_ignores_blank_values() {
+    let mut cfg = Config::default();
+
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("KEENABLE_API_KEY", "alias-key"));
+    assert_eq!(cfg.search.keenable.api_key.as_deref(), Some("alias-key"));
+
+    cfg.apply_env_overlay_with(
+        &HashMapEnv::new()
+            .with("KEENABLE_API_KEY", "lower-priority-key")
+            .with("OPENHUMAN_KEENABLE_API_KEY", "namespaced-key"),
+    );
+    assert_eq!(
+        cfg.search.keenable.api_key.as_deref(),
+        Some("namespaced-key")
+    );
+
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_KEENABLE_API_KEY", "   "));
+    assert_eq!(
+        cfg.search.keenable.api_key.as_deref(),
+        Some("namespaced-key"),
+        "a blank override must not clear the configured key"
+    );
+}
+
+#[test]
 fn env_overlay_tavily_api_key_supports_alias_precedence_and_ignores_blank_values() {
     let mut cfg = Config::default();
 

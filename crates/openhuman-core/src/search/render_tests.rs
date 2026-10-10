@@ -107,5 +107,6 @@ fn results_are_capped_and_subject_reads_urls() {
     );
     assert_eq!(subject(&serde_json::json!({"query": " q "})), "q");
     assert_eq!(provider_label("searxng"), "SearXNG");
+    assert_eq!(provider_label("keenable"), "Keenable");
     assert_eq!(provider_label("custom"), "custom");
 }

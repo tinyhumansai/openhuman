@@ -205,3 +205,46 @@ fn tinyfish_takes_its_own_key() {
     assert_eq!(tinyfish["route"], "direct");
     assert!(!view.to_string().contains("tf-key"));
 }
+
+#[test]
+fn keenable_turns_on_without_a_key_and_takes_an_optional_one() {
+    let mut config = Config::default();
+    apply_search_patch(
+        &mut config,
+        patch(json!({"providers": {"keenable": {"enabled": true}}})),
+    )
+    .unwrap();
+    assert_eq!(
+        config.search.providers.get("keenable"),
+        Some(&SearchProviderSettings::direct())
+    );
+    let view = search_settings_json_with(&config, false);
+    let keenable = provider(&view, "keenable");
+    assert_eq!(keenable["label"], "Keenable");
+    assert_eq!(keenable["routes"], json!(["direct"]));
+    assert_eq!(keenable["takes_key"], true);
+    assert_eq!(keenable["key_optional"], true);
+    assert_eq!(keenable["key_configured"], false);
+    assert_eq!(keenable["status"], "ready");
+    assert_eq!(keenable["docs_url"], "https://keenable.ai/console");
+    assert_eq!(provider(&view, "brave")["key_optional"], false);
+    assert_eq!(view["effective_roles"]["search"], json!(["keenable"]));
+    assert_eq!(view["effective_roles"]["contents"], json!(["keenable"]));
+
+    apply_search_patch(
+        &mut config,
+        patch(json!({"providers": {"keenable": {"api_key": " kn-key "}}})),
+    )
+    .unwrap();
+    assert_eq!(config.search.keenable.key(), Some("kn-key"));
+    let view = search_settings_json_with(&config, false);
+    assert_eq!(provider(&view, "keenable")["key_configured"], true);
+    assert!(!view.to_string().contains("kn-key"));
+
+    let err = apply_search_patch(
+        &mut config,
+        patch(json!({"providers": {"keenable": {"route": "managed"}}})),
+    )
+    .unwrap_err();
+    assert!(err.contains("does not support the managed route"), "{err}");
+}
