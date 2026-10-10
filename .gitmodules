@@ -63,3 +63,6 @@
 [submodule "vendor/tinymemes"]
 	path = vendor/tinymemes
 	url = https://github.com/tinyhumansai/tinymemes.git
+[submodule "vendor/tinysecurity"]
+	path = vendor/tinysecurity
+	url = https://github.com/tinyhumansai/tinysecurity

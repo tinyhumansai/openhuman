@@ -554,3 +554,13 @@ test("the submodule probe is not fooled by the superproject above it", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+
+test("conditional registry entries remain covered by the pin gate", () => {
+  const source = `pub const ALL: &[ModuleRecord] = &[
+    TINYSEARCH,
+    #[cfg(any(feature = "security-module", feature = "test-module"))]
+    TINYSECURITY,
+  ];`;
+  assert.deepEqual(parseAllList(source), ["TINYSEARCH", "TINYSECURITY"]);
+});

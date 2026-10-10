@@ -283,6 +283,44 @@ jobs:
             fi
           done < <(integration_test_targets)
 
+  security-characterization:
+    if: inputs.run_rust_core
+    name: Security characterization (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: "2"
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+          submodules: recursive
+      - name: Install Linux inference test prerequisites
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          key: security-characterization-${{ runner.os }}
+      - name: Pin current security wire and redaction behavior
+        shell: bash
+        run: bash scripts/ci-cancel-aware.sh cargo test -p openhuman-cli --no-default-features --test security_characterization_e2e
+      - name: Exercise private redactors with the shared corpus
+        shell: bash
+        run: bash scripts/ci-cancel-aware.sh cargo test -p openhuman --no-default-features --features inference,web3,modules shared_security -- --nocapture
+      - name: Exercise attested native security adapter and latency budget
+        shell: bash
+        run: bash scripts/ci/security-native-fixture.sh
+      - name: Record existing in-process latency baseline
+        shell: bash
+        run: bash scripts/ci-cancel-aware.sh cargo test -p openhuman-cli --no-default-features --test security_characterization_e2e in_process_policy_latency_baseline -- --nocapture
+
   rust-core-tests-windows:
     if: inputs.run_rust_core
     name: Rust Core Tests (Windows — secrets ACL)

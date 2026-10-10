@@ -1,9 +1,11 @@
 use std::path::{Path, PathBuf};
 
-use super::types::{SecurityPolicy, TrustedAccess, POLICY_BLOCKED_MARKER};
+#[cfg(any(test, not(feature = "security-module")))]
+use super::types::POLICY_BLOCKED_MARKER;
+use super::types::{SecurityPolicy, TrustedAccess};
 use super::types::{
     ACCOUNT_CONFIG_FILE, ARTIFACTS_DIR, ARTIFACT_TOOL_RESULTS_DIR, WORKSPACE_INTERNAL_DIRS,
-    WORKSPACE_INTERNAL_FILES,
+    WORKSPACE_INTERNAL_FILES, WORKSPACE_INTERNAL_PREFIXES,
 };
 
 impl SecurityPolicy {
@@ -216,6 +218,7 @@ impl SecurityPolicy {
     /// Falls back to the raw `workspace_dir` if `canonicalize` fails (e.g.
     /// during early startup or in tests where the workspace doesn't exist on
     /// disk), matching the inline behavior the callers used before the cache.
+    #[cfg(any(test, not(feature = "security-module")))]
     pub(super) async fn workspace_root(&self) -> PathBuf {
         self.canonical_workspace
             .get_or_init(|| async {
@@ -227,14 +230,14 @@ impl SecurityPolicy {
             .clone()
     }
 
-    /// Synchronous counterpart to [`workspace_root`], hydrating the **same**
+    /// Synchronous counterpart to the legacy async workspace-root helper, hydrating the **same**
     /// `canonical_workspace` cache via `OnceCell`'s sync `get`/`set`.
     ///
     /// The sync path validators (`is_path_string_allowed`,
     /// `is_resolved_path_allowed_for`) run on every file tool call and each
     /// previously re-invoked `self.workspace_dir.canonicalize()` — one
     /// `stat(2)` + symlink walk on the same immutable input per call. They
-    /// cannot `.await` [`workspace_root`], so they reach the cache through this
+    /// cannot await the legacy async workspace-root helper, so they reach the cache through this
     /// helper.
     ///
     /// # Why one cell can serve both, and why a lost `set` is safe
@@ -259,7 +262,7 @@ impl SecurityPolicy {
     ///
     /// Fallback to the raw `workspace_dir` on canonicalize failure matches the
     /// inline behavior these callers used before, and the async
-    /// [`workspace_root`] — including under the race, since the fallback is the
+    /// legacy async workspace-root helper — including under the race, since the fallback is the
     /// same immutable `workspace_dir` on both sides.
     pub(super) fn workspace_root_sync(&self) -> PathBuf {
         if let Some(cached) = self.canonical_workspace.get() {
@@ -279,6 +282,12 @@ impl SecurityPolicy {
     /// Validate a path for file I/O: string checks, canonicalize, workspace containment,
     /// and forbidden-path check on the resolved path.
     /// Returns the canonical `PathBuf` on success.
+    #[cfg(feature = "security-module")]
+    pub async fn validate_path(&self, path: &str) -> Result<PathBuf, String> {
+        self.validate_native_path(path, false).await
+    }
+
+    #[cfg(not(feature = "security-module"))]
     pub async fn validate_path(&self, path: &str) -> Result<PathBuf, String> {
         if !self.is_path_string_allowed(path) {
             return Err(format!(
@@ -316,6 +325,12 @@ impl SecurityPolicy {
     /// Does NOT require the parent directory to exist — walks up to the deepest
     /// existing ancestor and checks that for symlink escapes.
     /// Returns the canonical full path (parent resolved + filename appended).
+    #[cfg(feature = "security-module")]
+    pub async fn validate_parent_path(&self, path: &str) -> Result<PathBuf, String> {
+        self.validate_native_path(path, true).await
+    }
+
+    #[cfg(not(feature = "security-module"))]
     pub async fn validate_parent_path(&self, path: &str) -> Result<PathBuf, String> {
         if !self.is_path_string_allowed(path) {
             return Err(format!(
@@ -417,13 +432,11 @@ impl SecurityPolicy {
         };
         let component = first_component.as_ref();
         if WORKSPACE_INTERNAL_DIRS.contains(&component)
-            || ["memory-", "memory_tree-", "session_raw-"]
-                .iter()
-                .any(|prefix| {
-                    component
-                        .strip_prefix(prefix)
-                        .is_some_and(|s| !s.is_empty())
-                })
+            || WORKSPACE_INTERNAL_PREFIXES.iter().any(|prefix| {
+                component
+                    .strip_prefix(prefix)
+                    .is_some_and(|s| !s.is_empty())
+            })
         {
             return true;
         }
@@ -578,6 +591,7 @@ impl SecurityPolicy {
     /// Check `resolved` against every entry in `forbidden_paths`, resolving relative
     /// entries against `workspace_root`. Absolute entries whose prefix IS the workspace
     /// root are skipped — the workspace containment check already covers them.
+    #[cfg(not(feature = "security-module"))]
     pub(super) fn check_resolved_against_forbidden(
         &self,
         resolved: &Path,
@@ -625,3 +639,7 @@ impl SecurityPolicy {
         Ok(())
     }
 }
+
+#[cfg(all(test, feature = "security-module"))]
+#[path = "path_checks_native_tests.rs"]
+mod native_tests;

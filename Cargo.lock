@@ -4727,6 +4727,7 @@ dependencies = [
  "tinyruntime-bus",
  "tinyruntime-pyserver",
  "tinysearch-bus",
+ "tinysecurity-bus",
  "tinyskills",
  "tinystoragedrivers",
  "tinytools",
@@ -4832,6 +4833,7 @@ dependencies = [
  "jsonschema",
  "log",
  "openhuman",
+ "rand 0.10.2",
  "reqwest 0.12.28",
  "sentry",
  "serde",
@@ -7410,7 +7412,7 @@ dependencies = [
 
 [[package]]
 name = "tinybox-core"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "async-trait",
  "serde",
@@ -7419,7 +7421,7 @@ dependencies = [
 
 [[package]]
 name = "tinybox-docker"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "async-trait",
  "tinybox-core",
@@ -7428,7 +7430,7 @@ dependencies = [
 
 [[package]]
 name = "tinybox-jail"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "landlock",
  "log",
@@ -8070,6 +8072,14 @@ version = "0.4.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "tinysecurity-bus"
+version = "0.2.2"
+dependencies = [
+ "serde",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

@@ -117,7 +117,7 @@ macOS ve Linux betiğinin ne yapacağını önceden görmek için komutun sonuna
 
 <h3>Geliştiriciler için tasarlandı</h3>
 
-<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust hızlı başlangıç</a> · <a href="https://tinyhumans.gitbook.io/openhuman/developing/embedding">Gömme rehberi</a> · <a href="../crates/openhuman-embed/examples">Örnekler</a></p>
+<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust hızlı başlangıç</a> · <a href="https://tinyhumans.gitbook.io/openhuman/developing/embed">Gömme rehberi</a> · <a href="../crates/openhuman-embed/examples">Örnekler</a></p>
 
 <p>Bir Rust kütüphanesi olarak kullanın: bir ajanı herhangi bir işlev gibi çağırın ya da tüm bir filoyu tek bir küçük sunucudan çalıştırın.</p>
 
@@ -288,7 +288,7 @@ let reply = agent.run("Summarize what you can see in this directory.").await?;
 println!("{}", reply.reply);
 ```
 
-Sırada: [Rust hızlı başlangıç](https://tinyhumans.gitbook.io/openhuman/developing/quickstart), [gömme rehberi](https://tinyhumans.gitbook.io/openhuman/developing/embedding) ve [geliştirici dokümanları](https://tinyhumans.gitbook.io/openhuman/developing).
+Sırada: [Rust hızlı başlangıç](https://tinyhumans.gitbook.io/openhuman/developing/quickstart), [gömme rehberi](https://tinyhumans.gitbook.io/openhuman/developing/embed) ve [geliştirici dokümanları](https://tinyhumans.gitbook.io/openhuman/developing).
 
 ---
 

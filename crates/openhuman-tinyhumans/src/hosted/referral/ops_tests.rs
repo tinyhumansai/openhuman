@@ -3,31 +3,17 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use openhuman_embed::__host::security::credentials::{
-    AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
-};
 use serde_json::json;
 use tempfile::TempDir;
 
 fn test_config(tmp: &TempDir) -> Config {
+    crate::hosted::test_support::init_keyring();
     Config {
         workspace_dir: tmp.path().join("workspace"),
         action_dir: tmp.path().join("workspace"),
         config_path: tmp.path().join("config.toml"),
         ..Config::default()
     }
-}
-
-fn store_session_token(config: &Config, token: &str) {
-    AuthService::from_config(config)
-        .store_provider_token(
-            APP_SESSION_PROVIDER,
-            DEFAULT_AUTH_PROFILE_NAME,
-            token,
-            std::collections::HashMap::new(),
-            true,
-        )
-        .expect("store token");
 }
 
 async fn spawn_mock(app: Router) -> String {
@@ -56,7 +42,7 @@ fn config_with_backend(tmp: &TempDir, base: String) -> Config {
         .expect("install SDK backend transport for referral mock");
     let mut c = test_config(tmp);
     c.api_url = Some(base);
-    store_session_token(&c, "test-session-token");
+    crate::hosted::test_support::store_session(&c, "test-session-token");
     c
 }
 
@@ -86,7 +72,7 @@ async fn get_stats_sends_trimmed_bearer() {
     let base = spawn_mock(app).await;
     let tmp = TempDir::new().unwrap();
     let config = config_with_backend(&tmp, base);
-    store_session_token(&config, "  tok  ");
+    crate::hosted::test_support::store_session(&config, "  tok  ");
     let out = get_stats(&config).await.unwrap();
     assert_eq!(out.value["auth"], json!("Bearer tok"));
 }

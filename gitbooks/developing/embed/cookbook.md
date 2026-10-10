@@ -76,6 +76,14 @@ Lean runtime without background services.
 
 Run: `cargo run -p openhuman-embed --example lean_headless`
 
+## Linux agent fleet memory and latency
+
+Measure retained runtime-owned agents using loopback inference and two worker threads.
+
+[Source](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/linux_fleet.rs) · offline on Linux; use a fresh constrained cgroup for release measurements.
+
+Run: `cargo run -p openhuman-embed --example linux_fleet`
+
 ## Connect an actual MCP protocol stub over loopback
 
 Connect an actual MCP protocol stub over loopback.

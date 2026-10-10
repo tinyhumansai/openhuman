@@ -52,6 +52,7 @@ documents = ["openhuman-tinyhumans/documents"]
 hosting = ["openhuman-tinyhumans/hosting"]
 tinymemes = ["openhuman-tinyhumans/tinymemes"]
 modules = ["openhuman-tinyhumans/modules"]
+security-module = ["openhuman-tinyhumans/security-module"]
 voice = ["openhuman-tinyhumans/voice"]
 web3 = ["openhuman-tinyhumans/web3"]
 # Storage drivers for `[storage] url` (see the core `storage` domain and

@@ -191,3 +191,20 @@ mod crate_native_tests;
 mod egress_fallback_tests;
 #[path = "factory_route_resolution_tests.rs"]
 mod route_resolution_tests;
+
+#[test]
+fn shared_security_url_corpus_pins_inference_log_redactors() {
+    let corpus: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/security-redaction-corpus.json"
+    )))
+    .unwrap();
+    for case in corpus["urls"].as_array().unwrap() {
+        let input = case["input"].as_str().unwrap();
+        assert_eq!(redact_endpoint(input), case["endpoint"]);
+        assert_eq!(
+            primary_cloud::redact_inference_url(Some(input)),
+            case["inference"]
+        );
+    }
+}

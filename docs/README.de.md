@@ -117,7 +117,7 @@ Die meisten Agent-Harnesses starten pro Agent einen schweren Prozess und senden 
 
 <h3>Für Entwickler gebaut</h3>
 
-<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust-Schnellstart</a> · <a href="https://tinyhumans.gitbook.io/openhuman/developing/embedding">Einbettungsanleitung</a> · <a href="../crates/openhuman-embed/examples">Beispiele</a></p>
+<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust-Schnellstart</a> · <a href="https://tinyhumans.gitbook.io/openhuman/developing/embed">Einbettungsanleitung</a> · <a href="../crates/openhuman-embed/examples">Beispiele</a></p>
 
 <p>Nutze es als Rust-Bibliothek: Rufe einen Agenten wie jede andere Funktion auf oder betreibe eine ganze Flotte auf einem kleinen Server.</p>
 
@@ -288,7 +288,7 @@ let reply = agent.run("Summarize what you can see in this directory.").await?;
 println!("{}", reply.reply);
 ```
 
-Als Nächstes: der [Rust-Schnellstart](https://tinyhumans.gitbook.io/openhuman/developing/quickstart), die [Einbettungsanleitung](https://tinyhumans.gitbook.io/openhuman/developing/embedding) und die [Entwicklerdokumentation](https://tinyhumans.gitbook.io/openhuman/developing).
+Als Nächstes: der [Rust-Schnellstart](https://tinyhumans.gitbook.io/openhuman/developing/quickstart), die [Einbettungsanleitung](https://tinyhumans.gitbook.io/openhuman/developing/embed) und die [Entwicklerdokumentation](https://tinyhumans.gitbook.io/openhuman/developing).
 
 ---
 

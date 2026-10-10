@@ -1,0 +1,54 @@
+---
+# Candidate-source integration checks. Released-artifact admission remains a
+# separate requirement before the dependent migration is ready to ship.
+name: Security Native
+
+on:
+  pull_request:
+    branches: [main, release]
+    paths:
+      - .github/workflows/security-native.yml
+      - .gitmodules
+      - vendor/tinysecurity
+      - crates/openhuman-core/src/modules/security*.rs
+      - crates/openhuman-core/src/modules/registry/records_security.rs
+      - crates/openhuman-core/src/security/policy/**
+      - scripts/ci/security-native-fixture.sh
+      - Cargo.lock
+  workflow_dispatch: {}
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: security-native-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: Native policy (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: "2"
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Install Linux inference prerequisites
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          key: security-native-${{ runner.os }}
+      - name: Exercise attested adapter and latency budget
+        shell: bash
+        run: bash scripts/ci/security-native-fixture.sh

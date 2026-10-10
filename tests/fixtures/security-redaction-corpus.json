@@ -1,0 +1,104 @@
+{
+  "text": [
+    {
+      "case": "anthropic_key",
+      "input": "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789",
+      "needle": "abcdefghijklmnopqrstuvwxyz0123456789",
+      "removed_by": [
+        "prefix",
+        "identity_hash",
+        "log",
+        "host_scrub",
+        "denials",
+        "credential_middleware"
+      ],
+      "composio_secret": "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789"
+    },
+    {
+      "case": "email",
+      "input": "alice@example.com",
+      "needle": "alice@example.com",
+      "removed_by": [
+        "prefix",
+        "identity_hash",
+        "pii"
+      ],
+      "composio_secret": "unrelated-configured-key"
+    },
+    {
+      "case": "linux_home",
+      "input": "/home/alice/report.txt",
+      "needle": "alice",
+      "removed_by": [
+        "prefix",
+        "identity_hash",
+        "approval"
+      ],
+      "composio_secret": "unrelated-configured-key"
+    },
+    {
+      "case": "macos_home",
+      "input": "/Users/alice/report.txt",
+      "needle": "alice",
+      "removed_by": [
+        "prefix",
+        "identity_hash",
+        "approval"
+      ],
+      "composio_secret": "unrelated-configured-key"
+    },
+    {
+      "case": "windows_home",
+      "input": "C:\\Users\\alice\\report.txt",
+      "needle": "alice",
+      "removed_by": [
+        "prefix",
+        "identity_hash",
+        "approval"
+      ],
+      "composio_secret": "unrelated-configured-key"
+    },
+    {
+      "case": "windows_home_doubled",
+      "input": "C:\\\\Users\\\\alice\\\\report.txt",
+      "needle": "alice",
+      "removed_by": [
+        "prefix",
+        "identity_hash"
+      ],
+      "composio_secret": "unrelated-configured-key"
+    },
+    {
+      "case": "ordinary_text",
+      "input": "hello world",
+      "needle": "hello world",
+      "removed_by": [
+        "prefix",
+        "identity_hash"
+      ],
+      "composio_secret": "unrelated-configured-key"
+    }
+  ],
+  "urls": [
+    {
+      "case": "basic_auth_and_query",
+      "input": "https://alice:hunter2@api.example.com/v1?key=secret#private",
+      "util": "https://redacted:redacted@api.example.com/v1?key=secret#private",
+      "storage": "https://***@api.example.com/v1?***",
+      "migration": "https://api.example.com/v1",
+      "endpoint": "https://api.example.com",
+      "inference": "api.example.com",
+      "wallet": "https://api.example.com"
+    },
+    {
+      "case": "plain_url",
+      "input": "https://api.example.com/v1",
+      "util": "https://api.example.com/v1",
+      "storage": "https://api.example.com/v1",
+      "migration": "https://api.example.com/v1",
+      "endpoint": "https://api.example.com",
+      "inference": "api.example.com",
+      "wallet": "https://api.example.com"
+    }
+  ]
+}

@@ -410,6 +410,11 @@ pub(super) fn load_local(
 /// Credentials are intentionally absent. TinyMemory calls back into the host
 /// for embedding and chat compute; the other modules need no host config.
 fn module_config(config: &Config, id: &str) -> serde_json::Value {
+    #[cfg(feature = "security-module")]
+    if id == super::security::MODULE_ID {
+        return serde_json::to_value(super::security::module_config(config))
+            .expect("TinySecurity config serializes");
+    }
     if id == super::search::MODULE_ID {
         return serde_json::to_value(super::search::module_config(config))
             .expect("TinySearch config serializes");

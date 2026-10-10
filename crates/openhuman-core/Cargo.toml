@@ -320,6 +320,7 @@ tinychannels = { version = "0.1", features = ["relay-websocket"], optional = tru
 # never loads a module. The kernel-floor ratchet catches exactly that, and did.
 tinybus = { path = "../../vendor/tinybus/crates/tinybus", default-features = false, features = ["macros", "uds"] }
 tinysearch-bus = { path = "../../vendor/tinysearch/crates/tinysearch-bus" }
+tinysecurity-bus = { path = "../../vendor/tinysecurity/crates/tinysecurity-bus", optional = true }
 tinycomputer-bus = { path = "../../vendor/tinycomputer/crates/tinycomputer-bus", optional = true }
 # Desktop accessibility middleware, linked as a plain library (not through the
 # tinycomputer module): the voice pipeline needs focus lookup, paste validation,
@@ -832,6 +833,7 @@ tinymemes = ["dep:tinymemes"]
 # tinybus never unloads one. See `crates/openhuman-core/src/modules/` before adding an entry
 # to the registry.
 modules = ["tinybus/modules", "dep:tinycomputer-bus"]
+security-module = ["modules", "dep:tinysecurity-bus"]
 # Voice + audio_toolkit domains: STT/TTS providers, the standalone dictation
 # server, always-on listening, and podcast audio generation/email delivery.
 # Default-ON — the desktop app always ships with voice. Slim / headless builds

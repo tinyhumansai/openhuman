@@ -117,7 +117,7 @@ macOS と Linux のスクリプトが何を行うかを事前に確認するに�
 
 <h3>開発者のために</h3>
 
-<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust クイックスタート</a> · <a href="https://tinyhumans.gitbook.io/openhuman/developing/embedding">組み込みガイド</a> · <a href="../crates/openhuman-embed/examples">サンプル</a></p>
+<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust クイックスタート</a> · <a href="https://tinyhumans.gitbook.io/openhuman/developing/embed">組み込みガイド</a> · <a href="../crates/openhuman-embed/examples">サンプル</a></p>
 
 <p>Rust ライブラリとして使えます。エージェントを普通の関数のように呼び出すことも、小さなサーバー1台でエージェント群をまるごと動かすこともできます。</p>
 
@@ -288,7 +288,7 @@ let reply = agent.run("Summarize what you can see in this directory.").await?;
 println!("{}", reply.reply);
 ```
 
-次は、[Rust クイックスタート](https://tinyhumans.gitbook.io/openhuman/developing/quickstart)、[組み込みガイド](https://tinyhumans.gitbook.io/openhuman/developing/embedding)、[開発者向けドキュメント](https://tinyhumans.gitbook.io/openhuman/developing)をご覧ください。
+次は、[Rust クイックスタート](https://tinyhumans.gitbook.io/openhuman/developing/quickstart)、[組み込みガイド](https://tinyhumans.gitbook.io/openhuman/developing/embed)、[開発者向けドキュメント](https://tinyhumans.gitbook.io/openhuman/developing)をご覧ください。
 
 ---
 

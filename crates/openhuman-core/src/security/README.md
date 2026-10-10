@@ -4,8 +4,31 @@ The trust boundary of the core. This folder decides whether an agent may run a
 command or touch a path, parks tool calls that need a human yes or no, stores
 credentials and secrets, scrubs secrets and PII out of anything persisted, and
 guards the RPC listener when it binds beyond loopback. `security/mod.rs` calls
-it the kernel security family. None of its submodules is feature-gated: every
-build carries all of it.
+it the kernel security family. The `security-module` feature moves asynchronous
+filesystem authorization into the separately loaded TinySecurity native module.
+
+## Native filesystem policy
+
+With `security-module`, `SecurityPolicy::validate_path` and
+`validate_parent_path` use the typed host client in `modules/security.rs`.
+`policy/native_paths.rs` translates trusted roots, the acting directory,
+internal-state reservations, and the current turn's workspace grant into an
+immutable scope. Scope registration deduplicates the whole policy; one agent
+cannot replace another agent's settings through global module reinitialization.
+
+The host links only `tinysecurity-bus`. The engine canonicalizes paths and
+checks read/write grants in the native module. A missing module, an untrusted
+recipient, a timeout, or a malformed response denies access without a local
+fallback. Synchronous lexical checks remain host preflights during this phase;
+they do not substitute for the asynchronous I/O authorization.
+
+Production admission pins TinySecurity v0.2.2 and its published archive checksums
+in the module registry. `scripts/ci/security-native-fixture.sh` loads those
+released archives and invokes their admission, path, and latency tests. Explicit
+local fixtures remain available for development; their digests never become
+production release pins. Shell policy,
+approvals, redaction, and crypto continue to use their existing host engines
+until their own migration phases are implemented and verified.
 
 Callers are spread across the core. Every acting tool consults
 `SecurityPolicy` before it runs, the agent harness asks the approval gate

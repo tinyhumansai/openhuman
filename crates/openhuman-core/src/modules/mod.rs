@@ -57,6 +57,8 @@ pub mod registry;
 pub mod runtime;
 pub mod schemas;
 pub mod search;
+#[cfg(feature = "security-module")]
+pub mod security;
 mod tokenjuice_host;
 pub mod types;
 #[cfg(feature = "voice")]

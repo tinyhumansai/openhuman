@@ -4,6 +4,8 @@
 
 mod command_checks;
 mod enforcement;
+#[cfg(feature = "security-module")]
+mod native_paths;
 mod path_checks;
 
 mod types;

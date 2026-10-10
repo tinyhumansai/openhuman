@@ -261,10 +261,10 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
       checks: [
         {
           name: "pnpm-install",
-          // ex63: also for a core change, so rust-core-coverage's mock backend
-          // (scripts/mock-api-server.mjs imports `ws`) can start when no
-          // frontend file changed. One install per VM: lanes share a checkout.
-          when: areas.frontend || areas.i18n || areas.scripts || (ex63 && core),
+          // All Rust changes run the bus-only dependency guard, whose TOML
+          // parser is a root package dependency. ex63 shares this install
+          // with rust-core-coverage's mock backend; hosted lanes are separate.
+          when: areas.frontend || areas.i18n || areas.scripts || rust,
           run: "pnpm install --frozen-lockfile",
         },
         {
@@ -309,6 +309,12 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           run: "pnpm docs:test",
         },
         { name: "docs-drift", when: areas.docs, run: "pnpm docs:check" },
+        {
+          name: "security-module-dependencies",
+          when: areas.scripts || rust,
+          needs: ["pnpm-install"],
+          run: "node scripts/ci/check-security-module-dependencies.mjs",
+        },
         {
           name: "scripts-self-tests",
           when: areas.scripts,

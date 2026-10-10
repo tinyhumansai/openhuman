@@ -19,6 +19,7 @@ documents = ["openhuman-core/documents"]
 hosting = ["openhuman-core/hosting"]
 tinymemes = ["openhuman-core/tinymemes"]
 modules = ["openhuman-core/modules"]
+security-module = ["openhuman-core/security-module"]
 voice = ["openhuman-core/voice"]
 web3 = ["openhuman-core/web3"]
 # Storage drivers for `[storage] url` (see the core `storage` domain).
@@ -82,6 +83,7 @@ url = "2"
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
+rand = "0.10"
 async-trait = "0.1"
 tinymemory-api = { path = "../../vendor/tinymemory/crates/tinymemory-api", features = ["conformance"] }
 dirs = "6"

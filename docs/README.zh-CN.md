@@ -117,7 +117,7 @@ irm https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/instal
 
 <h3>为开发者而建</h3>
 
-<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust 快速入门</a> · <a href="https://tinyhumans.gitbook.io/openhuman/developing/embedding">嵌入指南</a> · <a href="../crates/openhuman-embed/examples">示例</a></p>
+<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust 快速入门</a> · <a href="https://tinyhumans.gitbook.io/openhuman/developing/embed">嵌入指南</a> · <a href="../crates/openhuman-embed/examples">示例</a></p>
 
 <p>把它当作 Rust 库来用：像调用普通函数一样调用智能体，或者在一台小服务器上运行整个集群。</p>
 
@@ -288,7 +288,7 @@ let reply = agent.run("Summarize what you can see in this directory.").await?;
 println!("{}", reply.reply);
 ```
 
-接下来看：[Rust 快速入门](https://tinyhumans.gitbook.io/openhuman/developing/quickstart)、[嵌入指南](https://tinyhumans.gitbook.io/openhuman/developing/embedding)和[开发者文档](https://tinyhumans.gitbook.io/openhuman/developing)。
+接下来看：[Rust 快速入门](https://tinyhumans.gitbook.io/openhuman/developing/quickstart)、[嵌入指南](https://tinyhumans.gitbook.io/openhuman/developing/embed)和[开发者文档](https://tinyhumans.gitbook.io/openhuman/developing)。
 
 ---
 

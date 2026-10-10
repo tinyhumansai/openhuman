@@ -49,6 +49,9 @@ export function parseAllList(src) {
   if (!block) throw new Error("registry.rs: could not find `pub const ALL`");
   return block[1]
     .replace(/\/\/[^\n]*/g, "")
+    // Inspect every possible feature set. Attributes annotate the next record;
+    // commas inside cfg(any(...)) must not split the record list.
+    .replace(/#\[cfg\([^\]]*\)\]/g, "")
     .split(",")
     .map((s) => s.trim())
     .filter((s) => s.length > 0);

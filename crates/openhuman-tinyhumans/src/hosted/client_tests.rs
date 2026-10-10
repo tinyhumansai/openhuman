@@ -2,13 +2,13 @@ use super::*;
 use openhuman_embed::__host::core::observability::{
     expected_error_kind, is_api_key_rejected_message, is_session_expired_message,
 };
-use openhuman_embed::__host::security::credentials::{AuthService, APP_SESSION_PROVIDER};
 use serde_json::json;
 use tempfile::TempDir;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn test_config(tmp: &TempDir, api_url: &str) -> Config {
+    crate::hosted::test_support::init_keyring();
     Config {
         workspace_dir: tmp.path().join("workspace"),
         action_dir: tmp.path().join("workspace"),
@@ -18,17 +18,7 @@ fn test_config(tmp: &TempDir, api_url: &str) -> Config {
     }
 }
 
-fn store_session(config: &Config, token: &str) {
-    AuthService::from_config(config)
-        .store_provider_token(
-            APP_SESSION_PROVIDER,
-            "default",
-            token,
-            std::collections::HashMap::new(),
-            true,
-        )
-        .expect("store session token");
-}
+use crate::hosted::test_support::store_session;
 
 #[test]
 fn backend_origin_strips_path_query_and_fragment() {

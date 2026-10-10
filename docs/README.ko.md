@@ -117,7 +117,7 @@ macOS와 Linux 스크립트가 무엇을 하는지 미리 보려면 명령 끝�
 
 <h3>개발자를 위해 만들었습니다</h3>
 
-<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust 퀵스타트</a> · <a href="https://tinyhumans.gitbook.io/openhuman/developing/embedding">임베딩 가이드</a> · <a href="../crates/openhuman-embed/examples">예제</a></p>
+<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust 퀵스타트</a> · <a href="https://tinyhumans.gitbook.io/openhuman/developing/embed">임베딩 가이드</a> · <a href="../crates/openhuman-embed/examples">예제</a></p>
 
 <p>Rust 라이브러리로 사용하세요. 다른 함수처럼 에이전트를 호출하거나, 작은 서버 하나에서 수많은 에이전트를 실행할 수 있습니다.</p>
 
@@ -288,7 +288,7 @@ let reply = agent.run("Summarize what you can see in this directory.").await?;
 println!("{}", reply.reply);
 ```
 
-다음으로는 [Rust 퀵스타트](https://tinyhumans.gitbook.io/openhuman/developing/quickstart), [임베딩 가이드](https://tinyhumans.gitbook.io/openhuman/developing/embedding), [개발자 문서](https://tinyhumans.gitbook.io/openhuman/developing)를 보세요.
+다음으로는 [Rust 퀵스타트](https://tinyhumans.gitbook.io/openhuman/developing/quickstart), [임베딩 가이드](https://tinyhumans.gitbook.io/openhuman/developing/embed), [개발자 문서](https://tinyhumans.gitbook.io/openhuman/developing)를 보세요.
 
 ---
 

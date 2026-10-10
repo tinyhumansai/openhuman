@@ -81,6 +81,7 @@ openhuman-rpc = { path = "../openhuman-rpc", default-features = false, features 
     "web3",
     "documents",
     "modules",
+    "security-module",
     "flows",
     "skills",
     "mcp",

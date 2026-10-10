@@ -41,6 +41,8 @@ mod records_mcp_connectors;
 mod records_memory_juice;
 mod records_runtime;
 mod records_search;
+#[cfg(feature = "security-module")]
+mod records_security;
 mod records_voice;
 
 use crate::modules::types::ModuleRecord;
@@ -51,6 +53,8 @@ use records_mcp_connectors::{TINYCONNECTORS, TINYMCP};
 use records_memory_juice::TINYJUICE;
 use records_runtime::{TINYRUNTIME, TINYRUNTIME_NODEJS, TINYRUNTIME_PYTHON};
 use records_search::TINYSEARCH;
+#[cfg(feature = "security-module")]
+use records_security::TINYSECURITY;
 use records_voice::TINYVOICE;
 
 /// Every module this build can load.
@@ -69,6 +73,8 @@ pub const ALL: &[ModuleRecord] = &[
     TINYBOX,
     TINYCHANNELS,
     TINYHOSTS,
+    #[cfg(feature = "security-module")]
+    TINYSECURITY,
 ];
 
 /// The record for `id`, if this build knows it.

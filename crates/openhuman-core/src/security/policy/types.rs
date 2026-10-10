@@ -190,6 +190,10 @@ pub(super) const WORKSPACE_INTERNAL_DIRS: &[&str] = &[
     "tinyplace",
 ];
 
+/// Per-profile internal-state directory families under the workspace.
+pub(super) const WORKSPACE_INTERNAL_PREFIXES: &[&str] =
+    &["memory-", "memory_tree-", "session_raw-"];
+
 /// The artifact store under `workspace_dir`. Its per-artifact directories are
 /// internal state (see `is_workspace_internal_path`); only
 /// [`ARTIFACT_TOOL_RESULTS_DIR`] inside it stays agent-readable.

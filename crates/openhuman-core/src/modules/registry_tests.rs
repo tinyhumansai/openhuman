@@ -1,6 +1,15 @@
 use super::{find, ALL};
 use tinybus::module::platform::candidates_for;
 
+#[cfg(feature = "security-module")]
+#[test]
+fn tinysecurity_is_eager_and_matches_the_typed_policy_contract() {
+    let record = find("tinysecurity").expect("compiled native security module");
+    assert_eq!(record.bus_name, tinysecurity_bus::names::INTERFACE);
+    assert_eq!(record.object_path, tinysecurity_bus::names::OBJECT_PATH);
+    assert_eq!(record.load, crate::modules::LoadPolicy::Eager);
+}
+
 #[test]
 fn tinycomputer_registry_matches_bus_contract_and_published_release() {
     let desktop = find("tinycomputer").expect("compiled computer module");

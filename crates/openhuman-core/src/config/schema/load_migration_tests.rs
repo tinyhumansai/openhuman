@@ -664,3 +664,18 @@ fn resolve_action_dir_rejects_empty_override() {
         "empty override must be ignored, falling back to default"
     );
 }
+
+#[test]
+fn shared_security_url_corpus_pins_migration_redactor() {
+    let corpus: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/security-redaction-corpus.json"
+    )))
+    .unwrap();
+    for case in corpus["urls"].as_array().unwrap() {
+        assert_eq!(
+            redact_url_for_log(case["input"].as_str().unwrap()),
+            case["migration"]
+        );
+    }
+}

@@ -117,7 +117,7 @@ Most agent harnesses run one heavy process per agent and resend a big prompt on 
 
 <h3>Built for developers</h3>
 
-<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust quickstart</a> · <a href="https://tinyhumans.gitbook.io/openhuman/developing/embedding">Embedding guide</a> · <a href="./crates/openhuman-embed/examples">Examples</a></p>
+<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust quickstart</a> · <a href="https://tinyhumans.gitbook.io/openhuman/developing/embed">Embedding guide</a> · <a href="./crates/openhuman-embed/examples">Examples</a></p>
 
 <p>Use it as a Rust library: call an agent like any other function, or run a whole fleet from one small server.</p>
 
@@ -288,7 +288,7 @@ let reply = agent.run("Summarize what you can see in this directory.").await?;
 println!("{}", reply.reply);
 ```
 
-Next: the [Rust quickstart](https://tinyhumans.gitbook.io/openhuman/developing/quickstart), the [embedding guide](https://tinyhumans.gitbook.io/openhuman/developing/embedding) and the [developer docs](https://tinyhumans.gitbook.io/openhuman/developing).
+Next: the [Rust quickstart](https://tinyhumans.gitbook.io/openhuman/developing/quickstart), the [embedding guide](https://tinyhumans.gitbook.io/openhuman/developing/embed) and the [developer docs](https://tinyhumans.gitbook.io/openhuman/developing).
 
 ---
 

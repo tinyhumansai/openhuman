@@ -538,6 +538,7 @@ fn from_config_does_not_duplicate_user_granted_projects_root() {
 /// that result. This test pins the contract: the cell starts empty, is
 /// populated after the first `validate_path` call, and stays populated (same
 /// value) across subsequent calls — i.e. only one canonicalize per policy.
+#[cfg(not(feature = "security-module"))]
 #[tokio::test]
 async fn validate_path_caches_canonical_workspace_root() {
     let tmp = tempfile::tempdir().unwrap();
@@ -657,6 +658,7 @@ async fn workspace_root_sync_hydrates_and_shares_the_async_cache() {
 /// `validate_parent_path` shares the same cache as `validate_path` — both go
 /// through `workspace_root()`. Hydrating via either entry point must be
 /// observable from the other.
+#[cfg(not(feature = "security-module"))]
 #[tokio::test]
 async fn validate_parent_path_uses_same_cache_as_validate_path() {
     let tmp = tempfile::tempdir().unwrap();

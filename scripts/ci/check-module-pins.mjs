@@ -75,6 +75,7 @@ const ROOT = resolve(process.argv[2] ?? join(HERE, "..", ".."));
 // scripts/ci/module-provider-pins.json (their release, and the commit of
 // `builtAgainst` that release was built from, which must be the host's pin).
 const PIN_MAP = {
+  tinysecurity: { submodule: "vendor/tinysecurity" },
   tinysearch: { submodule: "vendor/tinysearch" },
   tinycomputer: { submodule: "vendor/tinycomputer" },
   tinybox: { submodule: "vendor/tinybox" },

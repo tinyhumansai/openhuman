@@ -139,7 +139,7 @@ macOS اور Linux کی اسکرپٹ کیا کرے گی، یہ پہلے دیکھ
 
 <h3>ڈیولپرز کے لیے بنایا گیا</h3>
 
-<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust کوئیک اسٹارٹ</a> · <a href="https://tinyhumans.gitbook.io/openhuman/developing/embedding">ایمبیڈنگ گائیڈ</a> · <a href="../crates/openhuman-embed/examples">مثالیں</a></p>
+<p><a href="https://tinyhumans.gitbook.io/openhuman/developing/quickstart">Rust کوئیک اسٹارٹ</a> · <a href="https://tinyhumans.gitbook.io/openhuman/developing/embed">ایمبیڈنگ گائیڈ</a> · <a href="../crates/openhuman-embed/examples">مثالیں</a></p>
 
 <p>اسے Rust لائبریری کے طور پر استعمال کریں: ایجنٹ کو کسی بھی عام فنکشن کی طرح کال کریں، یا ایک چھوٹے سرور سے پورا بیڑا چلائیں۔</p>
 
@@ -333,7 +333,7 @@ println!("{}", reply.reply);
 
 <div dir="rtl" lang="ur">
 
-اگلا قدم: [Rust کوئیک اسٹارٹ](https://tinyhumans.gitbook.io/openhuman/developing/quickstart)، [ایمبیڈنگ گائیڈ](https://tinyhumans.gitbook.io/openhuman/developing/embedding) اور [ڈیولپر دستاویزات](https://tinyhumans.gitbook.io/openhuman/developing)۔
+اگلا قدم: [Rust کوئیک اسٹارٹ](https://tinyhumans.gitbook.io/openhuman/developing/quickstart)، [ایمبیڈنگ گائیڈ](https://tinyhumans.gitbook.io/openhuman/developing/embed) اور [ڈیولپر دستاویزات](https://tinyhumans.gitbook.io/openhuman/developing)۔
 
 ---
 

@@ -60,6 +60,9 @@ jobs:
           fetch-depth: 1
       - name: Lychee link check
         uses: lycheeverse/lychee-action@v2
+        env:
+          # Use authenticated API checks instead of anonymous GitHub page requests.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           # Product Hunt denies GitHub-hosted runners (403) for the translated
           # README badge destination, so it cannot be a stable external-link
@@ -72,6 +75,7 @@ jobs:
           # its provider-side redirect is restored.
           args: >-
             --no-progress
+            --max-concurrency 8
             --include-fragments
             --exclude '^http://localhost'
             --exclude '^https?://127\.0\.0\.1'

@@ -25,6 +25,7 @@ documents = ["openhuman-embed/documents"]
 hosting = ["openhuman-embed/hosting"]
 tinymemes = ["openhuman-embed/tinymemes"]
 modules = ["openhuman-embed/modules"]
+security-module = ["openhuman-embed/security-module"]
 voice = ["openhuman-embed/voice"]
 web3 = ["openhuman-embed/web3"]
 # Storage drivers for `[storage] url` (see the core `storage` domain).

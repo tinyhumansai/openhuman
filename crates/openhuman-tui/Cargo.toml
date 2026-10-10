@@ -36,6 +36,7 @@ documents = ["openhuman-rpc/documents"]
 hosting = ["openhuman-rpc/hosting"]
 tinymemes = ["openhuman-rpc/tinymemes"]
 modules = ["openhuman-rpc/modules"]
+security-module = ["openhuman-rpc/security-module"]
 voice = ["openhuman-rpc/voice"]
 web3 = ["openhuman-rpc/web3"]
 # Storage drivers for `[storage] url` / `OPENHUMAN_STORAGE_URL`.

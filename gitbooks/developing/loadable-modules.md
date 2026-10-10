@@ -13,7 +13,10 @@ The trade is explicit. A module shares the core's address space and crash domain
 
 ## The registry
 
-`crates/openhuman-core/src/modules/registry/` compiles in fourteen records. Only this registry may select an artifact. Nothing reads a module name from config and goes looking for it.
+`crates/openhuman-core/src/modules/registry/` compiles in fourteen released
+records, plus the TinySecurity admission record when `security-module` is
+enabled. Only this registry may select an artifact. Nothing reads a module name
+from config and goes looking for it.
 
 | Module | Provides |
 | --- | --- |
@@ -33,6 +36,21 @@ The trade is explicit. A module shares the core's address space and crash domain
 Each record carries a version, the release it came from, and one `PlatformAsset` per supported build. Thirteen of the fourteen publish eleven builds: `ubuntu-24.04` and `ubuntu-22.04` on `x86_64` and `arm64`, `macos-26` and `macos-15` on `arm64` and `x86_64`, `windows-2025-x86_64`, `windows-2022-x86_64` and `windows-11-arm64`. `tinycomputer` publishes seven because it has no Linux backend.
 
 Every asset carries a SHA-256 copied verbatim from the published release's own checksum file. Do not compute a replacement pin from a local build. The digest must describe the artifact the release workflow signed, not the one on your machine.
+
+### TinySecurity migration
+
+`vendor/tinysecurity` owns the native security engine. The `security-module`
+feature links its transport-free `tinysecurity-bus` contract and forwards through
+the host library chain. Asynchronous filesystem checks use immutable scopes
+containing host-authorized roots and internal-state reservations. The client
+requires artifact attestation and fails closed if loading or validation fails.
+
+The production registry pins TinySecurity v0.2.2 and its 11 supported host
+archives using digests copied from the published checksum manifest. Native CI
+loads these released archives through digest admission. Explicit local fixtures
+remain available for module development and never replace production pins.
+Shell policy, approvals, redaction, and crypto still run through their existing
+host implementations.
 
 ## Resolution order
 

@@ -91,3 +91,23 @@ mod host_credential_tests;
 mod metadata_and_sandbox_tests;
 #[path = "tools_redact_tests.rs"]
 mod redact_tests;
+
+#[test]
+fn shared_security_corpus_pins_configured_secret_redaction() {
+    let corpus: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/security-redaction-corpus.json"
+    )))
+    .unwrap();
+    for case in corpus["text"].as_array().unwrap() {
+        let input = case["input"].as_str().unwrap();
+        let secret = case["composio_secret"].as_str().unwrap().to_owned();
+        let output = redact::redact_text(input, &[secret]);
+        let expected = if case["case"] == "anthropic_key" {
+            "[REDACTED]"
+        } else {
+            input
+        };
+        assert_eq!(output, expected, "{}", case["case"]);
+    }
+}

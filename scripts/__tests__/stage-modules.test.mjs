@@ -18,7 +18,10 @@ import { execFileSync } from "node:child_process";
 import { gzipSync } from "node:zlib";
 import { test } from "node:test";
 
-import { readRegistrySource } from "../ci/self-hosted/test-module-assets.mjs";
+import {
+  parseReleaseUrls,
+  readRegistrySource,
+} from "../ci/self-hosted/test-module-assets.mjs";
 import { parseAllList } from "../lib/module-pins.mjs";
 import {
   bundledAssets,
@@ -40,6 +43,27 @@ const HOST_KEYS = [
   "windows-2022-x86_64",
   "windows-11-arm64",
 ];
+
+test("an unpublished module cannot borrow the next record's release URL", () => {
+  const source = `const PENDING: ModuleRecord = ModuleRecord {
+    id: "pending",
+    version: "1.0.0",
+    release_url: "",
+    assets: &[],
+};
+const RELEASED: ModuleRecord = ModuleRecord {
+    id: "released",
+    version: "2.0.0",
+    release_url: "https://github.com/example/released/releases/tag/v2.0.0",
+    assets: &[],
+};`;
+  const urls = parseReleaseUrls(source);
+  assert.equal(urls.has("pending"), false);
+  assert.equal(
+    urls.get("released"),
+    "https://github.com/example/released/releases/tag/v2.0.0",
+  );
+});
 
 for (const hostKey of HOST_KEYS) {
   test(`every compiled module has one pinned ${hostKey} asset`, () => {

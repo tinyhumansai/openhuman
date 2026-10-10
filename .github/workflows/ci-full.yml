@@ -124,6 +124,9 @@ jobs:
           touch .env
           touch app/.env
 
+      - name: Exercise attested native security adapter and latency budget
+        shell: bash
+        run: bash scripts/ci/security-native-fixture.sh
       - name: Install checksum-pinned native test modules
         run: |
           # tinybus validates every directory ancestor. GitHub mounts the

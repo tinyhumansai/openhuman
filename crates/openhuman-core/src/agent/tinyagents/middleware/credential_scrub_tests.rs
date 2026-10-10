@@ -62,3 +62,29 @@ fn source_code_about_tokens_passes_through_the_host_scrubber() {
     assert_eq!(count, 1);
     assert!(!scrubbed.contains("hunter2secret"));
 }
+
+#[test]
+fn shared_security_corpus_pins_credential_middleware_catches_and_gaps() {
+    let corpus: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/security-redaction-corpus.json"
+    )))
+    .unwrap();
+    for case in corpus["text"].as_array().unwrap() {
+        let input = case["input"].as_str().unwrap();
+        let output = scrub_with_notice_for_tool("read_file", input)
+            .map(|(text, _)| text)
+            .unwrap_or_else(|| input.to_owned());
+        let removed = case["removed_by"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|redactor| redactor == "credential_middleware");
+        assert_eq!(
+            !output.contains(case["needle"].as_str().unwrap()),
+            removed,
+            "{}: {output}",
+            case["case"]
+        );
+    }
+}
