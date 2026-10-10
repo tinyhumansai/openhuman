@@ -1316,6 +1316,7 @@ async fn config_save_and_load_encrypts_channel_secret_fields() {
     config.search.querit.api_key = Some("querit-secret".into());
     config.search.exa.api_key = Some("exa-secret".into());
     config.search.tavily.api_key = Some("tavily-secret".into());
+    config.search.keenable.api_key = Some("keenable-secret".into());
     config.channels_config.telegram = Some(TelegramConfig {
         bot_token: "telegram-secret".into(),
         chat_id: None,
@@ -1400,6 +1401,7 @@ async fn config_save_and_load_encrypts_channel_secret_fields() {
         "api-secret",
         "exa-secret",
         "tavily-secret",
+        "keenable-secret",
         "telegram-secret",
         "discord-secret",
         "slack-bot-secret",
@@ -1427,6 +1429,10 @@ async fn config_save_and_load_encrypts_channel_secret_fields() {
     assert_eq!(
         loaded.search.tavily.api_key.as_deref(),
         Some("tavily-secret")
+    );
+    assert_eq!(
+        loaded.search.keenable.api_key.as_deref(),
+        Some("keenable-secret")
     );
     assert_eq!(
         loaded

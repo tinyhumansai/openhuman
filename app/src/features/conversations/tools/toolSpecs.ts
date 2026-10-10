@@ -226,6 +226,7 @@ export const EXACT_TOOL_SPECS: Record<string, ToolSpec> = {
   tinyfish_search: webSearch('searchWeb'),
   searxng_search: webSearch('searchWeb'),
   seltz_search: webSearch('searchWeb'),
+  keenable_search: webSearch('searchWeb'),
   brave_news_search: webSearch('searchNews', NewspaperIcon),
   brave_image_search: webSearch('searchImages', ImageIcon),
   brave_video_search: webSearch('searchVideos', VideoIcon),
@@ -237,6 +238,7 @@ export const EXACT_TOOL_SPECS: Record<string, ToolSpec> = {
   tavily_extract: readPages,
   parallel_extract: readPages,
   tinyfish_fetch: readPages,
+  keenable_fetch: readPages,
   // Parallel was removed from the core; these stay so old transcripts still
   // render with a meaningful label.
   parallel_research: spec('research', TelescopeIcon, 'web', { chip: chip.query() }),

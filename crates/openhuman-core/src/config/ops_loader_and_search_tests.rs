@@ -341,12 +341,15 @@ fn snapshot_config_json_redacts_every_search_key_but_keeps_settings() {
     cfg.search.exa.api_key = Some("exa-sentinel".into());
     cfg.search.tavily.api_key = Some("tavily-sentinel".into());
     cfg.search.gemini.api_key = Some("gemini-sentinel".into());
+    cfg.search.keenable.api_key = Some("keenable-sentinel".into());
     cfg.seltz.api_key = Some("seltz-sentinel".into());
     let snapshot = snapshot_config_json(&cfg).unwrap();
     let serialized = snapshot.to_string();
     assert!(!serialized.contains("-sentinel"));
     assert_eq!(snapshot["config"]["search"]["max_results"], 13);
-    for provider in ["parallel", "brave", "querit", "exa", "tavily", "gemini"] {
+    for provider in [
+        "parallel", "brave", "querit", "exa", "tavily", "gemini", "keenable",
+    ] {
         assert!(snapshot["config"]["search"][provider]["api_key"].is_null());
     }
     assert!(snapshot["config"]["seltz"]["api_key"].is_null());

@@ -62,8 +62,9 @@ const SearchPanelConnectDialog = ({
   const [url, setUrl] = useState(provider.base_url ?? '');
 
   // A stored key may be kept when only the route or URL changes; a new
-  // provider without one must get one before it can serve anything.
-  const keyRequired = showKey && !provider.key_configured;
+  // provider without one must get one before it can serve anything, unless
+  // its key is optional.
+  const keyRequired = showKey && !provider.key_configured && !provider.key_optional;
   const canSubmit =
     !saving &&
     (!keyRequired || key.trim().length > 0) &&
@@ -165,6 +166,13 @@ const SearchPanelConnectDialog = ({
             {provider.deep_research_available !== undefined && (
               <p className="text-[11px] leading-4 text-content-muted">
                 {withProvider(t('settings.search.deepResearchHint'), provider.label)}
+              </p>
+            )}
+            {provider.key_optional && (
+              <p
+                className="text-[11px] leading-4 text-content-muted"
+                data-testid={`search-connect-${provider.id}-key-optional`}>
+                {withProvider(t('settings.search.optionalKeyHint'), provider.label)}
               </p>
             )}
           </div>

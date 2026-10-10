@@ -1050,6 +1050,9 @@ const messages: TranslationMap = {
   'settings.search.addProviderAria': 'Połącz {provider}',
   'settings.search.detailOwnKey': 'Własny klucz API',
   'settings.search.detailNoKey': 'Brak klucza API',
+  'settings.search.detailKeyOptional': 'Klucz API nie jest wymagany',
+  'settings.search.optionalKeyHint':
+    'Opcjonalnie: {provider} działa bez klucza. Klucz podnosi limity zapytań.',
   'settings.search.detailNoUrl': 'Brak adresu URL instancji',
   'settings.search.deepResearchBadge': 'Dogłębne badanie',
   'settings.search.rowActions': 'Opcje {provider}',

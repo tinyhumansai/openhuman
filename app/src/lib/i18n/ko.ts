@@ -1020,6 +1020,9 @@ const messages: TranslationMap = {
   'settings.search.addProviderAria': '{provider} 연결',
   'settings.search.detailOwnKey': '본인 API 키',
   'settings.search.detailNoKey': '아직 API 키 없음',
+  'settings.search.detailKeyOptional': 'API 키 필요 없음',
+  'settings.search.optionalKeyHint':
+    '선택 사항: {provider}는 키 없이도 작동합니다. 키를 추가하면 사용 한도가 늘어납니다.',
   'settings.search.detailNoUrl': '아직 인스턴스 URL 없음',
   'settings.search.deepResearchBadge': '심층 리서치',
   'settings.search.rowActions': '{provider} 옵션',

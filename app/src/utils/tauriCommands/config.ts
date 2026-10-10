@@ -706,6 +706,8 @@ export interface SearchProviderInfo {
   managed_available: boolean;
   key_configured: boolean;
   takes_key: boolean;
+  /** The direct route also works without a key (Keenable); a key raises its limits. */
+  key_optional?: boolean;
   usable: boolean;
   status: SearchProviderStatus;
   /** Roles this provider is able to serve. */

@@ -1085,6 +1085,9 @@ const messages: TranslationMap = {
   'settings.search.addProviderAria': '{provider} bağlan',
   'settings.search.detailOwnKey': 'Kendi API anahtarınız',
   'settings.search.detailNoKey': 'Henüz API anahtarı yok',
+  'settings.search.detailKeyOptional': 'API anahtarı gerekmez',
+  'settings.search.optionalKeyHint':
+    'İsteğe bağlı: {provider} anahtar olmadan çalışır. Anahtar, hız sınırlarını yükseltir.',
   'settings.search.detailNoUrl': "Henüz örnek URL'si yok",
   'settings.search.deepResearchBadge': 'Derin araştırma',
   'settings.search.rowActions': '{provider} seçenekleri',

@@ -1040,6 +1040,9 @@ const messages: TranslationMap = {
   'settings.search.addProviderAria': 'Подключить {provider}',
   'settings.search.detailOwnKey': 'Свой API-ключ',
   'settings.search.detailNoKey': 'API-ключа пока нет',
+  'settings.search.detailKeyOptional': 'API-ключ не нужен',
+  'settings.search.optionalKeyHint':
+    'Необязательно: {provider} работает без ключа. Ключ повышает лимиты запросов.',
   'settings.search.detailNoUrl': 'URL экземпляра пока не задан',
   'settings.search.deepResearchBadge': 'Глубокое исследование',
   'settings.search.rowActions': 'Параметры {provider}',

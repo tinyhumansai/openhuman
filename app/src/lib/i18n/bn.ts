@@ -1025,6 +1025,9 @@ const messages: TranslationMap = {
   'settings.search.addProviderAria': '{provider} সংযুক্ত করুন',
   'settings.search.detailOwnKey': 'আপনার নিজের API কী',
   'settings.search.detailNoKey': 'এখনও কোনো API কী নেই',
+  'settings.search.detailKeyOptional': 'API কী লাগবে না',
+  'settings.search.optionalKeyHint':
+    'ঐচ্ছিক: {provider} কী ছাড়াই কাজ করে। কী দিলে রেট লিমিট বাড়ে।',
   'settings.search.detailNoUrl': 'এখনও কোনো ইনস্ট্যান্স URL নেই',
   'settings.search.deepResearchBadge': 'গভীর গবেষণা',
   'settings.search.rowActions': '{provider} বিকল্প',

@@ -11,7 +11,9 @@ pub fn snapshot_config_json(config: &Config) -> Result<serde_json::Value, String
     let mut value = serde_json::to_value(config).map_err(|e| e.to_string())?;
     // The full snapshot is sent over RPC. Keep search settings visible while
     // removing credentials, including the legacy Seltz key.
-    for provider in ["brave", "querit", "exa", "tavily", "gemini", "parallel"] {
+    for provider in [
+        "brave", "querit", "exa", "tavily", "gemini", "parallel", "keenable",
+    ] {
         value["search"][provider]["api_key"] = serde_json::Value::Null;
     }
     value["seltz"]["api_key"] = serde_json::Value::Null;
