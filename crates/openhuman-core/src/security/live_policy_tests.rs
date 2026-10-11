@@ -232,3 +232,42 @@ async fn effective_falls_back_to_the_process_policy_for_an_agent_without_one() {
         crate::core::runtime::CoreContext::scope(agent_context(None), async { effective() }).await;
     assert!(Arc::ptr_eq(&seen.expect("process policy"), &process));
 }
+
+/// `reload_from` rebuilds through `from_config`, which cannot infer the account
+/// root (it is not derivable from `workspace_dir`). Without the stored copy the
+/// field would be right at boot and silently lost on the first
+/// `config.update_autonomy_settings`, which is the hard kind of bug to notice:
+/// the predicate still runs, just against the wrong directory.
+#[test]
+fn account_root_survives_an_autonomy_reload() {
+    // Same process-global lock as the other live-policy tests.
+    let _env = crate::config::TEST_ENV_LOCK.blocking_lock();
+    let account = std::env::temp_dir().join("openhuman_live_policy_account");
+    let workspace = account.join("workspace");
+    let installed = Arc::new(
+        SecurityPolicy {
+            workspace_dir: workspace.clone(),
+            ..SecurityPolicy::default()
+        }
+        .with_account_dir(Some(account.as_path())),
+    );
+    install(installed, workspace.clone(), workspace.clone());
+    assert_eq!(
+        current().expect("policy installed").account_dir.as_deref(),
+        Some(account.as_path())
+    );
+
+    reload_from(&AutonomyConfig {
+        level: AutonomyLevel::Full,
+        ..AutonomyConfig::default()
+    });
+
+    assert_eq!(
+        current()
+            .expect("policy still installed")
+            .account_dir
+            .as_deref(),
+        Some(account.as_path()),
+        "the configured account root must survive a reload"
+    );
+}

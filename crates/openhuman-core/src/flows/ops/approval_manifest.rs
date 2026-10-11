@@ -37,8 +37,7 @@ pub async fn compute_approval_manifest(config: &Config, graph: &WorkflowGraph) -
     use crate::flows::tinyflows::caps::classify_composio_action_for_tier;
     use crate::security::{CommandClass, GateDecision, SecurityPolicy};
 
-    let security =
-        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
+    let security = SecurityPolicy::for_config(config);
 
     let mut entries: Vec<Value> = Vec::new();
     // Approvable/blocked rows dedupe on the trust key (`tool_name`) — two

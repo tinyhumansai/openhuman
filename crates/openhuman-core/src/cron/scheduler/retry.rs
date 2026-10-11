@@ -24,8 +24,7 @@ pub(super) fn agent_session_target_tag(target: &SessionTarget) -> &'static str {
 /// Run `job` now under the caller's `run_id` (also the id its delivery and
 /// run record use).
 pub async fn execute_job_now(config: &Config, job: &CronJob, run_id: &str) -> (bool, String) {
-    let security =
-        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
+    let security = SecurityPolicy::for_config(config);
     execute_job_with_retry_for_run(config, &security, job, run_id).await
 }
 

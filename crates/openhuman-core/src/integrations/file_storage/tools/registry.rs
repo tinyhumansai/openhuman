@@ -24,11 +24,7 @@ pub fn build_file_storage_tools(root_config: &Config, action_dir: &Path) -> Vec<
     };
 
     let action_dir = action_dir.to_path_buf();
-    let security = Arc::new(SecurityPolicy::from_config(
-        &root_config.autonomy,
-        &root_config.workspace_dir,
-        &root_config.action_dir,
-    ));
+    let security = Arc::new(SecurityPolicy::for_config(root_config));
     let tools: Vec<Box<dyn Tool>> = vec![
         Box::new(StorageUploadFileTool::new_with_security(
             Arc::clone(&client),

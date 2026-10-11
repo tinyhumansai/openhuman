@@ -180,11 +180,7 @@ impl AttachmentModel {
             .join(id)
             .join(super::super::filename(name));
         let root = super::super::action_root(&self.config, scope);
-        let preliminary = crate::security::SecurityPolicy::from_config(
-            &self.config.autonomy,
-            &self.config.workspace_dir,
-            &root,
-        );
+        let preliminary = crate::security::SecurityPolicy::for_config_in(&self.config, &root);
         preliminary
             .validate_parent_path(&root.join(&relative).to_string_lossy())
             .await
@@ -195,11 +191,7 @@ impl AttachmentModel {
         let root = tokio::fs::canonicalize(root)
             .await
             .map_err(|e| tinyinference_llm::Error::Model(e.to_string()))?;
-        let policy = crate::security::SecurityPolicy::from_config(
-            &self.config.autonomy,
-            &self.config.workspace_dir,
-            &root,
-        );
+        let policy = crate::security::SecurityPolicy::for_config_in(&self.config, &root);
         let path = root.join(&relative);
         policy
             .validate_parent_path(&path.to_string_lossy())

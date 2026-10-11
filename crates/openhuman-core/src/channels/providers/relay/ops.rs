@@ -101,10 +101,8 @@ pub(crate) async fn run_relay_turn(
         params.message_id.clone(),
     ));
 
-    let security = Arc::new(
-        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir)
-            .with_privacy_mode(config.privacy.mode),
-    );
+    let security =
+        Arc::new(SecurityPolicy::for_config(&config).with_privacy_mode(config.privacy.mode));
     let parts = match build_channel_turn_parts(&config, &security, PromptToolDescs::Registered) {
         Ok(parts) => parts,
         Err(error) => {

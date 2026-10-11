@@ -1,6 +1,8 @@
 use crate::config::Config;
 use crate::core::Outcome;
-use crate::cron::{self, add_shell_job, update_job, CronJob, CronJobPatch, CronRun, Schedule};
+use crate::cron::{
+    self, add_shell_job, get_job, update_job, CronJob, CronJobPatch, CronRun, Schedule,
+};
 use crate::security::SecurityPolicy;
 use anyhow::Result;
 use once_cell::sync::Lazy;
@@ -117,11 +119,7 @@ pub fn update_cron_job(
     };
 
     if let Some(ref cmd) = command {
-        let security = SecurityPolicy::from_config(
-            &config.autonomy,
-            &config.workspace_dir,
-            &config.action_dir,
-        );
+        let security = SecurityPolicy::for_config(config);
         if !security.is_command_allowed(cmd) {
             anyhow::bail!("Command blocked by security policy: {cmd}");
         }
@@ -181,11 +179,7 @@ pub async fn cron_update(
     }
 
     if let Some(command) = &patch.command {
-        let security = SecurityPolicy::from_config(
-            &config.autonomy,
-            &config.workspace_dir,
-            &config.action_dir,
-        );
+        let security = SecurityPolicy::for_config(config);
         crate::cron::scheduler::shell_job::authorize_shell_command(config, &security, command)
             .await?;
     }

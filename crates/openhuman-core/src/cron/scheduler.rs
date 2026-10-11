@@ -65,11 +65,7 @@ pub async fn run(config: Config) -> Result<()> {
 
     let poll_secs = config.reliability.scheduler_poll_secs.max(MIN_POLL_SECONDS);
     let mut interval = time::interval(Duration::from_secs(poll_secs));
-    let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
-        &config.workspace_dir,
-        &config.action_dir,
-    ));
+    let security = Arc::new(SecurityPolicy::for_config(&config));
 
     BUS.publish(DomainEvent::SystemStartup {
         component: "scheduler".to_string(),

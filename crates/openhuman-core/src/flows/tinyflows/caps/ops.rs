@@ -603,11 +603,7 @@ impl ToolInvoker for OpenHumanTools {
 /// flow-scoped memory: `OpenHumanMemory` tags memory items with
 /// `flows::flow_tag`, derived independently from the run's trusted origin.
 pub fn build_capabilities(config: Arc<Config>, state_namespace: impl Into<String>) -> Capabilities {
-    let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
-        &config.workspace_dir,
-        &config.action_dir,
-    ));
+    let security = Arc::new(SecurityPolicy::for_config(&config));
     let http_config = config.http_request.clone();
     let http_creds = Arc::new(HttpCredentialsStore::from_config(&config));
 

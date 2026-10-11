@@ -205,11 +205,7 @@ async fn regenerate_presentation(
 
     // A fresh policy from the live config — cheap, sync, and mirrors how
     // the agent harness builds the same tool (see `tools::ops`).
-    let security = std::sync::Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
-        &config.workspace_dir,
-        &config.action_dir,
-    ));
+    let security = std::sync::Arc::new(SecurityPolicy::for_config(&config));
     let tool = PresentationTool::with_config(
         config.workspace_dir.clone(),
         super::files::FileRoots::from_config(config),

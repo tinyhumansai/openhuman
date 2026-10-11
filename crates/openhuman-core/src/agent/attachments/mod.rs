@@ -156,7 +156,7 @@ pub(crate) fn action_root(config: &Config, scope: &AttachmentAccessScope) -> Pat
 }
 
 fn policy(config: &Config, root: &Path) -> SecurityPolicy {
-    SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, root)
+    SecurityPolicy::for_config_in(config, root)
 }
 
 /// Resolve a local attachment under the same filesystem policy as acting

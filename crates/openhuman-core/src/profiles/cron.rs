@@ -121,11 +121,7 @@ pub async fn sweep(host: &ProfileHost, now: DateTime<Utc>) -> SweepReport {
         let count = claimed.len();
         let profile_config = profile.config.clone();
         let outcome = CoreContext::scope(Arc::clone(profile.context()), async move {
-            let security = Arc::new(crate::security::SecurityPolicy::from_config(
-                &profile_config.autonomy,
-                &profile_config.workspace_dir,
-                &profile_config.action_dir,
-            ));
+            let security = Arc::new(crate::security::SecurityPolicy::for_config(&profile_config));
             let mut dispatcher = JobDispatcher::new(profile_config.scheduler.max_concurrent);
             dispatcher
                 .dispatch(&profile_config, &security, claimed)
