@@ -4090,8 +4090,10 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",
+ "tinyagents-graph",
  "tinyagents-harness",
  "tinyagents-session",
+ "tinybus",
  "tinyinference-embeddings",
  "tinyinference-llm",
  "tinymcp-bus",
@@ -7138,7 +7140,7 @@ dependencies = [
 
 [[package]]
 name = "tinysearch-bus"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -7308,7 +7310,7 @@ dependencies = [
 
 [[package]]
 name = "tinywallet"
-version = "0.7.3"
+version = "0.13.0"
 dependencies = [
  "coins-bip32",
  "coins-bip39",
@@ -7326,16 +7328,16 @@ dependencies = [
 
 [[package]]
 name = "tinywallet-bus"
-version = "0.7.3"
+version = "0.13.0"
 dependencies = [
  "serde",
- "tinywallet-crypto",
- "tinywallet-x402",
+ "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
 name = "tinywallet-crypto"
-version = "0.7.3"
+version = "0.13.0"
 dependencies = [
  "async-trait",
  "bech32 0.12.0",
@@ -7346,17 +7348,18 @@ dependencies = [
  "sha2 0.11.0",
  "sha3 0.12.0",
  "thiserror 2.0.20",
+ "tinywallet-bus",
 ]
 
 [[package]]
 name = "tinywallet-web3"
-version = "0.7.3"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bs58",
- "curve25519-dalek 4.1.3",
+ "curve25519-dalek 5.0.0",
  "hex",
  "log",
  "parking_lot",
@@ -7371,23 +7374,24 @@ dependencies = [
 
 [[package]]
 name = "tinywallet-x402"
-version = "0.7.3"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bs58",
  "chrono",
- "curve25519-dalek 4.1.3",
+ "curve25519-dalek 5.0.0",
  "hex",
  "log",
- "reqwest 0.12.28",
+ "reqwest 0.13.5",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "sha3 0.12.0",
  "thiserror 2.0.20",
  "tinytools",
+ "tinywallet-bus",
  "tinywallet-crypto",
  "uuid",
 ]
