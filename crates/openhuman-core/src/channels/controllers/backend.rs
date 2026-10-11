@@ -8,14 +8,14 @@ use crate::config::{ChannelsConfig, Config};
 use crate::core::Outcome;
 
 use super::ops;
-use tinychannels::controllers::{
+use tinychannels::{ChannelBackend, ChannelOutboundIntent, SendMessage};
+use tinychannels_bus::controllers::{
     ChannelAuthMode, ChannelConnectionResult, ChannelDisconnectResult, ChannelReactionResult,
     ChannelSendMessageResult, ChannelStatusEntry, ChannelTestResult, ChannelThreadListResult,
     ChannelThreadResult, DiscordChannelEntry, DiscordChannelListResult, DiscordGuildEntry,
     DiscordGuildListResult, DiscordLinkCheckResult, DiscordLinkStartResult,
     DiscordPermissionCheckResult, TelegramLoginCheckResult, TelegramLoginStartResult,
 };
-use tinychannels::{ChannelBackend, ChannelOutboundIntent, SendMessage};
 
 /// OpenHuman-owned implementation of the TinyChannels backend contract.
 #[derive(Debug, Clone)]

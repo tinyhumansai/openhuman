@@ -27,7 +27,7 @@ AES-256-GCM at-rest crypto for AI memory storage and the encrypt/decrypt RPC sur
 
 ## Tests
 
-- This domain has no `*_tests.rs` siblings; the underlying crypto round-trips are exercised by `crates/openhuman-core/src/security/keyring/encrypted_store_tests.rs` and the credentials tests, which both cover encrypt/decrypt happy paths and tampered-ciphertext rejection.
+- This domain has no `*_tests.rs` siblings; the underlying crypto round-trips are exercised by `crates/openhuman-core/src/security/secret_storage/encrypted_store_tests.rs` and the credentials tests, which both cover encrypt/decrypt happy paths and tampered-ciphertext rejection.
 
 ## Further reading
 

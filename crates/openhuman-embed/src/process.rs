@@ -96,10 +96,10 @@ pub fn apply_startup_restart_delay_from_env() {
     openhuman_core::platform::service::apply_startup_restart_delay_from_env();
 }
 
-/// Load the master encryption key before anything decrypts a secret. A
-/// no-op once loaded; the core's boot calls it too.
+/// Load the master key when encrypted-file storage is selected. The default
+/// in-memory backend needs no key. Core boot also calls this helper.
 pub fn init_master_key() -> anyhow::Result<()> {
-    openhuman_core::security::keyring::init_master_key().map_err(|error| {
+    openhuman_core::security::secret_storage::init_master_key().map_err(|error| {
         log::warn!("[embed][process] master key init failed");
         anyhow::Error::msg(error)
     })

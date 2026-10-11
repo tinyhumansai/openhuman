@@ -1,5 +1,5 @@
 use super::*;
-use tinychannels::controllers::ChannelThreadListResult;
+use tinychannels_bus::controllers::ChannelThreadListResult;
 
 #[test]
 fn send_message_payload_preserves_thread_and_subject() {

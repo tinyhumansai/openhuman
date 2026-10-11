@@ -176,7 +176,7 @@ OpenHuman rethinks the parts that cost the most: how much text the AI has to rea
 
 <p><a href="https://tinyhumans.gitbook.io/openhuman/developing/loadable-modules">How plug-ins work</a></p>
 
-<p>Every feature, like search, documents or voice, plugs into one Rust bus, an idea borrowed from the <a href="https://www.freedesktop.org/wiki/Software/dbus/">Linux system bus</a>. A feature loads only when needed, and if one gets stuck, the rest keep working.</p>
+<p>Every feature, like search, documents or voice, plugs into one Rust bus, an idea borrowed from the <a href="https://packages.debian.org/stable/dbus">Linux system bus</a>. A feature loads only when needed, and if one gets stuck, the rest keep working.</p>
 
 </td>
 

@@ -346,8 +346,8 @@ pub async fn build(
     }
     // Root the keyring (the master key and every stored credential) under the
     // operator directory, never the host's `~/.openhuman`.
-    crate::security::keyring::init_workspace(&operator.workspace_dir);
-    let keyring_dir = crate::security::keyring::store::workspace_dir_for_file_backend();
+    crate::security::secret_storage::init_workspace(&operator.workspace_dir);
+    let keyring_dir = crate::security::secret_storage::store::workspace_dir_for_file_backend();
     if keyring_dir != operator.workspace_dir {
         anyhow::bail!(
             "[saas] the keyring is already rooted at {}; a SaaS core keeps it under {}",

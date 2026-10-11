@@ -12,7 +12,9 @@ publish = false
 # hosts). `http-client`, `server` and `session-store` are this crate's own.
 [features]
 langfuse = ["openhuman-tinyhumans/langfuse"]
-default = ["http-client", "server"]
+default = ["http-client", "server", "os-keyring"]
+# Host-owned OS credential and master-key providers.
+os-keyring = ["dep:keyring", "dep:tinystoragedrivers", "dep:zeroize", "dep:hex"]
 # Authenticated HTTP client for reaching a core's `/rpc` endpoint.
 http-client = ["dep:reqwest"]
 # The core's JSON-RPC server: HTTP router, Socket.IO, and the listener bind.
@@ -20,6 +22,7 @@ http-client = ["dep:reqwest"]
 # handlers (the `/v1` inference router, the dictation WebSocket) the router
 # mounts.
 server = [
+    "os-keyring",
     "http-server",
     "dep:axum",
     "dep:socketioxide",
@@ -75,6 +78,10 @@ scheduler-gate = ["openhuman-tinyhumans/scheduler-gate"]
 e2e-test-support = ["openhuman-tinyhumans/e2e-test-support"]
 
 [dependencies]
+keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"], optional = true }
+tinystoragedrivers = { path = "../../vendor/tinyagents/vendor/tinystoragedrivers/crates/tinystoragedrivers", default-features = false, features = ["secrets", "keyring"], optional = true }
+zeroize = { version = "1", optional = true }
+hex = { version = "0.4", optional = true }
 # The only openhuman crate this layer depends on. Core internals the server
 # needs come through embed's `#[doc(hidden)]` `__host` list (reached as
 # `openhuman_tinyhumans::__host`, which tinyhumans forwards); there is no direct `openhuman-core`

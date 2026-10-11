@@ -4,7 +4,9 @@
 //! (`crate::search::providers`) into the module's private configuration.
 //! Secrets enter only through that configuration, delivered at TinyBus
 //! initialization and reinitialization; they never ride an ordinary method
-//! call or a settings RPC response. `proxy` holds the call path.
+//! call or a settings RPC response. A key an embedder pinned on one agent's
+//! config ([`crate::config::SearchHostCredential`]) enters the same way, for
+//! that agent's calls. `proxy` holds the call path.
 
 use std::collections::BTreeMap;
 
@@ -19,6 +21,16 @@ use crate::search::providers::{self, ResolvedProvider, ROLES};
 mod proxy;
 
 pub use proxy::{execute_tool, list_tools, refresh_loaded};
+
+/// [`module_config`] as the JSON the module is loaded with, recorded as the
+/// configuration the module holds so the first call knows whether to
+/// reconfigure it.
+pub(crate) fn load_configuration(config: &Config) -> serde_json::Value {
+    let configuration =
+        serde_json::to_value(module_config(config)).expect("TinySearch config serializes");
+    proxy::record_load_configuration(&configuration);
+    configuration
+}
 
 pub const MODULE_ID: &str = "tinysearch";
 
@@ -50,9 +62,11 @@ fn direct_settings(config: &Config, provider: &str) -> ProviderConfig {
             settings.default_language = Some(config.searxng.default_language.clone());
         }
         other => {
-            settings.credential = search
-                .credentials(other)
-                .and_then(|c| c.key())
+            // A key pinned on this agent's config wins over the stored one.
+            settings.credential = search.direct_key(other).map(str::to_owned);
+            settings.base_url = search
+                .host_credential(other)
+                .and_then(|pinned| pinned.base_url())
                 .map(str::to_owned);
         }
     }

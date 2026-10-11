@@ -1,0 +1,156 @@
+{
+  "implementationPackages": [
+    "tinyjuice",
+    "tinyconnectors",
+    "tinyconnectors-sync",
+    "tinymcp",
+    "tinychannels",
+    "tinychannels-runtime",
+    "tinyhosts",
+    "tinybox-core",
+    "tinybox-jail",
+    "tinybox-docker",
+    "tinybox-host",
+    "tinybox-ssh",
+    "tinycomputer-accessibility",
+    "tinyvoice",
+    "tinywallet-crypto",
+    "tinywallet-web3",
+    "tinywallet-x402",
+    "pdf-extract",
+    "calamine",
+    "tinybox-linux",
+    "tinybox-microvm",
+    "tinybox-sync",
+    "tinydocs",
+    "tinydocs-core",
+    "tinydocs-extract",
+    "tinysearch",
+    "tinysearch-core",
+    "cpal"
+  ],
+  "implementationPrefixes": [
+    "tinyjuice-",
+    "tinyconnectors-",
+    "tinymcp-",
+    "tinychannels-",
+    "tinyhosts-",
+    "tinybox-",
+    "tinywallet-",
+    "tinycomputer-",
+    "tinyvoice-",
+    "tinydocs-",
+    "tinysearch-"
+  ],
+  "contracts": [
+    {
+      "name": "tinyjuice-bus",
+      "manifest": "vendor/tinyjuice/crates/tinyjuice-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinyjuice"
+    },
+    {
+      "name": "tinyconnectors-bus",
+      "manifest": "vendor/tinyconnectors/crates/tinyconnectors-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinyconnectors"
+    },
+    {
+      "name": "tinymcp-bus",
+      "manifest": "vendor/tinymcp/crates/tinymcp-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinymcp"
+    },
+    {
+      "name": "tinychannels-bus",
+      "manifest": "vendor/tinychannels/crates/tinychannels-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinychannels"
+    },
+    {
+      "name": "tinywallet-bus",
+      "manifest": "vendor/tinywallet/crates/tinywallet-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinywallet"
+    },
+    {
+      "name": "tinycomputer-bus",
+      "manifest": "vendor/tinycomputer/crates/tinycomputer-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinycomputer"
+    },
+    {
+      "name": "tinyvoice-bus",
+      "manifest": "vendor/tinyvoice/crates/tinyvoice-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinyvoice"
+    },
+    {
+      "name": "tinydocs-bus",
+      "manifest": "vendor/tinydocs/crates/tinydocs-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinydocs"
+    },
+    {
+      "name": "tinysearch-bus",
+      "manifest": "vendor/tinysearch/crates/tinysearch-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinysearch"
+    },
+    {
+      "name": "tinyhosts-bus",
+      "manifest": "vendor/tinyhosts/crates/tinyhosts-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinyhosts"
+    },
+    {
+      "name": "tinybox-bus",
+      "manifest": "vendor/tinybox/crates/tinybox-bus/Cargo.toml",
+      "owner": "https://github.com/tinyhumansai/tinybox"
+    }
+  ],
+  "pendingContracts": [],
+  "exceptions": [
+    {
+      "scope": "hosts",
+      "package": "tinymcp",
+      "reason": "Protocol servers and supervisor operations still call the implementation."
+    },
+    {
+      "scope": "hosts",
+      "package": "tinychannels",
+      "reason": "Providers, relay, pairing and delivery lifecycles still call the implementation."
+    },
+    {
+      "scope": "hosts",
+      "package": "tinychannels-runtime",
+      "reason": "Providers, relay, pairing and delivery lifecycles still call the implementation."
+    },
+    {
+      "scope": "hosts",
+      "package": "tinybox-core",
+      "reason": "Sandbox execution, shell analysis and pre-core gateways need a bus contract."
+    },
+    {
+      "scope": "hosts",
+      "package": "tinybox-jail",
+      "reason": "Sandbox execution, shell analysis and pre-core gateways need a bus contract."
+    },
+    {
+      "scope": "hosts",
+      "package": "tinybox-docker",
+      "reason": "Sandbox execution, shell analysis and pre-core gateways need a bus contract."
+    },
+    {
+      "scope": "hosts",
+      "package": "tinywallet-crypto",
+      "reason": "Validation, transaction construction, web3 and x402 need module operations."
+    },
+    {
+      "scope": "hosts",
+      "package": "tinywallet-web3",
+      "reason": "Validation, transaction construction, web3 and x402 need module operations."
+    },
+    {
+      "scope": "hosts",
+      "package": "tinywallet-x402",
+      "reason": "Validation, transaction construction, web3 and x402 need module operations."
+    }
+  ],
+  "excludedSubsystems": [
+    {
+      "owner": "tinyruntime",
+      "reason": "Excluded by user: TinyRuntime removal is being implemented separately. This migration does not change its host or module."
+    }
+  ]
+}

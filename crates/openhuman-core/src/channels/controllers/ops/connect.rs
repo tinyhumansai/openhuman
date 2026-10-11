@@ -9,6 +9,8 @@ mod status;
 mod test_channel;
 
 pub use connect_channel::connect_channel;
+#[cfg(test)]
+pub(crate) use connect_channel::persist_prepared_connection;
 pub use disconnect::disconnect_channel;
 #[cfg(test)]
 pub(crate) use email::persist_email_config;

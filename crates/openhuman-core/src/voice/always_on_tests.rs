@@ -45,3 +45,17 @@ fn a_nonpositive_utterance_ceiling_cannot_collapse_to_zero() {
         1
     );
 }
+
+#[tokio::test]
+async fn an_utterance_started_after_stop_never_polls_its_transcription() {
+    let (stop, observed) = tokio::sync::watch::channel(0_u64);
+    let delivered = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let task_delivered = delivered.clone();
+    stop.send_replace(1);
+    let mut tasks = tokio::task::JoinSet::new();
+    processor::spawn_transcription(&mut tasks, &observed, async move {
+        task_delivered.store(true, Ordering::SeqCst);
+    });
+    tasks.join_next().await.unwrap().unwrap();
+    assert!(!delivered.load(Ordering::SeqCst));
+}

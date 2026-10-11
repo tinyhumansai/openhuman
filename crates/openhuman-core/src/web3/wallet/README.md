@@ -126,13 +126,13 @@ None. The module publishes or subscribes no `DomainEvent`s and has no `bus.rs`. 
 ## Persistence
 
 - `{workspace_dir}/state/wallet-state.json`: `StoredWalletState`, consent flag, source, mnemonic word count, accounts, `updated_at_ms`, and (only as fallback) the encrypted mnemonic. Written atomically (temp file + `sync_all` + dir fsync + `persist`), guarded by a process-wide `WALLET_STATE_FILE_LOCK`. Corrupt/unreadable/invalid files are quarantined to `...json.corrupted.<ts>`.
-- OS keychain: preferred home for the encrypted mnemonic under key `wallet.mnemonic`, scoped by a workspace-derived user id (`crate::security::keyring`), used only when `keyring_consent::policy::check_secret_access()` returns `Proceed` and the keyring is available. When available, the secret is stripped from JSON; load promotes any JSON-resident secret into the keychain.
+- OS keychain: preferred home for the encrypted mnemonic under key `wallet.mnemonic`, scoped by a workspace-derived user id (`crate::security::secret_storage`), used only when `keyring_consent::policy::check_secret_access()` returns `Proceed` and the keyring is available. When available, the secret is stripped from JSON; load promotes any JSON-resident secret into the keychain.
 - In-memory quote store (instance-owned by the `WalletEngine`, `tinywallet_web3::quote::QuoteStore`): `PreparedTransaction`s, 5-minute TTL, cap 64, pruned on insert. Not persisted across restarts.
 
 ## Dependencies
 
 - `crate::config` (`Config`, `config::rpc::load_config_with_timeout`): resolves workspace dir and config for state paths, keychain user id, and decryption.
-- `crate::security::keyring` (`is_available`/`get`/`set`): OS keychain storage for the encrypted mnemonic.
+- `crate::security::secret_storage` (`is_available`/`get`/`set`): OS keychain storage for the encrypted mnemonic.
 - `crate::security::encryption::rpc` (`encrypt_secret`/`decrypt_secret`): `HostSigner` decrypts the recovery phrase before handing it to the wallet module.
 - `crate::modules::wallet` (`derive_account`, `sign_transaction_in_module`, `sign_message`): the loaded `tinywallet` native module does every derivation and signature; the phrase is only sent after the module passes the attestation check (`modules::wallet::attested_proxy`).
 - `crate::security::approval::APPROVAL_CHAT_CONTEXT`: task-local chat owner (`thread_id`/`client_id`), read by `TaskLocalScope`, used to bind quotes to their originating thread.

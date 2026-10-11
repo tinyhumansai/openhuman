@@ -6,10 +6,11 @@
 
 use serde_json::Value;
 use tinychannels_bus::controllers::{
-    channel_credential_provider, ChannelAuthMode, DiscordLinkCheckResult, DiscordLinkStartResult,
-    TelegramLoginCheckResult, TelegramLoginStartResult,
+    ChannelAuthMode, DiscordLinkCheckResult, DiscordLinkStartResult, TelegramLoginCheckResult,
+    TelegramLoginStartResult,
 };
 
+use credentials::channel_credential_provider;
 use openhuman_embed::__host::config::app_env::{app_env_from_env, is_staging_app_env};
 use openhuman_embed::__host::config::Config;
 use openhuman_embed::__host::core::Outcome;

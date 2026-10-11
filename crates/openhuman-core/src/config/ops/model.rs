@@ -214,7 +214,6 @@ fn complete_byok_route(config: &mut Config, explicit: &ExplicitRolePins) {
                 label: "Custom inference endpoint".to_string(),
                 endpoint: endpoint.clone(),
                 auth_style: AuthStyle::Bearer,
-                legacy_type: None,
                 default_model: Some(model.clone()),
             });
             BYOK_INFERENCE_SLUG.to_string()

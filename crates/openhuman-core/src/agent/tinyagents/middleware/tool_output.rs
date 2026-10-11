@@ -144,8 +144,7 @@ pub(crate) fn is_truncation_exempt(name: &str) -> bool {
 /// [`artifact_read_target`] does.
 ///
 /// Such a result is exempt from the payload summarizer (step 2). `web_fetch`
-/// normally returns HTML as Markdown — `tinyjuice::compressors::html::
-/// html_to_markdown`, which drops scripts and styling — and `raw: true` turns
+/// normally returns HTML as Markdown — TinyJuice’s `ExtractHtml` bus operation, which drops scripts and styling — and `raw: true` turns
 /// that off, so the payload is unconverted markup. Paying a full-price,
 /// *uncached* model call to have an LLM paraphrase minified JS and CSS is the
 /// worst trade in the ladder: one observed `raw: true` fetch of a 183 KB page

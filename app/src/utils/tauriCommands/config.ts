@@ -25,15 +25,6 @@ export interface ModelRoute {
 /** Authentication header style. Matches Rust AuthStyle enum. */
 export type AuthStyle = 'bearer' | 'anthropic' | 'openhuman_jwt' | 'none';
 
-/** @deprecated Use AuthStyle. Kept for back-compat with old wire format. */
-export type CloudProviderType =
-  | 'openhuman'
-  | 'openai'
-  | 'anthropic'
-  | 'openrouter'
-  | 'orcarouter'
-  | 'custom';
-
 /**
  * Endpoint config for one cloud LLM provider (new slug-keyed shape).
  * API keys are NOT carried here — they live in `auth-profiles.json`

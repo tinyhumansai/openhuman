@@ -71,6 +71,7 @@ serde_json = "1"
 # embedded JSON-RPC server and `host::desktop`) and `jev` (the Jev-backed
 # `tool_search` ranker the product ships).
 openhuman-rpc = { path = "../openhuman-rpc", default-features = false, features = [
+    "os-keyring",
     "http-client",
     "server",
     "jev",
@@ -130,14 +131,6 @@ url = "2"
 
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rand = "0.9"
-# tinybox: reach (local/ssh) and confinement (passthrough/docker) as
-# independent axes, which is what lets one `GatewaySpec::Box` variant cover a
-# container here, a machine over there, and a container over there. Vendored as
-# a submodule and taken by path, the same shape as the other tiny* crates.
-tinybox-core = { path = "../../vendor/tinybox/crates/tinybox-core", optional = true }
-tinybox-host = { path = "../../vendor/tinybox/crates/tinybox-host", optional = true }
-tinybox-ssh = { path = "../../vendor/tinybox/crates/tinybox-ssh", optional = true }
-tinybox-docker = { path = "../../vendor/tinybox/crates/tinybox-docker", optional = true }
 hex = "0.4"
 # Tauri's vendored dev-server proxy (see `vendor/tauri-cef/.../protocol/tauri.rs`)
 # builds a reqwest 0.13 client that requires a process-wide rustls
@@ -272,19 +265,14 @@ windows-sys = { version = "0.59", features = [
 [features]
 default = ["gateways"]
 # Routing the frontend to a core somewhere other than this process: a
-# container, a machine over SSH, or a container on a machine over SSH. Pulls in
-# the tinybox crates that provision and reach those boxes.
+# container, a machine over SSH, or a container on a machine over SSH. Calls
+# the TinyBox module through openhuman-rpc's curated embed facade.
 #
 # This is a **shell-local** gate, unrelated to the feature-forwarding rules in
 # AGENTS.md: those govern which product gates the shell forwards on its
 # `openhuman-rpc` dependency, and `scripts/ci/check-feature-forwarding.mjs`
 # reads that dependency's feature list, not this table. Nothing here belongs in `scripts/ci/product-features.txt`.
-gateways = [
-    "dep:tinybox-core",
-    "dep:tinybox-docker",
-    "dep:tinybox-host",
-    "dep:tinybox-ssh",
-]
+gateways = []
 # `custom-protocol` switches Tauri from `devUrl` (vite dev server) to the
 # bundled `frontendDist` served via `tauri://localhost`. `cargo tauri build`
 # turns this on automatically for release; do not put it in `default` or

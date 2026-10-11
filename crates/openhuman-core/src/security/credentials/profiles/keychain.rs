@@ -24,7 +24,7 @@ impl AuthProfilesStore {
         });
         let payload = serde_json::to_string(&secrets)
             .context("Failed to serialize auth secrets for keychain")?;
-        crate::security::keyring::set(&self.user_id, &key, &payload).map_err(|e| {
+        crate::security::secret_storage::set(&self.user_id, &key, &payload).map_err(|e| {
             anyhow::anyhow!(
                 "Keychain set failed for profile {}: {e} | detail={}",
                 profile.id,
@@ -47,7 +47,7 @@ impl AuthProfilesStore {
         profile_id: &str,
     ) -> anyhow::Result<Option<KeychainSecrets>> {
         let key = self.keychain_key_for_profile(profile_id);
-        let payload = match crate::security::keyring::get(&self.user_id, &key) {
+        let payload = match crate::security::secret_storage::get(&self.user_id, &key) {
             Ok(Some(p)) => p,
             Ok(None) => {
                 log::debug!(
@@ -78,7 +78,7 @@ impl AuthProfilesStore {
     /// Delete keychain secrets for a profile (called on profile removal).
     pub(super) fn keychain_delete_secrets(&self, profile_id: &str) {
         let key = self.keychain_key_for_profile(profile_id);
-        if let Err(e) = crate::security::keyring::delete(&self.user_id, &key) {
+        if let Err(e) = crate::security::secret_storage::delete(&self.user_id, &key) {
             log::warn!(
                 "[auth] keychain_delete_secrets error profile_id={profile_id} user_id={}: {e} | detail={}",
                 self.user_id,

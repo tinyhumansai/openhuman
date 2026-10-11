@@ -118,7 +118,7 @@ Method names are `openhuman.<namespace>_<function>`.
   [`crates/openhuman-app/src/notch_window.rs`](../../../openhuman-app/src/notch_window.rs).
 - Socket.IO forwarding belongs to [`crates/openhuman-rpc/src/server/socketio.rs`](../../../openhuman-rpc/src/server/socketio.rs).
 - OS accessibility (AX and IOKit FFI, the Swift helper, focus, permissions,
-  the Globe key) belongs to the `tinycomputer-accessibility` crate in
+  the Globe key) executes inside the compiled TinyComputer module in
   [`vendor/tinycomputer`](../../../../vendor/tinycomputer/) (upstream `tinyhumansai/tinycomputer`). Desktop
   observation, interaction, and Jev-driven goals belong to the `tinycomputer`
   module; this folder calls it through `tinycomputer-bus`.

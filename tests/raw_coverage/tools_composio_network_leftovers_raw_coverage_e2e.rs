@@ -90,7 +90,6 @@ async fn setup_config() -> Harness {
         config_path: root.join("config.toml"),
         ..Config::default()
     };
-    config.node.enabled = false;
     config.secrets.encrypt = false;
     config.observability.analytics_enabled = false;
     config.save().await.expect("save config");

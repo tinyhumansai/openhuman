@@ -2,13 +2,13 @@
 
 Opt-in **Model Context Protocol (MCP) server** that exposes a curated, security-gated slice of OpenHuman's tool surface (Memory v2 reads/writes, core/agent introspection, subagent execution, web search) and bundled prompt assets to external MCP clients (Claude Desktop, Cursor, Windsurf, …). Started via `openhuman-core mcp`: stdio transport by default, or `--transport http` for Streamable HTTP + SSE on a local bind address. It is a JSON-RPC dispatcher, not a registered RPC domain: it has no `schemas.rs`/controllers and is wired only through [`crates/openhuman-core/src/core/cli.rs`](../../core/cli.rs), translating each MCP `tools/call` into an existing registered core RPC method.
 
-The generic server half (JSON-RPC protocol, client-provenance sessions, argument validators, and the stdio and Streamable HTTP transports) lives in `tinymcp::server` ([`vendor/tinymcp`](../../../../../vendor/tinymcp/)). This module is the host half: it implements `tinymcp::McpServerHandler` ([`handler.rs`](./handler.rs)) over OpenHuman's config, security policy, write audit, agent turns, tool catalog, prompt resources and subagent depth.
+TinyMCP owns MCP framing, protocol state, callbacks, and HTTP admission through the `tinymcp_bus` server contract. OpenHuman's `module.rs` and `http.rs`/`stdio.rs` adapt the transports to that contract; `handler.rs` applies OpenHuman policy and dispatches the typed callbacks to the tool catalog, resources, and subagent-depth scope.
 
 ## Responsibilities
 
-- Implement the MCP JSON-RPC server lifecycle: `initialize`, `ping`, `tools/list`, `tools/call`, `resources/list`, `resources/templates/list`, `resources/read`, plus notifications (`notifications/initialized`, `notifications/cancelled`).
+- Compose TinyMCP's protocol lifecycle for `initialize`, `ping`, tools, resources, prompts, and notifications with OpenHuman's host callbacks.
 - Advertise a fixed catalog of MCP tools (`tool_specs`) with input JSON-schemas and MCP `ToolAnnotations` (`readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint`).
-- Validate/normalize tool arguments at the MCP layer (explicit rejection over silent clamping), map them to registered core RPC params, and dispatch via `all::try_invoke_registered_rpc`.
+- Map validated module callbacks to registered core RPC params and dispatch via `all::try_invoke_registered_rpc`.
 - Enforce `SecurityPolicy` per call: read tools require `ToolOperation::Read`; `agent.run_subagent` and the two write tools (`memory.learn`, `memory.forget`) require `ToolOperation::Act`.
 - Run write tools (`memory.learn`, `memory.forget`) through a dedicated write-dispatch + audit pipeline that records every attempt (success and rejection) to the MCP write-audit log.
 - Serve bundled prompt assets (`IDENTITY.md`, `SOUL.md`, `USER.md`, and each built-in subagent's `prompt.md`) as static MCP resources under the `openhuman://prompts/...` URI scheme.
@@ -20,16 +20,17 @@ The generic server half (JSON-RPC protocol, client-provenance sessions, argument
 | File | Role |
 | --- | --- |
 | [`crates/openhuman-core/src/mcp/server/mod.rs`](./mod.rs) | Module docstring + private submodule decls; re-exports `run_http`/`run_http_reporting`/`HttpServerConfig`, `run_stdio_from_cli`, `ensure_local_http`/`LocalMcpEndpoint`, `current_subagent_depth`/`HEADER_SUBAGENT_DEPTH`, `tool_specs`/`McpToolSpec`. |
-| `crates/openhuman-core/src/mcp/server/handler.rs` | `OpenHumanMcpHandler`, the `tinymcp::McpServerHandler` every transport serves: `serverInfo` (`openhuman-core` + instructions), the `mcp` source-type prefix, `tools/list` from the config-gated catalog, `tools/call` through `tools::dispatch` inside the request's subagent-depth scope, and the prompt resources. |
-| [`crates/openhuman-core/src/mcp/server/tools/`](./tools/) | Tool catalog and dispatch: `mod.rs` (facade; re-exports `tinymcp::ToolCallError`), `types.rs` (`McpToolSpec` and the limit/tag constants, ungated so `McpToolSpec` is one real type in both builds), `specs.rs` (`tool_specs`/`base_tool_specs`/`tool_specs_for_loaded_config` builders and the `server_tool_spec` conversion), `params.rs` (OpenHuman's per-tool argument policy → RPC params, over `tinymcp::server::args`), `dispatch.rs` (`call_tool`/`list_tool_specs`, policy enforcement, subagent handlers). |
+| [`crates/openhuman-core/src/mcp/server/module.rs`](./module.rs) | Typed TinyBus adapter; submits frames, handles replayable callbacks, preserves host replies, and joins cancellation/close operations. |
+| `crates/openhuman-core/src/mcp/server/handler.rs` | Applies host policy and dispatches typed `ServerHostCall`s to OpenHuman tool/resource behavior. |
+| [`crates/openhuman-core/src/mcp/server/tools/`](./tools/) | Tool catalog and dispatch: `mod.rs` (facade; re-exports `tinymcp_bus::ToolCallError`), `types.rs` (`McpToolSpec` and the limit/tag constants, ungated so `McpToolSpec` is one real type in both builds), `specs.rs` (catalog builders and the `ServerToolSpec` conversion), `params.rs` (OpenHuman's per-tool argument policy → RPC params), `dispatch.rs` (`call_tool`/`list_tool_specs`, policy enforcement, subagent handlers). |
 | [`crates/openhuman-core/src/mcp/server/write_dispatch.rs`](./write_dispatch.rs) | Write/audit pipeline for `memory.learn`/`memory.forget`: config load, act-policy enforcement, RPC dispatch to `openhuman.memory_learn` / `openhuman.memory_forget`, audit-record write (success/rejection) via `crate::mcp::audit::record_write`, PII-redacting arg summaries. |
-| [`crates/openhuman-core/src/mcp/server/resources.rs`](./resources.rs) | Static `RESOURCE_CATALOG` of compile-time-embedded (`include_str!`) prompt markdown, served as `tinymcp::ResourceSpec`s and read by URI (`-32002` when unknown). Test cross-checks catalog vs `agent::agents::BUILTINS`. |
-| [`crates/openhuman-core/src/mcp/server/http.rs`](./http.rs) | OpenHuman's `run_http`/`run_http_reporting`: `tinymcp::run_http_reporting` bound to the handler. Gated on `all(feature = "mcp", feature = "http-server")`; `http-server` forwards `tinymcp/server-http`. |
+| [`crates/openhuman-core/src/mcp/server/resources.rs`](./resources.rs) | Static `RESOURCE_CATALOG` of compile-time-embedded prompt markdown, declared and read through bus vocabulary. Test cross-checks catalog vs `agent::agents::BUILTINS`. |
+| [`crates/openhuman-core/src/mcp/server/http.rs`](./http.rs) | Thin Axum transport adapter; passes raw request bodies and headers to module operations and uses module-selected response metadata. Gated on `all(feature = "mcp", feature = "http-server")`. |
 | [`crates/openhuman-core/src/mcp/server/local.rs`](./local.rs) | Lazily-started, process-wide in-process loopback HTTP MCP server (`ensure_local_http`, `LocalMcpEndpoint`). Lets the sandboxed `claude` subprocess (Claude Code provider) reach OpenHuman's memory/tools over loopback without the MCP server inheriting Claude Code's OS jail; a per-process random bearer token stops any other local process from talking to it. |
 | [`crates/openhuman-core/src/mcp/server/subagent_depth.rs`](./subagent_depth.rs) | Per-delegation-chain depth tracking for `agent.run_subagent`, propagated across the loopback MCP HTTP hop via the `X-OpenHuman-Subagent-Depth` header (read by `handler.rs` from `tinymcp`'s `RequestContext`) so nested Claude Code subagent calls are bounded without penalizing unrelated parallel callers. |
-| [`crates/openhuman-core/src/mcp/server/stdio.rs`](./stdio.rs) | CLI entry `run_stdio_from_cli` (arg parse: `--transport`/`--host`/`--port`/`--auth-token`/`-v`/`--help`), logging init, then `tinymcp::run_stdio` or `run_http` with the handler. |
+| [`crates/openhuman-core/src/mcp/server/stdio.rs`](./stdio.rs) | CLI entry and newline framing adapter; submits lines to TinyMCP and writes completed protocol replies. |
 | [`crates/openhuman-core/src/mcp/server/stub.rs`](./stub.rs) | The `mcp`-less mirror of `run_stdio_from_cli`, `ensure_local_http`/`LocalMcpEndpoint`, and `tool_specs`: disabled-error / empty-catalog bodies so always-on callers (`core/cli.rs`, the Claude Code driver, [`tools/registry/ops.rs`](../../tools/registry/ops.rs)) keep a stable surface. |
-| [`crates/openhuman-core/src/mcp/server/wire_golden_tests.rs`](./wire_golden_tests.rs), `http_golden_tests.rs` | Golden wire fixtures captured before the move to `tinymcp`: exact protocol bytes and HTTP status/body/header behavior. A diff here is a wire change. [`test_support.rs`](./test_support.rs) is the one seam they call through. |
+| [`crates/openhuman-core/src/mcp/server/module_tests.rs`](./module_tests.rs), [`handler_tests.rs`](./handler_tests.rs) | Mocked bus adapter tests for positive callbacks, unavailable modules, cancellation, and preserved host error categories. TinyMCP owns protocol and transport wire fixtures. |
 | [`crates/openhuman-core/src/mcp/server/tools_tests.rs`](./tools_tests.rs) | Sibling `#[cfg(test)]` suite for `tools/` (via `#[path]`). |
 
 ## Public surface
@@ -37,7 +38,7 @@ The generic server half (JSON-RPC protocol, client-provenance sessions, argument
 Re-exported from `mod.rs`:
 
 - `run_stdio_from_cli(args: &[String]) -> Result<()>`: CLI entry point; builds its own tokio runtime and selects stdio vs HTTP transport.
-- `run_http(config: HttpServerConfig) -> Result<()>`, `run_http_reporting` (the same, plus a oneshot that reports the bound address; `local.rs` uses it), and `HttpServerConfig { bind_addr, auth_token }` (`tinymcp`'s): HTTP/SSE server (`mcp` + `http-server`).
+- `run_http(config: HttpServerConfig) -> Result<()>`, `run_http_reporting` (the same, plus a oneshot that reports the bound address; `local.rs` uses it), and OpenHuman's `HttpServerConfig { bind_addr, auth_token }`: HTTP/SSE adapter (`mcp` + `http-server`).
 - `ensure_local_http() -> Result<LocalMcpEndpoint>` and `LocalMcpEndpoint { addr, token }`: the loopback in-process server for the Claude Code driver.
 - `current_subagent_depth()` / `HEADER_SUBAGENT_DEPTH`: the delegation-depth hop for `agent.run_subagent`.
 - `tool_specs() -> Vec<McpToolSpec>` and `McpToolSpec { name, title, description, rpc_method, input_schema, annotations }`: the advertised tool catalog.
@@ -87,7 +88,7 @@ No `store.rs`. The only durable side effect is the **MCP write-audit log**, writ
 - `crate::search::providers`: which search tools the config can serve (`tool_specs_for_config`).
 - `crate::mcp::audit` (`record_write`, `NewMcpWriteRecord`, list/query helpers in tests): durable write-audit log.
 - `crate::mcp::http_client::McpHttpClient`: round-trip test harness for the HTTP transport (test-only).
-- `tinymcp::server` (protocol, sessions, argument validators, stdio + HTTP/SSE transports; HTTP behind `tinymcp/server-http`).
+- `tinymcp_bus` (typed server declarations, callback and replay vocabulary, HTTP metadata); TinyMCP owns protocol validation and transport/session behavior.
 - External crates: `serde_json`, `uuid`, `sha2`/`hex` (slug fallback hash), `chrono` (audit timestamps), `futures-util` (`BoxFuture`).
 
 ## Used by
@@ -103,8 +104,8 @@ No `store.rs`. The only durable side effect is the **MCP write-audit log**, writ
 - **`ToolCallError` variant → JSON-RPC code is deliberate:** `InvalidParams` → `-32602` (client-actionable, including policy denials so the reason text surfaces), `Internal` → `-32603` (config load / platform failures), `ResourceNotFound` → `-32002`. Policy denials are intentionally `InvalidParams`, not `Internal`.
 - **Explicit rejection over silent clamping** throughout: over-cap `k`, oversize/over-count tags, blank required strings, and unexpected arguments all error rather than being trimmed/dropped.
 - **Write audit is fire-and-forget but mandatory:** rejections are audited even before config is loaded (`audit_write_rejection_without_config`), and `dispatch_write_tool` returns `Ok(tool_error(...))` (not `Err`) on RPC-handler failure so the client gets an MCP `isError` result while the failure is still recorded.
-- **Protocol negotiation:** supports `2024-11-05`, `2025-03-26`, `2025-06-18`, and `2025-11-25` (`LATEST_PROTOCOL_VERSION`); unknown requested versions fall back to latest. HTTP enforces an exact session protocol-version match on subsequent requests.
-- **HTTP security:** bearer auth is optional (`--auth-token`); session ids are SHA-256-redacted in logs; default bind is `127.0.0.1:9300`.
+- **Protocol negotiation:** owned by TinyMCP and covered by its module protocol fixtures. The host routes HTTP methods and passes raw headers/frames without parsing MCP methods.
+- **HTTP security:** bearer auth is optional (`--auth-token`); the default bind is `127.0.0.1:9300`.
 - **Resource catalog parity is CI-enforced:** `resources.rs` content is `include_str!`-embedded at compile time and the `catalog_mirrors_builtins` test fails if a built-in subagent lacks a matching `openhuman://prompts/agents/<id>` entry.
 - **`agent.run_subagent` limits:** runs a fresh single-turn agent session tagged with an `mcp:<agent_id>:<uuid>` event context.
 - **stdio logging defaults to `warn`** on stderr (so failures surface in client UIs); `--verbose` → `debug`; a user-set `RUST_LOG` always wins. Stdout is reserved for protocol messages only.

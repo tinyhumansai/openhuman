@@ -128,7 +128,7 @@ const messages: TranslationMap = {
   'feedback.status.completed': 'Abgeschlossen',
   'feedback.status.closed': 'Geschlossen',
   'feedback.type.feature': 'Funktion',
-  'feedback.type.bug': 'Bug',
+  'feedback.type.bug': 'Fehler',
   'feedback.sort.hot': 'Angesagt',
   'feedback.sort.top': 'Top',
   'feedback.sort.new': 'Neu',
@@ -154,8 +154,8 @@ const messages: TranslationMap = {
   'feedback.comments.loadError': 'Kommentare konnten nicht geladen werden',
   'feedback.comments.postError': 'Kommentar konnte nicht gesendet werden',
   'feedback.comments.you': 'Du',
-  'conversations.backgroundTasks.statusRunning': 'Running',
-  'conversations.backgroundTasks.close': 'Close',
+  'conversations.backgroundTasks.statusRunning': 'Wird ausgeführt',
+  'conversations.backgroundTasks.close': 'Schließen',
   'conversations.backgroundTasks.sectionThisChat': 'In diesem Chat',
   'conversations.backgroundTasks.sectionScheduled': 'Geplante Aufgaben',
   'conversations.backgroundTasks.sectionMemory': 'Speicher wird synchronisiert',
@@ -173,7 +173,7 @@ const messages: TranslationMap = {
   'nav.settings': 'Einstellungen',
   'nav.activity': 'Aktivität',
   'nav.brain': 'Gedächtnis',
-  'nav.flows': 'Workflows',
+  'nav.flows': 'Arbeitsabläufe',
   'nav.workflowRuns': 'Workflow-Ausführungen',
   'nav.workflowDiscoveries': 'Workflows entdecken',
 
@@ -183,7 +183,7 @@ const messages: TranslationMap = {
 
   'nav.avatarMenu.account': 'Konto',
   'nav.avatarMenu.invites': 'Freund einladen',
-  'nav.avatarMenu.wallet': 'Wallet',
+  'nav.avatarMenu.wallet': 'Geldbörse',
 
   // Brain: full-page memory knowledge-graph surface
   'common.cancel': 'Abbrechen',
@@ -485,8 +485,8 @@ const messages: TranslationMap = {
   'skills.rows.edit': '{name} bearbeiten',
   'skills.rows.remove': '{name} entfernen',
   'skills.explorer.searchPlaceholder': 'Skills suchen...',
-  'skills.explorer.scopeUser': 'User',
-  'skills.explorer.scopeProject': 'Project',
+  'skills.explorer.scopeUser': 'Benutzer',
+  'skills.explorer.scopeProject': 'Projekt',
   'skills.explorer.scopeLegacy': 'Legacy',
   'skills.explorer.noDescription': 'Keine Beschreibung angegeben.',
   'skills.explorer.uninstallSuccess': 'Skill erfolgreich deinstalliert.',
@@ -1262,24 +1262,24 @@ const messages: TranslationMap = {
   'voice.providers.chip.cloud': 'OpenHuman (Verwaltet)',
   'voice.providers.chip.cloudAria': 'Verwalteter OpenHuman-Anbieter ist immer aktiv',
   'voice.providers.chip.piper': 'Piper (Lokal)',
-  'voice.providers.chip.enableProvider': 'Enable',
-  'voice.providers.chip.disableProvider': 'Disable',
+  'voice.providers.chip.enableProvider': 'Aktivieren',
+  'voice.providers.chip.disableProvider': 'Deaktivieren',
   'voice.providers.chip.apiKeyLabel': 'API-Schlüssel',
   'voice.providers.chip.apiKeyPlaceholder': 'sk-…',
   'voice.providers.chip.comingSoon': 'demnächst verfügbar',
-  'voice.modal.title': 'Configure',
+  'voice.modal.title': 'Konfigurieren',
   'voice.modal.desc':
     'API-Schlüssel eingeben, um diesen Anbieter zu aktivieren. Die Verbindung kann vor dem Speichern getestet werden.',
   'voice.modal.testKey': 'Schlüssel testen',
   'voice.modal.testing': 'Teste…',
   'voice.modal.saveAndEnable': 'Speichern & aktivieren',
-  'voice.modal.enable': 'Enable',
+  'voice.modal.enable': 'Aktivieren',
   'voice.modal.piperDesc':
     'Nutze deine eigene Piper-Installation für lokale Sprachausgabe. Piper läuft vollständig offline mit geringer Latenz.',
   'voice.routing.title': 'Sprach-Routing',
   'voice.routing.desc':
     'Wähle, welche aktivierten Anbieter Sprache-zu-Text und Text-zu-Sprache übernehmen.',
-  'voice.routing.save': 'Save',
+  'voice.routing.save': 'Speichern',
   'voice.routing.testStt': 'STT testen',
   'voice.routing.testTts': 'TTS testen',
   'voice.routing.elevenlabsVoice': 'ElevenLabs-Stimme',
@@ -1728,10 +1728,10 @@ const messages: TranslationMap = {
     'Wähle unten eine Methode: schreibe dem verwalteten OpenHuman-Bot, um ihn zu verknüpfen, oder füge deinen eigenen Bot-Token von @BotFather ein.',
   'channels.connectHelp.slackNote':
     'Du suchst Slack? Slack wird als App unter Verbindungen → OAuth verbunden, nicht als Messaging-Kanal hier.',
-  'channels.yuanbao.connect': 'Connect',
+  'channels.yuanbao.connect': 'Verbinden',
   'channels.yuanbao.connecting': 'Verbinde…',
   'channels.yuanbao.fieldRequired': '{field} ist erforderlich',
-  'channels.yuanbao.reconnect': 'Reconnect',
+  'channels.yuanbao.reconnect': 'Wieder verbinden',
   'channels.yuanbao.savedRestartRequired':
     'Kanal gespeichert. App neu starten, um ihn zu aktivieren.',
   'channels.yuanbao.unexpectedStatus': 'Unerwarteter Verbindungsstatus: {status}',
@@ -1990,7 +1990,7 @@ const messages: TranslationMap = {
     'Wiederholungsversuch fehlgeschlagen. Lade den neuesten App-Build herunter und versuche es erneut.',
   'daemon.serviceBlockingGate.retrying': 'Erneuter Versuch...',
   'daemon.serviceBlockingGate.title': 'OpenHuman Kern ist nicht verfügbar',
-  'worktree.label': 'Worktree',
+  'worktree.label': 'Arbeitsbaum',
   'worktree.dirty': 'Nicht committete Änderungen',
   'worktree.clean': 'Sauber',
   'worktree.removing': 'Wird entfernt…',
@@ -2073,7 +2073,7 @@ const messages: TranslationMap = {
   'flowRuns.status.cancelled': 'Abgebrochen',
   'flowRuns.status.interrupted': 'Unterbrochen',
 
-  'flows.page.title': 'Workflows',
+  'flows.page.title': 'Arbeitsabläufe',
   'flows.page.description':
     'Gespeicherte Automatisierungen, die du aktivieren, ausführen und überwachen kannst.',
   'flows.page.emptyTitle': 'Noch keine Workflows',
@@ -2147,7 +2147,7 @@ const messages: TranslationMap = {
   'flows.import.error':
     'Dieser Workflow konnte nicht importiert werden. Überprüfe die Datei und versuche es erneut.',
   'flows.import.warningTitle': 'Importwarnung',
-  'flows.canvas.title': 'Workflow',
+  'flows.canvas.title': 'Arbeitsablauf',
   'flows.canvas.description':
     'Erstellen Sie diese Automatisierung Schritt für Schritt, speichern Sie sie und führen Sie sie aus.',
   'flows.canvas.loading': 'Workflow wird geladen…',
@@ -2361,7 +2361,7 @@ const messages: TranslationMap = {
     'Welche Persona-Facette gelesen werden soll, z. B. communication.',
   'flows.nodeConfig.memory.keyLabel': 'Schlüssel',
   'flows.nodeConfig.memory.valueLabel': 'Wert',
-  'flows.nodeConfig.memory.limitLabel': 'Limit',
+  'flows.nodeConfig.memory.limitLabel': 'Begrenzen',
   'flows.nodeConfig.memory.limitHint': 'Maximale Anzahl an Ergebnissen.',
   'flows.nodeConfig.memory.minScoreLabel': 'Mindestbewertung',
   'flows.nodeConfig.memory.minScoreHint': 'Relevanzschwelle von 0 bis 1.',
@@ -2664,12 +2664,12 @@ const messages: TranslationMap = {
   'settings.ai.routing.backgroundTasks': 'Hintergrundaufgaben',
   'settings.ai.routing.bgTasksDesc':
     'Modelle, die außerhalb des Hauptgesprächsflusses für Zusammenfassungen verwendet werden.',
-  'settings.ai.routing.workload.chat.label': 'Chat',
+  'settings.ai.routing.workload.chat.label': 'Chatten',
   'settings.ai.routing.workload.chat.description':
     'Direkter dialogischer Austausch hin und her – „Schnell“-Modus in Unterhaltungen',
   'settings.ai.routing.workload.chat.hint':
     'Empfohlen: ein günstiges oder mittelpreisiges, schnelles Chat-Modell mit hohem Tokens/Sek.-Durchsatz und geringer Latenz. Quelloffene lokale Modelle eignen sich hier gut, wenn sie sich reaktionsschnell anfühlen.',
-  'settings.ai.routing.workload.reasoning.label': 'Reasoning',
+  'settings.ai.routing.workload.reasoning.label': 'Begründung',
   'settings.ai.routing.workload.reasoning.description':
     'Haupt-Chat-Agent, Meeting-Zusammenfasser – „Reasoning“-Modus in Unterhaltungen',
   'settings.ai.routing.workload.reasoning.hint':
@@ -2872,7 +2872,7 @@ const messages: TranslationMap = {
   'settings.developerMenu.eventLog.allTypes': 'Alle Typen',
   'settings.developerMenu.eventLog.filterAgent': 'Filter&#xA0;…',
   'settings.developerMenu.eventLog.download': 'Herunterladen',
-  'settings.developerMenu.eventLog.events': 'events',
+  'settings.developerMenu.eventLog.events': 'Ereignisse',
   'settings.developerMenu.eventLog.live': 'Live',
   'settings.developerMenu.eventLog.disconnected': 'Nicht verbunden',
   'settings.developerMenu.eventLog.waiting': 'Warten auf Ereignisse...',
@@ -2959,7 +2959,7 @@ const messages: TranslationMap = {
     'Ordner, die der Agent zusätzlich zum Arbeitsbereich lesen und schreiben kann. Anmeldedatenspeicher (~/.ssh, ~/.gnupg, ~/.aws, Schlüsselanhänger) und Systemverzeichnisse (/etc, /System, C:\\Windows,…) werden immer blockiert, auch innerhalb eines zugewiesenen Ordners.',
   'settings.agentAccess.noneGranted': 'Keine Ordner gewährt.',
   'settings.agentAccess.readWrite': 'Lesen+Schreiben',
-  'settings.agentAccess.readOnly': 'read-only',
+  'settings.agentAccess.readOnly': 'schreibgeschützt',
   'settings.agentAccess.remove': 'Entlassen',
   'settings.agentAccess.pathPlaceholder': 'Absoluter Ordnerpfad',
   'settings.agentAccess.accessLevelLabel': 'Auf Ebene zugreifen',
@@ -3030,16 +3030,16 @@ const messages: TranslationMap = {
   'settings.sandbox.noEnvVars': 'Keine Umgebungsvariablen konfiguriert.',
   'settings.approvalHistory.title': 'Genehmigungsverlauf',
   'settings.approvalHistory.subtitle': 'Aktuelle Tool-Genehmigungsentscheidungen, neueste zuerst.',
-  'settings.approvalHistory.refresh': 'Refresh',
+  'settings.approvalHistory.refresh': 'Aktualisieren',
   'settings.approvalHistory.loading': 'Genehmigungsverlauf wird geladen…',
-  'settings.approvalHistory.retry': 'Retry',
+  'settings.approvalHistory.retry': 'Versuchen Sie es noch einmal',
   'settings.approvalHistory.emptyState': 'Noch keine Genehmigungsentscheidungen aufgezeichnet.',
   'settings.approvalHistory.errorGeneric':
     'Genehmigungsverlauf konnte nicht geladen werden. Erneut versuchen.',
   'settings.approvalHistory.decision.approveOnce': 'Einmal genehmigt',
   'settings.approvalHistory.decision.approveAlways': 'Immer erlaubt',
   'settings.approvalHistory.decision.approveAlwaysFlow': 'Immer erlaubt (Flow)',
-  'settings.approvalHistory.decision.deny': 'Denied',
+  'settings.approvalHistory.decision.deny': 'Abgelehnt',
   'settings.theme.variantLight': 'Hell',
   'settings.theme.variantDark': 'Dunkel',
   'settings.theme.variantAuto': 'Automatisch',
@@ -3053,7 +3053,7 @@ const messages: TranslationMap = {
   'settings.theme.title': 'Theme-Studio',
   'settings.theme.menuDesc':
     'Passe Farben und Schriftarten vollständig an oder wähle ein voreingestelltes Theme.',
-  'settings.theme.presetsHeading': 'Themes',
+  'settings.theme.presetsHeading': 'Themen',
   'settings.theme.customBadge': 'Benutzerdefiniert',
   'settings.theme.importedName': 'Importiertes Theme',
   'settings.theme.contrastWarn':
@@ -3211,7 +3211,7 @@ const messages: TranslationMap = {
   'skills.create.description': 'Beschreibung',
   'skills.create.descriptionPlaceholder': 'Was bewirkt diese Fähigkeit?',
   'skills.create.optional': '(optional)',
-  'skills.create.inputs.heading': 'Inputs',
+  'skills.create.inputs.heading': 'Eingaben',
   'skills.create.inputs.help':
     'Parameter deklarieren, die der Skill benötigt. Der Skills Runner erstellt zur Laufzeit ein Formular dafür.',
   'skills.create.inputs.add': 'Eingabe hinzufügen',
@@ -3221,11 +3221,11 @@ const messages: TranslationMap = {
     'Nur Buchstaben, Ziffern, Unterstriche und Bindestriche; muss mit einem Buchstaben beginnen.',
   'skills.create.inputs.row.description': 'Eingabebeschreibung',
   'skills.create.inputs.row.descriptionPlaceholder': 'Was wird in dieses Feld eingegeben?',
-  'skills.create.inputs.row.type': 'Type',
-  'skills.create.inputs.row.required': 'Required',
+  'skills.create.inputs.row.type': 'Typ',
+  'skills.create.inputs.row.required': 'Erforderlich',
   'skills.create.inputs.row.remove': 'Eingabe entfernen',
   'skills.create.inputs.type.string': 'Text',
-  'skills.create.inputs.type.integer': 'Number',
+  'skills.create.inputs.type.integer': 'Nummer',
   'skills.create.inputs.type.boolean': 'Ja / Nein',
   'skills.create.name': 'Name',
   'skills.create.namePlaceholder': 'z.B. Fachzeitschrift',
@@ -3402,9 +3402,9 @@ const messages: TranslationMap = {
   'walletBalances.colAddress': 'Adresse',
   'walletBalances.colBalance': 'Guthaben',
   'walletBalances.colActions': 'Aktionen',
-  'walletBalances.refresh': 'Refresh',
+  'walletBalances.refresh': 'Aktualisieren',
   'walletBalances.loading': 'Guthaben wird geladen…',
-  'walletBalances.retry': 'Retry',
+  'walletBalances.retry': 'Versuchen Sie es noch einmal',
   'walletBalances.emptyState':
     "Noch keine Wallet-Konten – richte eine Wallet unter 'Wiederherstellungsphrase' ein.",
   'walletBalances.copyAddress': 'Adresse kopieren',
@@ -3457,9 +3457,9 @@ const messages: TranslationMap = {
   'workflows.create.subtitle':
     'Definieren Sie ein lebenszyklus-gebundenes Regelwerk für den Agenten.',
   'workflows.create.createBtn': 'Workflow erstellen',
-  'workflows.create.creating': 'Creating…',
+  'workflows.create.creating': 'Erstellen…',
   'workflows.create.createError': 'Workflow konnte nicht erstellt werden',
-  'workflows.phase.toolScope.allow': 'Allow',
+  'workflows.phase.toolScope.allow': 'Erlauben',
   // Chat: agent-generated artifacts (#2779)
   'chat.artifact.ready': 'Bereit',
   'chat.artifact.failed': 'Erstellung fehlgeschlagen',
@@ -3573,7 +3573,7 @@ const messages: TranslationMap = {
   // Monthly cost badge
 
   // Onboarding: Custom > Vault
-  'onboarding.custom.stepperVault': 'Vault',
+  'onboarding.custom.stepperVault': 'Tresor',
   'onboarding.custom.vault.title': 'Gib OpenHuman ein Gedächtnis',
   'onboarding.custom.vault.subtitle':
     'Hier wird gespeichert, was du ihm erzählst, damit es über Chats hinweg erhalten bleibt.',
@@ -3589,7 +3589,7 @@ const messages: TranslationMap = {
     'Der Auslöser, anhand dessen ein Agent entscheidet, diesen Workflow auszuführen. Leer lassen, um die Beschreibung zu verwenden.',
   'skills.create.inputs.row.descriptionError':
     'Für jede Eingabe ist eine Beschreibung erforderlich.',
-  'skills.run.title': 'Workflow',
+  'skills.run.title': 'Arbeitsablauf',
   // Security banner (approval-gate host-aware boot state)
   'security.approvalGateDisabled.title': 'Genehmigungstor deaktiviert',
   'security.approvalGateDisabled.body':
@@ -3669,7 +3669,7 @@ const messages: TranslationMap = {
   'settings.ai.openaiOauthDisconnectError':
     'Die ChatGPT-Verbindung konnte nicht getrennt werden. Bitte versuche es erneut.',
   'flows.canvas.sidePanelToggle': 'Seitenleiste',
-  'flows.canvas.legendTab': 'Manuell',
+  'flows.canvas.legendTab': 'Manual',
 
   // Privacy status pill + per-action egress disclosure (#4437 / S3)
   // Data Sync layered pipeline status (GH-4690)
@@ -3772,7 +3772,7 @@ const messages: TranslationMap = {
   'skills.category.builtIn': 'Integriert',
   'skills.category.channels': 'Kanäle',
   'skills.category.productivity': 'Produktivität',
-  'skills.category.chat': 'Chat',
+  'skills.category.chat': 'Chatten',
   'skills.category.toolsAutomation': 'Tools und Automatisierung',
   'skills.category.social': 'Sozial',
   'skills.category.platform': 'Plattform',
@@ -3827,7 +3827,7 @@ const messages: TranslationMap = {
   'migration.vendor.hermesDesc': 'Erinnerungen und Notizen von Hermes',
   'migration.sourceHeadingDesc': 'Wählen Sie den Assistenten zum Importieren aus',
   'migration.confirmTitle': 'Import in diesen Arbeitsbereich?',
-  'skills.explorer.runnerTab': 'Läufer',
+  'skills.explorer.runnerTab': 'Runner',
   'desktop.enableLabel': 'Lassen Sie den Agenten Apps steuern',
   'desktop.statusSetupNeeded': 'Setup benötigt',
   'desktop.permissionState.granted': 'gewährt',
@@ -3965,11 +3965,11 @@ const messages: TranslationMap = {
   'webCallback.title': 'Sign-in abschließen',
   'webCallback.description':
     'OpenHuman verarbeitet Ihren Rückruf und wird automatisch fortgesetzt.',
-  'dataTable.column.format': 'Format',
+  'dataTable.column.format': 'Formatieren',
   'dataTable.column.status': 'Status',
   'dataTable.column.version': 'Version',
   'flows.allRuns.columnStatus': 'Status',
-  'flows.allRuns.columnWorkflow': 'Workflow',
+  'flows.allRuns.columnWorkflow': 'Arbeitsablauf',
   'settings.developerMenu.eventLog.column.agent': 'Agent',
 
   // Chat failure copy: localized render of chat_error.message, keyed by chat_error.copy_key
@@ -4013,7 +4013,7 @@ const messages: TranslationMap = {
   'memoryPage.backfill.consentBody':
     'Ihre früheren Chats werden in Ihre Gedächtnis-Engine hochgeladen und wie jede andere Unterhaltung aufbewahrt. Werkzeugargumente werden nie übernommen. Eine spätere Synchronisierung sendet nur Neues.',
   'memoryPage.backfill.consentConfirm': 'Jetzt synchronisieren',
-  'memoryPage.tabs.explorer': 'Explorer',
+  'memoryPage.tabs.explorer': 'Entdecker',
   'memoryPage.header.explorer':
     'Durchsuchen Sie alles, was Ihr Gedächtnis enthält, nach Quelle, Ordner, Unterhaltung oder Schlagwort.',
   'memoryPage.explorer.pathLabel': 'Explorer-Pfad',
@@ -4484,6 +4484,54 @@ const messages: TranslationMap = {
   'connections.voiceAgents.loadFailed':
     'Einstellungen der Sprachagenten konnten nicht geladen werden',
   'connections.voiceAgents.saving': 'Wird gespeichert…',
+
+  // UI keys referenced by the app but missing from the locale maps.
+  'channels.discord.oauthStartFailed':
+    'Die Discord-Anmeldung konnte nicht gestartet werden. Versuchen Sie es erneut.',
+  'mcp.json.loading': 'Laden…',
+  'settings.embeddings.testUnavailableCustom':
+    'Das Testen eines benutzerdefinierten Endpunkts wird noch nicht unterstützt. Speichern Sie ihn und überprüfen Sie den Status im Bereich „Einbettungen“.',
+  'walletSend.to': 'Zu',
+  'walletSend.availableBalance': 'Verfügbar: {{amount}} {{symbol}}',
+  'settings.skillsRunner.error.listWorkflows': 'Workflows konnten nicht geladen werden:',
+  'conversations.runMode.plan': 'Planen',
+  'channels.oauth.connectRecoverFailed':
+    'Die Verbindung zwischen {channel} konnte nicht abgeschlossen werden. Das Anmeldefenster wurde geschlossen, bevor der Zugriff gewährt wurde. Versuchen Sie es erneut.',
+  'channels.savedRestartRequired': 'Kanal gespeichert. Starte die App neu, um sie zu aktivieren.',
+  'channels.connect': 'Verbinden',
+  connectProvider: 'Anbieter verbinden',
+  'walletSend.title': 'Senden',
+  'composer.reasoning.default': 'Standard',
+  'composer.reasoning.none': 'Aus',
+  'composer.reasoning.minimal': 'Minimal',
+  'composer.reasoning.low': 'Niedrig',
+  'composer.reasoning.medium': 'Mittel',
+  'composer.reasoning.high': 'Hoch',
+  'composer.reasoning.xhigh': 'Sehr hoch',
+  'flows.nodeKind.agent': 'Agent',
+  'flows.nodeKind.tool_call': 'Aktion',
+  'flows.nodeKind.http_request': 'Webanfrage',
+  'flows.nodeKind.code': 'Code ausführen',
+  'flows.nodeKind.condition': 'Bedingung',
+  'flows.nodeKind.switch': 'Weiche',
+  'flows.nodeKind.merge': 'Zusammenführen',
+  'flows.nodeKind.split_out': 'Aufteilen',
+  'flows.nodeKind.transform': 'Transformieren',
+  'flows.nodeKind.output_parser': 'Ausgabe auswerten',
+  'flows.nodeKind.sub_workflow': 'Unter-Workflow',
+  'flows.nodeKind.memory': 'Speicher',
+  'flows.nodeKind.dedup': 'Duplikate überspringen',
+  'flows.nodeKind.loop': 'Schleife',
+  'flows.palette.group.triggers': 'Auslöser',
+  'flows.palette.group.actions': 'Aktionen',
+  'flows.palette.group.logic': 'Logik',
+  'settings.layout.corners.none': 'Keine',
+  'settings.layout.corners.subtle': 'Dezent',
+  'settings.layout.corners.default': 'Standard',
+  'settings.layout.corners.round': 'Abgerundet',
+  'settings.layout.contrast.subtle': 'Dezent',
+  'settings.layout.contrast.default': 'Standard',
+  'settings.layout.contrast.strong': 'Stark',
 };
 
 export default messages;

@@ -11,7 +11,7 @@ use super::super::write_dispatch;
 use super::params::{build_rpc_params, validate_controller_params};
 use super::specs::{base_tool_specs, tool_specs_for_loaded_config};
 use super::types::McpToolSpec;
-use tinymcp::ToolCallError;
+use tinymcp_bus::ToolCallError;
 
 /// The tools `tools/list` advertises and `tools/call` accepts: every tool the
 /// loaded config can serve, or only the config-independent base set when the

@@ -118,7 +118,6 @@ async fn configure_openrouter_workspace(tmp: &TempDir, endpoint: String, token: 
         label: "OpenRouter".to_string(),
         endpoint,
         auth_style: AuthStyle::Bearer,
-        legacy_type: None,
         default_model: None,
     });
     config.save().await.expect("save config");
@@ -184,7 +183,6 @@ async fn configure_generic_workspace(tmp: &TempDir, endpoint: String) -> Config 
         label: "Generic".to_string(),
         endpoint,
         auth_style: AuthStyle::None,
-        legacy_type: None,
         default_model: None,
     });
     config.save().await.expect("save config");

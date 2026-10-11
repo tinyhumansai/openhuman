@@ -26,3 +26,24 @@ async fn the_module_bus_is_a_singleton_and_serves_proxies() {
     // A name that cannot be a bus name is refused without reaching the bus.
     assert!(first.proxy("not a bus name", "/nope").is_err());
 }
+
+#[cfg(feature = "web3")]
+#[tokio::test]
+async fn wallet_host_callback_is_served_before_the_module_is_loaded() {
+    let runtime = runtime().await.expect("runtime should start");
+    let proxy = runtime
+        .proxy(
+            tinywallet_bus::HOST_INTERFACE,
+            tinywallet_bus::HOST_OBJECT_PATH,
+        )
+        .expect("wallet callback contract names are valid");
+
+    let response: tinywallet_bus::wire::HostResponse = proxy
+        .call(tinywallet_bus::names::host_methods::WALLET_ACCOUNTS, ())
+        .await
+        .expect("the host must serve callbacks before resolving the wallet module");
+    assert!(matches!(
+        response,
+        tinywallet_bus::wire::HostResponse::WalletAccounts(_)
+    ));
+}

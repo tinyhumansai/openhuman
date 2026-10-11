@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn normalize_cmdorctrl_macos() {
-    let result = normalize_hotkey_for_rdev("CmdOrCtrl+Shift+D");
+    let result = normalize_hotkey("CmdOrCtrl+Shift+D");
     if cfg!(target_os = "macos") {
         assert_eq!(result, "cmd+shift+d");
     } else {
@@ -12,12 +12,12 @@ fn normalize_cmdorctrl_macos() {
 
 #[test]
 fn normalize_plain_keys() {
-    assert_eq!(normalize_hotkey_for_rdev("Ctrl+Space"), "ctrl+space");
+    assert_eq!(normalize_hotkey("Ctrl+Space"), "ctrl+space");
 }
 
 #[test]
 fn normalize_preserves_structure() {
-    assert_eq!(normalize_hotkey_for_rdev("Alt+Shift+F5"), "alt+shift+f5");
+    assert_eq!(normalize_hotkey("Alt+Shift+F5"), "alt+shift+f5");
 }
 
 #[test]
@@ -48,7 +48,7 @@ fn publish_transcription_reaches_subscriber() {
 
 #[test]
 fn normalize_commandorcontrol_alias() {
-    let result = normalize_hotkey_for_rdev("CommandOrControl+Alt+K");
+    let result = normalize_hotkey("CommandOrControl+Alt+K");
     if cfg!(target_os = "macos") {
         assert_eq!(result, "cmd+alt+k");
     } else {
@@ -130,22 +130,22 @@ async fn start_if_enabled_is_noop_on_macos_with_fn_hotkey() {
 
 #[test]
 fn normalize_maps_shift_and_alt_verbatim() {
-    let result = normalize_hotkey_for_rdev("Shift+Alt+D");
+    let result = normalize_hotkey("Shift+Alt+D");
     assert_eq!(result, "shift+alt+d");
 }
 
 #[test]
 fn normalize_handles_lowercase_input() {
-    assert_eq!(normalize_hotkey_for_rdev("cmd+d"), "cmd+d");
+    assert_eq!(normalize_hotkey("cmd+d"), "cmd+d");
 }
 
 #[test]
 fn normalize_preserves_function_keys() {
-    assert_eq!(normalize_hotkey_for_rdev("F12"), "f12");
+    assert_eq!(normalize_hotkey("F12"), "f12");
 }
 
 #[test]
 fn normalize_trims_whitespace_between_segments() {
-    let result = normalize_hotkey_for_rdev("  cmd  + shift  +  d  ");
+    let result = normalize_hotkey("  cmd  + shift  +  d  ");
     assert_eq!(result, "cmd+shift+d");
 }

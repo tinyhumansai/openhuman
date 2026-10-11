@@ -56,13 +56,13 @@ fn wallet_user_id(config: &Config) -> String {
 pub(super) fn keychain_load_mnemonic(config: &Config) -> Option<String> {
     let policy = crate::security::keyring_consent::policy::check_secret_access();
     if policy != crate::security::keyring_consent::PolicyDecision::Proceed
-        || !crate::security::keyring::is_available()
+        || !crate::security::secret_storage::is_available()
     {
         log::debug!("{LOG_PREFIX} keychain unavailable or consent pending, skipping mnemonic load policy={policy:?}");
         return None;
     }
     let user_id = wallet_user_id(config);
-    match crate::security::keyring::get(&user_id, KEYCHAIN_MNEMONIC_KEY) {
+    match crate::security::secret_storage::get(&user_id, KEYCHAIN_MNEMONIC_KEY) {
         Ok(Some(val)) => {
             log::debug!("{LOG_PREFIX} keychain mnemonic loaded user_id={user_id}");
             Some(val)
@@ -84,13 +84,14 @@ pub(super) fn keychain_load_mnemonic(config: &Config) -> Option<String> {
 fn keychain_save_mnemonic(config: &Config, encrypted_mnemonic: &str) -> bool {
     let policy = crate::security::keyring_consent::policy::check_secret_access();
     if policy != crate::security::keyring_consent::PolicyDecision::Proceed
-        || !crate::security::keyring::is_available()
+        || !crate::security::secret_storage::is_available()
     {
         log::debug!("{LOG_PREFIX} keychain unavailable or consent pending, skipping mnemonic save policy={policy:?}");
         return false;
     }
     let user_id = wallet_user_id(config);
-    match crate::security::keyring::set(&user_id, KEYCHAIN_MNEMONIC_KEY, encrypted_mnemonic) {
+    match crate::security::secret_storage::set(&user_id, KEYCHAIN_MNEMONIC_KEY, encrypted_mnemonic)
+    {
         Ok(()) => {
             log::debug!("{LOG_PREFIX} keychain mnemonic saved user_id={user_id}");
             true
@@ -106,13 +107,13 @@ fn keychain_save_mnemonic(config: &Config, encrypted_mnemonic: &str) -> bool {
 pub(super) fn keychain_has_mnemonic(config: &Config) -> bool {
     let policy = crate::security::keyring_consent::policy::check_secret_access();
     if policy != crate::security::keyring_consent::PolicyDecision::Proceed
-        || !crate::security::keyring::is_available()
+        || !crate::security::secret_storage::is_available()
     {
         return false;
     }
     let user_id = wallet_user_id(config);
     matches!(
-        crate::security::keyring::get(&user_id, KEYCHAIN_MNEMONIC_KEY),
+        crate::security::secret_storage::get(&user_id, KEYCHAIN_MNEMONIC_KEY),
         Ok(Some(_))
     )
 }

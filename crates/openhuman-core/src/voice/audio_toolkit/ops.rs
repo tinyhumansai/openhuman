@@ -7,7 +7,7 @@ use lettre::Message;
 use crate::config::Config;
 use crate::core::Outcome;
 use crate::voice::{create_tts_provider, DEFAULT_PIPER_VOICE};
-use tinychannels::providers::email_channel::EmailChannel;
+use tinychannels_bus::{EmailAttachmentUpload, EmailUploadBegin};
 
 use super::types::{
     AudioEmailDeliveryResult, AudioFormat, AudioGenerateRequest, AudioGeneratedArtifact,
@@ -132,19 +132,20 @@ pub async fn email_podcast(
                 .map(|v| v.to_string_lossy().to_string())
         })
         .unwrap_or_else(|| "podcast.mp3".to_string());
-    let content_type = content_type_for_attachment(&attachment_name)?;
-
-    let email = build_email_message(
-        config,
-        to,
-        subject,
-        body,
-        &attachment_name,
-        content_type,
-        audio_bytes,
-    )?;
+    let content_type = content_type_for_attachment(&attachment_name);
 
     if let Some(capture_dir) = resolve_email_capture_dir(config) {
+        let email = build_email_message(
+            config,
+            to,
+            subject,
+            body,
+            &attachment_name,
+            content_type
+                .parse()
+                .map_err(|error| format!("invalid content type for attachment: {error}"))?,
+            audio_bytes,
+        )?;
         let capture_rel =
             capture_email_message(config.workspace_dir.as_path(), &capture_dir, &email).await?;
         let result = AudioEmailDeliveryResult {
@@ -165,10 +166,32 @@ pub async fn email_podcast(
         .email
         .clone()
         .ok_or_else(|| "email channel is not configured".to_string())?;
-    let channel = EmailChannel::new(email_cfg);
-    channel
-        .send_message(email)
-        .map_err(|e| format!("failed to send email attachment: {e}"))?;
+    let mut email_cfg = crate::channels::credentials::resolve_email_password(email_cfg, config);
+    email_cfg.from_address = email_cfg.from_address.trim().to_owned();
+    if email_cfg.from_address.is_empty() {
+        email_cfg.from_address = "openhuman@localhost.test".into();
+    }
+    let byte_count = audio_bytes.len();
+    if byte_count > tinychannels_bus::module_email::EMAIL_ATTACHMENT_BYTES {
+        return Err("audio attachment exceeds the 25 MiB email limit".into());
+    }
+    crate::modules::channel_email::send_attachment(
+        crate::modules::client::ModuleClient::new(config.clone()),
+        EmailUploadBegin {
+            config: email_cfg,
+            recipient: to.to_owned(),
+            subject: subject.to_owned(),
+            body: body.to_owned(),
+            attachments: vec![EmailAttachmentUpload {
+                filename: attachment_name.clone(),
+                content_type: content_type.to_string(),
+                byte_count,
+            }],
+        },
+        audio_bytes,
+    )
+    .await
+    .map_err(|error| format!("failed to send email attachment: {error}"))?;
 
     Ok(Outcome::single_log(
         AudioEmailDeliveryResult {
@@ -340,14 +363,12 @@ fn slugify_title(title: &str) -> String {
     }
 }
 
-fn content_type_for_attachment(file_name: &str) -> Result<ContentType, String> {
-    let mime = if file_name.to_ascii_lowercase().ends_with(".wav") {
+fn content_type_for_attachment(file_name: &str) -> &'static str {
+    if file_name.to_ascii_lowercase().ends_with(".wav") {
         "audio/wav"
     } else {
         "audio/mpeg"
-    };
-    mime.parse()
-        .map_err(|e| format!("invalid content type for attachment: {e}"))
+    }
 }
 
 fn build_email_message(

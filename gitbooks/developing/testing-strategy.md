@@ -53,6 +53,14 @@ A spec that asserts only the happy path is incomplete.
 
 ---
 
+## Property-test regressions
+
+Core proptests set `failure_persistence: None` in their `ProptestConfig`; they do not write seed files. When a property fails, preserve the minimized input shown in the failure report to reproduce it, then promote that input to a named unit test beside the property test. Confirm that the explicit case fails against the faulty implementation and passes with the fix before shipping it.
+
+For example, the lease model retains the expired-holder reacquisition case as `reacquiring_at_expiry_advances_epoch_and_marks_previous_holder_unclean`, with two nodes and the steps `Acquire(0), Advance(1000), Acquire(0)`.
+
+---
+
 ## Mock policy
 
 - Use no real network in unit, integration or E2E tests. Use the shared mock backend (`scripts/mock-api-core.mjs`, `scripts/mock-api-server.mjs`, `app/test/e2e/mock-server.ts`).

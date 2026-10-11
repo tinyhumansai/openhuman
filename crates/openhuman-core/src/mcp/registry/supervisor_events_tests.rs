@@ -34,6 +34,11 @@ fn an_answered_probe_is_not_an_event() {
 }
 
 #[test]
+fn an_unknown_supervisor_event_without_a_server_is_skipped() {
+    assert!(domain_events_for(workspace(), &[SupervisorEvent::Unknown]).is_empty());
+}
+
+#[test]
 fn a_kept_timeout_becomes_probe_timed_out_with_its_place_in_the_streak() {
     let events = domain_events_for(
         workspace(),

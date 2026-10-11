@@ -123,6 +123,17 @@ impl AuthService {
     }
 }
 
+/// OpenHuman's persisted credential-provider namespace for channel accounts.
+///
+/// Keeping this host-owned key stable lets managed login and provider setup
+/// reuse existing profiles independently of the loaded module's lifecycle.
+pub fn channel_credential_provider(
+    channel_id: &str,
+    mode: tinychannels_bus::controllers::ChannelAuthMode,
+) -> String {
+    format!("channel:{channel_id}:{mode}")
+}
+
 pub fn normalize_provider(provider: &str) -> Result<String> {
     let normalized = provider.trim().to_ascii_lowercase();
     if normalized.is_empty() {

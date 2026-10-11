@@ -1,6 +1,6 @@
 use crate::tools::schema_cache::static_schema;
 use serde_json::{json, Value};
-use tinymcp::ServerToolSpec;
+use tinymcp_bus::ServerToolSpec;
 
 use super::types::{
     McpToolSpec, FETCH_MODES, ITEM_KINDS, LEARNING_KINDS, MEMORY_FORGET_MAX_IDS, MEMORY_MAX_LIMIT,
@@ -244,7 +244,7 @@ pub fn tool_specs_for_config(
     specs
 }
 
-/// A catalog entry as `tinymcp` advertises it in `tools/list`.
+/// A catalog entry as TinyMCP advertises it in `tools/list`.
 pub fn server_tool_spec(spec: &McpToolSpec) -> ServerToolSpec {
     ServerToolSpec::new(spec.name, spec.description, spec.input_schema.clone())
         .with_title(spec.title)

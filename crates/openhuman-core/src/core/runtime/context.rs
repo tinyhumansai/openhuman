@@ -175,7 +175,10 @@ impl CoreContext {
         // 2. Load the master encryption key before any config/credential op that
         //    needs to decrypt secrets. No-op if already called (e.g. from
         //    run_core_from_args for the CLI).
-        crate::security::keyring::init_master_key().map_err(anyhow::Error::msg)?;
+        if let Some(config) = &preloaded_config {
+            crate::security::secret_storage::init_workspace(&config.workspace_dir);
+        }
+        crate::security::secret_storage::init_master_key().map_err(anyhow::Error::msg)?;
 
         // 4. Seed the per-process RPC bearer. `Fixed` seeds the in-memory value
         //    directly (never touches the env); `EnvOrFile` reads
@@ -621,7 +624,7 @@ impl StoreInitPlan {
 pub async fn init_stores(cfg: &crate::config::Config, domains: crate::core::runtime::DomainSet) {
     let plan = StoreInitPlan::for_domains(domains);
 
-    let keyring_dir = crate::security::keyring::store::workspace_dir_for_file_backend();
+    let keyring_dir = crate::security::secret_storage::store::workspace_dir_for_file_backend();
     // Keyring path log + credentials Sentry bind (below) are unguarded — they
     // are core infra every DomainSet needs. Each workspace-bound store init is
     // gated on its owning DomainGroup so an excluded domain's store stays
@@ -631,7 +634,7 @@ pub async fn init_stores(cfg: &crate::config::Config, domains: crate::core::runt
         cfg.config_path.display(),
         cfg.workspace_dir.display(),
         keyring_dir.display(),
-        crate::security::keyring::backend_name(),
+        crate::security::secret_storage::backend_name(),
         domains,
     );
     if plan.memory {

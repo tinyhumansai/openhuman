@@ -326,7 +326,7 @@ async fn cache_entries_survive_idle_time_until_connection_change() {
 }
 
 #[test]
-fn fallback_reader_matches_main_reader_without_time_based_expiry() {
+fn cached_integrations_remain_available_after_a_long_idle_period() {
     let _guard = cache_guard();
     let tmp = tempfile::TempDir::new().unwrap();
     let config = test_config(&tmp);
@@ -339,9 +339,8 @@ fn fallback_reader_matches_main_reader_without_time_based_expiry() {
         let mut guard = INTEGRATIONS_CACHE.write().unwrap();
         guard.get_mut(&key).unwrap().cached_at = Instant::now() - Duration::from_secs(3600);
     }
-    assert!(cached_active_integrations(&config).is_some());
-    let stale = cached_active_integrations_including_expired(&config)
-        .expect("expired entry should still be returned by the fallback read");
+    let stale = cached_active_integrations(&config)
+        .expect("a long idle period must not expire the last-known snapshot");
     assert_eq!(stale.len(), 1);
     assert_eq!(stale[0].toolkit, "gmail");
 

@@ -7,7 +7,7 @@ mod relay;
 mod start_channels;
 mod turn_parts;
 
-pub(crate) use credentials::{hydrate_channel_credentials, RuntimeProxyClients};
+pub(crate) use credentials::hydrate_channel_credentials;
 pub use start_channels::start_channels;
 pub(crate) use start_channels::start_channels_with_session;
 pub(crate) use turn_parts::{build_channel_turn_parts, runtime_context, PromptToolDescs};

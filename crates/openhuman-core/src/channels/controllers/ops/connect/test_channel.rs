@@ -1,56 +1,45 @@
-//! Testing a channel's credentials without persisting anything.
+//! Testing credentials through the module without persisting host configuration.
 
 use serde_json::Value;
+use tinychannels_bus::{methods, ChannelControllerRequest, ChannelControllerResult};
 
 use crate::config::Config;
 use crate::core::Outcome;
+use crate::modules::client::{ModuleCallError, ModuleClient};
 
-use super::super::super::definitions::{find_channel_definition, ChannelAuthMode};
+use super::super::super::definitions::ChannelAuthMode;
 use super::super::types::ChannelTestResult;
-use tinychannels::controllers::build_email_config;
-use tinychannels::providers::verify_email_credentials;
 
-/// Test a channel connection without persisting credentials.
+/// Validate credentials inside TinyChannels, including native IMAP verification
+/// for email. No credentials or configuration are persisted.
 pub async fn test_channel(
-    _config: &Config,
+    config: &Config,
     channel_id: &str,
     auth_mode: ChannelAuthMode,
     credentials_value: Value,
 ) -> Result<Outcome<ChannelTestResult>, String> {
-    let def = find_channel_definition(channel_id)
-        .ok_or_else(|| format!("unknown channel: {channel_id}"))?;
-
-    let creds_map = credentials_value
-        .as_object()
-        .ok_or("credentials must be a JSON object")?;
-
-    // Validate fields first.
-    def.validate_credentials(auth_mode, creds_map)?;
-
-    // Email supports a real connection test: build the effective config and
-    // attempt an IMAP login without persisting anything.
-    if channel_id == "email" && auth_mode == ChannelAuthMode::ApiKey {
-        let email_cfg = build_email_config(creds_map, None)?;
-        verify_email_credentials(&email_cfg).await?;
-        return Ok(Outcome::new(
-            ChannelTestResult {
-                success: true,
-                message: "IMAP login succeeded.".to_string(),
-            },
-            vec![],
-        ));
+    let response = ModuleClient::new(config.clone())
+        .call_confidential(
+            "tinychannels",
+            methods::CHANNEL_CONTROLLER,
+            (ChannelControllerRequest::TestChannel {
+                config: config.channels_config.clone(),
+                channel: channel_id.to_owned(),
+                auth_mode,
+                credentials: credentials_value,
+            },),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    match response {
+        ChannelControllerResult::TestChannel(result) => Ok(Outcome::new(result, vec![])),
+        _ => {
+            ModuleClient::report_malformed_reply("tinychannels");
+            Err(ModuleCallError::ModuleFault.to_string())
+        }
     }
-
-    // For other channels, field validation is the test. A future version can
-    // instantiate the channel provider and call health_check().
-    Ok(Outcome::new(
-        ChannelTestResult {
-            success: true,
-            message: format!(
-                "Credentials for '{}' ({}) are structurally valid.",
-                channel_id, auth_mode
-            ),
-        },
-        vec![],
-    ))
 }
+
+#[cfg(test)]
+#[path = "test_channel_tests.rs"]
+mod tests;

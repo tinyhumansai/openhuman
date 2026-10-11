@@ -22,7 +22,7 @@ Implementations live in [`vendor/tinychannels/src/providers/`](../../../../../ve
 | `whatsapp_web`  | `WhatsAppWebChannel` | `whatsapp-web` (forwards to `tinychannels/whatsapp-web`) |
 | `yuanbao`       | `YuanbaoChannel`     | `channels`                                               |
 
-`CliChannel` is not a provider re-export: `channels/mod.rs` takes it from the ungated `tinychannels-runtime` crate.
+The local CLI REPL is OpenHuman orchestration and does not import a TinyChannels CLI provider.
 
 ## Relay
 

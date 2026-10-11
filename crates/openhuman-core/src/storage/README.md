@@ -189,7 +189,7 @@ without fencing).
   `anyhow::Error` (a typed `FlowUpdateError` passes through unchanged).
 - Approvals (`security::approval`), through `store_documents.rs`.
 - Secrets (`storage::secrets`): the keyring's user secrets
-  (`security::keyring::get` / `set` / `delete`) and the credential stores'
+  (`security::secret_storage::get` / `set` / `delete`) and the credential stores'
   files (`auth-profiles.json`, `http-credentials.json`) become encrypted
   documents (`DocumentSecrets`, `enc2:`) in the acting agent's scope. Each
   scope's data key is derived with HKDF-SHA256 from the keyring master key

@@ -6,6 +6,12 @@
 //! can pin without connecting anything.
 
 use super::*;
+use crate::mcp::module_client::{McpConfiguredClient, McpModulePort};
+use crate::modules::client::ModuleCallError;
+use async_trait::async_trait;
+use serde_json::Value;
+use std::sync::{Arc, Mutex};
+use tinymcp_bus::{OpenConfiguredResponse, TransitionStatus};
 
 #[test]
 fn a_blank_identifier_is_refused_with_the_field_name() {
@@ -21,8 +27,8 @@ fn an_identifier_is_trimmed_before_it_is_used() {
 
 // ── list_tools refusals (#6313) ─────────────────────────────────────────────
 //
-// A real host over a temp workspace. `apply_config_doc` writes the install
-// store and dials nothing, so an installed server stays disconnected.
+// A per-workspace fake module port keeps these handler tests independent of a
+// live module process while exercising the production TinyBus adapter.
 
 const QUALIFIED: &str = "io.github.ryudi84/uuid";
 
@@ -35,27 +41,117 @@ fn temp_config(workspace: &tempfile::TempDir) -> Config {
     }
 }
 
-/// Installs one stdio server under [`QUALIFIED`] and returns its `server_id`.
-async fn install_one(config: &Config) -> String {
-    let registry = resolve(config).unwrap();
-    let doc = json!({ "mcpServers": { QUALIFIED: { "command": "uuid-mcp" } } });
-    registry.dynamic().apply_config_doc(&doc).await.unwrap();
-    let installs = registry.dynamic().status().await.unwrap();
-    assert_eq!(installs.len(), 1, "{installs:?}");
-    assert_ne!(
-        installs[0].server_id, QUALIFIED,
-        "fixture: the install's id must differ from its registry name"
-    );
-    installs[0].server_id.clone()
+#[derive(Clone, Default)]
+struct RegistryPort {
+    statuses: Arc<Mutex<Vec<tinymcp_bus::ConnStatus>>>,
+}
+
+#[async_trait]
+impl McpModulePort for RegistryPort {
+    async fn open_configured(
+        &self,
+        _data_dir: &str,
+        _config: &tinymcp_bus::McpClientConfig,
+    ) -> Result<OpenConfiguredResponse, ModuleCallError> {
+        Ok(OpenConfiguredResponse {
+            object_path: "/test/mcp".to_owned(),
+            transition_id: "open-test".to_owned(),
+        })
+    }
+
+    async fn close(&self, _data_dir: &str) -> Result<Option<String>, ModuleCallError> {
+        Ok(None)
+    }
+
+    async fn transition_status(
+        &self,
+        _transition_id: &str,
+    ) -> Result<TransitionStatus, ModuleCallError> {
+        Ok(TransitionStatus::Complete)
+    }
+
+    async fn call_object(
+        &self,
+        _object_path: &str,
+        member: &str,
+        args: Value,
+        _confidential: bool,
+    ) -> Result<Value, ModuleCallError> {
+        match member {
+            tinymcp_bus::names::methods::STATUS => {
+                serde_json::to_value(self.statuses.lock().unwrap().clone())
+                    .map_err(|_| ModuleCallError::ModuleFault)
+            }
+            tinymcp_bus::names::methods::CONNECT => {
+                let server_id = args
+                    .get(0)
+                    .and_then(Value::as_str)
+                    .ok_or(ModuleCallError::ModuleFault)?;
+                let mut statuses = self.statuses.lock().unwrap();
+                let status = statuses
+                    .iter_mut()
+                    .find(|status| status.server_id == server_id)
+                    .ok_or(ModuleCallError::ModuleFault)?;
+                status.status = tinymcp_bus::ServerStatus::Connected;
+                status.tool_count = 1;
+                let outcome = tinymcp_bus::ConnectOutcome {
+                    server_id: server_id.to_owned(),
+                    tools: vec![tinymcp_bus::McpTool::new("forecast")],
+                };
+                serde_json::to_value(outcome).map_err(|_| ModuleCallError::ModuleFault)
+            }
+            tinymcp_bus::names::methods::LIST_TOOLS => {
+                let server_id = args
+                    .get(0)
+                    .and_then(Value::as_str)
+                    .ok_or(ModuleCallError::ModuleFault)?;
+                let statuses = self.statuses.lock().unwrap();
+                let connected = statuses.iter().any(|status| {
+                    status.server_id == server_id
+                        && status.status == tinymcp_bus::ServerStatus::Connected
+                });
+                if connected {
+                    serde_json::to_value(vec![tinymcp_bus::McpTool::new("forecast")])
+                        .map_err(|_| ModuleCallError::ModuleFault)
+                } else {
+                    Err(ModuleCallError::ModuleFault)
+                }
+            }
+            _ => Err(ModuleCallError::IncompatibleContract),
+        }
+    }
+}
+
+fn status(server_id: &str, qualified_name: &str) -> tinymcp_bus::ConnStatus {
+    tinymcp_bus::ConnStatus {
+        server_id: server_id.to_owned(),
+        qualified_name: qualified_name.to_owned(),
+        display_name: "fixture".to_owned(),
+        status: tinymcp_bus::ServerStatus::Disconnected,
+        tool_count: 0,
+        last_error: None,
+        auth_hint: None,
+    }
+}
+
+fn install_port(config: &Config, statuses: Vec<tinymcp_bus::ConnStatus>) {
+    McpConfiguredClient::install_test_port(
+        config,
+        Box::new(RegistryPort {
+            statuses: Arc::new(Mutex::new(statuses)),
+        }),
+    )
+    .unwrap();
 }
 
 #[tokio::test]
 async fn agent_refusal_names_no_rpc_method() {
     let workspace = tempfile::tempdir().unwrap();
     let config = temp_config(&workspace);
-    let server_id = install_one(&config).await;
+    let server_id = "fixture-install";
+    install_port(&config, vec![status(server_id, QUALIFIED)]);
 
-    let error = mcp_clients_list_tools(&config, server_id.clone(), Caller::Agent)
+    let error = mcp_clients_list_tools(&config, server_id.to_owned(), Caller::Agent)
         .await
         .expect_err("a disconnected server has no tools to list");
     assert!(!error.contains("mcp_clients_"), "{error}");
@@ -132,9 +228,10 @@ fn refusals_name_only_tools_on_every_listing_belt() {
 async fn rpc_refusal_still_names_the_rpc_method() {
     let workspace = tempfile::tempdir().unwrap();
     let config = temp_config(&workspace);
-    let server_id = install_one(&config).await;
+    let server_id = "fixture-install";
+    install_port(&config, vec![status(server_id, QUALIFIED)]);
 
-    let error = mcp_clients_list_tools(&config, server_id, Caller::Rpc)
+    let error = mcp_clients_list_tools(&config, server_id.to_owned(), Caller::Rpc)
         .await
         .expect_err("a disconnected server has no tools to list");
     assert!(error.contains("mcp_clients_connect"), "{error}");
@@ -145,7 +242,8 @@ async fn rpc_refusal_still_names_the_rpc_method() {
 async fn a_qualified_name_resolves_to_its_install() {
     let workspace = tempfile::tempdir().unwrap();
     let config = temp_config(&workspace);
-    let server_id = install_one(&config).await;
+    let server_id = "fixture-install";
+    install_port(&config, vec![status(server_id, QUALIFIED)]);
 
     // Resolved, then refused for the install it names — in terms of that
     // install's server_id, not the registry name the caller passed.
@@ -162,7 +260,7 @@ async fn a_qualified_name_resolves_to_its_install() {
 async fn an_uninstalled_id_is_not_reported_as_not_connected() {
     let workspace = tempfile::tempdir().unwrap();
     let config = temp_config(&workspace);
-    install_one(&config).await;
+    install_port(&config, vec![]);
 
     let error = mcp_clients_list_tools(&config, "io.github.other/absent".into(), Caller::Agent)
         .await
@@ -172,36 +270,15 @@ async fn an_uninstalled_id_is_not_reported_as_not_connected() {
     assert!(error.contains("mcp_registry_status"), "{error}");
 }
 
-/// The #6313 case itself: the server is connected, and the caller passes its
-/// registry name. The listing is answered for the install that name resolves
-/// to, under that install's `server_id`.
-///
-/// The server is OpenHuman's own MCP endpoint on an ephemeral loopback port,
-/// so nothing leaves the machine.
-#[cfg(feature = "http-server")]
+/// The #6313 case itself: the module owns the connection and answers a
+/// qualified-name lookup with the connected install's tools.
 #[tokio::test]
 async fn a_qualified_name_lists_the_tools_of_its_connected_install() {
-    let (bound_tx, bound_rx) = tokio::sync::oneshot::channel();
-    let serve = crate::mcp::server::HttpServerConfig {
-        bind_addr: "127.0.0.1:0".parse().unwrap(),
-        auth_token: None,
-    };
-    let server = tokio::spawn(crate::mcp::server::run_http_reporting(
-        serve,
-        Some(bound_tx),
-    ));
-    let endpoint = format!("http://{}/", bound_rx.await.unwrap());
-
     let workspace = tempfile::tempdir().unwrap();
     let config = temp_config(&workspace);
-    let registry = resolve(&config).unwrap();
-    let doc = json!({ "mcpServers": { QUALIFIED: { "url": endpoint } } });
-    registry.dynamic().apply_config_doc(&doc).await.unwrap();
-    let server_id = registry.dynamic().status().await.unwrap()[0]
-        .server_id
-        .clone();
-    assert_ne!(server_id, QUALIFIED, "fixture: id and registry name differ");
-    mcp_clients_connect(&config, server_id.clone())
+    let server_id = "fixture-install";
+    install_port(&config, vec![status(server_id, QUALIFIED)]);
+    mcp_clients_connect(&config, server_id.to_owned())
         .await
         .unwrap();
 
@@ -214,9 +291,6 @@ async fn a_qualified_name_lists_the_tools_of_its_connected_install() {
         "{}",
         listed.value
     );
-
-    registry.dynamic().disconnect(&server_id).await.unwrap();
-    server.abort();
 }
 
 #[test]

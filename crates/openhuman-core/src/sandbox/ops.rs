@@ -291,12 +291,14 @@ pub async fn execute_in_sandbox(
     if !crate::core::runtime::is_saas() && sandbox_disabled_by_host() {
         effective_policy.backend = SandboxBackendKind::None;
     }
+    let mut module_config = None;
     let explicitly_requested = if crate::core::runtime::is_saas() || sandbox_disabled_by_host() {
         false
     } else {
         let config = crate::config::ops::load_config_with_timeout()
             .await
             .map_err(|e| anyhow::anyhow!("Cannot read sandbox configuration: {e}"))?;
+        module_config = Some(config.clone());
         if config.sandbox.enabled == Some(false) {
             false
         } else {
@@ -339,7 +341,15 @@ pub async fn execute_in_sandbox(
                 env: extra_env,
                 timeout,
             };
-            docker::docker_exec(policy, &request).await
+            let config = match module_config {
+                Some(config) => config,
+                None => crate::config::ops::load_config_with_timeout()
+                    .await
+                    .map_err(|error| {
+                        anyhow::anyhow!("Cannot read module configuration: {error}")
+                    })?,
+            };
+            docker::docker_exec(&config, policy, &request).await
         }
     }
 }

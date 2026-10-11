@@ -207,9 +207,19 @@ pub mod integrations {
 /// tinyhumans (credentials for the hosted client) and rpc (server auth,
 /// Socket.IO approvals, bind policy).
 pub mod security {
+    /// Host-supplied secret storage and encryption-key sources.
+    pub mod secret_storage {
+        pub use openhuman_core::security::secret_storage::{
+            clear_master_key_source, clear_secret_backend, init_workspace,
+            install_master_key_source, install_secret_backend, installed_master_key_source,
+            installed_secret_backend, is_available, store::workspace_dir_for_file_backend,
+            EncryptedFileBackend, MasterKeySource, SecretBackend, SecretStorageError,
+        };
+    }
     pub mod credentials {
         pub use openhuman_core::security::credentials::{
-            AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
+            channel_credential_provider, AuthService, APP_SESSION_PROVIDER,
+            DEFAULT_AUTH_PROFILE_NAME,
         };
         pub mod ops {
             pub use openhuman_core::security::credentials::ops::{
@@ -282,8 +292,8 @@ pub mod platform {
 
 pub mod storage {
     pub use openhuman_core::storage::{
-        block_on_anyhow, clear, configured_url, driver_is_shared, install, installed, open,
-        url_from, StorageBackend, STORAGE_URL_VAR,
+        block_on, block_on_anyhow, clear, configured_url, driver_is_shared, install, installed,
+        open, url_from, StorageBackend, STORAGE_URL_VAR,
     };
 }
 

@@ -1,89 +1,97 @@
-//! OpenHuman's [`McpServerHandler`]: the host policy behind the MCP surface.
+//! Host callbacks for the module-owned MCP server protocol.
 //!
-//! `tinymcp::server` owns the protocol and both transports. This is what it
-//! asks OpenHuman: who the server is, which tools exist (`tools::specs`, gated
-//! by the loaded config), what calling one does (`tools::dispatch`, under
-//! `SecurityPolicy` and the write-audit pipeline), and which prompt resources
-//! are served (`resources`).
-//!
-//! It also applies the one piece of transport state OpenHuman cares about:
-//! the subagent delegation depth that rides the loopback HTTP hop as
-//! [`subagent_depth::HEADER_SUBAGENT_DEPTH`]. Every tool call runs inside
-//! [`subagent_depth::scope`] at the depth its request carried (0 when absent,
-//! as on stdio), so `agent.run_subagent` bounds recursion per chain.
+//! TinyMCP validates MCP frames and emits typed callbacks. This module applies
+//! OpenHuman policy and invokes the existing tool/resource implementations;
+//! it does not parse protocol messages or own a transport.
 
-use std::sync::Arc;
-
-use futures_util::future::BoxFuture;
 use serde_json::{Map, Value};
-use tinymcp::{
-    McpServerHandler, RequestContext, ResourceSpec, ServerInfo, ServerToolSpec, ToolCallError,
-};
+use tinymcp_bus::{ServerHostCall, ServerHostReply, ToolCallError};
 
 use super::{resources, subagent_depth, tools};
 
-/// The base of every MCP session's `source_type`: `mcp`, or
-/// `mcp:<client-name>` once `initialize` names the client. Audit rows and
-/// memory writes are attributed with it.
-const SOURCE_TYPE_PREFIX: &str = "mcp";
-
-/// The `instructions` OpenHuman's `initialize` result carries.
 const INSTRUCTIONS: &str = "OpenHuman MCP exposes first-level core integration: inspect the live tool catalog with core.list_tools or core.tool_instructions, inspect subagents with agent.list_subagents, run a standalone subagent with agent.run_subagent, use web_search or web_answer for live web lookups (and searxng_search when self-hosted search is enabled), and use memory.recall (answer with citations), memory.fetch or memory.list to read memory, and memory.learn or memory.forget to change it.";
 
-/// The handler every OpenHuman MCP transport serves.
-#[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct OpenHumanMcpHandler;
-
-/// The handler, shareable across a transport's connections.
-pub(crate) fn handler() -> Arc<dyn McpServerHandler> {
-    Arc::new(OpenHumanMcpHandler)
-}
-
-impl McpServerHandler for OpenHumanMcpHandler {
-    fn server_info(&self) -> ServerInfo {
-        ServerInfo::new("openhuman-core", env!("CARGO_PKG_VERSION")).with_instructions(INSTRUCTIONS)
-    }
-
-    fn source_type_prefix(&self) -> &str {
-        SOURCE_TYPE_PREFIX
-    }
-
-    fn list_tools<'a>(&'a self, _ctx: &'a RequestContext) -> BoxFuture<'a, Vec<ServerToolSpec>> {
-        Box::pin(async {
-            tools::list_tool_specs()
+/// Apply the host-owned part of a validated TinyMCP server callback.
+pub(super) async fn dispatch(call: ServerHostCall) -> ServerHostReply {
+    match call {
+        ServerHostCall::ListTools { .. } => {
+            let specs = tools::list_tool_specs()
                 .await
                 .iter()
                 .map(tools::server_tool_spec)
-                .collect()
-        })
+                .collect::<Vec<_>>();
+            match serde_json::to_value(specs) {
+                Ok(value) => ServerHostReply::Success { value },
+                Err(_) => ServerHostReply::Internal {
+                    message: "tool declarations could not be encoded".to_owned(),
+                },
+            }
+        }
+        ServerHostCall::CallTool {
+            source_type,
+            headers,
+            name,
+            arguments,
+        } => {
+            let depth = subagent_depth::parse_header(header_string(
+                &headers,
+                subagent_depth::HEADER_SUBAGENT_DEPTH,
+            ));
+            log::trace!(
+                "[mcp_server] tools/call tool={name} client_source_type={source_type} chain_depth={depth:?}"
+            );
+            let result = subagent_depth::scope(
+                depth,
+                tools::call_tool(&name, Value::Object(arguments), &source_type),
+            )
+            .await;
+            result.map_or_else(reply_error, |value| ServerHostReply::Success { value })
+        }
+        ServerHostCall::ReadResource { uri, .. } => resources::read_resource(&uri)
+            .map_or_else(reply_error, |value| ServerHostReply::Success { value }),
+        ServerHostCall::ListPrompts { .. } => ServerHostReply::Success {
+            value: Value::Array(Vec::new()),
+        },
+        ServerHostCall::GetPrompt { name, .. } => ServerHostReply::InvalidParams {
+            message: format!("unknown prompt `{name}`"),
+        },
+        ServerHostCall::Unsupported => ServerHostReply::Internal {
+            message: "unsupported server callback".to_owned(),
+        },
+        _ => ServerHostReply::Internal {
+            message: "unsupported server callback".to_owned(),
+        },
     }
+}
 
-    fn call_tool<'a>(
-        &'a self,
-        ctx: &'a RequestContext,
-        name: &'a str,
-        arguments: Map<String, Value>,
-    ) -> BoxFuture<'a, Result<Value, ToolCallError>> {
-        let depth = subagent_depth::parse_header(ctx.header(subagent_depth::HEADER_SUBAGENT_DEPTH));
-        log::trace!(
-            "[mcp_server] tools/call tool={name} client_source_type={} chain_depth={depth}",
-            ctx.source_type()
-        );
-        // Boxed by the trait: a subagent run is a whole agent turn, and its
-        // future must not sit on the transport's stack.
-        Box::pin(subagent_depth::scope(
-            depth,
-            tools::call_tool(name, Value::Object(arguments), ctx.source_type()),
-        ))
-    }
+/// Declarations frozen into a module-owned server session.
+pub(super) fn declarations() -> (Value, String, Vec<Value>) {
+    let info = tinymcp_bus::ServerInfo::new("openhuman-core", env!("CARGO_PKG_VERSION"))
+        .with_instructions(INSTRUCTIONS);
+    let resources = resources::resource_specs()
+        .into_iter()
+        .filter_map(|resource| serde_json::to_value(resource).ok())
+        .collect();
+    (
+        serde_json::to_value(info).expect("server info is serializable"),
+        "mcp".to_owned(),
+        resources,
+    )
+}
 
-    fn list_resources(&self) -> Vec<ResourceSpec> {
-        resources::resource_specs()
+fn reply_error(error: ToolCallError) -> ServerHostReply {
+    match error {
+        ToolCallError::InvalidParams(message) => ServerHostReply::InvalidParams { message },
+        ToolCallError::Internal(message) => ServerHostReply::Internal { message },
+        ToolCallError::ResourceNotFound(message) => ServerHostReply::ResourceNotFound { message },
     }
+}
 
-    fn read_resource<'a>(&'a self, uri: &'a str) -> BoxFuture<'a, Result<Value, ToolCallError>> {
-        Box::pin(async move { resources::read_resource(uri) })
-    }
+fn header_string<'a>(headers: &'a Map<String, Value>, name: &str) -> Option<&'a str> {
+    headers
+        .iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case(name))
+        .and_then(|(_, value)| value.as_str())
 }
 
 #[cfg(test)]

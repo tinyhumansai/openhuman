@@ -12,6 +12,7 @@ An embedded runtime composes the capabilities its host supplies. Start with the 
 - [Local models](local-models.md)
 - [MCP servers](mcp.md)
 - [Composio](composio.md)
+- [Web search](web-search.md)
 - [Storage drivers](storage-drivers.md)
 - [Channels](channels.md)
 

@@ -69,30 +69,15 @@ pub struct ToolPolicyRequest {
     pub tool_name: String,
     pub arguments: serde_json::Value,
     pub context: ToolCallContext,
-    /// Backward-compatible mirror of `context.session_id`.
-    #[deprecated(note = "use context.session_id")]
-    pub session_id: String,
-    /// Backward-compatible mirror of `context.channel`.
-    #[deprecated(note = "use context.channel")]
-    pub channel: String,
-    /// Backward-compatible mirror of `context.agent_definition_id`.
-    #[deprecated(note = "use context.agent_definition_id")]
-    pub agent_definition_id: String,
 }
 
 impl fmt::Debug for ToolPolicyRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        #[allow(deprecated)]
-        {
-            f.debug_struct("ToolPolicyRequest")
-                .field("tool_name", &self.tool_name)
-                .field("arguments", &"<redacted>")
-                .field("context", &self.context)
-                .field("session_id", &redact_for_debug(&self.session_id))
-                .field("channel", &redact_for_debug(&self.channel))
-                .field("agent_definition_id", &self.agent_definition_id)
-                .finish()
-        }
+        f.debug_struct("ToolPolicyRequest")
+            .field("tool_name", &self.tool_name)
+            .field("arguments", &"<redacted>")
+            .field("context", &self.context)
+            .finish()
     }
 }
 
@@ -102,16 +87,10 @@ impl ToolPolicyRequest {
         arguments: serde_json::Value,
         context: ToolCallContext,
     ) -> Self {
-        #[allow(deprecated)]
-        {
-            Self {
-                tool_name: tool_name.into(),
-                arguments,
-                session_id: context.session_id.clone(),
-                channel: context.channel.clone(),
-                agent_definition_id: context.agent_definition_id.clone(),
-                context,
-            }
+        Self {
+            tool_name: tool_name.into(),
+            arguments,
+            context,
         }
     }
 }

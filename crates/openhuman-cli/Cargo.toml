@@ -233,6 +233,18 @@ name = "inference_provider_e2e"
 path = "../../tests/inference_provider_e2e.rs"
 
 [[test]]
+name = "keyring_headless_e2e"
+path = "../../tests/keyring_headless_e2e.rs"
+
+[[test]]
+# Its own binary: it installs the process's global tracing subscriber to prove
+# no log line carries a pinned search key, and drives the process-wide
+# TinySearch module.
+name = "search_pinned_keys_e2e"
+path = "../../tests/search_pinned_keys_e2e.rs"
+required-features = ["modules"]
+
+[[test]]
 name = "keyring_secretstore_e2e"
 path = "../../tests/keyring_secretstore_e2e.rs"
 
@@ -348,11 +360,13 @@ wiremock = "0.6"
 
 [features]
 langfuse = ["openhuman-rpc/langfuse"]
+os-keyring = ["openhuman-rpc/os-keyring"]
 # The contributor set: the core's `[features] default` gates (listed, because
 # `openhuman-rpc`'s own default carries only its server and client) plus the
 # Jev ranker. The product lanes pass `--features
 # "$(scripts/ci/product-features.sh)"`; every product gate name resolves here.
 default = [
+    "os-keyring",
     "media",
     "skills",
     "flows",

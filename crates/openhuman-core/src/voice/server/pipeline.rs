@@ -11,11 +11,9 @@ use log::{debug, info, warn};
 use tokio::sync::Mutex;
 
 use crate::config::Config;
+use crate::modules::accessibility::{AccessibilityClient, FocusTarget, PasteRequest};
 use crate::modules::voice::{is_hallucinated, HallucinationMode};
 use crate::voice::audio_capture::RecordingHandle;
-#[cfg(target_os = "macos")]
-use tinycomputer_accessibility as accessibility;
-use tinycomputer_accessibility::paste as text_input;
 
 use super::types::{
     ServerState, VoiceServerConfig, MAX_INITIAL_PROMPT_CHARS, MAX_RECENT_TRANSCRIPTS,
@@ -24,8 +22,11 @@ use super::LOG_PREFIX;
 
 /// Capture the frontmost app name at hotkey press so insertion can be validated later.
 #[cfg(target_os = "macos")]
-pub(super) fn capture_expected_app_name() -> Option<String> {
-    match accessibility::focused_text_context_verbose() {
+pub(super) async fn capture_expected_app_name(config: &Config) -> Option<String> {
+    match AccessibilityClient::new(config)
+        .focus(crate::modules::accessibility::FocusQuery { verbose: true })
+        .await
+    {
         Ok(ctx) => {
             let app = ctx
                 .app_name
@@ -48,7 +49,7 @@ pub(super) fn capture_expected_app_name() -> Option<String> {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(super) fn capture_expected_app_name() -> Option<String> {
+pub(super) async fn capture_expected_app_name(_config: &Config) -> Option<String> {
     None
 }
 
@@ -271,9 +272,18 @@ pub(super) async fn process_recording_bg(
                             );
                         } else {
                             let insert_started = Instant::now();
-                            if let Err(e) = text_input::insert_text(text, expected_app.as_deref()) {
+                            if let Err(e) = AccessibilityClient::new(config)
+                                .paste(PasteRequest {
+                                    text: text.to_string(),
+                                    target: FocusTarget {
+                                        app: expected_app.clone(),
+                                        ..Default::default()
+                                    },
+                                })
+                                .await
+                            {
                                 warn!("{LOG_PREFIX} [pipeline={pipeline_id}] stage=deliver_paste FAILED: {e}");
-                                *last_error.lock().await = Some(e);
+                                *last_error.lock().await = Some(e.to_string());
                             } else {
                                 let insert_elapsed = insert_started.elapsed();
                                 transcription_count.fetch_add(1, Ordering::Relaxed);

@@ -7,8 +7,13 @@
 //! `RpcEndpoints` seam the engine asks, and the free functions are what the
 //! host [`Transport`](super::transport) and the x402 helpers resolve through.
 
-use tinywallet_web3::crypto::defaults::{default_rpc_url, EvmNetwork, RpcSource, SolanaCluster};
+use tinywallet_web3::crypto::defaults::{
+    default_rpc_url, EvmNetwork, EvmNetworkReferenceData, RpcSource, SolanaCluster,
+};
 use tinywallet_web3::crypto::seams::RpcEndpoints;
+
+#[cfg(test)]
+use tinywallet_web3::crypto::defaults::SolanaClusterReferenceData;
 
 use super::ops::WalletChain;
 

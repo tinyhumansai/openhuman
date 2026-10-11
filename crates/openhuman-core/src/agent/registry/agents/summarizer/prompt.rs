@@ -15,7 +15,7 @@ use anyhow::Result;
 /// second copy that could drift. It stays `pub` (issue #6014) so an embedder
 /// supplying its own [`PayloadSummarizer`](crate::agent::tinyagents::payload_summarizer::PayloadSummarizer)
 /// can read the contract its model is asked to follow.
-pub const ARCHETYPE: &str = tinyjuice::summarize::SYSTEM_PROMPT;
+pub const ARCHETYPE: &str = tinyjuice_bus::summary::SYSTEM_PROMPT;
 
 pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
     let mut out = String::with_capacity(4096);

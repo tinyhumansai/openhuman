@@ -1,4 +1,4 @@
-use crate::security::keyring::SecretStore;
+use crate::security::secret_storage::SecretStore;
 use crate::util::retry_with_backoff;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -270,7 +270,7 @@ pub struct AuthProfilesStore {
 /// ciphertext, leaving `.secret_key` as the only remaining control.
 ///
 /// Same shape as the fix #2360 landed for the secret key in
-/// `keyring/encrypted_store.rs`: create with the mode already set rather than
+/// `secret_storage/encrypted_store.rs`: create with the mode already set rather than
 /// widening then narrowing, so the file is never briefly world-readable.
 ///
 /// `.mode()` only applies when the file is *created*, so a leftover tmp from an

@@ -10,15 +10,9 @@ async fn allow_all_policy_allows_every_call() {
     );
 
     assert_eq!(policy.check(&request).await, ToolPolicyDecision::Allow);
-    #[allow(deprecated)]
-    {
-        assert_eq!(request.session_id, request.context.session_id);
-        assert_eq!(request.channel, request.context.channel);
-        assert_eq!(
-            request.agent_definition_id,
-            request.context.agent_definition_id
-        );
-    }
+    assert_eq!(request.context.session_id, "session");
+    assert_eq!(request.context.channel, "chat");
+    assert_eq!(request.context.agent_definition_id, "orchestrator");
     assert_eq!(request.context.source, ToolCallSource::Session);
     assert_eq!(request.context.call_id, "call-1");
 }

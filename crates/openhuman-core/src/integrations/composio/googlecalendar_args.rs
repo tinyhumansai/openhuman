@@ -1,7 +1,7 @@
 //! Host time-zone lookup for Google Calendar defaults.
 //!
 //! The defaulting itself (`timeZone` + `singleEvents` for calendar list/find
-//! actions, issue #1714) is `tinyconnectors::execute::apply_calendar_query_defaults`.
+//! actions, issue #1714) is the connector module’s `PrepareArguments` operation.
 //! It takes the zone as a parameter because reading the machine's zone is host
 //! business; this is that lookup.
 

@@ -29,8 +29,9 @@ pub(super) fn synthesize_managed_entry(
         id: "openhuman".to_string(),
         slug: "openhuman".to_string(),
         label: "OpenHuman".to_string(),
-        endpoint: crate::config::schema::cloud_providers::CloudProviderType::Openhuman
-            .default_endpoint()
+        endpoint: crate::config::schema::cloud_providers::builtin_cloud_provider("openhuman")
+            .expect("managed builtin")
+            .endpoint
             .to_string(),
         auth_style: AuthStyle::OpenhumanJwt,
         ..Default::default()

@@ -4,9 +4,10 @@ use serde::{Deserialize, Serialize};
 
 /// Where the process's secrets actually live.
 ///
-/// The variants fall into three groups. They are named here rather than
+/// The variants fall into four groups. They are named here rather than
 /// referred to by position, because position is what rots:
 ///
+/// - `InMemory` — the basic volatile library store, with no OS or disk storage.
 /// - `OsKeyring` — no consent was ever needed; the `os` backend's probe
 ///   succeeded and secrets are in the OS credential store.
 /// - `LocalEncrypted` / `ConsentPending` / `Declined` — **consent outcomes**,
@@ -14,7 +15,7 @@ use serde::{Deserialize, Serialize};
 ///   the user has either answered the consent prompt or not answered yet.
 /// - `LocalEncryptedFile` / `LocalPlaintextFile` — **operator-configured
 ///   backends**: nobody was asked anything, `OPENHUMAN_KEYRING_BACKEND` (or
-///   the staging/production default) simply selected a different store.
+///   a product host's persistent default) simply selected a different store.
 ///
 /// The last two groups must stay apart because they are not the same storage:
 /// a consented `LocalEncrypted` fallback means per-field `SecretStore`
@@ -27,6 +28,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StorageMode {
+    /// Volatile, unencrypted values held only in process memory.
+    InMemory,
     /// The `os` backend, probed and working: macOS Keychain, Windows
     /// Credential Manager, or Linux Secret Service.
     OsKeyring,
@@ -35,7 +38,7 @@ pub enum StorageMode {
     LocalEncrypted,
     /// Operator-configured `encrypted_file` backend — one ChaCha20-Poly1305
     /// `{workspace}/secrets.enc`, unlocked by a master key held in the OS
-    /// keychain. The staging/production default.
+    /// keychain. The product-host default.
     LocalEncryptedFile,
     /// Operator-configured `file` (or test-only `mock`) backend. `file` is a
     /// **plaintext** `{workspace}/dev-keychain.json` with no encryption and no
@@ -50,6 +53,7 @@ pub enum StorageMode {
 impl std::fmt::Display for StorageMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::InMemory => write!(f, "in_memory"),
             Self::OsKeyring => write!(f, "os_keyring"),
             Self::LocalEncrypted => write!(f, "local_encrypted"),
             Self::LocalEncryptedFile => write!(f, "local_encrypted_file"),

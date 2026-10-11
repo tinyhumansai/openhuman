@@ -34,6 +34,8 @@ mod http;
 #[cfg(feature = "mcp")]
 mod local;
 #[cfg(feature = "mcp")]
+mod module;
+#[cfg(feature = "mcp")]
 mod resources;
 #[cfg(feature = "mcp")]
 mod stdio;
@@ -68,13 +70,3 @@ pub use tools::McpToolSpec;
 mod stub;
 #[cfg(not(feature = "mcp"))]
 pub use stub::*;
-
-// Golden wire fixtures, and the one seam they call through (see each file).
-#[cfg(all(test, feature = "mcp", feature = "http-server"))]
-#[path = "http_golden_tests.rs"]
-mod http_golden_tests;
-#[cfg(all(test, feature = "mcp"))]
-mod test_support;
-#[cfg(all(test, feature = "mcp"))]
-#[path = "wire_golden_tests.rs"]
-mod wire_golden_tests;

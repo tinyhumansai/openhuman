@@ -176,7 +176,7 @@ OpenHuman 重新设计了开销最大的几个环节：AI 要读多少文字、�
 
 <p><a href="https://tinyhumans.gitbook.io/openhuman/developing/loadable-modules">插件如何工作</a></p>
 
-<p>每个功能，比如搜索、文档或语音，都接入同一条 Rust 总线，这个想法借鉴自 <a href="https://www.freedesktop.org/wiki/Software/dbus/">Linux 系统总线</a>。功能只在需要时才加载，其中一个卡住了，其余的仍能正常工作。</p>
+<p>每个功能，比如搜索、文档或语音，都接入同一条 Rust 总线，这个想法借鉴自 <a href="https://packages.debian.org/stable/dbus">Linux 系统总线</a>。功能只在需要时才加载，其中一个卡住了，其余的仍能正常工作。</p>
 
 </td>
 

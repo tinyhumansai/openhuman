@@ -53,6 +53,15 @@ impl OpenHumanTurnPrelude {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         mutable.recorded_integration_actions = actions;
+        mutable.recorded_tool_snapshot_adopted = true;
+        {
+            mutable.recorded_repl_tools = recorded
+                .specs()
+                .iter()
+                .filter(|spec| crate::inference::tokenjuice::is_repl_tool(&spec.name))
+                .cloned()
+                .collect();
+        }
         // MCP tools are rebuilt from the tool cache every turn; all a resumed
         // thread needs remembered is which names it was sent, so a tool it
         // knew under the pre-readable hashed name keeps resolving.
@@ -120,6 +129,32 @@ impl OpenHumanTurnPrelude {
         ));
         #[cfg(not(feature = "modules"))]
         let _ = base;
+        {
+            let recorded_repl_tools = self
+                .mutable
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .recorded_repl_tools
+                .clone();
+            let live_names = base
+                .iter()
+                .chain(synthesized.iter())
+                .map(|tool| tool.name())
+                .collect::<std::collections::HashSet<_>>();
+            let missing = recorded_repl_tools
+                .into_iter()
+                .filter(|spec| !live_names.contains(spec.name.as_str()))
+                .collect::<Vec<_>>();
+            if !missing.is_empty() {
+                rebuilt.extend(
+                    crate::inference::tokenjuice::repl_tools::repl_tools_for_recorded(
+                        self.runtime_config.as_deref(),
+                        &self.workspace_dir,
+                        &missing,
+                    ),
+                );
+            }
+        }
         rebuilt
     }
 
@@ -351,8 +386,7 @@ async fn load_connected_integrations(
     match crate::integrations::composio::fetch_connected_integrations_status(config).await {
         FetchConnectedIntegrationsStatus::Authoritative(connected) => Some((connected, true)),
         FetchConnectedIntegrationsStatus::Unavailable => {
-            let stale =
-                crate::integrations::composio::cached_active_integrations_including_expired(config);
+            let stale = crate::integrations::composio::cached_active_integrations(config);
             log::warn!(
                 "[session] integrations fetch unavailable; using stale snapshot={}",
                 stale.as_ref().map_or(0, Vec::len)

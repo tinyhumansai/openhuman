@@ -477,7 +477,6 @@ fn provider_entry(
         label: slug.to_string(),
         endpoint: endpoint.to_string(),
         auth_style,
-        legacy_type: None,
         default_model: default_model.map(ToString::to_string),
     }
 }

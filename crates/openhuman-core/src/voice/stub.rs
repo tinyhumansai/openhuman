@@ -171,7 +171,7 @@ pub mod dictation_listener {
     pub async fn start_if_enabled(_config: &Config) {}
 
     /// No-op: nothing to stop.
-    pub fn stop() {}
+    pub async fn stop() {}
 }
 
 // ---------------------------------------------------------------------------
@@ -186,6 +186,9 @@ pub mod always_on {
 
     /// No-op: nothing to stop.
     pub fn stop() {}
+
+    /// No-op: no module capture leases exist when voice is disabled.
+    pub async fn shutdown() {}
 }
 
 // ---------------------------------------------------------------------------

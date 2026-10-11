@@ -167,26 +167,6 @@ async fn exited_group_leader_is_not_reaped_until_its_descendants_close_the_pipes
 }
 
 #[tokio::test]
-async fn cancellable_turns_route_interpreters_away_from_unacknowledged_pools() {
-    let mut config = openhuman_core::config::RuntimePoolConfig::default();
-    config.python.enabled = Some(true);
-    assert!(openhuman_core::runtime::pool::python::enabled(&config));
-    assert!(openhuman_core::runtime::pool::node::enabled(&config));
-    let cleanup = ProcessCleanup::default();
-    cleanup
-        .scope(async {
-            tokio::task::yield_now().await;
-            assert!(!openhuman_core::runtime::pool::python::enabled(&config));
-            assert!(
-                !openhuman_core::runtime::pool::node::enabled(&config),
-                "cancellable node jobs must use an owned subprocess"
-            );
-        })
-        .await;
-    assert!(openhuman_core::runtime::pool::node::enabled(&config));
-}
-
-#[tokio::test]
 async fn host_commands_receive_stdin_and_timeout_after_reaping() {
     let mut cmd = tokio::process::Command::new("/bin/sh");
     cmd.args(["-c", "cat; printf stderr >&2"]);

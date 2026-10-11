@@ -1,6 +1,6 @@
 //! Core-side dictation hotkey listener.
 //!
-//! Reads the `DictationConfig` from config, starts an `rdev`-based global
+//! Reads the `DictationConfig` from config, starts a module-owned global
 //! hotkey listener on the core process, and broadcasts `dictation:toggle`
 //! events over a `tokio::sync::broadcast` channel that the Socket.IO
 //! bridge subscribes to — so the frontend receives hotkey presses without
@@ -11,20 +11,20 @@ use serde::Serialize;
 use std::sync::Mutex;
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 use crate::config::Config;
-// The rdev-based listener (non-macOS) resolves the hotkey combo + activation mode
-// against the cross-platform `hotkey` module. macOS uses a separate path and
-// never compiles `start_rdev_listener`, so gate the import to avoid an unused
-// import warning there.
+// macOS keeps the Tauri-owned global shortcut. Other platforms use TinyVoice's
+// module-owned native listener through the same adapter as the voice server.
 #[cfg(not(target_os = "macos"))]
-use super::hotkey::{self, ActivationMode, HotkeyEvent};
+use super::hotkey::{ActivationMode, HotkeyEvent};
 
 const LOG_PREFIX: &str = "[dictation_listener]";
 
 // ── Listener task handle (for stop support) ─────────────────────────
 
-static LISTENER_HANDLE: Lazy<Mutex<Option<JoinHandle<()>>>> = Lazy::new(|| Mutex::new(None));
+static LISTENER_HANDLE: Lazy<Mutex<Option<(CancellationToken, JoinHandle<()>)>>> =
+    Lazy::new(|| Mutex::new(None));
 
 // ── Broadcast channel for dictation events ────────────────────────────
 
@@ -129,41 +129,42 @@ pub async fn start_if_enabled(config: &Config) {
         );
     }
 
-    // Non-macOS: start the rdev-based listener.
+    // Non-macOS: start the TinyVoice-owned native listener.
     #[cfg(not(target_os = "macos"))]
-    start_rdev_listener(hotkey_str, config).await;
+    start_module_listener(hotkey_str, config).await;
 }
 
 #[cfg(not(target_os = "macos"))]
-async fn start_rdev_listener(hotkey_str: String, config: &Config) {
+async fn start_module_listener(hotkey_str: String, config: &Config) {
     // Map DictationActivationMode to our hotkey ActivationMode.
     let mode = match config.dictation.activation_mode {
         crate::config::DictationActivationMode::Push => ActivationMode::Push,
         crate::config::DictationActivationMode::Toggle => ActivationMode::Tap,
     };
 
-    // Normalize the hotkey string for rdev (CmdOrCtrl → ctrl on non-macOS).
-    let normalized = normalize_hotkey_for_rdev(&hotkey_str);
+    // Normalize the product spelling before passing it to TinyVoice.
+    let normalized = normalize_hotkey(&hotkey_str);
 
     log::info!(
         "{LOG_PREFIX} starting dictation hotkey listener: hotkey={normalized} (raw={hotkey_str}) mode={mode:?}"
     );
 
-    let combo = match hotkey::parse_hotkey(&normalized) {
-        Ok(c) => c,
-        Err(e) => {
-            log::warn!("{LOG_PREFIX} failed to parse hotkey '{normalized}': {e}");
-            return;
-        }
-    };
-
-    let (listener_handle, mut hotkey_rx) = match hotkey::start_listener(combo, mode) {
-        Ok(pair) => pair,
-        Err(e) => {
-            log::warn!("{LOG_PREFIX} failed to start hotkey listener: {e}");
-            return;
-        }
-    };
+    let cancel = CancellationToken::new();
+    let (listener, mut hotkey_rx) =
+        match crate::voice::server::hotkey_listener::start_hotkey_listener(
+            config,
+            &normalized,
+            mode,
+            &cancel,
+        )
+        .await
+        {
+            Ok(pair) => pair,
+            Err(e) => {
+                log::warn!("{LOG_PREFIX} failed to start hotkey listener: {e}");
+                return;
+            }
+        };
 
     let mode_str = match mode {
         ActivationMode::Tap => "toggle",
@@ -173,11 +174,16 @@ async fn start_rdev_listener(hotkey_str: String, config: &Config) {
     log::info!("{LOG_PREFIX} dictation hotkey active: {normalized}");
 
     // Forward hotkey events to the broadcast channel.
+    let task_cancel = cancel.clone();
     let task = tokio::spawn(async move {
-        // Keep the listener handle alive for the lifetime of this task.
-        let _handle = listener_handle;
-
-        while let Some(event) = hotkey_rx.recv().await {
+        loop {
+            let event = tokio::select! {
+                _ = task_cancel.cancelled() => break,
+                event = hotkey_rx.recv() => match event {
+                    Some(event) => event,
+                    None => break,
+                },
+            };
             let event_type = match event {
                 HotkeyEvent::Pressed => "pressed",
                 HotkeyEvent::Released => "released",
@@ -192,33 +198,39 @@ async fn start_rdev_listener(hotkey_str: String, config: &Config) {
             });
         }
 
-        log::warn!("{LOG_PREFIX} hotkey event channel closed, listener stopping");
+        listener.stop().await;
+        log::debug!("{LOG_PREFIX} hotkey listener stopped");
     });
 
     // Store handle so `stop()` can abort it on logout.
     if let Ok(mut guard) = LISTENER_HANDLE.lock() {
-        *guard = Some(task);
+        *guard = Some((cancel, task));
     }
 }
 
 /// Stop the dictation hotkey listener if running.
 ///
-/// Aborts the spawned forwarder task and drops the `rdev` listener handle,
-/// preventing duplicate hotkey listeners from accumulating across
-/// logout → login cycles.
-pub fn stop() {
-    if let Ok(mut guard) = LISTENER_HANDLE.lock() {
-        if let Some(handle) = guard.take() {
-            handle.abort();
+/// Cancels the event forwarder and joins TinyVoice's native listener cleanup,
+/// preventing duplicate hooks from accumulating across logout → login cycles.
+pub async fn stop() {
+    let listener = LISTENER_HANDLE
+        .lock()
+        .ok()
+        .and_then(|mut guard| guard.take());
+    if let Some((cancel, handle)) = listener {
+        cancel.cancel();
+        if let Err(error) = handle.await {
+            log::warn!("{LOG_PREFIX} dictation listener task ended: {error}");
+        } else {
             log::info!("{LOG_PREFIX} dictation listener stopped");
         }
     }
 }
 
-/// Normalize a Tauri-style hotkey string to rdev-compatible format.
+/// Normalize the host-style hotkey spelling for TinyVoice's portable parser.
 ///
 /// Converts `CmdOrCtrl+Shift+D` → `cmd+shift+d` (macOS) or `ctrl+shift+d` (other).
-fn normalize_hotkey_for_rdev(hotkey: &str) -> String {
+fn normalize_hotkey(hotkey: &str) -> String {
     let parts: Vec<&str> = hotkey.split('+').map(|s| s.trim()).collect();
     let mut result = Vec::new();
 

@@ -1,9 +1,9 @@
-//! Calling the `tinydocs` module: the three document operations, over the bus.
+//! Calling the `tinydocs` module over the bus.
 //!
 //! Each function here is the host half of one method on
-//! `ai.tinyhumans.tinydocs.Documents`. They exist so the three tools that need a
-//! document do not each have to know about streams, held outputs, or wire error
-//! names — a tool asks for bytes and gets bytes or a reason.
+//! `ai.tinyhumans.tinydocs.Documents`. These wrappers keep document tools from
+//! needing to know about streams, held outputs, or wire error names — a caller
+//! gets a typed result or a reason.
 //!
 //! # The shape of a call
 //!
@@ -385,6 +385,69 @@ pub async fn extract_document(
         )
         .await
         .map_err(|e| classify(&e))
+}
+
+/// Convert a streamed PDF or Office document to complete normalized Markdown.
+///
+/// Unlike [`extract_document`], this operation preserves the full text needed
+/// for memory persistence and returns it through the module's bounded held
+/// output store.
+///
+/// # Errors
+///
+/// Returns [`DocumentCallError`] when the module is unavailable, the document
+/// is invalid, the output transfer fails, or the complete text is not UTF-8.
+pub async fn convert_markdown(
+    config: &Config,
+    format: tinydocs_bus::DocumentFormat,
+    document: &[u8],
+) -> Result<String, DocumentCallError> {
+    let (runtime, record) = ready(config).await?;
+    let proxy = proxy(runtime, record)?;
+    let (destination, path, interface) = address(record)?;
+    let handle: OutputRef = runtime
+        .connection()
+        .call_with_stream(
+            destination,
+            path,
+            interface,
+            member(methods::CONVERT_MARKDOWN)?,
+            |stream| serde_json::json!([format, stream]),
+            document,
+        )
+        .await
+        .map_err(|error| classify(&error))?;
+    let bytes = collect(&proxy, handle).await?;
+    String::from_utf8(bytes)
+        .map_err(|_| DocumentCallError::Failed("converted Markdown was not valid UTF-8".into()))
+}
+
+/// Inspect bounded PNG/JPEG bytes through TinyDocs and return their verified
+/// format and dimensions.
+pub async fn inspect_image(
+    config: &Config,
+    image: &[u8],
+) -> Result<tinydocs_bus::ImageFacts, DocumentCallError> {
+    let max = tinydocs_bus::spec::presentation::MAX_IMAGE_BYTES;
+    if image.is_empty() || image.len() > max {
+        return Err(DocumentCallError::InvalidInput(format!(
+            "image must contain 1 to {max} bytes"
+        )));
+    }
+    let (runtime, record) = ready(config).await?;
+    let (destination, path, interface) = address(record)?;
+    runtime
+        .connection()
+        .call_with_stream(
+            destination,
+            path,
+            interface,
+            member(methods::INSPECT_IMAGE)?,
+            |stream| serde_json::json!([stream]),
+            image,
+        )
+        .await
+        .map_err(|error| classify(&error))
 }
 
 /// Render selected PDF pages and collect/release every held PNG output.

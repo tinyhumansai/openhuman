@@ -170,6 +170,11 @@ fn is_valid_for(user: &str, header: &str) -> bool {
 }
 
 proptest! {
+    #![proptest_config(ProptestConfig {
+        failure_persistence: None,
+        ..ProptestConfig::default()
+    })]
+
     /// `verify` never panics, and accepts a header only when its `v1` is the
     /// full HMAC of `<t>.<user>` for a `t` inside the window.
     #[test]

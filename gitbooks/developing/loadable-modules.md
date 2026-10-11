@@ -11,6 +11,25 @@ Feature gates decide what compiles into the binary. Modules decide what the runn
 
 The trade is explicit. A module shares the core's address space and crash domain, so it is trusted code and the admission checks matter. In return, a user who never generates a document never pays for the document writer in download size, memory or dependencies.
 
+## Host access and contracts
+
+Hosts reach module clients through the `openhuman-rpc` facade chain. The shared
+`openhuman_rpc::embed::modules::ModuleClient` accepts explicit configuration
+and uses the process-wide lazy loader before or after core startup. Constructing
+a client starts nothing and requires no signed-in session. Set bundled-artifact
+discovery before its first call. Without the loader, a call returns an explicit
+unavailable error.
+
+A `*-bus` crate contains serialized vocabulary, errors, identifiers, versions,
+schemas and static tool declarations. Parsing, provider dispatch, cryptography,
+processes and device access execute inside the compiled module. Hosts retain
+configuration, credentials, approvals and execution policy. They never link an
+implementation fallback when a module is unavailable. Stateful adapters release
+module-owned resources through explicit close, cancellation and shutdown calls.
+
+The remaining migration work and temporary dependency exceptions are tracked
+in [the module-boundary inventory](../../docs/module-boundary-inventory.md).
+
 ## The registry
 
 `crates/openhuman-core/src/modules/registry/` compiles in fourteen records. Only this registry may select an artifact. Nothing reads a module name from config and goes looking for it.

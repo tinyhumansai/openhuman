@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Print the desktop product's core Cargo gates as a comma-separated list,
+# Print the desktop product's Cargo gates as a comma-separated list,
 # ready to paste into `cargo --features "$(scripts/ci/product-features.sh)"`.
 #
 # Source of truth: scripts/ci/product-features.txt (one gate per line).
@@ -12,6 +12,13 @@
 # compiling and testing voice, web3, documents, meet, contacts and
 # crash-reporting — a silent loss of coverage over code that still ships.
 set -euo pipefail
+
+# `--core` excludes host-owned gates for core/embed/tinyhumans package builds.
+CORE_ONLY=0
+if [ "${1:-}" = "--core" ]; then
+  CORE_ONLY=1
+  shift
+fi
 
 # Optional argument: an alternative gate file. CI always uses the default; the
 # override exists so the self-test can drive the empty-list path with a fixture
@@ -40,4 +47,9 @@ if [[ -z "$LIST" ]]; then
   exit 2
 fi
 
+if [ "$CORE_ONLY" = "1" ]; then
+  # The OS keychain is owned by RPC. Core and the two library facades have
+  # no corresponding feature or dependency.
+  LIST="$(printf '%s' "$LIST" | tr ',' '\n' | sed '/^os-keyring$/d' | paste -sd, -)"
+fi
 printf '%s\n' "$LIST"

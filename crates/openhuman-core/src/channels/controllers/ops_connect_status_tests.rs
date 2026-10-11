@@ -1,9 +1,9 @@
 use super::*;
 
 #[tokio::test]
-async fn connect_discord_bot_token_persists_runtime_config() {
+async fn persist_prepared_discord_configuration_and_encrypted_token() {
     let (_tmp, config) = isolated_test_config();
-    let result = connect_channel(
+    let result = persist_module_fixture(
         &config,
         "discord",
         ChannelAuthMode::BotToken,
@@ -11,6 +11,14 @@ async fn connect_discord_bot_token_persists_runtime_config() {
             "bot_token": "discord-token-123",
             "guild_id": "guild-1",
             "channel_id": "channel-2"
+        }),
+        tinychannels_bus::module_controller::ChannelConfigUpdate::Discord(DiscordConfig {
+            bot_token: "discord-token-123".into(),
+            guild_id: Some("guild-1".into()),
+            channel_id: Some("channel-2".into()),
+            allowed_users: vec![],
+            listen_to_bots: false,
+            mention_only: false,
         }),
     )
     .await
@@ -46,9 +54,9 @@ async fn connect_discord_bot_token_persists_runtime_config() {
 }
 
 #[tokio::test]
-async fn connect_telegram_bot_token_persists_chat_id() {
+async fn persist_prepared_telegram_chat_target() {
     let (_tmp, config) = isolated_test_config();
-    let result = connect_channel(
+    let result = persist_module_fixture(
         &config,
         "telegram",
         ChannelAuthMode::BotToken,
@@ -56,6 +64,17 @@ async fn connect_telegram_bot_token_persists_chat_id() {
             "bot_token": "telegram-token-123",
             "chat_id": "  987654  "
         }),
+        tinychannels_bus::module_controller::ChannelConfigUpdate::Telegram(
+            tinychannels_bus::config::TelegramConfig {
+                bot_token: "telegram-token-123".into(),
+                chat_id: Some("987654".into()),
+                allowed_users: vec![],
+                stream_mode: tinychannels_bus::config::StreamMode::Off,
+                draft_update_interval_ms: 1000,
+                silent_streaming: true,
+                mention_only: false,
+            },
+        ),
     )
     .await
     .expect("telegram connect should succeed");
@@ -81,18 +100,26 @@ async fn connect_telegram_bot_token_persists_chat_id() {
 }
 
 #[tokio::test]
-async fn connect_discord_omitted_allowlist_reuses_existing() {
+async fn persist_prepared_discord_retained_allowlist() {
     // Reconnecting without resending `allowed_users` keeps the saved list — the
     // reconnect-convenience path (#3794 review — Codex P2).
     let (_tmp, mut config) = isolated_test_config();
     seed_discord_with_allowlist(&mut config);
     config.save().await.expect("seed should persist");
 
-    connect_channel(
+    persist_module_fixture(
         &config,
         "discord",
         ChannelAuthMode::BotToken,
         serde_json::json!({ "bot_token": "discord-token-abc" }),
+        tinychannels_bus::module_controller::ChannelConfigUpdate::Discord(DiscordConfig {
+            bot_token: "discord-token-abc".into(),
+            guild_id: None,
+            channel_id: None,
+            allowed_users: vec!["111".into(), "222".into()],
+            listen_to_bots: false,
+            mention_only: false,
+        }),
     )
     .await
     .expect("reconnect should succeed");
@@ -105,7 +132,7 @@ async fn connect_discord_omitted_allowlist_reuses_existing() {
 }
 
 #[tokio::test]
-async fn connect_discord_cleared_allowlist_allows_everyone() {
+async fn persist_prepared_discord_empty_allowlist() {
     // Clearing the allowlist in the UI submits an explicit empty value; the
     // backend must honor it (empty ⇒ allow-all) instead of reusing the old list
     // (#3794 review — Codex P2).
@@ -113,11 +140,19 @@ async fn connect_discord_cleared_allowlist_allows_everyone() {
     seed_discord_with_allowlist(&mut config);
     config.save().await.expect("seed should persist");
 
-    connect_channel(
+    persist_module_fixture(
         &config,
         "discord",
         ChannelAuthMode::BotToken,
         serde_json::json!({ "bot_token": "discord-token-abc", "allowed_users": "" }),
+        tinychannels_bus::module_controller::ChannelConfigUpdate::Discord(DiscordConfig {
+            bot_token: "discord-token-abc".into(),
+            guild_id: None,
+            channel_id: None,
+            allowed_users: vec![],
+            listen_to_bots: false,
+            mention_only: false,
+        }),
     )
     .await
     .expect("reconnect should succeed");
@@ -162,14 +197,17 @@ async fn disconnect_discord_bot_token_clears_runtime_config() {
 
 // ── iMessage channel ───────────────────────────────────────────
 #[tokio::test]
-async fn connect_imessage_persists_allowed_contacts() {
+async fn persist_prepared_imessage_allowed_contacts() {
     let (_tmp, config) = isolated_test_config();
-    let result = connect_channel(
+    let result = persist_module_fixture(
         &config,
         "imessage",
         ChannelAuthMode::ManagedDm,
         serde_json::json!({
             "allowed_contacts": "+15551234567, user@icloud.com"
+        }),
+        tinychannels_bus::module_controller::ChannelConfigUpdate::IMessage(IMessageConfig {
+            allowed_contacts: vec!["+15551234567".into(), "user@icloud.com".into()],
         }),
     )
     .await
@@ -198,13 +236,16 @@ async fn connect_imessage_persists_allowed_contacts() {
 }
 
 #[tokio::test]
-async fn connect_imessage_allows_empty_contacts() {
+async fn persist_prepared_imessage_empty_contacts() {
     let (_tmp, config) = isolated_test_config();
-    let result = connect_channel(
+    let result = persist_module_fixture(
         &config,
         "imessage",
         ChannelAuthMode::ManagedDm,
         serde_json::json!({}),
+        tinychannels_bus::module_controller::ChannelConfigUpdate::IMessage(IMessageConfig {
+            allowed_contacts: vec![],
+        }),
     )
     .await
     .expect("imessage connect with no contacts should succeed");
@@ -519,21 +560,9 @@ async fn connected_channel_slugs_empty_when_nothing_configured() {
 }
 
 #[tokio::test]
-async fn connect_yuanbao_rejects_invalid_credentials() {
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
-
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/v5/robotLogic/sign-token"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "code": 40001,
-            "msg": "invalid signature",
-        })))
-        .mount(&server)
-        .await;
-
-    let (_tmp, config) = yuanbao_test_config(&server.uri());
+async fn unavailable_module_cannot_persist_yuanbao_credentials() {
+    let (_tmp, mut config) = isolated_test_config();
+    config.modules.enabled = false;
     let err = connect_channel(
         &config,
         "yuanbao",
@@ -544,16 +573,15 @@ async fn connect_yuanbao_rejects_invalid_credentials() {
     .expect_err("invalid yuanbao credentials should fail");
 
     assert!(
-        err.contains("yuanbao credential verification failed") && err.contains("invalid signature"),
-        "expected upstream API msg in error, got: {err}"
+        err.contains("module unavailable"),
+        "expected explicit unavailable module error, got: {err}"
     );
 
     // Nothing should be persisted on failure: no TOML write, no credential row.
     let raw = tokio::fs::read_to_string(&config.config_path).await.ok();
     if let Some(text) = raw {
         let parsed: toml::Value = toml::from_str(&text).expect("config parses");
-        // The mock api_domain we pre-loaded is allowed to be present, but
-        // app_key / app_secret must NOT have been written.
+        // No new credentials may be written when the module is unavailable.
         if let Some(yb) = parsed
             .get("channels_config")
             .and_then(|v| v.get("yuanbao"))

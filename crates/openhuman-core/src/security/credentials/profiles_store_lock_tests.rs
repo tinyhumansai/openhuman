@@ -189,7 +189,7 @@ fn load_drops_profiles_whose_decryption_fails_under_rotated_key() {
     // that the current key cannot decrypt.
     let user_id = user_id_from_state_dir(tmp.path());
     let keychain_key = format!("{KEYCHAIN_AUTH_PREFIX}{}", doomed.id);
-    crate::security::keyring::delete(&user_id, &keychain_key)
+    crate::security::secret_storage::delete(&user_id, &keychain_key)
         .expect("delete keychain entry for test setup");
 
     let path = store.path().to_path_buf();

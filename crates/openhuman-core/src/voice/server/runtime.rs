@@ -94,10 +94,13 @@ impl VoiceServer {
         // rdev's CGEventTap can see it. Use the Swift-based globe listener
         // instead, which monitors NSEvent.flagsChanged for the .function flag.
         let (listener_handle, mut hotkey_rx) = match start_hotkey_listener(
+            app_config,
             &self.config.hotkey,
             self.config.activation_mode,
             &cancel,
-        ) {
+        )
+        .await
+        {
             Ok(pair) => pair,
             Err(e) => {
                 *self.state.lock().await = ServerState::Stopped;
@@ -114,9 +117,8 @@ impl VoiceServer {
         // thread so the event loop stays responsive to Release events that
         // macOS fires almost immediately for the Fn key.
         let mut recording_pending_rx: Option<
-            tokio::sync::oneshot::Receiver<Result<RecordingHandle, String>>,
+            tokio::sync::oneshot::Receiver<Result<(RecordingHandle, Option<String>), String>>,
         > = None;
-        let mut pending_expected_app: Option<String> = None;
         let mut pending_generation: Option<u64> = None;
         let mut recording_generation: Option<u64> = None;
         // Set when a stop-intent event (Release/Pressed toggle) arrives before
@@ -159,7 +161,7 @@ impl VoiceServer {
 
                     // Forward hotkey event to the dictation bus so Socket.IO
                     // clients receive dictation:toggle events even when the
-                    // dictation_listener is not running (single rdev listener).
+                    // dictation_listener is not running (single TinyVoice listener).
                     {
                         use crate::voice::dictation_listener;
                         let event_type = match event {
@@ -203,7 +205,6 @@ impl VoiceServer {
                                 info!("{LOG_PREFIX} hotkey pressed while recording setup pending — buffering stop intent");
                                 pending_stop = true;
                             } else {
-                                let expected_app = capture_expected_app_name();
                                 let generation =
                                     self.session_generation.fetch_add(1, Ordering::Relaxed) + 1;
                                 debug!("{LOG_PREFIX} hotkey pressed → starting recording (non-blocking)");
@@ -215,12 +216,14 @@ impl VoiceServer {
                                 // Start recording on a blocking thread so the
                                 // event loop remains responsive to Release.
                                 let (tx, rx) = tokio::sync::oneshot::channel();
-                                tokio::task::spawn_blocking(move || {
-                                    let result = audio_capture::start_recording();
+                                let capture_config = app_config.clone();
+                                tokio::spawn(async move {
+                                    let expected_app = capture_expected_app_name(&capture_config).await;
+                                    let result = audio_capture::start_recording(&capture_config).await
+                                        .map(|handle| (handle, expected_app));
                                     let _ = tx.send(result);
                                 });
                                 recording_pending_rx = Some(rx);
-                                pending_expected_app = expected_app;
                                 pending_generation = Some(generation);
                                 pending_stop = false;
                                 deferred_stop_deadline = None;
@@ -258,7 +261,7 @@ impl VoiceServer {
                     // Recording setup completed (or failed).
                     recording_pending_rx = None;
                     match result {
-                        Ok(Ok(handle)) => {
+                        Ok(Ok((handle, expected_app))) => {
                             // Check for a buffered stop event that lost the
                             // select! race against pending_ready. On warm CPAL
                             // init both branches may be ready simultaneously;
@@ -299,7 +302,7 @@ impl VoiceServer {
                                 pending_stop = false;
                                 recording = Some(handle);
                                 recording_generation = pending_generation.take();
-                                recording_expected_app = pending_expected_app.take();
+                                recording_expected_app = expected_app;
 
                                 info!(
                                     "{LOG_PREFIX} deferred stop: recording for at least {}ms",
@@ -311,7 +314,7 @@ impl VoiceServer {
                             } else {
                                 recording = Some(handle);
                                 recording_generation = pending_generation.take();
-                                recording_expected_app = pending_expected_app.take();
+                                recording_expected_app = expected_app;
                                 deferred_stop_deadline = None;
 
                                 info!("{LOG_PREFIX} recording started (live)");
@@ -320,7 +323,6 @@ impl VoiceServer {
                         Ok(Err(e)) => {
                             pending_stop = false;
                             deferred_stop_deadline = None;
-                            pending_expected_app = None;
                             pending_generation = None;
                             warn!("{LOG_PREFIX} failed to start recording: {e}");
                             *self.state.lock().await = ServerState::Idle;
@@ -329,7 +331,6 @@ impl VoiceServer {
                         Err(_) => {
                             pending_stop = false;
                             deferred_stop_deadline = None;
-                            pending_expected_app = None;
                             pending_generation = None;
                             warn!("{LOG_PREFIX} recording setup task dropped");
                             *self.state.lock().await = ServerState::Idle;
@@ -360,7 +361,7 @@ impl VoiceServer {
             }
         }
 
-        listener_handle.stop();
+        listener_handle.stop().await;
         *self.state.lock().await = ServerState::Stopped;
         info!("{LOG_PREFIX} voice server stopped");
 

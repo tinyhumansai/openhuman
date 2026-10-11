@@ -335,8 +335,7 @@ impl<C: Send + Sync> Middleware<(), C> for UnmetDeliverableMiddleware {
     /// The clock-driven rungs: at half-time a requested path that still does
     /// not exist is pointed out on the tool result the model is about to
     /// read, and at 80% the note says to stop exploring and meet the stated
-    /// limits. Each is appended once per run, and each asks the loop for
-    /// reasoning on the next call: these are the moments thinking pays.
+    /// limits. Each note is appended once per run.
     async fn after_tool(
         &self,
         ctx: &mut RunContext<C>,
@@ -377,7 +376,6 @@ impl<C: Send + Sync> Middleware<(), C> for UnmetDeliverableMiddleware {
                 "[unmet_deliverable] late note: stop exploring, meet the stated limits"
             );
             append_note(result, &late_note(&clock));
-            ctx.request_reasoning();
             return Ok(());
         }
         if (HALF_TIME_BAND..LATE_BAND).contains(&band) && !half_noted {
@@ -392,7 +390,6 @@ impl<C: Send + Sync> Middleware<(), C> for UnmetDeliverableMiddleware {
                     "[unmet_deliverable] half-time note: requested paths still absent"
                 );
                 append_note(result, &half_time_note(&missing, &clock));
-                ctx.request_reasoning();
             }
         }
         Ok(())

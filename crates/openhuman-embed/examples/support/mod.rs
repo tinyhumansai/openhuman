@@ -378,14 +378,9 @@ where
     if offline() {
         // Set before starting any worker; fixtures never use operator credentials.
         std::env::set_var("OPENHUMAN_WORKSPACE", workspace);
+        std::env::remove_var("OPENHUMAN_KEYRING_MASTER_KEY");
         std::env::remove_var("OPENHUMAN_KEYRING_MASTER_KEY_FILE");
         std::env::remove_var("OPENHUMAN_KEYRING_BACKEND");
-        let key = format!(
-            "{}{}",
-            uuid::Uuid::new_v4().simple(),
-            uuid::Uuid::new_v4().simple()
-        );
-        std::env::set_var("OPENHUMAN_KEYRING_MASTER_KEY", key);
     }
     openhuman_embed::process::init_master_key()?;
     if offline() {

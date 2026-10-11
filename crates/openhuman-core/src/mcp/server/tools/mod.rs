@@ -3,7 +3,7 @@
 //! Split into focused sub-modules:
 //!   - `types`    — `McpToolSpec` and the argument/limit constants
 //!   - `specs`    — tool spec builders, schema helpers, and the conversion to
-//!     `tinymcp::ServerToolSpec`
+//!     `tinymcp_bus::ServerToolSpec`
 //!   - `params`   — OpenHuman's per-tool argument policy and RPC param
 //!     construction, over `tinymcp::server::args`' generic validators
 //!   - `dispatch` — `call_tool`, `list_tool_specs`, agent/subagent handlers
@@ -33,7 +33,7 @@ pub use dispatch::{call_tool, list_tool_specs, tool_error, tool_success};
 #[cfg(feature = "mcp")]
 pub use specs::{server_tool_spec, tool_specs};
 #[cfg(feature = "mcp")]
-pub use tinymcp::ToolCallError;
+pub use tinymcp_bus::ToolCallError;
 
 pub use types::McpToolSpec;
 

@@ -1,6 +1,6 @@
 # audio_toolkit
 
-Text-to-speech "podcast" toolkit. Synthesizes text into a workspace audio file via the `voice` TTS providers, optionally emails that file as an attachment (over SMTP or as a workspace capture in test/e2e mode), and exposes both as agent tools and JSON-RPC controllers. The combined `generate_and_email` flow chains both steps so the agent can turn arbitrary text into a listen-later audio email in one call.
+Text-to-speech "podcast" toolkit. Synthesizes text into a workspace audio file via the `voice` TTS providers, optionally emails that file as an attachment (through the loadable TinyChannels module over SMTP, or as a workspace capture in test/e2e mode), and exposes both as agent tools and JSON-RPC controllers. The combined `generate_and_email` flow chains both steps so the agent can turn arbitrary text into a listen-later audio email in one call.
 
 ## Responsibilities
 
@@ -92,3 +92,10 @@ No durable domain store. Side effects are filesystem writes within the workspace
 - [Voice tools](../../../../../gitbooks/features/native-tools/voice.md)
 - [tinyvoice submodule](../../../../../vendor/tinyvoice/README.md)
 - [Chat](../../../../../gitbooks/features/chat.md)
+
+SMTP delivery uses `modules/channel_email.rs`: credentials are reconciled by
+OpenHuman and metadata/attachment chunks travel through confidential TinyBus
+calls. Chunks are bounded by the contract limit; unexpected acknowledgments
+abort the upload before SMTP. Cancellation requests cleanup of a known upload handle; module lease expiry
+reclaims it if transport cleanup fails. Admitted SMTP work remains module-owned. An unavailable module fails delivery.
+The existing capture mode still writes its MIME fixture to the workspace.

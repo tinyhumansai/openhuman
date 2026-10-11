@@ -22,7 +22,7 @@ is mounted as a submodule of [`load/dirs.rs`](./load/dirs.rs) via `#[path]`.
 | `[[capability_providers]]` | [`capability_providers.rs`](./capability_providers.rs) | `CapabilityProviderConfig` |
 | `[channels_config]`, `[sandbox]` | [`channels.rs`](./channels.rs) | `ChannelsConfig` and per-provider configs re-exported from `tinychannels_bus`; `SandboxConfig`, `ResourceLimitsConfig`, `AuditConfig`, and `SecurityConfig` (only `DaemonConfig` embeds the last one) |
 | `[claude_agent_sdk]` | [`claude_agent_sdk.rs`](./claude_agent_sdk.rs) | `ClaudeAgentSdkConfig` |
-| `[[cloud_providers]]`, `primary_cloud`, `*_provider` slugs | [`cloud_providers.rs`](./cloud_providers.rs) | `CloudProviderCreds`, `CloudProviderType`, `AuthStyle` |
+| `[[cloud_providers]]`, `primary_cloud`, `*_provider` slugs | [`cloud_providers.rs`](./cloud_providers.rs) | `CloudProviderCreds`, `AuthStyle` |
 | `[context]` | [`context.rs`](./context.rs) | `ContextConfig` |
 | `[cost]` | [`identity_cost.rs`](./identity_cost.rs) | `CostConfig`, `ModelPricing` |
 | `[dashboard]` | [`dashboard.rs`](./dashboard.rs) | `DashboardConfig`, `DiagramViewerConfig`, `EventStreamConfig`, `ModelHealthConfig` |
@@ -117,7 +117,7 @@ sandbox policy contract described under Workspace/identity helpers below.
 5. Run pending schema migrations ([`../migrations/`](../migrations/), via
    `migrations::run_pending`), which bump `schema_version` and save as they go.
 6. Decrypt at-rest secrets ([`load/secrets.rs`](./load/secrets.rs)); a legacy `enc:` (XOR) value is
-   force-migrated to `enc2:` (ChaCha20-Poly1305 via `security::keyring`) and
+   force-migrated to `enc2:` (ChaCha20-Poly1305 via `security::secret_storage`) and
    the config is saved again immediately.
 
 A brand-new workspace is instead stamped at `CURRENT_SCHEMA_VERSION`, seeded

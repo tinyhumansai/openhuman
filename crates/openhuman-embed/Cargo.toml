@@ -12,7 +12,7 @@ publish = false
 langfuse = ["openhuman-core/langfuse"]
 # `channels` is in core's default set already; enabling it here too compiles
 # the `Runtime::channels` facade in a default build.
-default = ["openhuman-core/default", "channels"]
+default = ["openhuman-core/default", "channels", "modules"]
 http-server = ["openhuman-core/http-server"]
 inference = ["openhuman-core/inference"]
 documents = ["openhuman-core/documents"]

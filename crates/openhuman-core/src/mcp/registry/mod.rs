@@ -89,6 +89,16 @@ pub mod connections {
 
     use crate::mcp::host;
 
+    async fn module_call<R: serde::de::DeserializeOwned>(
+        config: &Config,
+        member: &str,
+        args: impl serde::Serialize,
+    ) -> Result<R, crate::modules::client::ModuleCallError> {
+        crate::mcp::module_client::McpConfiguredClient::for_config(config)?
+            .call(&host::client_config(config), member, args)
+            .await
+    }
+
     /// Every connected server's identity and advertised tools.
     ///
     /// Sorted by qualified name, so a prompt built from this does not reshuffle
@@ -108,12 +118,12 @@ pub mod connections {
     /// [`disconnect_for_config`] exist: the ambient form resolves through the
     /// process default, which stops answering once a second workspace is open.
     pub async fn connected_overview_for_config(config: &Config) -> Vec<ConnectedServerOverview> {
-        match host::lookup(config) {
-            Ok(service) => service.dynamic().connected_overview().await,
+        match module_call(config, tinymcp_bus::names::methods::CONNECTED_OVERVIEW, ()).await {
+            Ok(overview) => overview,
             Err(error) => {
                 tracing::debug!(
                     ?error,
-                    "[mcp] no host for workspace; reporting no connections"
+                    "[mcp] no MCP module for workspace; reporting no connections"
                 );
                 Vec::new()
             }
@@ -129,18 +139,14 @@ pub mod connections {
     /// its connect finishes. Listing is not authorization — a call still
     /// needs a live connection.
     pub async fn cached_overview_for_config(config: &Config) -> Vec<ConnectedServerOverview> {
-        let service = match host::lookup(config) {
-            Ok(service) => service,
-            Err(error) => {
-                tracing::debug!(?error, "[mcp] no host for workspace; no cached tools");
-                return Vec::new();
-            }
-        };
-        match service.dynamic().cached_overview().await {
+        match module_call(config, tinymcp_bus::names::methods::CACHED_OVERVIEW, ()).await {
             Ok(overview) => overview,
             Err(error) => {
-                tracing::debug!(%error, "[mcp] falling back to live servers only");
-                service.dynamic().connected_overview().await
+                tracing::debug!(
+                    ?error,
+                    "[mcp] no module cached tools; checking live connections"
+                );
+                connected_overview_for_config(config).await
             }
         }
     }
@@ -165,13 +171,18 @@ pub mod connections {
     pub async fn all_connected_tools_for_config(
         config: &Config,
     ) -> Vec<(String, String, tinymcp_bus::McpTool)> {
-        match host::lookup(config) {
-            Ok(service) => service.dynamic().connections().all_connected_tools().await,
-            Err(error) => {
-                tracing::debug!(?error, "[mcp] no host for workspace; reporting no tools");
-                Vec::new()
-            }
-        }
+        connected_overview_for_config(config)
+            .await
+            .into_iter()
+            .flat_map(|server| {
+                let server_id = server.server_id;
+                let qualified_name = server.qualified_name;
+                server
+                    .tools
+                    .into_iter()
+                    .map(move |tool| (server_id.clone(), qualified_name.clone(), tool))
+            })
+            .collect()
     }
 
     /// Every tool on every connected server, paired with its server.
@@ -206,13 +217,11 @@ pub mod connections {
         config: &Config,
         server_id: &str,
     ) -> Option<Vec<tinymcp_bus::McpTool>> {
-        match host::lookup(config) {
-            Ok(service) => service.dynamic().connections().tools_for(server_id).await,
-            Err(error) => {
-                tracing::debug!(?error, server_id, "[mcp] no host for workspace; no tools");
-                None
-            }
-        }
+        connected_overview_for_config(config)
+            .await
+            .into_iter()
+            .find(|server| server.server_id == server_id)
+            .map(|server| server.tools)
     }
 
     /// Whether a server has a live entry.
@@ -231,42 +240,23 @@ pub mod connections {
 
     /// Whether a server has a live entry in `config`'s workspace.
     pub async fn is_connected_for_config(config: &Config, server_id: &str) -> bool {
-        match host::lookup(config) {
-            Ok(service) => {
-                service
-                    .dynamic()
-                    .connections()
-                    .is_connected(server_id)
-                    .await
-            }
-            Err(error) => {
-                tracing::debug!(
-                    ?error,
-                    server_id,
-                    "[mcp] no host for workspace; reporting not connected"
-                );
-                false
-            }
-        }
+        connected_overview_for_config(config)
+            .await
+            .iter()
+            .any(|server| server.server_id == server_id)
     }
 
-    /// Why a server's most recent attempt in `config`'s workspace hit a 401.
+    /// Whether the last authentication failure requested OAuth.
     pub async fn auth_hint_for_config(config: &Config, server_id: &str) -> Option<&'static str> {
-        match host::lookup(config) {
-            Ok(service) => Some(
-                service
-                    .dynamic()
-                    .connections()
-                    .auth_hint(server_id)
-                    .await?
-                    .as_code(),
-            ),
+        let statuses: Result<Vec<tinymcp_bus::ConnStatus>, _> =
+            module_call(config, tinymcp_bus::names::methods::STATUS, ()).await;
+        match statuses {
+            Ok(statuses) => statuses
+                .iter()
+                .find(|status| status.server_id == server_id)
+                .and_then(|status| status.auth_hint.map(|hint| hint.as_code())),
             Err(error) => {
-                tracing::debug!(
-                    ?error,
-                    server_id,
-                    "[mcp] no host for workspace; no auth hint"
-                );
+                tracing::debug!(?error, "[mcp] no status for workspace; no auth hint");
                 None
             }
         }
@@ -283,21 +273,14 @@ pub mod connections {
         config: &crate::config::Config,
         server: &tinymcp_bus::InstalledServer,
     ) -> anyhow::Result<Vec<tinymcp_bus::McpTool>> {
-        let service = host::for_config(config)?;
-        let client = host::client_config(config);
-
-        service
-            .dynamic()
-            .connections()
-            .connect(
-                service.dynamic().store(),
-                service.dynamic().oauth(),
-                &client.client_identity,
-                client.proxy.as_ref(),
-                server,
-            )
-            .await
-            .map_err(|error| anyhow::anyhow!("failed to connect `{}`: {error}", server.server_id))
+        let outcome: tinymcp_bus::ConnectOutcome = module_call(
+            config,
+            tinymcp_bus::names::methods::CONNECT,
+            (server.server_id.clone(),),
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("failed to connect `{}`: {error}", server.server_id))?;
+        Ok(outcome.tools)
     }
 
     /// Drops a server's connection, reporting whether there was one.
@@ -320,8 +303,14 @@ pub mod connections {
     /// through [`connect`] already named a workspace and should close over the
     /// same one.
     pub async fn disconnect_for_config(config: &Config, server_id: &str) -> bool {
-        match host::lookup(config) {
-            Ok(service) => service.dynamic().connections().disconnect(server_id).await,
+        match module_call::<bool>(
+            config,
+            tinymcp_bus::names::methods::DISCONNECT,
+            (server_id,),
+        )
+        .await
+        {
+            Ok(disconnected) => disconnected,
             Err(error) => {
                 tracing::debug!(?error, "[mcp] no host for workspace; nothing to disconnect");
                 false
@@ -331,8 +320,17 @@ pub mod connections {
 
     /// The most recent failure message for a server in `config`'s workspace.
     pub async fn last_error_for_config(config: &Config, server_id: &str) -> Option<String> {
-        match host::lookup(config) {
-            Ok(service) => service.dynamic().connections().last_error(server_id).await,
+        match module_call::<Vec<tinymcp_bus::ConnStatus>>(
+            config,
+            tinymcp_bus::names::methods::STATUS,
+            (),
+        )
+        .await
+        {
+            Ok(statuses) => statuses
+                .into_iter()
+                .find(|status| status.server_id == server_id)
+                .and_then(|status| status.last_error),
             Err(error) => {
                 tracing::debug!(
                     ?error,

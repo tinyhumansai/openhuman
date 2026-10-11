@@ -85,10 +85,21 @@ fn zero_limits_fall_back_to_the_http_request_config_defaults() {
     assert_ne!(limits.timeout_secs, 0);
 }
 
-#[test]
-fn tinyjuice_detects_and_converts_html() {
+#[tokio::test]
+async fn tinyjuice_detects_and_converts_html() {
+    if std::env::var_os("TINYJUICE_TEST_MODULE").is_none() {
+        eprintln!("SKIPPED: released module fixture is not configured");
+        return;
+    }
     let page = "<!DOCTYPE html><html><body><p>hi</p></body></html>";
-    assert!(TinyJuiceHtml.looks_like_html(page));
-    assert!(!TinyJuiceHtml.looks_like_html("# Just a README\n\nSome prose.\n"));
-    assert!(TinyJuiceHtml.to_markdown(page).contains("hi"));
+    assert!(TinyJuiceHtml.looks_like_html(page).await.unwrap());
+    assert!(!TinyJuiceHtml
+        .looks_like_html("# Just a README\n\nSome prose.\n")
+        .await
+        .unwrap());
+    assert!(TinyJuiceHtml
+        .to_markdown(page)
+        .await
+        .unwrap()
+        .contains("hi"));
 }

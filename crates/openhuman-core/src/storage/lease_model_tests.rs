@@ -319,8 +319,20 @@ fn scenario() -> impl Strategy<Value = (usize, Vec<Op>)> {
     (2usize..=4).prop_flat_map(|nodes| (Just(nodes), prop::collection::vec(ops(nodes), 1..80)))
 }
 
+/// Preserve the saved lease-model case: the same holder reacquires at exact expiry.
+#[tokio::test]
+async fn reacquiring_at_expiry_advances_epoch_and_marks_previous_holder_unclean() {
+    run(2, vec![Op::Acquire(0), Op::Advance(1_000), Op::Acquire(0)])
+        .await
+        .unwrap();
+}
+
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(256))]
+    #![proptest_config(ProptestConfig {
+        cases: 256,
+        failure_persistence: None,
+        ..ProptestConfig::default()
+    })]
 
     #[test]
     fn leases_match_the_model_and_never_double_grant((nodes, steps) in scenario()) {

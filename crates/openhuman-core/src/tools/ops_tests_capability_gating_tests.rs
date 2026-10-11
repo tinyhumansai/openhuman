@@ -165,7 +165,7 @@ fn no_gate_family_tool_silently_defaults_to_platform() {
 #[cfg(not(feature = "flows"))]
 fn default_tools_omits_flows_tools_when_feature_off() {
     let security = Arc::new(SecurityPolicy::default());
-    let tools = default_tools(security);
+    let tools = crate::tools::ops::default_tools(security);
     let names = tool_names(&tools);
 
     for absent in [

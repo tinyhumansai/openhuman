@@ -196,7 +196,7 @@ pub(super) fn register_domain_subscribers(
                         "[auth] no session token at startup — scheduler gate set to signed_out \
                          (config_path={}, keyring_backend={})",
                         config.config_path.display(),
-                        crate::security::keyring::backend_name(),
+                        crate::security::secret_storage::backend_name(),
                     );
                     crate::cron::scheduler_gate::set_signed_out(true);
                 }
@@ -205,7 +205,7 @@ pub(super) fn register_domain_subscribers(
                         "[auth] failed to read session token at startup ({err}) — assuming signed_out \
                          (config_path={}, keyring_backend={})",
                         config.config_path.display(),
-                        crate::security::keyring::backend_name(),
+                        crate::security::secret_storage::backend_name(),
                     );
                     crate::cron::scheduler_gate::set_signed_out(true);
                 }

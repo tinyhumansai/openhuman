@@ -8,13 +8,13 @@
 //! ## Module layout
 //!
 //! - [`types`] — run state, status snapshot, and server config.
-//! - [`hotkey_listener`] — rdev vs. the macOS Swift globe listener.
+//! - [`hotkey_listener`] — TinyVoice native listeners and the macOS Globe composition.
 //! - [`pipeline`] — the background recording → transcription pass.
 //! - [`runtime`] — the hotkey event loop that drives a `VoiceServer`.
 //! - [`singleton`] — the process-global instance, auto-start, and the
 //!   standalone (CLI) entry point.
 
-mod hotkey_listener;
+pub(crate) mod hotkey_listener;
 mod pipeline;
 mod runtime;
 mod singleton;

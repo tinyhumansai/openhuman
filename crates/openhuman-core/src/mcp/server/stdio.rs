@@ -5,11 +5,11 @@ use anyhow::{bail, Result};
 #[cfg(feature = "http-server")]
 use std::net::SocketAddr;
 
-use crate::core::logging::CliLogDefault;
+use crate::{config::Config, core::logging::CliLogDefault};
 
-use super::handler::handler;
 #[cfg(feature = "http-server")]
 use super::http::{run_http, HttpServerConfig};
+use super::module::ServerSession;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum McpTransport {
@@ -85,11 +85,7 @@ pub fn run_stdio_from_cli(args: &[String]) -> Result<()> {
     match transport {
         McpTransport::Stdio => {
             log::debug!("[mcp_server] starting stdio MCP server");
-            rt.block_on(tinymcp::run_stdio(
-                handler(),
-                tokio::io::stdin(),
-                tokio::io::stdout(),
-            ))?;
+            rt.block_on(run_stdio_module())?;
         }
         McpTransport::Http => {
             #[cfg(feature = "http-server")]
@@ -116,6 +112,37 @@ pub fn run_stdio_from_cli(args: &[String]) -> Result<()> {
             }
         }
     }
+    Ok(())
+}
+
+async fn run_stdio_module() -> Result<()> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+
+    let config = Config::load_or_init().await?;
+    let session = ServerSession::open(&config).await?;
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    let result = async {
+        let mut input = tokio::io::BufReader::new(tokio::io::stdin()).lines();
+        let mut output = tokio::io::stdout();
+        while let Some(line) = input.next_line().await? {
+            let snapshot = session
+                .submit(serde_json::Map::new(), line, &cancellation)
+                .await?;
+            if let tinymcp_bus::ServerOperationState::Complete {
+                response: Some(response),
+            } = snapshot.state
+            {
+                output.write_all(response.as_bytes()).await?;
+                output.write_all(b"\n").await?;
+                output.flush().await?;
+            }
+        }
+        Ok::<(), anyhow::Error>(())
+    }
+    .await;
+    let cleanup = session.close().await;
+    result?;
+    cleanup?;
     Ok(())
 }
 

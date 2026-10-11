@@ -69,10 +69,8 @@ pub fn direct_configured(config: &Config, provider: &str) -> bool {
             .as_deref()
             .is_some_and(|key| !key.trim().is_empty()),
         "searxng" => !config.searxng.base_url.trim().is_empty(),
-        other => config
-            .search
-            .credentials(other)
-            .is_some_and(|credentials| credentials.has_key()),
+        // A key an embedder pinned on this agent counts as well as a stored one.
+        other => config.search.direct_key(other).is_some(),
     }
 }
 

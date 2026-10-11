@@ -111,3 +111,22 @@ async fn local_session_is_backend_unavailable_for_every_flow() {
         assert!(err.starts_with("BACKEND_UNAVAILABLE:"), "{err}");
     }
 }
+
+#[test]
+fn channel_credential_keys_preserve_existing_profiles_for_every_auth_mode() {
+    for (mode, suffix) in [
+        (ChannelAuthMode::ApiKey, "api_key"),
+        (ChannelAuthMode::BotToken, "bot_token"),
+        (ChannelAuthMode::OAuth, "oauth"),
+        (ChannelAuthMode::ManagedDm, "managed_dm"),
+    ] {
+        assert_eq!(
+            channel_credential_provider("telegram", mode),
+            format!("channel:telegram:{suffix}")
+        );
+    }
+    assert_eq!(
+        channel_credential_provider("discord", ChannelAuthMode::ManagedDm),
+        "channel:discord:managed_dm"
+    );
+}

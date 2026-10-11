@@ -16,7 +16,9 @@ publish = false
 # core's whole `default`.
 [features]
 langfuse = ["openhuman-rpc/langfuse"]
+os-keyring = ["openhuman-rpc/os-keyring"]
 default = [
+    "os-keyring",
     "crash-reporting",
     "media",
     "skills",

@@ -28,7 +28,7 @@ It does not own the cross-domain `EncryptionEngine` (in `security/encryption/`) 
 | `SecurityPolicy`                                                                                                              | `policy/types.rs` (path checks in `policy/path_checks.rs`, command classification in `policy/command_checks.rs`, gating in `policy/enforcement.rs`) | Assembles runtime policy from `AutonomyConfig` + workspace dir.         |
 | `AutonomyLevel` (`ReadOnly` / `Supervised` / `Full`)                                                                          | `policy/types.rs` | Three-step autonomy ladder.                                             |
 | `CommandRiskLevel`, `ToolOperation`, `ActionTracker`                                                                          | `policy/types.rs` | Risk classification and per-session counting.                             |
-| `SecretStore`                                                                                                                 | `keyring/encrypted_store.rs` (`secrets.rs` re-exports it) | OS-keychain / encrypted-file secret persistence with round-trip helpers. |
+| `SecretStore`                                                                                                                 | `secret_storage/encrypted_store.rs` (`secrets.rs` re-exports it) | OS-keychain / encrypted-file secret persistence with round-trip helpers. |
 | `AuditLogger`, `AuditEventType`, `AuditEvent`, `Actor`, `Action`, `ExecutionResult`, `SecurityContext`, `CommandExecutionLog` | `audit.rs`   | Append-only audit trail.                                                |
 | `PairingGuard`, `constant_time_eq`, `is_public_bind`                                                                          | `pairing.rs` (`PairingGuard` and `constant_time_eq` are re-exported from `tinychannels_bus::security`) | Pairing-token check before binding the RPC server publicly.             |
 | `redact(value: &str) -> String`                                                                                               | `core.rs`    | Uniform 4-char-prefix redaction for logs.                               |
@@ -64,7 +64,7 @@ One check never turns off. `is_always_forbidden` blocks credential stores (`~/.s
 
 ## Secret store
 
-`SecretStore` (implemented in `keyring/encrypted_store.rs`, re-exported through `secrets.rs`) encrypts config-field secrets with ChaCha20-Poly1305 (`enc2:` prefix) under a keychain-backed master key. It migrates the legacy XOR `enc:` format when it decrypts. Backend selection and the encrypted-file fallback are described in `crates/openhuman-core/src/security/keyring/README.md`.
+`SecretStore` (implemented in `security/secret_storage/encrypted_store.rs`, re-exported through `secrets.rs`) encrypts config-field secrets with ChaCha20-Poly1305 (`enc2:` prefix). It migrates the legacy XOR `enc:` format when it decrypts. Core owns the platform-independent secret-storage contracts, an in-memory default, and an optional encrypted-file backend. `openhuman-rpc::keyring` owns the native OS providers and installs them through those contracts before host boot. RPC product hosts explicitly select persistent storage; embed uses memory unless a provider or backend override is supplied. Backend selection and migration are described in `crates/openhuman-core/src/security/secret_storage/README.md`.
 
 ## `redact()`
 
@@ -77,7 +77,7 @@ One check never turns off. `is_always_forbidden` blocks credential stores (`~/.s
 | `policy/` (`mod.rs`, `types.rs`, `path_checks.rs`, `command_checks.rs`, `enforcement.rs`, `policy_*_tests.rs`, `proptest_tests.rs`) | `SecurityPolicy`, `AutonomyLevel`, risk classification, path and command checks, action tracking. |
 | `core.rs`, `core_tests.rs`                                    | `redact()` + small shared helpers.                                        |
 | `audit.rs`                                                    | Append-only audit log types.                                              |
-| `secrets.rs`, `keyring/`                                      | `SecretStore` (implemented in `keyring/encrypted_store.rs`) + round-trip tests. |
+| `secrets.rs`, `secret_storage/`                                      | `SecretStore` (implemented in `secret_storage/encrypted_store.rs`) + round-trip tests. |
 | `pairing.rs`, `pairing_tests.rs`                              | `PairingGuard` + constant-time helpers.                                   |
 | `ops.rs`                                                      | RPC handler (`security_policy_info_for_config`).                          |
 | `schemas.rs`                                                  | Controller schemas + handler dispatch.                                    |
@@ -101,7 +101,7 @@ One check never turns off. `is_always_forbidden` blocks credential stores (`~/.s
 
 ## Tests
 
-- Unit: `pairing_tests.rs`, `policy/policy_tests*.rs`, `policy/proptest_tests.rs`, `keyring/encrypted_store_tests*.rs`.
+- Unit: `pairing_tests.rs`, `policy/policy_tests*.rs`, `policy/proptest_tests.rs`, `secret_storage/encrypted_store_tests*.rs`.
 - `core_tests.rs` covers `redact()`.
 
 ## Related

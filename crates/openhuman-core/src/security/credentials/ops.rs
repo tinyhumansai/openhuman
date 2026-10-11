@@ -20,10 +20,7 @@ pub use credential::{
     clear_credential, clear_session, set_credential, store_session, SetCredentialRequest,
     PENDING_BACKEND_VALIDATION_FIELD,
 };
-pub use gated_services::{
-    start_credential_gated_services, start_login_gated_services, stop_credential_gated_services,
-    stop_login_gated_services,
-};
+pub use gated_services::{start_credential_gated_services, stop_credential_gated_services};
 pub use provider_credentials::{
     list_provider_credentials, list_provider_credentials_by_prefix, remove_provider_credentials,
     store_provider_credentials,

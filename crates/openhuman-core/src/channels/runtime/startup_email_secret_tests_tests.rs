@@ -4,7 +4,7 @@ use crate::security::credentials::AuthService;
 use std::collections::HashMap;
 use tempfile::tempdir;
 
-use crate::channels::runtime::startup::credentials::resolve_email_password;
+use crate::channels::credentials::resolve_email_password;
 fn isolated_config() -> (tempfile::TempDir, Config) {
     let tmp = tempdir().expect("tempdir");
     let mut config = Config::default();

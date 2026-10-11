@@ -41,6 +41,7 @@
 - [OpenAI-compatible providers and BYOK](gitbooks/developing/embed/integrations/openai-compatible.md): Construct a route with `Provider::openai_compatible(base_url, api_key).model(model_id)`, then set it on the runtime or an individual agent. Pass the API root, such as a provider's `/v1` URL; the adapter appends `/chat/completions`. Supply an explicit model id so the route can register that model for its workload roles.
 - [Storage drivers](gitbooks/developing/embed/integrations/storage-drivers.md): Enable `storage-sqlite` for SQLite or `storage-mongodb` for MongoDB on your Embed dependency. These Cargo gates make the driver available; choosing a URL selects the runtime backend. Set `RuntimeConfig.storage.url`, pass a URL through `RuntimeBuilder::storage`, or set the `url` field in the `[storage]` section of the host's configuration. `OPENHUMAN_STORAGE_URL` is the environment override used by host configuration resolution.
 - [TinyHumans managed inference](gitbooks/developing/embed/integrations/tinyhumans-managed.md): Embed wraps the core; it does not contain a TinyHumans SDK backend client. A managed host must supply a `BackendTransport` through `RuntimeBuilder::backend_transport`, or boot through the SDK-backed builder in `openhuman-tinyhumans`. The connected host layer owns transport and session login. `RuntimeBuilder::backend_url` selects a URL; it does not install a transport.
+- [Web search](gitbooks/developing/embed/integrations/web-search.md): An agent's web-search tools (`web_search_tool`, `web_answer_tool`, `web_contents_tool`) run through the process-wide TinySearch module. Several agents in one runtime can each search with their own provider key: pin it on that agent's config, and it is never written to `config.toml`, the environment, or a log.
 - [Quickstart](gitbooks/developing/embed/quickstart.md): Start from a checkout of the repository and run `cargo run -p openhuman-embed --example run_turn`. The example boots an ephemeral runtime, creates its own local provider/backend fixtures and prints `hello from the stub`. It needs no inference account and does not contact a real backend.
 - [Embedding troubleshooting](gitbooks/developing/embed/troubleshooting.md): Use the typed error and the effective capability report together. A method that was compiled out is a different problem from a configured method with a provider failure. Keep credentials, user prompts and raw provider payloads out of routine diagnostics.
 - [OpenHuman Embed](crates/openhuman-embed/README.md): A typed Rust facade for running the OpenHuman core inside your application: one Runtime per process, with independently configured Agents.
@@ -526,6 +527,14 @@ A standalone completer does not claim the process runtime slot. An agent-backed 
 The example checks that exactly one inference request was made and verifies the returned text. It uses a local provider fixture by default; the source contains the explicit opt-in live route path.
 
 Choose `Agent` when a model should call tools, resume a durable thread or execute with an agent's access context. Choose the structured completion helpers when the host only needs a validated data result. For routes and transport failures see [providers](providers.md) and [errors](errors.md).
+
+## Timeouts and fallback
+
+Set `CompletionRequest::timeout_ms(120_000)` to bound each physical provider HTTP request to 120 seconds. The optional field defaults to unset and is omitted from serialized requests when absent, retaining the provider's transport defaults. Each structured repair attempt receives its own physical timeout; this is not a total completion or ladder deadline.
+
+A physical timeout is an RPC transport failure, so an explicit `CompletionLadder` can try its next route. By contrast, `Completer::timeout(duration)` bounds the entire logical completion, including repair attempts, and returns terminal `DeadlineExceeded`. Cancellation also stops the ladder without fallback. You can use both bounds when the host needs separate physical and logical limits.
+
+A timed-out physical attempt has unknown reported cost. Ladder aggregate cost stays unknown, and a budgeted call keeps its conservative reservation if no authoritative usage arrived. The remaining budget may therefore refuse a fallback before it sends another request. See the [routing guide](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/ROUTING.md) for the explicit ladder API.
 
 <!-- Source: gitbooks/developing/embed/concepts/cron.md -->
 ---
@@ -1893,6 +1902,7 @@ An embedded runtime composes the capabilities its host supplies. Start with the 
 - [Local models](local-models.md)
 - [MCP servers](mcp.md)
 - [Composio](composio.md)
+- [Web search](web-search.md)
 - [Storage drivers](storage-drivers.md)
 - [Channels](channels.md)
 
@@ -2328,6 +2338,26 @@ The SaaS example uses a deterministic implementation of that transport boundary 
 See the [complete profiles example](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/profiles.rs) and its shared support transport for the full offline setup. For a deployed SDK-backed host, follow the connected layer's setup instead of copying the loopback transport.
 
 Use [OpenAI-compatible routing](openai-compatible.md) when your host wants to send inference directly to a BYOK endpoint. That explicit provider route does not supply hosted backend services.
+
+<!-- Source: gitbooks/developing/embed/integrations/web-search.md -->
+---
+description: "Pin a web-search provider key per agent, held only in memory."
+icon: code
+---
+
+# Web search
+
+An agent's web-search tools (`web_search_tool`, `web_answer_tool`, `web_contents_tool`) run through the process-wide TinySearch module. Several agents in one runtime can each search with their own provider key: pin it on that agent's config, and it is never written to `config.toml`, the environment, or a log.
+
+In the agent's `AgentSpec::config` closure, call `config.search.pin_host_credential("brave", SearchHostCredential::new(key))`. `SearchHostCredential` is exported from `openhuman_embed`.
+
+`pin_host_credential` accepts `brave`, `exa`, `gemini`, `parallel`, `querit`, `tavily` and `tinyfish`, and refuses any other provider with `UnknownKeyedSearchProvider`. It turns search on and puts that provider on its direct route, the route a key authenticates; a pinned `gemini` key also serves deep research. `SearchHostCredential::with_base_url` sends the provider's calls to another endpoint, such as a proxy or a local stand-in under test.
+
+While an agent's config carries a pinned key, its search calls run under that config instead of a reload of the runtime's `config.toml`. The module is reconfigured whenever the next call needs a different configuration, and calls take turns, so one agent's call never runs with another agent's key. Agents without a pinned key keep the runtime's settings, environment and default managed routing.
+
+Provider order per role still comes from `search.roles` and TinySearch's defaults. A runtime signed in to the managed backend serves the managed providers first; set `search.roles` on the agent to put the pinned provider first.
+
+The repository's [pinned-key integration test](https://github.com/tinyhumansai/openhuman/blob/main/tests/search_pinned_keys_e2e.rs) runs two agents with different keys against a loopback provider. It checks each call's outgoing key, and that no key reaches the environment, a file or a log line.
 
 <!-- Source: gitbooks/developing/embed/quickstart.md -->
 ---
@@ -2918,6 +2948,7 @@ Generate the complete local Rust API reference with `cargo doc -p openhuman-embe
 - [`SaasConfig`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`SandboxModeSpec`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`ScheduledJob`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
+- [`SearchHostCredential`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`ServiceSet`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`Session`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`SessionStoreProvider`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
@@ -2944,6 +2975,7 @@ Generate the complete local Rust API reference with `cargo doc -p openhuman-embe
 - [`TurnOutcome`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`TurnRequest`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`TurnStream`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
+- [`UnknownKeyedSearchProvider`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`VOICE_COMPILED_IN`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`WeightClass`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`Workspace`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
@@ -2973,6 +3005,7 @@ Generate the complete local Rust API reference with `cargo doc -p openhuman-embe
 - [`run_from_args`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`schema_for_rpc_method`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`seams`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
+- [`secret_storage`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`session_store`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`skill_registry`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)
 - [`stream`](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/src/lib.rs)

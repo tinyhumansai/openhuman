@@ -8,7 +8,7 @@
 
 use openhuman_core::security::credentials::http_creds::{HttpCredential, HttpCredentialsStore};
 use openhuman_core::security::credentials::profiles::{AuthProfile, AuthProfilesStore};
-use openhuman_core::security::keyring;
+use openhuman_core::security::secret_storage;
 
 #[macro_use]
 #[path = "support/storage_drivers.rs"]
@@ -46,7 +46,7 @@ fn a_configured_backend_holds_keyring_and_credential_secrets(case: Case) {
     HttpCredentialsStore::new(&state, false)
         .upsert(&HttpCredential::bearer("legacy-http", "ghp-legacy"))
         .unwrap();
-    keyring::set("legacy-user", "old_token", "old-value").unwrap();
+    secret_storage::set("legacy-user", "old_token", "old-value").unwrap();
     let profiles_file = std::fs::read(state.join("auth-profiles.json")).unwrap();
     let http_file = std::fs::read(state.join("http-credentials.json")).unwrap();
 
@@ -58,23 +58,31 @@ fn a_configured_backend_holds_keyring_and_credential_secrets(case: Case) {
 
     case.install();
 
-    keyring::set("user-1", "api_token", "tok-123").unwrap();
+    secret_storage::set("user-1", "api_token", "tok-123").unwrap();
     assert_eq!(
-        keyring::get("user-1", "api_token").unwrap().as_deref(),
+        secret_storage::get("user-1", "api_token")
+            .unwrap()
+            .as_deref(),
         Some("tok-123")
     );
-    assert!(keyring::is_available());
-    keyring::delete("user-1", "api_token").unwrap();
-    assert!(keyring::get("user-1", "api_token").unwrap().is_none());
+    assert!(secret_storage::is_available());
+    secret_storage::delete("user-1", "api_token").unwrap();
+    assert!(secret_storage::get("user-1", "api_token")
+        .unwrap()
+        .is_none());
 
     // A secret the process keyring held is adopted on first read, and a
     // delete removes it from both places so it cannot resurface.
     assert_eq!(
-        keyring::get("legacy-user", "old_token").unwrap().as_deref(),
+        secret_storage::get("legacy-user", "old_token")
+            .unwrap()
+            .as_deref(),
         Some("old-value")
     );
-    keyring::delete("legacy-user", "old_token").unwrap();
-    assert!(keyring::get("legacy-user", "old_token").unwrap().is_none());
+    secret_storage::delete("legacy-user", "old_token").unwrap();
+    assert!(secret_storage::get("legacy-user", "old_token")
+        .unwrap()
+        .is_none());
 
     let profiles = AuthProfilesStore::new(&state, false);
     profiles

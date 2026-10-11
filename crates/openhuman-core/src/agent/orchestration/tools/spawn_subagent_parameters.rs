@@ -38,6 +38,8 @@ fn spawn_subagent_parameters_schema() -> serde_json::Value {
         "required": ["agent_id", "prompt"],
         "properties": {
             "agent_id": agent_id_schema,
+            // keep until v0.66 (review after 2027-01-11): resumed sessions freeze
+            // their tool schemas; retirement needs persisted-call evidence.
             // Back-compat alias — older callers used `archetype`.
             "archetype": {
                 "type": "string",

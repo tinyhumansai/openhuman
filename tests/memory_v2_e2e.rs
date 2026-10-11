@@ -33,7 +33,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{Duration, Instant};
 
-use env_guard::{env_lock_with_file_keyring_async, EnvVarGuard};
+use env_guard::{env_lock_async, EnvVarGuard};
 use rpc_harness::{rpc, serve_rpc};
 use serde_json::{json, Value};
 
@@ -194,7 +194,7 @@ struct Fixture {
 impl Fixture {
     /// Boots the stack; `signed_in` stores the mock session first.
     async fn new(signed_in: bool) -> Self {
-        let lock = env_lock_with_file_keyring_async().await;
+        let lock = env_lock_async().await;
         tinyhumans_boot::boot();
         let mock = MockBackend::start().await;
         let home = tempfile::tempdir().expect("tempdir");

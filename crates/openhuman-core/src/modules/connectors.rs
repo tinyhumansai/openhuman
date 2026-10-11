@@ -210,9 +210,9 @@ async fn ensure_routed(config: &Config, proxy: &Proxy) -> Result<(), String> {
     }
 
     proxy
-        .call::<serde_json::Value>(methods::CONFIGURE, (route,))
+        .call_confidential::<serde_json::Value>(methods::CONFIGURE, (route,))
         .await
-        .map_err(|error| format!("{}: {error}", methods::CONFIGURE))?;
+        .map_err(|error| bus_failure(methods::CONFIGURE, &error))?;
 
     // Recorded only after the module accepted it, so a failed reconfiguration
     // is retried on the next call rather than remembered as done.
@@ -233,7 +233,9 @@ async fn ensure_routed(config: &Config, proxy: &Proxy) -> Result<(), String> {
 /// the artifact missing or failing its digest check, or the bus refusing the
 /// proxy.
 pub async fn proxy(config: &Config) -> Result<Proxy, String> {
-    ops::ensure_loaded(config, MODULE_ID).await?;
+    ops::ensure_loaded(config, MODULE_ID)
+        .await
+        .map_err(|_| super::client::ModuleCallError::Unavailable.to_string())?;
     let proxy = proxy_to_serving().await?;
     ensure_routed(config, &proxy).await?;
     Ok(proxy)
@@ -244,12 +246,13 @@ pub async fn proxy(config: &Config) -> Result<Proxy, String> {
 async fn proxy_to_serving() -> Result<Proxy, String> {
     let record =
         registry::find(MODULE_ID).ok_or_else(|| format!("unknown module '{MODULE_ID}'"))?;
-    let runtime = super::host::runtime()
-        .await
-        .map_err(|error| format!("the module runtime is unavailable: {error}"))?;
+    let runtime = super::host::runtime().await.map_err(|_| {
+        super::failure::report(record, super::failure::Reason::TransportFailed);
+        super::client::ModuleCallError::TransportFailed.to_string()
+    })?;
     runtime
         .proxy(record.bus_name, record.object_path)
-        .map_err(|error| format!("could not reach '{MODULE_ID}': {error}"))
+        .map_err(|error| bus_failure("Connect", &error))
 }
 
 /// Give an already-serving module the route the current configuration
@@ -294,6 +297,26 @@ pub(crate) async fn proxy_without_reconcile() -> Result<Proxy, String> {
     proxy_to_serving().await
 }
 
+fn bus_failure(member: &str, error: &tinybus::Error) -> String {
+    let outcome = super::client::report_proxy_failure(
+        registry::find(MODULE_ID).expect("registered connector module"),
+        error,
+    );
+    if let tinybus::Error::MethodFailed { name, message } = error {
+        if message.starts_with("[composio:error:") {
+            // Preserve the existing provider presentation contract. This is
+            // product output only; telemetry above contains no remote text.
+            return message.clone();
+        }
+        if name == tinybus::Error::FAILED {
+            // Keep provider presentation byte-for-byte. The Composio reporting
+            // boundary recognizes this wire envelope without a visible marker.
+            return format!("{member}: {error}");
+        }
+    }
+    format!("{member}: {outcome}")
+}
+
 /// Call one member with an argument and decode its reply.
 ///
 /// # Errors
@@ -317,7 +340,7 @@ where
     proxy
         .call::<Reply>(member, (request,))
         .await
-        .map_err(|error| format!("{member}: {error}"))
+        .map_err(|error| bus_failure(member, &error))
 }
 
 /// Call a member that carries its own credential, without touching the route.
@@ -344,12 +367,14 @@ where
     // The module's own HTTP deadline is 30s; give the bus a little longer so a
     // slow Composio surfaces as the module's message, not a bus timeout.
     const STATELESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
-    ops::ensure_loaded(config, MODULE_ID).await?;
+    ops::ensure_loaded(config, MODULE_ID)
+        .await
+        .map_err(|_| super::client::ModuleCallError::Unavailable.to_string())?;
     let proxy = proxy_to_serving().await?.with_timeout(STATELESS_TIMEOUT);
     proxy
-        .call::<Reply>(member, (request,))
+        .call_confidential::<Reply>(member, (request,))
         .await
-        .map_err(|error| format!("{member}: {error}"))
+        .map_err(|error| bus_failure(member, &error))
 }
 
 /// Call a member that takes no arguments.
@@ -365,7 +390,7 @@ pub async fn call_bare<Reply: DeserializeOwned>(
     proxy
         .call::<Reply>(member, ())
         .await
-        .map_err(|error| format!("{member}: {error}"))
+        .map_err(|error| bus_failure(member, &error))
 }
 
 #[cfg(test)]

@@ -1,5 +1,4 @@
 use super::*;
-
 use crate::agent::host_runtime::{NativeRuntime, RuntimeAdapter};
 use crate::config::{Config, DelegateAgentConfig};
 use crate::security::{AuditLogger, SecurityPolicy};
@@ -705,10 +704,11 @@ pub fn all_tools_with_runtime(
         action_dir,
     ));
 
-    // Hosting tools — deploy a workspace directory to a real hosting provider,
-    // with a managed database wired into it. Registered only once a credential
+    // Hosting tools — deploy a workspace directory through the compiled
+    // TinyHosts module. Registered only once a credential
     // actually resolves (`[hosting].api_key`, else the provider's environment
-    // variables): a tool that cannot work is worse than one that is absent,
+    // variables). Module loading stays lazy until a tool is invoked.
+    // A tool that cannot work is worse than one that is absent,
     // because a model retries it. A misconfigured section — an unknown provider
     // slug, a blank key — is logged and skipped rather than failing startup,
     // since nothing else in the process depends on hosting.

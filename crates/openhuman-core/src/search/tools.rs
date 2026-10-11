@@ -4,7 +4,9 @@
 //! computed synchronously from config so a turn's tool list is stable and
 //! needs no module round-trip. Each call re-reads the live config and goes
 //! through `modules::search::execute_tool`, so a provider or login change is
-//! honoured on the next call without rebuilding the session.
+//! honoured on the next call without rebuilding the session — unless the
+//! agent's config carries host-pinned search keys, which make it the config
+//! the call runs under.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};

@@ -63,14 +63,6 @@ pub fn offline_config() -> Config {
 /// sub-agent and aborts the whole process, so building it the documented way is
 /// both what the test needs and a check that the documented way works.
 pub fn runtime() -> tokio::runtime::Runtime {
-    // Hosts initialize encryption before an API key is persisted by runtime
-    // boot. The runner supplies a disposable master key for headless tests.
-    if std::env::var_os("OPENHUMAN_KEYRING_MASTER_KEY").is_some() {
-        static KEY_ROOT: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
-        let root = KEY_ROOT.get_or_init(|| tempfile::tempdir().expect("fixture key root"));
-        std::env::set_var("OPENHUMAN_WORKSPACE", root.path());
-        openhuman_embed::process::init_master_key().expect("fixture master key initializes");
-    }
     runtime_without_master_key()
 }
 

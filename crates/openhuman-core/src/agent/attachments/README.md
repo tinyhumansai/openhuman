@@ -92,7 +92,8 @@ retain the source references so later requests can reevaluate routing.
 
 ## Published document capability
 
-The pinned TinyDocs `0.1.22` release exposes `ExtractDocument` and `RenderPdf`.
+The pinned TinyDocs `0.2.0` release exposes `ExtractDocument`, `InspectImage`
+and `RenderPdf`.
 Its source tag and all 11 platform archive digests match the published release
 manifest. Office extraction, PDF text extraction, and bounded scanned-page
 rendering use this native module through the shared bus contract. A disabled or

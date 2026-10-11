@@ -53,8 +53,13 @@ API and await its cleanup when completion telemetry is required.
 
 The optional `langfuse` feature forwards the existing transport through
 `observe::langfuse`: `LangfuseClient`, `LangfuseAuth`, score types and trace
-configuration. Hosts build their own batches from curated `TurnObservation`
-events and queue `send_batch` outside synchronous callbacks. The adapter adds
+configuration, plus the OTLP span builder (`TraceSpan`, `SpanKind`,
+`SpanStatus`, `ExportBrand`, `otlp_requests`). Hosts build their own spans
+from curated `TurnObservation` events, turn them into OTLP requests with
+`otlp_requests`, and queue `LangfuseClient::send_otlp` outside synchronous
+callbacks. OTLP is Langfuse's supported trace path; the legacy batch
+ingestion API is sunset on Langfuse Cloud on 2026-11-16, though scores still
+go through `create_score`. The adapter adds
 no second HTTP transport. Harness events, journal records, runtime identifiers
 and native inference usage types are not part of this public facade.
 

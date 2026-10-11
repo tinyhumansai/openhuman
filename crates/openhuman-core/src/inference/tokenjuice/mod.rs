@@ -1,7 +1,8 @@
 //! OpenHuman host adapter for the separately released TinyJuice module.
 
 pub mod config_patch;
-pub use tinyjuice::host::{focus, generate};
+pub mod focus;
+pub mod generate;
 pub mod repl_tools;
 pub mod savings;
 pub mod schemas;
@@ -138,48 +139,29 @@ pub async fn install_from_config(config: &crate::config::Config) -> Result<(), S
     if installed.as_ref() == Some(&fingerprint) {
         return Ok(());
     }
-    proxy(config)
-        .await?
-        .call::<()>(methods::INSTALL, (request,))
+    client(config)
+        .call::<()>("tinyjuice", methods::INSTALL, (request,))
         .await
         .map_err(|e| e.to_string())?;
     *installed = Some(fingerprint);
     Ok(())
 }
 
-#[cfg(feature = "modules")]
-pub(super) async fn proxy(config: &crate::config::Config) -> Result<tinybus::Proxy, String> {
-    let config = {
-        let mut test_config = config.clone();
-        if let Some(path) = std::env::var_os("TINYJUICE_TEST_MODULE") {
-            // An explicit fixture is an opt-in to module execution even when
-            // the ambient test workspace has persisted modules = disabled.
-            test_config.modules.enabled = true;
-            test_config
-                .modules
-                .overrides
-                .push(crate::config::schema::ModuleOverride {
-                    id: "tinyjuice".to_string(),
-                    path: path.to_string_lossy().into_owned(),
-                });
-        }
-        test_config
-    };
-    let config = &config;
-
-    crate::modules::ensure_loaded(config, "tinyjuice").await?;
-    let record = crate::modules::registry::find("tinyjuice")
-        .ok_or_else(|| "unknown module 'tinyjuice'".to_string())?;
-    crate::modules::host::runtime()
-        .await
-        .map_err(|e| e.to_string())?
-        .proxy(record.bus_name, record.object_path)
-        .map_err(|e| e.to_string())
-}
-
-#[cfg(not(feature = "modules"))]
-pub(super) async fn proxy(_config: &crate::config::Config) -> Result<tinybus::Proxy, String> {
-    Err("native modules are not compiled into this build".to_string())
+/// Construct explicit access over the shared process-wide loader.
+fn client(config: &crate::config::Config) -> crate::modules::client::ModuleClient {
+    #[allow(unused_mut)] // Fixture overrides are compiled only into tests.
+    let mut config = config.clone();
+    #[cfg(test)]
+    if let Some(path) = std::env::var_os("TINYJUICE_TEST_MODULE") {
+        config
+            .modules
+            .overrides
+            .push(crate::config::schema::ModuleOverride {
+                id: "tinyjuice".into(),
+                path: path.to_string_lossy().into_owned(),
+            });
+    }
+    crate::modules::client::ModuleClient::new(config)
 }
 
 /// Everything the module considers about one tool result.
@@ -232,7 +214,7 @@ impl CompactedToolOutput {
 /// TinyJuice's own notice for a summary that was attempted and not produced,
 /// so a host-side failure reads the same as a module-side one.
 pub fn summary_failed_notice() -> String {
-    tinyjuice::summarize::UnavailableReason::Failed
+    tinyjuice_bus::summary::UnavailableReason::Failed
         .notice()
         .to_string()
 }
@@ -309,13 +291,6 @@ pub async fn compact_tool_output(call: ToolOutputCompaction<'_>) -> CompactedToo
         log::debug!("[tokenjuice] module configuration failed, passing through: {error}");
         return CompactedToolOutput::passthrough(content, wants_summary);
     }
-    let proxy = match proxy(&config).await {
-        Ok(proxy) => proxy.with_timeout(COMPACT_WITH_TIMEOUT),
-        Err(error) => {
-            log::debug!("[tokenjuice] module unavailable, passing through: {error}");
-            return CompactedToolOutput::passthrough(content, wants_summary);
-        }
-    };
     let request = types::CompactRequest {
         content: content.clone(),
         tool_name: tool_name.to_string(),
@@ -326,84 +301,19 @@ pub async fn compact_tool_output(call: ToolOutputCompaction<'_>) -> CompactedToo
         context_token,
         scope,
     };
-    let compact_with_result = proxy.call(methods::COMPACT_WITH, (request,)).await;
-    let response = match classify_compact_with_reply(compact_with_result, tool_name) {
-        CompactWithOutcome::Response(response) => response,
-        CompactWithOutcome::RetryAsCompact => {
-            let legacy_result = proxy
-                .call::<types::CompactResponse>(
-                    methods::COMPACT,
-                    (content.clone(), tool_name.to_string(), enabled, profile),
-                )
-                .await;
-            match finish_legacy_compact_reply(legacy_result, wants_summary) {
-                Some(response) => response,
-                None => return CompactedToolOutput::passthrough(content, wants_summary),
-            }
-        }
-        CompactWithOutcome::GiveUp => {
+    let response = match client(&config)
+        .with_timeout(COMPACT_WITH_TIMEOUT)
+        .call::<types::CompactResponse>("tinyjuice", methods::COMPACT_WITH, (request,))
+        .await
+    {
+        Ok(response) => response,
+        Err(error) => {
+            log::debug!("[tokenjuice] module compaction unavailable: {error}");
             return CompactedToolOutput::passthrough(content, wants_summary);
         }
     };
     record_savings(&response);
     compacted_from(response)
-}
-
-/// What the module said about a `CompactWith` call, decided without touching
-/// the network again — kept separate from `compact_tool_output` so the retry
-/// decision is testable against synthetic wire errors.
-enum CompactWithOutcome {
-    /// Use this response as the final result.
-    Response(types::CompactResponse),
-    /// A module released before contract 1.1 has no `CompactWith`. Retry over
-    /// the pre-1.1 `Compact` member.
-    RetryAsCompact,
-    /// Any other failure, a timeout above all, is not retried: the module
-    /// already had its chance, and a second call could double the wait on a
-    /// turn that is already stalled.
-    GiveUp,
-}
-
-fn classify_compact_with_reply(
-    result: Result<types::CompactResponse, tinybus::Error>,
-    tool_name: &str,
-) -> CompactWithOutcome {
-    match result {
-        Ok(response) => CompactWithOutcome::Response(response),
-        Err(error) if error.wire_name() == tinybus::Error::UNKNOWN_METHOD => {
-            log::debug!(
-                "[tokenjuice] CompactWith unknown to the loaded module, retrying as Compact tool={tool_name}"
-            );
-            CompactWithOutcome::RetryAsCompact
-        }
-        Err(error) => {
-            log::debug!(
-                "[tokenjuice] CompactWith failed, passing through tool={tool_name} wire_error={}: {error}",
-                error.wire_name()
-            );
-            CompactWithOutcome::GiveUp
-        }
-    }
-}
-
-/// The fallback `Compact` reply, without the focus or a summary. `None` means
-/// the caller should pass the original content through unchanged.
-fn finish_legacy_compact_reply(
-    result: Result<types::CompactResponse, tinybus::Error>,
-    wants_summary: bool,
-) -> Option<types::CompactResponse> {
-    match result {
-        Ok(mut response) => {
-            if wants_summary && response.notice.is_none() {
-                response.notice = Some(summary_failed_notice());
-            }
-            Some(response)
-        }
-        Err(error) => {
-            log::debug!("[tokenjuice] module compaction failed, passing through: {error}");
-            None
-        }
-    }
 }
 
 fn compacted_from(response: types::CompactResponse) -> CompactedToolOutput {
@@ -432,9 +342,8 @@ pub async fn detect(content: String, hint: types::ContentHint) -> Result<String,
     let config = crate::config::Config::load_or_init()
         .await
         .map_err(|error| error.to_string())?;
-    proxy(&config)
-        .await?
-        .call(methods::DETECT, (content, hint))
+    client(&config)
+        .call("tinyjuice", methods::DETECT, (content, hint))
         .await
         .map_err(|error| error.to_string())
 }
@@ -447,9 +356,8 @@ pub async fn compress(
         .await
         .map_err(|error| error.to_string())?;
     install_from_config(&config).await?;
-    let response: types::CompressedOutput = proxy(&config)
-        .await?
-        .call(methods::COMPRESS, (content, hint))
+    let response: types::CompressedOutput = client(&config)
+        .call("tinyjuice", methods::COMPRESS, (content, hint))
         .await
         .map_err(|error| error.to_string())?;
     savings::record(
@@ -469,9 +377,8 @@ pub async fn retrieve(
         .await
         .map_err(|error| error.to_string())?;
     install_from_config(&config).await?;
-    proxy(&config)
-        .await?
-        .call(methods::RETRIEVE, (token, range))
+    client(&config)
+        .call("tinyjuice", methods::RETRIEVE, (token, range))
         .await
         .map_err(|error| error.to_string())
 }
@@ -481,9 +388,8 @@ pub async fn cache_stats() -> Result<types::CacheStats, String> {
         .await
         .map_err(|error| error.to_string())?;
     install_from_config(&config).await?;
-    proxy(&config)
-        .await?
-        .call(methods::CACHE_STATS, ())
+    client(&config)
+        .call("tinyjuice", methods::CACHE_STATS, ())
         .await
         .map_err(|error| error.to_string())
 }
@@ -503,3 +409,36 @@ pub(crate) mod module_stub;
 #[cfg(test)]
 #[path = "mod_repl_module_tests.rs"]
 mod repl_module_tests;
+
+/// Run a typed query inside TinyJuice; cached originals stay inside the module.
+pub async fn query(
+    request: tinyjuice_bus::wire::QueryRequest,
+) -> Result<tinyjuice_bus::wire::QueryResponse, String> {
+    let config = crate::config::Config::load_or_init()
+        .await
+        .map_err(|e| e.to_string())?;
+    query_for_config(&config, request).await
+}
+
+pub(crate) async fn query_for_config(
+    config: &crate::config::Config,
+    request: tinyjuice_bus::wire::QueryRequest,
+) -> Result<tinyjuice_bus::wire::QueryResponse, String> {
+    install_from_config(config).await?;
+    client(config)
+        .call("tinyjuice", methods::QUERY, (request,))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Extract HTML through the compiled module independently of compression settings.
+pub async fn extract_html(html: String) -> Result<String, String> {
+    let config = crate::config::Config::load_or_init()
+        .await
+        .map_err(|e| e.to_string())?;
+    let response: tinyjuice_bus::wire::HtmlResponse = client(&config)
+        .call("tinyjuice", methods::EXTRACT_HTML, (html,))
+        .await
+        .map_err(|e| e.to_string())?;
+    response.map_err(|_| "juice: HTML input exceeds module limit".into())
+}

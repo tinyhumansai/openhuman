@@ -2,7 +2,7 @@
 
 use crate::config::Config;
 use crate::core::Outcome;
-use crate::security::keyring::SecretStore;
+use crate::security::secret_storage::SecretStore;
 
 pub(crate) fn secret_store_for_config(config: &Config) -> SecretStore {
     let data_dir = config

@@ -176,7 +176,7 @@ OpenHuman は、最もコストのかかる部分を見直しました。AI が�
 
 <p><a href="https://tinyhumans.gitbook.io/openhuman/developing/loadable-modules">プラグインのしくみ</a></p>
 
-<p>検索、ドキュメント、音声などの機能はすべて、1本の Rust バスにつながります。これは <a href="https://www.freedesktop.org/wiki/Software/dbus/">Linux のシステムバス</a>から借りた考え方です。機能は必要なときだけ読み込まれ、1つが止まっても他は動き続けます。</p>
+<p>検索、ドキュメント、音声などの機能はすべて、1本の Rust バスにつながります。これは <a href="https://packages.debian.org/stable/dbus">Linux のシステムバス</a>から借りた考え方です。機能は必要なときだけ読み込まれ、1つが止まっても他は動き続けます。</p>
 
 </td>
 

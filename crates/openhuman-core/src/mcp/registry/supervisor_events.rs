@@ -47,7 +47,7 @@ pub fn domain_events_for(workspace: &Path, events: &[SupervisorEvent]) -> Vec<Do
 }
 
 fn domain_event_for(workspace: &Path, event: &SupervisorEvent) -> Option<DomainEvent> {
-    let server = event.server();
+    let server = event.server()?;
     let server_id = server.server_id.clone();
     let qualified_name = server.qualified_name.clone();
     let workspace_dir = workspace.to_path_buf();

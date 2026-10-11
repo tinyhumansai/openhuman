@@ -134,7 +134,7 @@ if (coreFeatureNames.length === 0) {
 }
 
 // Assertions 1 + 2.
-const product = checkProductForwarding({ productFeatures, coreFeatureNames, shell });
+const product = checkProductForwarding({ productFeatures, coreFeatureNames, hostFeatureNames: parseCoreFeatureNames(rpcToml), shell });
 console.log(formatProductReport(product, { productFeatures, shell }));
 
 // Assertion 3. Still worth running: it is what catches a gate added to

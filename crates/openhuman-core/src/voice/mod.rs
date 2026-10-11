@@ -39,6 +39,8 @@ pub mod audio_toolkit;
 #[cfg(feature = "voice")]
 pub mod bus;
 #[cfg(feature = "voice")]
+pub(crate) mod capture_lease;
+#[cfg(feature = "voice")]
 pub use bus::publish_ptt_transcript_committed;
 #[cfg(feature = "voice")]
 pub(crate) mod cli;

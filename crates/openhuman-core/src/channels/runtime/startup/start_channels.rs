@@ -18,6 +18,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tinychannels::runtime::compute_max_in_flight_messages;
+use tinychannels_runtime::config::RelayRuntimeConfigExt as _;
 use tokio_util::task::AbortOnDropHandle;
 
 pub async fn start_channels(config: Config) -> Result<()> {

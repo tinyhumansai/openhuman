@@ -631,53 +631,78 @@ sanitize_elf_rpaths() {
   return $rewrote
 }
 
-# validate_appimage_required_libs — fail the build loudly if the sharun preload
-# library or a runtime library the app hard-links (NEEDED) is absent from the
-# bundle.
-#
-# Problem (issues #3224 and #4020): the app links libxdo.so.3 via enigo
-# (`#[link(name = "xdo")]`, used by crates/openhuman-core/src/tools/impl/computer for Linux
-# mouse/keyboard control). lib4bin's ldd-walk normally bundles it into
-# shared/lib, but if a future runner image drops libxdo-dev or bumps its soname,
-# the lib silently vanishes from the AppImage and the binary segfaults on launch
-# on any host lacking the legacy soname (e.g. Arch, which ships libxdo.so.4). The
-# .deb path already guards this via its `depends` (libxdo3) +
-# scripts/__tests__/tauri-deb-depends.test.mjs; the AppImage path had no equivalent. This turns a
-# silent runtime segfault into a loud build failure. CEF is staged separately
-# from the ldd walk, so verify its runtime library survived bundling as well.
-# anylinux.so establishes sharun's portable runtime before either dependency
-# can load, so it is part of the same release contract.
+# These system libraries belong to the loaded Computer/Voice artifacts, so
+# walking the host's NEEDED entries no longer reliably stages them.
+MODULE_RUNTIME_LIBRARIES=(libxdo.so.3 libasound.so.2)
+
+appimage_has_runtime_library() {
+  local appdir="$1" name="$2" root found
+  for root in "$appdir/shared/lib" "$appdir/usr/lib" "$appdir/lib"; do
+    [ -d "$root" ] || continue
+    while IFS= read -r -d '' found; do
+      [ -f "$found" ] && return 0
+    done < <(find "$root" -name "$name" -print0)
+  done
+  return 1
+}
+
+system_module_runtime_library() {
+  local name="$1"
+  # CI builds on the target architecture and installs libxdo-dev/libasound2-dev.
+  # Use the loader cache rather than a runner-specific multiarch directory.
+  /sbin/ldconfig -p | awk -v name="$name" '$1 == name && !found++ { print $NF }'
+}
+
+# Copy only missing module dependencies; bundled libraries stay authoritative.
+# Sanitization and final-artifact validation run after this staging step.
+stage_module_runtime_libraries() {
+  local appdir="$1" name source destination main_binary
+  MODULE_RUNTIME_LIBRARIES_ADDED=0
+  if uses_sharun_launcher "$appdir"; then
+    destination="$appdir/shared/lib"
+    main_binary="$appdir/shared/bin/OpenHuman"
+  else
+    destination="$appdir/usr/lib"
+    main_binary="$appdir/usr/bin/OpenHuman"
+  fi
+  local machine
+  machine="$(LC_ALL=C readelf -h "$main_binary" | awk '/Class:|Machine:/ { print }')" || return 1
+  [ -n "$machine" ] || return 1
+  for name in "${MODULE_RUNTIME_LIBRARIES[@]}"; do
+    appimage_has_runtime_library "$appdir" "$name" && continue
+    source="$(system_module_runtime_library "$name")" || return 1
+    if [ ! -f "$source" ] || [ "$machine" != "$(LC_ALL=C readelf -h "$source" 2>/dev/null | awk '/Class:|Machine:/ { print }')" ]; then
+      echo "[strip-libs] ERROR: missing compatible module runtime library '$name' on the build runner" >&2
+      return 1
+    fi
+    mkdir -p "$destination"
+    # Remove a dangling destination symlink instead of writing through it.
+    rm -f "$destination/$name"
+    cp -L "$source" "$destination/$name" || return 1
+    MODULE_RUNTIME_LIBRARIES_ADDED=$((MODULE_RUNTIME_LIBRARIES_ADDED + 1))
+    echo "[strip-libs]   staged module runtime library $name"
+  done
+}
+
+validate_module_runtime_libraries() {
+  local appdir="$1" name
+  for name in "${MODULE_RUNTIME_LIBRARIES[@]}"; do
+    if ! appimage_has_runtime_library "$appdir" "$name"; then
+      echo "[strip-libs] ERROR: AppImage is missing $name — required by a loaded module" >&2
+      return 1
+    fi
+  done
+}
+
+# The sharun preload is specific to that launcher; module dependencies apply
+# to both supported AppImage layouts and need no host implementation linkage.
 validate_appimage_required_libs() {
   local appdir="$1"
-  if ! uses_sharun_launcher "$appdir"; then
-    return 0
-  fi
-
-  local root pattern found
-  # libcef.so* was here until #5606. CEF was removed in #5456 and there is no
-  # cef package in either Cargo.lock, so no build can satisfy it - it would fail
-  # every sharun bundle this function is still able to see.
-  for pattern in 'anylinux.so' 'libxdo.so*'; do
-    found=0
-    for root in "$appdir/shared/lib" "$appdir/usr/lib" "$appdir/lib"; do
-      [ -d "$root" ] || continue
-      if [ -n "$(find "$root" -name "$pattern" -print -quit 2>/dev/null)" ]; then
-        found=1
-        break
-      fi
-    done
-    [ "$found" -eq 1 ] && continue
-
-    case "$pattern" in
-      anylinux.so)
-        echo "[strip-libs] ERROR: AppImage is missing anylinux.so — the sharun preload library was not copied into the final bundle. The AppImage launcher cannot establish its portable runtime without it." >&2
-        ;;
-      libxdo.so\*)
-        echo "[strip-libs] ERROR: AppImage is missing libxdo.so.* — the enigo NEEDED dependency was not bundled (issue #3224). The app would segfault on launch on hosts without the legacy libxdo soname (e.g. Arch). Ensure libxdo-dev is installed on the build runner so lib4bin's ldd-walk bundles it." >&2
-        ;;
-    esac
+  if uses_sharun_launcher "$appdir" && ! appimage_has_runtime_library "$appdir" anylinux.so; then
+    echo "[strip-libs] ERROR: AppImage is missing anylinux.so — required by the sharun launcher" >&2
     return 1
-  done
+  fi
+  validate_module_runtime_libraries "$appdir" || return 1
 }
 
 # patch_apprun_sharun_cwd — retain historical shell-AppRun CWD hardening.
@@ -778,6 +803,11 @@ strip_one_appimage() {
   local rewrote_libpath=0
   local patched_apprun=0
   local rewrote_rpaths=0
+  if ! stage_module_runtime_libraries "$appdir"; then
+    rm -rf "$workdir"
+    return 1
+  fi
+  local added_module_libraries="$MODULE_RUNTIME_LIBRARIES_ADDED"
   local lib_roots=()
   for candidate in \
     "$appdir/usr/lib" \
@@ -827,7 +857,7 @@ strip_one_appimage() {
     return 1
   fi
 
-  if [ "$removed" -eq 0 ] && [ "$added_loader" -eq 0 ] && [ "$rewrote_libpath" -eq 0 ] && [ "$patched_apprun" -eq 0 ] && [ "$rewrote_rpaths" -eq 0 ]; then
+  if [ "$removed" -eq 0 ] && [ "$added_loader" -eq 0 ] && [ "$rewrote_libpath" -eq 0 ] && [ "$patched_apprun" -eq 0 ] && [ "$rewrote_rpaths" -eq 0 ] && [ "$added_module_libraries" -eq 0 ]; then
     echo "[strip-libs] No graphics libs, missing sharun interpreter, or build-machine RPATHs found in $original; leaving unchanged."
     if ! validate_rebuilt_appimage "$original"; then
       rm -rf "$workdir"
@@ -836,7 +866,7 @@ strip_one_appimage() {
     rm -rf "$workdir"
     return
   fi
-  echo "[strip-libs] Removed $removed file(s), added $added_loader loader file(s), patched AppRun=$patched_apprun, rewrote RPATHs=$rewrote_rpaths; repacking AppImage."
+  echo "[strip-libs] Removed $removed file(s), added $added_loader loader file(s), patched AppRun=$patched_apprun, rewrote RPATHs=$rewrote_rpaths, staged module libraries=$added_module_libraries; repacking AppImage."
 
   local rebuilt="$workdir/$name"
   local appimage_arch

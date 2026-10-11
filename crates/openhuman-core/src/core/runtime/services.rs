@@ -18,6 +18,8 @@
 // this file is plain field access on OpenHuman's own `Config`.
 use crate::config::Config;
 use crate::core::runtime::ServiceSet;
+#[cfg(feature = "channels")]
+use tinychannels_runtime::config::ChannelsConfigExt as _;
 
 /// The long-lived background services a runtime started, so it can stop them.
 ///
@@ -158,7 +160,8 @@ pub fn spawn_login_gated_services(embedded_core: bool) -> tokio::task::JoinHandl
                 if already_logged_in {
                     // User has an active session — start all services now.
                     log::info!("[services] existing session found, starting services");
-                    crate::security::credentials::ops::start_login_gated_services(&config).await;
+                    crate::security::credentials::ops::start_credential_gated_services(&config)
+                        .await;
                 } else {
                     log::info!(
                         "[services] no active session — deferring service startup until login"

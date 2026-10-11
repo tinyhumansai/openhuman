@@ -463,7 +463,7 @@ async fn each_account_workspace_holds_its_own_credential_data() {
     assert_eq!(result_b.value[0].provider, "anthropic");
 }
 
-/// #3490 regression: `start_login_gated_services` must launch its services
+/// #3490 regression: `start_credential_gated_services` must launch its services
 /// concurrently (independent `tokio::spawn` tasks) and return, rather than
 /// awaiting them serially. With an all-disabled config every `start_if_enabled`
 /// is a no-op, so this drives the spawn/await/join orchestration (the changed
@@ -475,7 +475,7 @@ async fn each_account_workspace_holds_its_own_credential_data() {
 /// per-service cold-starts to the slowest single one; this test guards that the
 /// orchestration keeps returning (and never deadlocks/panics on join).
 #[tokio::test]
-async fn start_login_gated_services_completes_with_all_services_disabled() {
+async fn start_credential_gated_services_completes_with_all_services_disabled() {
     // Serialize with the other env-mutating tests: this test sets a process-wide
     // opt-in env var below, and the lock keeps it from leaking into a
     // concurrently-running `store_session` test that would then start real
@@ -483,7 +483,7 @@ async fn start_login_gated_services_completes_with_all_services_disabled() {
     // the HOME-mutating tests.)
     let _env_guard = crate::config::TEST_ENV_LOCK.lock().await;
     let tmp = TempDir::new().unwrap();
-    // Under `#[cfg(test)]` `start_login_gated_services` skips the real services
+    // Under `#[cfg(test)]` `start_credential_gated_services` skips the real services
     // by default (they leak across the parallel test run); opt this one test
     // back in so it actually drives the concurrent spawn/await path it guards.
     // Only presence is checked, so the value (a temp path) is irrelevant.
@@ -502,8 +502,8 @@ async fn start_login_gated_services_completes_with_all_services_disabled() {
     // immediately; the generous ceiling only guards against a deadlock.
     tokio::time::timeout(
         std::time::Duration::from_secs(30),
-        start_login_gated_services(&config),
+        start_credential_gated_services(&config),
     )
     .await
-    .expect("start_login_gated_services must return, not block");
+    .expect("start_credential_gated_services must return, not block");
 }

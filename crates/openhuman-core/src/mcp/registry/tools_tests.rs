@@ -1,5 +1,7 @@
 use super::*;
+use async_trait::async_trait;
 use serde_json::json;
+use std::sync::{Arc as SharedArc, Mutex};
 use tinytools::ToolScope;
 
 fn cfg() -> Arc<Config> {
@@ -62,7 +64,14 @@ async fn list_tools_requires_server_id() {
 async fn list_tools_errors_for_unconnected_server() {
     // A server_id that is not installed errors rather than succeeding empty,
     // and says so rather than claiming it is merely not connected (#6313).
-    let err = McpRegistryListToolsTool::new(cfg())
+    let dir = tempfile::tempdir().expect("temp workspace");
+    let config = workspace_config(dir.path());
+    crate::mcp::module_client::McpConfiguredClient::install_test_port(
+        &config,
+        Box::new(ToolCallPort::default()),
+    )
+    .expect("test module port");
+    let err = McpRegistryListToolsTool::new(Arc::clone(&config))
         .execute(json!({ "server_id": "definitely-not-connected-uuid" }))
         .await
         .expect_err("unconnected server must error");
@@ -225,70 +234,113 @@ fn workspace_config(dir: &std::path::Path) -> Arc<Config> {
     })
 }
 
-/// Answers the MCP handshake and one tool over Streamable HTTP.
-struct LoopbackMcp;
+#[derive(Clone, Default)]
+struct ToolCallPort {
+    arguments: SharedArc<Mutex<Vec<Value>>>,
+    connected: bool,
+}
 
-impl wiremock::Respond for LoopbackMcp {
-    fn respond(&self, request: &wiremock::Request) -> wiremock::ResponseTemplate {
-        let body: Value = serde_json::from_slice(&request.body).unwrap_or_default();
-        let result = match body["method"].as_str().unwrap_or_default() {
-            "initialize" => json!({
-                "protocolVersion": tinymcp_bus::LATEST_PROTOCOL_VERSION,
-                "capabilities": { "tools": {} },
-                "serverInfo": { "name": "loopback", "version": "1.0.0" },
-            }),
-            "notifications/initialized" => return wiremock::ResponseTemplate::new(202),
-            "tools/list" => json!({
-                "tools": [{ "name": "forecast", "inputSchema": { "type": "object" } }]
-            }),
-            "tools/call" => json!({ "content": [{ "type": "text", "text": "sunny" }] }),
-            _ => json!({}),
-        };
-        wiremock::ResponseTemplate::new(200).set_body_json(json!({
-            "jsonrpc": "2.0",
-            "id": body["id"].clone(),
-            "result": result,
-        }))
+#[async_trait]
+impl crate::mcp::module_client::McpModulePort for ToolCallPort {
+    async fn open_configured(
+        &self,
+        _data_dir: &str,
+        _config: &tinymcp_bus::McpClientConfig,
+    ) -> Result<tinymcp_bus::OpenConfiguredResponse, crate::modules::client::ModuleCallError> {
+        Ok(tinymcp_bus::OpenConfiguredResponse {
+            object_path: "/test/mcp".to_owned(),
+            transition_id: "open-test".to_owned(),
+        })
+    }
+
+    async fn close(
+        &self,
+        _data_dir: &str,
+    ) -> Result<Option<String>, crate::modules::client::ModuleCallError> {
+        Ok(None)
+    }
+
+    async fn transition_status(
+        &self,
+        _transition_id: &str,
+    ) -> Result<tinymcp_bus::TransitionStatus, crate::modules::client::ModuleCallError> {
+        Ok(tinymcp_bus::TransitionStatus::Complete)
+    }
+
+    async fn call_object(
+        &self,
+        _object_path: &str,
+        member: &str,
+        args: Value,
+        _confidential: bool,
+    ) -> Result<Value, crate::modules::client::ModuleCallError> {
+        match member {
+            tinymcp_bus::names::methods::STATUS => {
+                let statuses = self.connected.then(|| tinymcp_bus::ConnStatus {
+                    server_id: "srv-1".to_owned(),
+                    qualified_name: "loopback".to_owned(),
+                    display_name: "loopback".to_owned(),
+                    status: tinymcp_bus::ServerStatus::Connected,
+                    tool_count: 1,
+                    last_error: None,
+                    auth_hint: None,
+                });
+                serde_json::to_value(statuses.into_iter().collect::<Vec<_>>())
+                    .map_err(|_| crate::modules::client::ModuleCallError::ModuleFault)
+            }
+            tinymcp_bus::names::methods::LIST_TOOLS => {
+                if self.connected {
+                    serde_json::to_value(vec![tinymcp_bus::McpTool::new("forecast")])
+                        .map_err(|_| crate::modules::client::ModuleCallError::ModuleFault)
+                } else {
+                    Err(crate::modules::client::ModuleCallError::ModuleFault)
+                }
+            }
+            tinymcp_bus::names::methods::CONNECTED_OVERVIEW => {
+                let overview = self
+                    .connected
+                    .then(|| tinymcp_bus::ConnectedServerOverview {
+                        server_id: "srv-1".to_owned(),
+                        qualified_name: "loopback".to_owned(),
+                        display_name: "loopback".to_owned(),
+                        description: None,
+                        instructions: None,
+                        tools: vec![tinymcp_bus::McpTool::new("forecast")],
+                    });
+                serde_json::to_value(overview.into_iter().collect::<Vec<_>>())
+                    .map_err(|_| crate::modules::client::ModuleCallError::ModuleFault)
+            }
+            tinymcp_bus::names::methods::TOOL_CALL => {
+                let arguments = args
+                    .get(2)
+                    .cloned()
+                    .ok_or(crate::modules::client::ModuleCallError::ModuleFault)?;
+                self.arguments.lock().unwrap().push(arguments);
+                serde_json::to_value(tinymcp_bus::ToolCallOutcome {
+                    result: json!({"content":[{"type":"text","text":"sunny"}]}),
+                    is_error: false,
+                    rendered: tinymcp_bus::McpToolResult::success("sunny"),
+                })
+                .map_err(|_| crate::modules::client::ModuleCallError::ModuleFault)
+            }
+            _ => Err(crate::modules::client::ModuleCallError::IncompatibleContract),
+        }
     }
 }
 
 #[tokio::test]
-async fn tool_call_with_string_arguments_reaches_the_server_as_an_object() {
-    // The reported failure: a model called `mcp_registry_tool_call` with
+async fn tool_call_with_string_arguments_reaches_the_module_as_an_object() {
+    // A model can call `mcp_registry_tool_call` with
     // `"arguments": "{...}"`, a JSON-encoded string where MCP needs an object.
-    let server = wiremock::MockServer::start().await;
-    wiremock::Mock::given(wiremock::matchers::method("POST"))
-        .respond_with(LoopbackMcp)
-        .mount(&server)
-        .await;
     let dir = tempfile::tempdir().expect("temp workspace");
     let config = workspace_config(dir.path());
-    let host = crate::mcp::host::for_config(&config).expect("host");
-    host.dynamic()
-        .store()
-        .insert_server(&crate::mcp::registry::InstalledServer {
-            server_id: "srv-1".into(),
-            qualified_name: "loopback".into(),
-            display_name: "loopback".into(),
-            description: None,
-            icon_url: None,
-            command_kind: tinymcp_bus::CommandKind::Node,
-            command: String::new(),
-            args: Vec::new(),
-            env_keys: Vec::new(),
-            config: None,
-            installed_at: 1,
-            last_connected_at: None,
-            transport: tinymcp_bus::Transport::HttpRemote {
-                url: format!("{}/mcp", server.uri()),
-            },
-            enabled: true,
-        })
-        .expect("insert");
-    McpRegistryConnectTool::new(Arc::clone(&config))
-        .execute(json!({ "server_id": "srv-1" }))
-        .await
-        .expect("connect");
+    let port = ToolCallPort {
+        connected: true,
+        ..ToolCallPort::default()
+    };
+    let arguments = SharedArc::clone(&port.arguments);
+    crate::mcp::module_client::McpConfiguredClient::install_test_port(&config, Box::new(port))
+        .expect("test module port");
 
     let result = McpRegistryToolCallTool::new(Arc::clone(&config))
         .execute(json!({
@@ -300,14 +352,8 @@ async fn tool_call_with_string_arguments_reaches_the_server_as_an_object() {
         .expect("call");
     assert!(!result.is_error, "{}", result.text());
 
-    let calls: Vec<Value> = server
-        .received_requests()
-        .await
-        .expect("recording")
-        .iter()
-        .filter_map(|request| serde_json::from_slice::<Value>(&request.body).ok())
-        .filter(|body| body["method"] == "tools/call")
-        .collect();
-    assert_eq!(calls.len(), 1);
-    assert_eq!(calls[0]["params"]["arguments"], json!({ "city": "Paris" }));
+    assert_eq!(
+        arguments.lock().unwrap().as_slice(),
+        &[json!({ "city": "Paris" })]
+    );
 }

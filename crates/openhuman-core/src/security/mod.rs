@@ -14,7 +14,6 @@ pub mod credentials;
 pub mod devices;
 pub mod egress;
 pub mod encryption;
-pub mod keyring;
 pub mod keyring_consent;
 pub mod live_policy;
 pub mod pairing;
@@ -22,10 +21,11 @@ pub mod pii;
 pub mod policy;
 pub mod prompt_injection;
 pub mod scrub;
+pub mod secret_storage;
 pub mod secrets;
 
 #[allow(unused_imports)]
-pub use self::keyring::SecretStore;
+pub use self::secret_storage::SecretStore;
 #[allow(unused_imports)]
 pub use audit::{
     get_or_create_workspace_audit_logger, AuditEvent, AuditEventType, AuditLogger,

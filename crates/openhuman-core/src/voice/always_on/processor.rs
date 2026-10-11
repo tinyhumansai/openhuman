@@ -31,13 +31,22 @@ const SESSION_RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_se
 /// decide whether to send.
 const CAPTURE_QUEUE_CHUNKS: usize = 256;
 
-/// The capture thread + processor have been spawned (once per process).
+/// A module capture lease and processor are active.
 static RUNNING: AtomicBool = AtomicBool::new(false);
+static LIFECYCLE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static PROCESSOR: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>> =
+    std::sync::Mutex::new(None);
+struct RunningGuard;
+impl Drop for RunningGuard {
+    fn drop(&mut self) {
+        RUNNING.store(false, Ordering::SeqCst);
+    }
+}
 
 /// Runtime on/off, mirrors `config.voice_server.always_on_enabled`. Toggling it
 /// at runtime takes effect immediately: when false the processor drops all audio
 /// (nothing is transcribed or sent). Lets the Settings toggle work without a
-/// restart. (The mic stream itself stays open until the next launch.)
+/// restart. Disabling capture releases the module stream.
 pub(super) static ENABLED: AtomicBool = AtomicBool::new(false);
 
 /// When true, the processor drops audio and resets the segmenter (privacy hook:
@@ -63,6 +72,11 @@ const MAX_UTTERANCE_SAMPLES: usize = TARGET_SAMPLE_RATE as usize * 60;
 /// routes each finished utterance through STT and the dictation delivery bus (so
 /// it reaches the agent exactly like a hotkey dictation, and lights up the notch).
 pub async fn start_if_enabled(app_config: &Config) {
+    if !app_config.voice_server.always_on_enabled {
+        shutdown().await;
+        return;
+    }
+    let _lifecycle = LIFECYCLE.lock().await;
     let on = app_config.voice_server.always_on_enabled;
     ENABLED.store(on, Ordering::SeqCst);
     if !on {
@@ -74,6 +88,15 @@ pub async fn start_if_enabled(app_config: &Config) {
         return;
     }
 
+    let running = RunningGuard;
+    if let Err(error) = crate::modules::accessibility::AccessibilityClient::new(app_config)
+        .microphone_permission(false)
+        .await
+    {
+        log::warn!("{LOG_PREFIX} could not authorize microphone capture: {error}");
+        RUNNING.store(false, Ordering::SeqCst);
+        return;
+    }
     let vad = tinyvoice::vad_config_from_server_config(&app_config.voice_server);
     let config = app_config.clone();
     log::info!(
@@ -84,36 +107,11 @@ pub async fn start_if_enabled(app_config: &Config) {
         vad.max_utterance_ms
     );
 
-    // The cpal stream is `!Send`, so it lives on a dedicated thread that pushes
-    // RAW interleaved chunks over a channel to the async processor below —
-    // deliberately raw: every transform now happens off the audio callback.
-    // `spawn_capture_thread` blocks on a synchronous readiness handshake while
-    // the OS builds the input stream — cold WASAPI init on Windows can take a
-    // while — so run it on the blocking pool. This function is polled
-    // concurrently with the other login-gated services (#3490), and blocking an
-    // async worker here would stall them.
     let (tx, mut rx) = tokio::sync::mpsc::channel::<RawChunk>(CAPTURE_QUEUE_CHUNKS);
-    log::debug!(
-        "{LOG_PREFIX} starting microphone capture (blocking readiness handshake on the blocking pool)"
-    );
-    // Distinguish a Tokio join failure (the blocking task itself panicked) from a
-    // `spawn_capture_thread` setup error (e.g. no input device), so the log points
-    // at the right layer instead of flattening both into one message.
-    let format = match tokio::task::spawn_blocking(move || spawn_capture_thread(tx)).await {
-        Ok(Ok(format)) => {
-            log::debug!("{LOG_PREFIX} microphone capture stream ready");
-            format
-        }
-        Ok(Err(e)) => {
-            log::warn!("{LOG_PREFIX} could not start microphone capture: {e}");
-            RUNNING.store(false, Ordering::SeqCst);
-            return;
-        }
-        Err(join_err) => {
-            log::error!(
-                "{LOG_PREFIX} microphone capture setup task failed to join (panicked): {join_err}"
-            );
-            RUNNING.store(false, Ordering::SeqCst);
+    let (format, pump) = match spawn_capture_thread(app_config, tx).await {
+        Ok(stream) => stream,
+        Err(error) => {
+            log::warn!("{LOG_PREFIX} could not start microphone capture: {error}");
             return;
         }
     };
@@ -122,20 +120,20 @@ pub async fn start_if_enabled(app_config: &Config) {
     spawn_lock_watcher();
 
     let onset_threshold = vad.onset_threshold;
-    tokio::spawn(async move {
+    let mut stopped = super::capture::stop_subscription();
+    let processor = tokio::spawn(async move {
+        let _running = running;
+        let _pump = pump;
         // The segmenter lives in the module now, so opening it can fail for
         // reasons unrelated to audio — a download that has not happened yet, a
         // host with no published artifact.
         //
-        // That failure must NOT end this task. The capture thread is already
-        // running and owns the microphone for the process lifetime; returning
-        // here would clear `RUNNING` while the stream stays live, and the next
-        // `start_if_enabled` would sail past the `RUNNING` guard and open a
-        // *second* microphone stream. So the session is opened lazily and
-        // retried, and audio is dropped until there is one.
+        // Retain the known capture lease while retrying VAD setup. Cancellation
+        // closes both the processor and its module-owned stream.
         let mut session: Option<tinyvoice::VadSession> = None;
         let mut last_open_attempt: Option<std::time::Instant> = None;
 
+        let mut transcriptions = tokio::task::JoinSet::new();
         let mut pending: Vec<f32> = Vec::new();
         let mut utterance: Vec<f32> = Vec::new();
         // Test-build diagnostics: confirm audio actually flows from the mic and
@@ -146,7 +144,12 @@ pub async fn start_if_enabled(app_config: &Config) {
         let mut level_frames: u32 = 0;
         let mut last_level_log = std::time::Instant::now();
 
-        while let Some(chunk) = rx.recv().await {
+        'capture: while let Some(chunk) = tokio::select! {
+            biased;
+            _ = stopped.changed() => None,
+            _ = transcriptions.join_next(), if !transcriptions.is_empty() => continue 'capture,
+            chunk = rx.recv() => chunk,
+        } {
             if !first_chunk_logged {
                 first_chunk_logged = true;
                 log::info!(
@@ -320,7 +323,7 @@ pub async fn start_if_enabled(app_config: &Config) {
                         );
                         if emit {
                             let cfg = config.clone();
-                            tokio::spawn(async move {
+                            spawn_transcription(&mut transcriptions, &stopped, async move {
                                 transcribe_and_deliver(&cfg, captured).await;
                             });
                         }
@@ -342,24 +345,36 @@ pub async fn start_if_enabled(app_config: &Config) {
             }
         }
 
+        transcriptions.abort_all();
+        while transcriptions.join_next().await.is_some() {}
         if let Some(open) = session.as_ref() {
             if let Err(error) = open.close(&config).await {
                 log::warn!("{LOG_PREFIX} could not close the VAD session: {error}");
             }
         }
         log::info!("{LOG_PREFIX} capture channel closed; processor exiting");
-        RUNNING.store(false, Ordering::SeqCst);
     });
+    *PROCESSOR.lock().expect("voice processor state poisoned") = Some(processor);
 }
 
-/// Disable always-on listening at runtime (logout). Flips the `ENABLED` gate so
-/// the processor immediately drops all audio — nothing is transcribed or sent —
-/// the symmetric counterpart to [`start_if_enabled`]. The cpal stream itself
-/// stays open (it's spawned once per process and reused if the user logs back in
-/// and re-enables), but no audio is processed while disabled.
+/// Immediately disable processing; async shutdown also releases the microphone.
 pub fn stop() {
-    if ENABLED.swap(false, Ordering::SeqCst) {
-        log::info!("{LOG_PREFIX} stopped (logout) — capture idle, audio dropped");
+    ENABLED.store(false, Ordering::SeqCst);
+    super::capture::request_stop();
+}
+/// Release continuous capture and wait for its processor on sign-out or toggle off.
+pub async fn shutdown() {
+    let _lifecycle = LIFECYCLE.lock().await;
+    stop();
+    if let Err(error) = crate::voice::capture_lease::close_streams().await {
+        log::warn!("{LOG_PREFIX} capture cleanup pending: {error}");
+    }
+    let processor = PROCESSOR
+        .lock()
+        .expect("voice processor state poisoned")
+        .take();
+    if let Some(processor) = processor {
+        let _ = processor.await;
     }
 }
 
@@ -373,3 +388,23 @@ pub(super) fn notch_status(status: &str, ttl_ms: u32) {
             .with_ttl_ms(ttl_ms),
     );
 }
+
+/// Retain the stream's observed stop generation, including a stop during VAD work.
+pub(super) fn spawn_transcription(
+    tasks: &mut tokio::task::JoinSet<()>,
+    cancelled: &tokio::sync::watch::Receiver<u64>,
+    task: impl std::future::Future<Output = ()> + Send + 'static,
+) {
+    let mut cancelled = cancelled.clone();
+    tasks.spawn(async move {
+        tokio::select! {
+            biased;
+            _ = cancelled.changed() => {},
+            () = task => {},
+        }
+    });
+}
+
+#[cfg(test)]
+#[path = "processor_tests.rs"]
+mod tests;

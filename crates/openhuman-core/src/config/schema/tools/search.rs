@@ -373,6 +373,13 @@ pub struct SearchConfig {
     #[serde(default, skip_serializing)]
     #[schemars(skip)]
     pub gemini_route: Option<String>,
+
+    /// Keys an embedder pinned for one agent, by provider. Never persisted
+    /// or printed. While any is set, this config is authoritative for the
+    /// agent's search calls. Set them with [`SearchConfig::pin_host_credential`].
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub host_credentials: BTreeMap<String, SearchHostCredential>,
 }
 
 impl Default for SearchConfig {
@@ -397,6 +404,7 @@ impl Default for SearchConfig {
             gemini_route: None,
             parallel: SearchEngineCredentials::default(),
             tinyfish: SearchEngineCredentials::default(),
+            host_credentials: BTreeMap::new(),
         }
     }
 }
@@ -480,6 +488,10 @@ impl SearchConfig {
 
 #[path = "search_migrate.rs"]
 mod migrate;
+
+#[path = "search_host.rs"]
+mod host;
+pub use host::{SearchHostCredential, UnknownKeyedSearchProvider};
 
 #[cfg(test)]
 #[path = "search_search_config_tests_tests.rs"]

@@ -412,14 +412,11 @@ impl Drop for EnvVarGuard {
 }
 
 pub static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-pub static KEYRING_INIT: OnceLock<()> = OnceLock::new();
 pub static AUTH_INIT: OnceLock<()> = OnceLock::new();
 pub static SEAMS_INIT: OnceLock<()> = OnceLock::new();
 
 pub fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-    KEYRING_INIT.get_or_init(|| unsafe {
-        std::env::set_var("OPENHUMAN_KEYRING_BACKEND", "file");
-    });
+    openhuman_core::security::secret_storage::init_workspace(shared_workspace());
     match ENV_LOCK.get_or_init(|| Mutex::new(())).lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),

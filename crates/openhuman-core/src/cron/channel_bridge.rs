@@ -8,10 +8,10 @@
 //! it starts; nothing registers in a core with no channels, and every accessor
 //! then answers "unavailable" instead of failing.
 
+use crate::channels::traits::{Channel, SendMessage};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use tinyagents_session::transcript::TranscriptMessage;
-use tinychannels_bus::{Channel, SendMessage};
 
 /// Same shape as `channels::context::ConversationHistoryMap`, spelled out so
 /// cron does not depend on the feature-gated `channels` module.

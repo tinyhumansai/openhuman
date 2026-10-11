@@ -71,7 +71,6 @@ pub mod mcp;
 #[cfg(feature = "media")]
 pub mod media;
 pub mod memory;
-#[cfg(feature = "modules")]
 pub mod modules;
 pub mod platform;
 pub mod profiles;
@@ -132,12 +131,12 @@ pub fn run_core_from_args_with(
 ) -> anyhow::Result<()> {
     core::cli::load_dotenv_for_cli()?;
     platform::service::apply_startup_restart_delay_from_env();
-    // A SaaS boot roots the keyring under its operator directory
+    // A SaaS boot roots secret storage under its operator directory
     // (`saas::build`), so it must not be latched to the home directory here.
     if !core::cli::is_help_only(args)
         && !core::runtime::mode::requested_in(args, std::env::var("OPENHUMAN_MODE").ok().as_deref())
     {
-        security::keyring::init_master_key().map_err(anyhow::Error::msg)?;
+        security::secret_storage::init_master_key().map_err(anyhow::Error::msg)?;
     }
     core::cli::run_from_cli_args_with(args, host_boot)
 }

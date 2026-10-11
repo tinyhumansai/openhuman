@@ -1,322 +1,158 @@
-//! Initiating a channel connection (credential validation, persistence, and
-//! any live pre-verification).
-
-use serde_json::Value;
-
-use crate::channels::email_channel::EmailConfig;
-use crate::channels::providers::yuanbao::YuanbaoConfig;
-use crate::config::{Config, DiscordConfig, IMessageConfig, TelegramConfig};
-use crate::core::Outcome;
-use crate::security::credentials;
-
-use super::super::super::definitions::{find_channel_definition, ChannelAuthMode};
+//! Module-owned connection preparation, followed by host credential custody
+//! and configuration persistence.
 use super::super::types::ChannelConnectionResult;
-use super::email::persist_email_config;
-use super::shared::{credential_provider, parse_allowed_users, parse_optional_bool};
-use tinychannels::controllers::build_email_config;
-use tinychannels::providers::verify_email_credentials;
-use tinychannels::providers::yuanbao::connect::{
-    build_effective_yuanbao_config, require_yuanbao_field, verify_yuanbao_credentials,
-};
+use super::shared::credential_provider;
+use crate::config::Config;
+use crate::core::Outcome;
+use crate::modules::client::{ModuleCallError, ModuleClient};
+use crate::security::credentials;
+use serde_json::Value;
+use tinychannels_bus::module_controller::{ChannelConfigUpdate, PreparedChannelConnection};
+use tinychannels_bus::{ChannelAuthMode, ChannelControllerRequest, HttpProxyPolicy};
 
-/// Initiate a channel connection.
-///
-/// For `BotToken`/`ApiKey` modes: validates fields and stores credentials.
-/// For `OAuth`/`ManagedDm` modes: returns the auth action the frontend should handle.
+/// Validate and verify through TinyChannels, then persist the approved provider
+/// update and credentials in OpenHuman's existing stores.
 pub async fn connect_channel(
     config: &Config,
     channel_id: &str,
     auth_mode: ChannelAuthMode,
     credentials_value: Value,
 ) -> Result<Outcome<ChannelConnectionResult>, String> {
-    let def = find_channel_definition(channel_id)
-        .ok_or_else(|| format!("unknown channel: {channel_id}"))?;
-
-    let spec = def.auth_mode_spec(auth_mode).ok_or_else(|| {
-        format!(
-            "channel '{}' does not support auth mode '{}'",
-            channel_id, auth_mode
-        )
-    })?;
-
-    // For OAuth/managed modes, return the auth action without storing credentials.
-    if let Some(action) = spec.auth_action {
-        return Ok(Outcome::new(
-            ChannelConnectionResult {
-                status: "pending_auth".to_string(),
-                restart_required: false,
-                auth_action: Some(action.to_string()),
-                message: Some(format!("Initiate '{}' auth flow on the frontend. Ignore if you are already in the auth flow.", action)),
-            },
-            vec![],
-        ));
-    }
-
-    // Credential-based modes: validate required fields.
-    let creds_map = credentials_value
-        .as_object()
-        .ok_or("credentials must be a JSON object")?;
-
-    def.validate_credentials(auth_mode, creds_map)?;
-
-    // Yuanbao: build the effective config (with any client-supplied
-    // endpoint overrides applied) once, verify against THAT cluster, and
-    // reuse the same config for persistence below. This prevents the
-    // verifier from validating against prod while the runtime then
-    // reconnects to a pre-release cluster after restart.
-    let mut prebuilt_yuanbao_config: Option<YuanbaoConfig> = None;
-    if channel_id == "yuanbao" && auth_mode == ChannelAuthMode::ApiKey {
-        let app_key = require_yuanbao_field(creds_map, "app_key")?;
-        let app_secret = require_yuanbao_field(creds_map, "app_secret")?;
-        let base = config.channels_config.yuanbao.clone().unwrap_or_default();
-        let effective = build_effective_yuanbao_config(base, creds_map, app_key);
-        verify_yuanbao_credentials(
-            crate::config::build_runtime_proxy_client("channel.yuanbao"),
-            &effective,
-            &app_secret,
-        )
-        .await?;
-        prebuilt_yuanbao_config = Some(effective);
-    }
-
-    // Email (IMAP/SMTP): build the effective config and live-verify the IMAP
-    // login BEFORE storing anything, so bad server settings surface in the UI
-    // rather than persisting and wedging the listener on the next restart.
-    // Reused below for persistence so verify and runtime can never diverge.
-    let mut prebuilt_email_config: Option<EmailConfig> = None;
-    if channel_id == "email" && auth_mode == ChannelAuthMode::ApiKey {
-        let email_cfg = build_email_config(creds_map, config.channels_config.email.as_ref())?;
-        verify_email_credentials(&email_cfg).await?;
-        prebuilt_email_config = Some(email_cfg);
-    }
-
-    // iMessage is local-only (no credentials): persist channels_config + return connected.
-    if channel_id == "imessage" && auth_mode == ChannelAuthMode::ManagedDm {
-        let allowed_contacts = parse_allowed_users(creds_map.get("allowed_contacts"));
-        let allowed_contacts_count = allowed_contacts.len();
-
-        let mut persisted = config.clone();
-        persisted.channels_config.imessage = Some(IMessageConfig { allowed_contacts });
-
-        persisted
-            .save()
-            .await
-            .map_err(|e| format!("failed to persist imessage config.toml: {e}"))?;
-
-        tracing::info!(
-            target: "openhuman::channels",
-            allowed_contacts_count,
-            "[imessage] connect_channel: wrote channels_config.imessage; restart core for AppleScript bridge to load"
-        );
-
-        return Ok(Outcome::single_log(
-            ChannelConnectionResult {
-                status: "connected".to_string(),
-                restart_required: true,
-                auth_action: None,
-                message: Some(
-                    "iMessage channel configured. Grant Full Disk Access and restart the service to activate.".to_string(),
-                ),
-            },
-            "stored imessage channel config (local-only)".to_string(),
-        ));
-    }
-
-    // Store credentials via the credentials domain.
-    let provider_key = credential_provider(channel_id, auth_mode);
-
-    // Extract the primary token field (bot_token or api_key) if present.
-    let token = creds_map
-        .get("bot_token")
-        .or_else(|| creds_map.get("api_key"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
-    // Store remaining fields as metadata.
-    let fields = if creds_map.len() > 1 || (creds_map.len() == 1 && token.is_none()) {
-        Some(Value::Object(creds_map.clone()))
+    let service = format!("channel.{channel_id}");
+    let proxy = if config.proxy.should_apply_to_service(&service) {
+        HttpProxyPolicy {
+            http_proxy: config.proxy.http_proxy.clone(),
+            https_proxy: config.proxy.https_proxy.clone(),
+            all_proxy: config.proxy.all_proxy.clone(),
+            no_proxy: config.proxy.normalized_no_proxy(),
+            service_selectors: vec![service],
+        }
     } else {
-        None
+        HttpProxyPolicy::default()
     };
-
-    credentials::ops::store_provider_credentials(
-        config,
-        &provider_key,
-        None, // default profile
-        token,
-        fields,
-        Some(true),
+    let prepared = crate::modules::channel_controller::prepare_connection(
+        &ModuleClient::new(config.clone()),
+        ChannelControllerRequest::PrepareConnect {
+            config: config.channels_config.clone(),
+            channel: channel_id.to_owned(),
+            auth_mode,
+            credentials: credentials_value.clone(),
+            proxy,
+        },
     )
     .await
-    .map_err(|e| format!("failed to store credentials: {e}"))?;
-
-    // Keep runtime channel config in sync so listeners can actually start
-    // with the credentials just connected from the UI.
-    if channel_id == "telegram" && auth_mode == ChannelAuthMode::BotToken {
-        let bot_token = creds_map
-            .get("bot_token")
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| "missing required bot_token".to_string())?
-            .to_string();
-        let allowed_users = parse_allowed_users(creds_map.get("allowed_users"));
-        let allowed_users_count = allowed_users.len();
-        // Default chat for recipient-less proactive sends (mirrors Discord's
-        // `channel_id`). Read fresh from the form each connect: present ⇒ use it
-        // (empty ⇒ cleared); absent ⇒ unset.
-        let chat_id = creds_map
-            .get("chat_id")
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string);
-        let has_chat_id = chat_id.is_some();
-
-        let mut persisted = config.clone();
-        let (stream_mode, draft_update_interval_ms, silent_streaming, mention_only) =
-            if let Some(existing) = persisted.channels_config.telegram.as_ref() {
-                (
-                    existing.stream_mode,
-                    existing.draft_update_interval_ms,
-                    existing.silent_streaming,
-                    existing.mention_only,
-                )
-            } else {
-                (crate::config::StreamMode::default(), 1000, true, false)
-            };
-
-        persisted.channels_config.telegram = Some(TelegramConfig {
-            bot_token,
-            chat_id,
-            allowed_users,
-            stream_mode,
-            draft_update_interval_ms,
-            silent_streaming,
-            mention_only,
-        });
-
-        persisted
-            .save()
-            .await
-            .map_err(|e| format!("failed to persist telegram config.toml: {e}"))?;
-
-        tracing::info!(
-            target: "openhuman::channels",
-            allowed_users_count,
-            has_chat_id,
-            mention_only,
-            "[telegram] connect_channel: wrote channels_config.telegram; restart core for listener to load token"
-        );
-    } else if channel_id == "discord" && auth_mode == ChannelAuthMode::BotToken {
-        let bot_token = creds_map
-            .get("bot_token")
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| "missing required bot_token".to_string())?
-            .to_string();
-
-        let guild_id = creds_map
-            .get("guild_id")
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-        let discord_channel_id = creds_map
-            .get("channel_id")
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        let mut persisted = config.clone();
-        let existing = persisted.channels_config.discord.as_ref();
-        // Distinguish an *explicitly cleared* allowlist from an *omitted* one.
-        // The field is advertised as "blank = everyone" (definitions.rs) and the
-        // provider treats an empty list as allow-all, but the old logic reused
-        // the saved list whenever the parsed value was empty — so a user who
-        // cleared the allowlist on reconnect stayed restricted to the previous
-        // users (#3794 review — Codex P2). The key is present in `creds_map`
-        // (even as an empty string) only when the FE sends it; a cleared field
-        // now submits an explicit empty value. So: present ⇒ honor literally
-        // (empty ⇒ allow-all); absent ⇒ reuse the saved list (reconnect
-        // convenience for callers that don't resend the field at all).
-        let allowed_users = match creds_map.get("allowed_users") {
-            Some(raw) => parse_allowed_users(Some(raw)),
-            None => existing
-                .map(|cfg| cfg.allowed_users.clone())
-                .unwrap_or_default(),
-        };
-        let allowed_users_count = allowed_users.len();
-        let listen_to_bots = parse_optional_bool(creds_map.get("listen_to_bots"))
-            .unwrap_or_else(|| existing.map(|cfg| cfg.listen_to_bots).unwrap_or(false));
-        let mention_only = parse_optional_bool(creds_map.get("mention_only"))
-            .unwrap_or_else(|| existing.map(|cfg| cfg.mention_only).unwrap_or(false));
-
-        persisted.channels_config.discord = Some(DiscordConfig {
-            bot_token,
-            guild_id: guild_id.clone(),
-            channel_id: discord_channel_id.clone(),
-            allowed_users,
-            listen_to_bots,
-            mention_only,
-        });
-
-        persisted
-            .save()
-            .await
-            .map_err(|e| format!("failed to persist discord config.toml: {e}"))?;
-
-        tracing::info!(
-            target: "openhuman::channels",
-            has_guild_id = guild_id.is_some(),
-            has_channel_id = discord_channel_id.is_some(),
-            allowed_users_count,
-            listen_to_bots,
-            mention_only,
-            "[discord] connect_channel: wrote channels_config.discord; restart core for listener to load token"
-        );
-    } else if channel_id == "yuanbao" && auth_mode == ChannelAuthMode::ApiKey {
-        // Reuse the effective config built above (with `env` / `api_domain`
-        // / `ws_domain` / `route_env` overrides already applied and
-        // `app_secret` already cleared) so persistence and verification
-        // can never diverge.
-        let yb_config = prebuilt_yuanbao_config.take().ok_or_else(|| {
-            "internal error: yuanbao config not built before persistence".to_string()
-        })?;
-
-        let mut persisted = config.clone();
-        persisted.channels_config.yuanbao = Some(yb_config);
-
-        persisted
-            .save()
-            .await
-            .map_err(|e| format!("failed to persist yuanbao config.toml: {e}"))?;
-
-        tracing::info!(
-            target: "openhuman::channels",
-            "[yuanbao] connect_channel: wrote channels_config.yuanbao (secret stored in credentials); restart core for WS listener"
-        );
-    } else if channel_id == "email" && auth_mode == ChannelAuthMode::ApiKey {
-        // Reuse the config already built + IMAP-verified above so persistence
-        // and verification can never diverge.
-        let email_cfg = prebuilt_email_config.take().ok_or_else(|| {
-            "internal error: email config not built before persistence".to_string()
-        })?;
-        persist_email_config(config, email_cfg).await?;
-    }
-
-    Ok(Outcome::single_log(
-        ChannelConnectionResult {
-            status: "connected".to_string(),
-            restart_required: true,
-            auth_action: None,
-            message: Some(format!(
-                "Channel '{}' credentials stored. Restart the service to activate.",
-                channel_id
-            )),
-        },
-        format!("stored credentials for {}", provider_key),
-    ))
+    .map_err(|error| error.to_string())?;
+    persist_prepared_connection(config, channel_id, auth_mode, credentials_value, prepared).await
 }
+
+pub(crate) async fn persist_prepared_connection(
+    config: &Config,
+    channel_id: &str,
+    auth_mode: ChannelAuthMode,
+    credentials_value: Value,
+    prepared: PreparedChannelConnection,
+) -> Result<Outcome<ChannelConnectionResult>, String> {
+    if prepared.result.status == "pending_auth"
+        && prepared.result.auth_action.is_some()
+        && prepared.config_update.is_none()
+        && !prepared.result.restart_required
+    {
+        return Ok(Outcome::new(prepared.result, vec![]));
+    }
+    if prepared.result.status != "connected"
+        || prepared.result.auth_action.is_some()
+        || !update_matches_scope(channel_id, auth_mode, prepared.config_update.as_ref())
+    {
+        return Err(malformed());
+    }
+    let creds_map = credentials_value.as_object().ok_or_else(malformed)?;
+    let local_only = channel_id == "imessage" && auth_mode == ChannelAuthMode::ManagedDm;
+    let provider_key = credential_provider(channel_id, auth_mode);
+    if !local_only {
+        // Credential storage policy remains host-owned. Provider validation has
+        // already succeeded in the module before any store is touched.
+        let token = creds_map
+            .get("bot_token")
+            .or_else(|| creds_map.get("api_key"))
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let fields = if creds_map.len() > 1 || (creds_map.len() == 1 && token.is_none()) {
+            Some(Value::Object(creds_map.clone()))
+        } else {
+            None
+        };
+        credentials::ops::store_provider_credentials(
+            config,
+            &provider_key,
+            None,
+            token,
+            fields,
+            Some(true),
+        )
+        .await
+        .map_err(|error| format!("failed to store credentials: {error}"))?;
+    }
+    if let Some(update) = prepared.config_update {
+        if let ChannelConfigUpdate::Email(value) = update {
+            super::email::persist_email_config(config, value).await?;
+        } else {
+            let mut persisted = config.clone();
+            match update {
+                ChannelConfigUpdate::Telegram(value) => {
+                    persisted.channels_config.telegram = Some(value)
+                }
+                ChannelConfigUpdate::Discord(value) => {
+                    persisted.channels_config.discord = Some(value)
+                }
+                ChannelConfigUpdate::IMessage(value) => {
+                    persisted.channels_config.imessage = Some(value)
+                }
+                ChannelConfigUpdate::Email(_) => unreachable!("email persistence handled above"),
+                ChannelConfigUpdate::Yuanbao(mut value) => {
+                    value.app_secret.clear();
+                    persisted.channels_config.yuanbao = Some(*value);
+                }
+            }
+            persisted
+                .save()
+                .await
+                .map_err(|error| format!("failed to persist {channel_id} config.toml: {error}"))?;
+        }
+    }
+    let log = if local_only {
+        "stored imessage channel config (local-only)".to_owned()
+    } else {
+        format!("stored credentials for {provider_key}")
+    };
+    Ok(Outcome::single_log(prepared.result, log))
+}
+
+fn update_matches_scope(
+    channel: &str,
+    mode: ChannelAuthMode,
+    update: Option<&ChannelConfigUpdate>,
+) -> bool {
+    match (channel, mode, update) {
+        ("telegram", ChannelAuthMode::BotToken, Some(ChannelConfigUpdate::Telegram(_)))
+        | ("discord", ChannelAuthMode::BotToken, Some(ChannelConfigUpdate::Discord(_)))
+        | ("imessage", ChannelAuthMode::ManagedDm, Some(ChannelConfigUpdate::IMessage(_)))
+        | ("email", ChannelAuthMode::ApiKey, Some(ChannelConfigUpdate::Email(_)))
+        | ("yuanbao", ChannelAuthMode::ApiKey, Some(ChannelConfigUpdate::Yuanbao(_))) => true,
+        ("telegram", ChannelAuthMode::BotToken, _)
+        | ("discord", ChannelAuthMode::BotToken, _)
+        | ("imessage", ChannelAuthMode::ManagedDm, _)
+        | ("email", ChannelAuthMode::ApiKey, _)
+        | ("yuanbao", ChannelAuthMode::ApiKey, _) => false,
+        (_, _, None) => true,
+        _ => false,
+    }
+}
+
+fn malformed() -> String {
+    ModuleClient::report_malformed_reply("tinychannels");
+    ModuleCallError::ModuleFault.to_string()
+}
+
+#[cfg(test)]
+#[path = "connect_channel_tests.rs"]
+mod tests;

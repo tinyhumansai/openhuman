@@ -1,7 +1,7 @@
 //! Secrets on the installed storage backend.
 //!
 //! With a backend configured, the keyring's user secrets
-//! ([`crate::security::keyring::get`] / `set` / `delete`) and the credential
+//! ([`crate::security::secret_storage::get`] / `set` / `delete`) and the credential
 //! stores' files live here instead of the OS keychain or `secrets.enc`: one
 //! encrypted document per secret (`tinystoragedrivers` `DocumentSecrets`,
 //! `enc2:` ChaCha20-Poly1305), under the acting agent's storage scope.
@@ -30,9 +30,10 @@ pub(crate) fn keys() -> Result<Arc<dyn KeyProvider>, StorageError> {
     if let Some(keys) = KEYS.get() {
         return Ok(Arc::clone(keys));
     }
-    let master = crate::security::keyring::encrypted_file_backend::storage_master_key().map_err(
-        |error| StorageError::crypto(format!("no master key for storage secrets: {error}")),
-    )?;
+    let master = crate::security::secret_storage::encrypted_file_backend::storage_master_key()
+        .map_err(|error| {
+            StorageError::crypto(format!("no master key for storage secrets: {error}"))
+        })?;
     let built: Arc<dyn KeyProvider> = Arc::new(DerivedKeys::new(Zeroizing::new(master)));
     Ok(Arc::clone(KEYS.get_or_init(|| built)))
 }

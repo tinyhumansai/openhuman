@@ -51,6 +51,8 @@ pub(super) struct CloudTranscribeParams {
 /// effective provider from `config.local_ai.stt_provider`. Keeps the
 /// existing `voice_cloud_transcribe` RPC intact for back-compat — older
 /// renderers still pin the cloud path directly.
+// keep until v0.66 (review after 2027-01-11): shipped sttClient still calls
+// voice_cloud_transcribe; migrate it and verify client telemetry before removal.
 #[derive(Debug, Deserialize)]
 pub(super) struct SttDispatchParams {
     pub(super) audio_base64: String,

@@ -9,6 +9,11 @@ use super::types::{CommandClass, SecurityPolicy};
 use proptest::prelude::*;
 
 proptest! {
+    #![proptest_config(ProptestConfig {
+        failure_persistence: None,
+        ..ProptestConfig::default()
+    })]
+
     /// The classifier + allowlist must never panic, regardless of shell
     /// metacharacters, redirects, pipes, or embedded control characters.
     #[test]

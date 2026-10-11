@@ -1,9 +1,6 @@
 //! Small helpers shared across the connect/disconnect/status operations.
 
-pub(crate) use tinychannels::controllers::{
-    channel_config_connected, channel_credential_provider as credential_provider,
-    parse_allowed_users, parse_optional_bool,
-};
+pub(crate) use tinychannels::controllers::channel_config_connected;
 
 /// Merge a channel's live supervised-listener health into its credential/config
 /// derived `connected` flag (issue #3712).
@@ -32,3 +29,5 @@ pub(crate) fn merge_listener_health(
         _ => (presence_connected, None),
     }
 }
+
+pub(crate) use crate::security::credentials::channel_credential_provider as credential_provider;

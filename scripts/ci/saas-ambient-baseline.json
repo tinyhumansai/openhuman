@@ -890,7 +890,7 @@
   },
   {
     "rule": "home-dir",
-    "path": "crates/openhuman-core/src/security/keyring/store.rs",
+    "path": "crates/openhuman-core/src/security/secret_storage/store.rs",
     "line": 231,
     "text": "let home = dirs::home_dir().unwrap_or_else(|| {",
     "occurrence": 1

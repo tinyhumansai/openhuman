@@ -4,7 +4,7 @@
 //! `"http_cred:<name>"`. This module is the host-side store those names resolve
 //! against: each record is an **injection template** (bearer token, HTTP basic
 //! user:pass, or a raw custom header) whose secret material is encrypted at
-//! rest with the same [`SecretStore`](crate::security::keyring::SecretStore)
+//! rest with the same [`SecretStore`](crate::security::secret_storage::SecretStore)
 //! (ChaCha20-Poly1305) the auth-profile store uses.
 //!
 //! **Security contract:** the secret value NEVER leaves this module except as
@@ -23,7 +23,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
-use crate::security::keyring::SecretStore;
+use crate::security::secret_storage::SecretStore;
 
 const STORE_FILENAME: &str = "http-credentials.json";
 const CURRENT_SCHEMA_VERSION: u32 = 1;

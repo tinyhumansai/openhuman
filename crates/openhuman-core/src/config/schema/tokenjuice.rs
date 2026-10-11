@@ -1,8 +1,8 @@
 //! TokenJuice content-router configuration (`[tokenjuice]`).
 //!
 //! Controls the TinyJuice content-aware tool-output compaction engine: which
-//! compressors are enabled, the Compress-Cache-Retrieve (CCR) store limits, and
-//! the opt-in Python/ML plain-text compressor. The host applies these settings
+//! compressors are enabled and the Compress-Cache-Retrieve (CCR) store limits.
+//! Plain text uses TinyJuice’s deterministic TextCrusher. The host applies these settings
 //! before module calls via [`crate::inference::tokenjuice::install_from_config`].
 
 use schemars::JsonSchema;

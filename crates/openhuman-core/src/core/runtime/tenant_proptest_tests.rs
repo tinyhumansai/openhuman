@@ -45,6 +45,11 @@ fn normalized(t: &Tenant) -> Tenant {
 }
 
 proptest! {
+    #![proptest_config(ProptestConfig {
+        failure_persistence: None,
+        ..ProptestConfig::default()
+    })]
+
     #[test]
     fn tenant_key_is_injective(a in tenant(), x in part(), b in tenant(), y in part()) {
         let same = tenant_key(&a, &x) == tenant_key(&b, &y);

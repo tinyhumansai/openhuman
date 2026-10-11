@@ -343,6 +343,8 @@ const TOOL_LESS: &[crate::core::all::DomainGroup] = {
         G::Channels,
         G::Hosted,
         G::Operator,
+        // Reserved domain after managed runtime tools were removed.
+        G::Runtimes,
     ]
 };
 

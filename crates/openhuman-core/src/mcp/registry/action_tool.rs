@@ -141,13 +141,27 @@ impl McpToolInvoker for InstalledServerInvoker {
                 tool: tool.to_string(),
             });
         }
-        let service = host::for_config(&self.config).map_err(|error| {
-            tracing::debug!(?error, server_id, "[mcp] no host for workspace");
-            not_connected()
-        })?;
-
         let start = Instant::now();
-        let result = service.dynamic().invoke(server_id, tool, arguments).await;
+        let result = async {
+            let client = crate::mcp::module_client::McpConfiguredClient::for_config(&self.config)
+                .map_err(|error| {
+                tracing::debug!(?error, server_id, "[mcp] no module for workspace");
+                not_connected()
+            })?;
+            let outcome: tinymcp_bus::ToolCallOutcome = client
+                .call(
+                    &host::client_config(&self.config),
+                    tinymcp_bus::names::methods::TOOL_CALL,
+                    (server_id, tool, arguments),
+                )
+                .await
+                .map_err(|error| {
+                    tracing::debug!(?error, server_id, tool, "[mcp] module tool call failed");
+                    not_connected()
+                })?;
+            Ok::<_, tinymcp::Error>(outcome.rendered)
+        }
+        .await;
         let elapsed_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
         BUS.publish(DomainEvent::McpClientToolExecuted {
             server_id: server_id.to_string(),

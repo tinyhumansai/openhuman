@@ -3,8 +3,8 @@
 //! Every function here maps one-to-one with a `schemas.rs` handler and keeps
 //! the signature and the JSON shape it had before the client moved out to
 //! `tinymcp` — the frontend calls these methods and nothing about its contract
-//! changed. What changed is underneath: each one now delegates to the service
-//! [`super::super::host`] holds.
+//! changed. Registry, connection, and tool calls delegate to the configured
+//! TinyMCP module object; host configuration and event projection remain here.
 //!
 //! # What stayed here on purpose
 //!
@@ -33,7 +33,31 @@ use crate::core::events::DomainEvent;
 use crate::core::Outcome;
 use crate::mcp::host;
 
-use super::helpers::{encode, inject_required_env_keys, require, resolve};
+use super::helpers::{encode, inject_required_env_keys, require};
+
+async fn module_call<R: serde::de::DeserializeOwned>(
+    config: &Config,
+    member: &str,
+    args: impl serde::Serialize,
+) -> Result<R, String> {
+    super::super::module_client::McpConfiguredClient::for_config(config)
+        .map_err(|error| error.to_string())?
+        .call(&host::client_config(config), member, args)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+async fn module_call_confidential<R: serde::de::DeserializeOwned>(
+    config: &Config,
+    member: &str,
+    args: impl serde::Serialize,
+) -> Result<R, String> {
+    super::super::module_client::McpConfiguredClient::for_config(config)
+        .map_err(|error| error.to_string())?
+        .call_confidential(&host::client_config(config), member, args)
+        .await
+        .map_err(|error| error.to_string())
+}
 
 // ── registry_search ──────────────────────────────────────────────────────────
 
@@ -51,16 +75,20 @@ pub async fn mcp_clients_registry_search(
     let page = page.unwrap_or(1);
     let page_size = page_size.unwrap_or(20);
 
-    let mut found = resolve(config)?
-        .dynamic()
-        .registry_search(query.as_deref(), page, page_size)
-        .await
-        .map_err(|error| error.to_string())?;
-
-    // Badging and the strict filter are presentation choices, applied here so a
-    // caller assembling its own view does not have to undo them.
-    tinymcp::registry::curation::tag_official(&mut found.servers);
-    tinymcp::registry::curation::float_official_first(&mut found.servers);
+    let found: tinymcp_bus::RegistrySearchPage = module_call(
+        config,
+        tinymcp_bus::names::methods::REGISTRY_SEARCH_CURATED,
+        (
+            query,
+            page,
+            page_size,
+            tinymcp_bus::SearchCuration {
+                tag_official: true,
+                official_first: true,
+            },
+        ),
+    )
+    .await?;
 
     let count = found.servers.len();
     Ok(Outcome::new(
@@ -81,22 +109,23 @@ pub async fn mcp_clients_registry_get(
 ) -> Result<Outcome<Value>, String> {
     let qualified_name = require(&qualified_name, "qualified_name")?;
 
-    let (detail, required_env_keys) = resolve(config)?
-        .dynamic()
-        .registry_get(&qualified_name)
-        .await
-        .map_err(|error| error.to_string())?;
+    let detail: tinymcp_bus::ServerDetail = module_call(
+        config,
+        tinymcp_bus::names::methods::REGISTRY_GET,
+        (qualified_name.clone(),),
+    )
+    .await?;
 
     // The registry tab shows what a server would ask for, and fetching the two
     // separately would be two catalog round trips for one screen.
-    let mut server = encode(&detail)?;
-    inject_required_env_keys(&mut server, &required_env_keys);
+    let mut server = encode(&detail.server)?;
+    inject_required_env_keys(&mut server, &detail.required_env_keys);
 
     Ok(Outcome::new(
         json!({ "server": server }),
         vec![format!(
             "registry_get ok: {qualified_name} env_keys={}",
-            required_env_keys.len()
+            detail.required_env_keys.len()
         )],
     ))
 }
@@ -104,10 +133,8 @@ pub async fn mcp_clients_registry_get(
 // ── installed_list ───────────────────────────────────────────────────────────
 
 pub async fn mcp_clients_installed_list(config: &Config) -> Result<Outcome<Value>, String> {
-    let installed = resolve(config)?
-        .dynamic()
-        .installed_list()
-        .map_err(|error| error.to_string())?;
+    let installed: Vec<tinymcp_bus::InstalledServer> =
+        module_call(config, tinymcp_bus::names::methods::INSTALLED_LIST, ()).await?;
 
     let count = installed.len();
     Ok(Outcome::new(
@@ -124,11 +151,12 @@ pub async fn mcp_clients_uninstall(
 ) -> Result<Outcome<Value>, String> {
     let server_id = require(&server_id, "server_id")?;
 
-    let removed = resolve(config)?
-        .dynamic()
-        .uninstall(&server_id)
-        .await
-        .map_err(|error| error.to_string())?;
+    let removed: bool = module_call(
+        config,
+        tinymcp_bus::names::methods::UNINSTALL,
+        (server_id.clone(),),
+    )
+    .await?;
 
     Ok(Outcome::new(
         json!({ "server_id": server_id, "removed": removed }),
@@ -144,11 +172,12 @@ pub async fn mcp_clients_detect_auth(
 ) -> Result<Outcome<Value>, String> {
     let server_id = require(&server_id, "server_id")?;
 
-    let detection = resolve(config)?
-        .dynamic()
-        .detect_auth(&server_id)
-        .await
-        .map_err(|error| error.to_string())?;
+    let detection: tinymcp_bus::AuthDetection = module_call(
+        config,
+        tinymcp_bus::names::methods::DETECT_AUTH,
+        (server_id.clone(),),
+    )
+    .await?;
 
     let kind = detection.kind.as_str();
     let value = encode(&detection)?;
@@ -165,11 +194,12 @@ pub async fn mcp_clients_oauth_begin(
 ) -> Result<Outcome<Value>, String> {
     let server_id = require(&server_id, "server_id")?;
 
-    let authorize_url = resolve(config)?
-        .dynamic()
-        .oauth_begin(&server_id, &host::oauth_redirect_uri())
-        .await
-        .map_err(|error| error.to_string())?;
+    let authorize_url: String = module_call(
+        config,
+        tinymcp_bus::names::methods::OAUTH_BEGIN,
+        (server_id.clone(), host::oauth_redirect_uri()),
+    )
+    .await?;
 
     Ok(Outcome::new(
         json!({ "authorize_url": authorize_url }),
@@ -185,11 +215,12 @@ pub async fn mcp_clients_connect(
 ) -> Result<Outcome<Value>, String> {
     let server_id = require(&server_id, "server_id")?;
 
-    let outcome = resolve(config)?
-        .dynamic()
-        .connect(&server_id)
-        .await
-        .map_err(|error| error.to_string())?;
+    let outcome: tinymcp_bus::ConnectOutcome = module_call(
+        config,
+        tinymcp_bus::names::methods::CONNECT,
+        (server_id.clone(),),
+    )
+    .await?;
 
     let tools = super::tools_safe_for_agent(&server_id, outcome.tools);
     let tool_count = u32::try_from(tools.len()).unwrap_or(u32::MAX);
@@ -216,11 +247,12 @@ pub async fn mcp_clients_set_enabled(
 ) -> Result<Outcome<Value>, String> {
     let server_id = require(&server_id, "server_id")?;
 
-    resolve(config)?
-        .dynamic()
-        .set_enabled(&server_id, enabled)
-        .await
-        .map_err(|error| error.to_string())?;
+    let _: () = module_call(
+        config,
+        tinymcp_bus::names::methods::SET_ENABLED,
+        (server_id.clone(), enabled),
+    )
+    .await?;
 
     if !enabled {
         BUS.publish(DomainEvent::McpServerDisconnected {
@@ -245,11 +277,12 @@ pub async fn mcp_clients_disconnect(
 ) -> Result<Outcome<Value>, String> {
     let server_id = require(&server_id, "server_id")?;
 
-    resolve(config)?
-        .dynamic()
-        .disconnect(&server_id)
-        .await
-        .map_err(|error| error.to_string())?;
+    let _: bool = module_call(
+        config,
+        tinymcp_bus::names::methods::DISCONNECT,
+        (server_id.clone(),),
+    )
+    .await?;
 
     BUS.publish(DomainEvent::McpServerDisconnected {
         server_id: server_id.clone(),
@@ -273,11 +306,16 @@ pub async fn mcp_clients_update_env(
 
     let server_id = require(&server_id, "server_id")?;
 
-    let outcome = resolve(config)?
-        .dynamic()
-        .update_env(&server_id, env.into_iter().collect())
-        .await
-        .map_err(|error| error.to_string())?;
+    let outcome: tinymcp_bus::UpdateEnvOutcome = module_call_confidential(
+        config,
+        tinymcp_bus::names::methods::UPDATE_ENV,
+        (
+            server_id.clone(),
+            env.into_iter()
+                .collect::<std::collections::BTreeMap<_, _>>(),
+        ),
+    )
+    .await?;
 
     match outcome.status {
         UpdateEnvStatus::Connected => {
@@ -348,7 +386,12 @@ pub async fn mcp_clients_update_env(
 // ── registry settings ────────────────────────────────────────────────────────
 
 pub async fn mcp_clients_registry_settings_get(config: &Config) -> Result<Outcome<Value>, String> {
-    let settings = resolve(config)?.dynamic().registry_settings();
+    let settings: tinymcp_bus::RegistrySettings = module_call(
+        config,
+        tinymcp_bus::names::methods::REGISTRY_SETTINGS_GET,
+        (),
+    )
+    .await?;
 
     Ok(Outcome::new(
         encode(&settings)?,
@@ -381,11 +424,12 @@ pub async fn mcp_clients_registry_settings_set(
 
     config.save().await.map_err(|error| error.to_string())?;
 
-    let settings = resolve(config)?.dynamic().set_registry_settings(
-        smithery_api_key,
-        mcp_official_base,
-        mcp_official_token,
-    );
+    let settings: tinymcp_bus::RegistrySettings = module_call_confidential(
+        config,
+        tinymcp_bus::names::methods::REGISTRY_SETTINGS_SET,
+        (smithery_api_key, mcp_official_base, mcp_official_token),
+    )
+    .await?;
 
     Ok(Outcome::new(
         encode(&settings)?,
@@ -396,11 +440,8 @@ pub async fn mcp_clients_registry_settings_set(
 // ── status ───────────────────────────────────────────────────────────────────
 
 pub async fn mcp_clients_status(config: &Config) -> Result<Outcome<Value>, String> {
-    let statuses = resolve(config)?
-        .dynamic()
-        .status()
-        .await
-        .map_err(|error| error.to_string())?;
+    let statuses: Vec<tinymcp_bus::ConnStatus> =
+        module_call(config, tinymcp_bus::names::methods::STATUS, ()).await?;
 
     let count = statuses.len();
     Ok(Outcome::new(
@@ -511,34 +552,43 @@ pub async fn mcp_clients_list_tools(
     caller: Caller,
 ) -> Result<Outcome<Value>, String> {
     let mut server_id = require(&server_id, "server_id")?;
-    let registry = resolve(config)?;
-    let registry = registry.dynamic();
-
-    let tools = match registry.list_tools(&server_id).await {
+    let tools: Vec<tinymcp_bus::McpTool> = match module_call(
+        config,
+        tinymcp_bus::names::methods::LIST_TOOLS,
+        (server_id.clone(),),
+    )
+    .await
+    {
         Ok(tools) => tools,
-        Err(tinymcp::Error::NotConnected { .. }) => {
-            let installs = registry.status().await.map_err(|error| error.to_string())?;
+        Err(error) => {
+            let installs: Vec<tinymcp_bus::ConnStatus> =
+                module_call(config, tinymcp_bus::names::methods::STATUS, ()).await?;
+            if installs.iter().any(|install| {
+                install.server_id == server_id
+                    && install.status == tinymcp_bus::ServerStatus::Connected
+            }) {
+                return Err(error);
+            }
             match explain_not_connected(&server_id, &installs, caller) {
                 NotConnected::Resolved(resolved) => {
-                    tracing::debug!(
-                        "[mcp-client] list_tools: {server_id} resolved to server_id={resolved}"
-                    );
-                    // `resolved` came from `installs`, so the lookup always finds it.
-                    let tools = registry.list_tools(&resolved).await.map_err(|error| {
+                    server_id = resolved;
+                    module_call(
+                        config,
+                        tinymcp_bus::names::methods::LIST_TOOLS,
+                        (server_id.clone(),),
+                    )
+                    .await
+                    .map_err(|_| {
                         installs
                             .iter()
-                            .find(|s| s.server_id == resolved)
-                            .map_or_else(|| error.to_string(), |i| not_connected_message(i, caller))
-                    })?;
-                    server_id = resolved;
-                    tools
+                            .find(|install| install.server_id == server_id)
+                            .map_or(error.clone(), |install| {
+                                not_connected_message(install, caller)
+                            })
+                    })?
                 }
                 NotConnected::Refused(message) => return Err(message),
             }
-        }
-        Err(error) => {
-            tracing::debug!("[mcp-client] list_tools ({server_id}) failed: {error}");
-            return Err(error.to_string());
         }
     };
 
@@ -565,10 +615,12 @@ pub async fn mcp_clients_tool_call(
     let tool_name = require(&tool_name, "tool_name")?;
 
     let start = Instant::now();
-    let result = resolve(config)?
-        .dynamic()
-        .tool_call(&server_id, &tool_name, arguments)
-        .await;
+    let result: Result<tinymcp_bus::ToolCallOutcome, String> = module_call(
+        config,
+        tinymcp_bus::names::methods::TOOL_CALL,
+        (server_id.clone(), tool_name.clone(), arguments),
+    )
+    .await;
     let elapsed_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
 
     BUS.publish(DomainEvent::McpClientToolExecuted {
@@ -586,7 +638,7 @@ pub async fn mcp_clients_tool_call(
             )],
         )),
         Err(error) => Ok(Outcome::new(
-            json!({ "result": error.to_string(), "is_error": true }),
+            json!({ "result": error, "is_error": true }),
             vec![format!(
                 "tool_call error server_id={server_id} tool={tool_name}: {error}"
             )],

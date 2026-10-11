@@ -1,6 +1,6 @@
 //! The process-wide connected-integrations cache: [`CachedIntegrations`],
 //! [`INTEGRATIONS_CACHE`], its readers/invalidation
-//! ([`cached_active_integrations`], [`cached_active_integrations_including_expired`],
+//! ([`cached_active_integrations`],
 //! [`invalidate_connected_integrations_cache`]), and the reconciliation
 //! helpers ([`connected_set_hash`], [`sync_cache_with_connections`]) that
 //! keep it in sync with a fresh backend `list_connections` response.
@@ -150,14 +150,6 @@ pub fn invalidate_connected_integrations_cache() {
 /// Freshness is driven by connection events and the Settings connection-list
 /// reconciliation, never by an idle-time expiry on the chat critical path.
 pub fn cached_active_integrations(config: &Config) -> Option<Vec<ConnectedIntegration>> {
-    read_cached_integrations(config)
-}
-
-/// Compatibility alias for callers preserving the last-known snapshot when a
-/// connection-change refresh fails. Entries have no time-based expiry.
-pub fn cached_active_integrations_including_expired(
-    config: &Config,
-) -> Option<Vec<ConnectedIntegration>> {
     read_cached_integrations(config)
 }
 

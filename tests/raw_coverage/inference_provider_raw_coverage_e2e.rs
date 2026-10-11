@@ -71,7 +71,6 @@ async fn provider_factory_and_model_listing_cover_cloud_local_and_invalid_shapes
             label: "Custom".to_string(),
             endpoint: format!("{base}/v1"),
             auth_style: CloudAuthStyle::Bearer,
-            legacy_type: None,
             default_model: Some("demo-chat".to_string()),
         },
         CloudProviderCreds {
@@ -80,7 +79,6 @@ async fn provider_factory_and_model_listing_cover_cloud_local_and_invalid_shapes
             label: "OpenRouter".to_string(),
             endpoint: format!("{base}/openrouter"),
             auth_style: CloudAuthStyle::Bearer,
-            legacy_type: None,
             default_model: None,
         },
         CloudProviderCreds {
@@ -89,7 +87,6 @@ async fn provider_factory_and_model_listing_cover_cloud_local_and_invalid_shapes
             label: "Missing".to_string(),
             endpoint: format!("{base}/missing"),
             auth_style: CloudAuthStyle::None,
-            legacy_type: None,
             default_model: None,
         },
         CloudProviderCreds {
@@ -98,7 +95,6 @@ async fn provider_factory_and_model_listing_cover_cloud_local_and_invalid_shapes
             label: "HTML".to_string(),
             endpoint: format!("{base}/html"),
             auth_style: CloudAuthStyle::None,
-            legacy_type: None,
             default_model: None,
         },
         CloudProviderCreds {
@@ -107,7 +103,6 @@ async fn provider_factory_and_model_listing_cover_cloud_local_and_invalid_shapes
             label: "Wrong Data".to_string(),
             endpoint: format!("{base}/wrong-data"),
             auth_style: CloudAuthStyle::None,
-            legacy_type: None,
             default_model: None,
         },
         CloudProviderCreds {
@@ -116,7 +111,6 @@ async fn provider_factory_and_model_listing_cover_cloud_local_and_invalid_shapes
             label: "Error Payload".to_string(),
             endpoint: format!("{base}/error-payload"),
             auth_style: CloudAuthStyle::None,
-            legacy_type: None,
             default_model: None,
         },
     ];

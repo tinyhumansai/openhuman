@@ -365,28 +365,28 @@
   },
   {
     "rule": "json-write",
-    "path": "crates/openhuman-core/src/security/keyring/encrypted_store.rs",
+    "path": "crates/openhuman-core/src/security/secret_storage/encrypted_store.rs",
     "line": 316,
     "text": "let open_result = fs::OpenOptions::new()",
     "occurrence": 1
   },
   {
     "rule": "json-write",
-    "path": "crates/openhuman-core/src/security/keyring/encrypted_store.rs",
+    "path": "crates/openhuman-core/src/security/secret_storage/encrypted_store.rs",
     "line": 348,
     "text": "let open_result = fs::OpenOptions::new()",
     "occurrence": 2
   },
   {
     "rule": "json-write",
-    "path": "crates/openhuman-core/src/security/keyring/file_store.rs",
+    "path": "crates/openhuman-core/src/security/secret_storage/file_store.rs",
     "line": 79,
     "text": "let file = OpenOptions::new()",
     "occurrence": 1
   },
   {
     "rule": "json-write",
-    "path": "crates/openhuman-core/src/security/keyring/file_store.rs",
+    "path": "crates/openhuman-core/src/security/secret_storage/file_store.rs",
     "line": 168,
     "text": "match OpenOptions::new()",
     "occurrence": 1

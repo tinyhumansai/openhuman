@@ -31,12 +31,12 @@ thread_local! {
 /// from persisting indefinitely (see audit C8). Reading existing `enc:` values
 /// still succeeds throughout the migration.
 fn decrypt_optional_secret(
-    store: &crate::security::keyring::SecretStore,
+    store: &crate::security::secret_storage::SecretStore,
     value: &mut Option<String>,
     field_name: &str,
 ) -> Result<()> {
     if let Some(raw) = value.clone() {
-        if crate::security::keyring::SecretStore::is_encrypted(&raw) {
+        if crate::security::secret_storage::SecretStore::is_encrypted(&raw) {
             // Legacy `enc:` values are migrated to `enc2:` on read so they are
             // rewritten on the next config save instead of lingering forever.
             match store.decrypt_and_migrate(&raw) {
@@ -94,12 +94,12 @@ pub(super) fn decrypt_config_secrets_strict(
 }
 
 fn encrypt_optional_secret(
-    store: &crate::security::keyring::SecretStore,
+    store: &crate::security::secret_storage::SecretStore,
     value: &mut Option<String>,
     field_name: &str,
 ) -> Result<()> {
     if let Some(raw) = value.clone() {
-        if !crate::security::keyring::SecretStore::is_encrypted(&raw) {
+        if !crate::security::secret_storage::SecretStore::is_encrypted(&raw) {
             *value = Some(
                 store
                     .encrypt(&raw)
@@ -126,7 +126,7 @@ pub(super) fn decrypt_config_secrets(config: &mut Config, openhuman_dir: &Path) 
     }
     // Reset the per-pass migration flag before decrypting any field.
     migration_flag().store(false, Ordering::Relaxed);
-    let store = crate::security::keyring::SecretStore::new(openhuman_dir, true);
+    let store = crate::security::secret_storage::SecretStore::new(openhuman_dir, true);
 
     decrypt_optional_secret(&store, &mut config.api_key, "api_key")?;
     // A MongoDB URL carries the database password.
@@ -250,7 +250,7 @@ pub(super) fn encrypt_config_secrets(config: &mut Config) -> Result<()> {
         .config_path
         .parent()
         .context("Config path must have a parent directory")?;
-    let store = crate::security::keyring::SecretStore::new(parent_dir, true);
+    let store = crate::security::secret_storage::SecretStore::new(parent_dir, true);
 
     encrypt_optional_secret(&store, &mut config.api_key, "api_key")?;
     // A MongoDB URL carries the database password.

@@ -58,6 +58,7 @@
     "linux": {
       "deb": {
         "depends": [
+          "libasound2t64 | libasound2",
           "libatk-bridge2.0-0",
           "libgbm1",
           "libgdk-pixbuf-2.0-0",

@@ -1,77 +1,88 @@
-//! The document converter memory files with: PDF, DOCX, PPTX and XLSX through
-//! TinyMemory's `OfficeConverter` (with the `documents` feature, which the
-//! shipped product enables), then its `NativeConverter` for text, markdown,
-//! HTML and code. Without `documents` the chain is native only, and an office
-//! file is refused as before; the parsers stay off the always-on path.
+//! Memory document conversion through the TinyDocs module.
 //!
-//! Brain ingest (`memory_brain_ingest` with a `path`) and file-backed sources
-//! (folder, file) both convert through [`converter`], so a PDF filed by hand
-//! and a PDF in a synced folder read the same. Without the office converter
-//! both refused office formats with "the native converter does not handle
-//! pdf" (#6718).
-//!
-//! Office parsing is CPU-bound and synchronous, so it runs on Tokio's
-//! blocking pool rather than on a runtime worker (`OfficeConverter`'s own
-//! async `convert` would parse inline). Size is capped upstream by
-//! `MAX_DOCUMENT_BYTES`.
+//! Brain ingest and file-backed sources share this chain. Textual formats stay
+//! with TinyMemory's native converter; PDF, DOCX, PPTX and XLSX are extracted
+//! by the configured TinyDocs module, with no host-side parser fallback.
 
-use std::sync::LazyLock;
-
+use crate::config::Config;
 use tinymemory_integrations::documents::ConverterChain;
+
 #[cfg(feature = "documents")]
-use {
-    async_trait::async_trait,
-    tinymemory_integrations::documents::{
-        ConvertedDocument, DocumentConverter, DocumentFormat, Error, OfficeConverter, RawDocument,
-        Result,
-    },
+use async_trait::async_trait;
+#[cfg(feature = "documents")]
+use tinymemory_integrations::documents::{
+    ConvertedDocument, DocumentConverter, DocumentFormat, Error, RawDocument, Result,
 };
 
-/// [`OfficeConverter`] on the blocking pool.
+/// The bus-backed document extraction adapter. Its name and metadata stay
+/// compatible with the former OfficeConverter while parsing belongs to TinyDocs.
 #[cfg(feature = "documents")]
-struct BlockingOffice;
+struct TinyDocsConverter {
+    config: Config,
+}
 
 #[cfg(feature = "documents")]
 #[async_trait]
-impl DocumentConverter for BlockingOffice {
+impl DocumentConverter for TinyDocsConverter {
     fn name(&self) -> &str {
-        OfficeConverter.name()
+        "office"
     }
 
     fn supports(&self, format: DocumentFormat) -> bool {
-        OfficeConverter.supports(format)
+        matches!(
+            format,
+            DocumentFormat::Pdf
+                | DocumentFormat::Docx
+                | DocumentFormat::Pptx
+                | DocumentFormat::Xlsx
+        )
     }
 
     async fn convert(&self, document: &RawDocument) -> Result<ConvertedDocument> {
-        let document = document.clone();
-        crate::core::runtime::spawn_blocking_scoped(move || {
-            OfficeConverter.convert_blocking(&document)
-        })
-        .await
-        .map_err(task_failed)?
+        let format = document.format();
+        let wire_format = match format {
+            DocumentFormat::Pdf => tinydocs_bus::DocumentFormat::Pdf,
+            DocumentFormat::Docx => tinydocs_bus::DocumentFormat::Docx,
+            DocumentFormat::Pptx => tinydocs_bus::DocumentFormat::Pptx,
+            DocumentFormat::Xlsx => tinydocs_bus::DocumentFormat::Xlsx,
+            _ => unreachable!("supports limits formats to TinyDocs formats"),
+        };
+        let markdown =
+            crate::modules::documents::convert_markdown(&self.config, wire_format, &document.bytes)
+                .await
+                .map_err(map_module_error)?;
+
+        Ok(
+            ConvertedDocument::new(markdown, format, document.bytes.len())
+                .with_metadata(serde_json::json!({ "converter": self.name() })),
+        )
     }
 }
 
-/// The error for a conversion task that never finished (it panicked or was
-/// cancelled): a converter failure, never a crash of the caller.
 #[cfg(feature = "documents")]
-fn task_failed(error: impl std::fmt::Display) -> Error {
-    Error::Converter {
-        converter: "office".to_string(),
-        message: format!("the conversion task did not finish: {error}"),
+fn map_module_error(error: crate::modules::documents::DocumentCallError) -> Error {
+    use crate::modules::documents::DocumentCallError;
+    match error {
+        DocumentCallError::InvalidInput(message) => Error::Invalid(message),
+        DocumentCallError::Unavailable(message) | DocumentCallError::Failed(message) => {
+            Error::Converter {
+                converter: "tinydocs".to_string(),
+                message,
+            }
+        }
     }
 }
 
-static CHAIN: LazyLock<ConverterChain> = LazyLock::new(|| {
+/// Build the host's format-first converter chain against this config snapshot.
+pub(crate) fn converter(config: &Config) -> ConverterChain {
     let chain = ConverterChain::default();
     #[cfg(feature = "documents")]
-    let chain = chain.prepend(Box::new(BlockingOffice));
+    let chain = chain.prepend(Box::new(TinyDocsConverter {
+        config: config.clone(),
+    }));
+    #[cfg(not(feature = "documents"))]
+    let _ = config;
     chain
-});
-
-/// The converter every memory write of a file goes through.
-pub(crate) fn converter() -> &'static ConverterChain {
-    &CHAIN
 }
 
 #[cfg(test)]

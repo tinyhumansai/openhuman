@@ -196,10 +196,11 @@ The brain is the set of documents every agent under a root shares, filed at
 `source:<connector>` nodes with no agent id ([`brain.rs`](./brain.rs)). A file ingested
 from the UI (`memory_brain_ingest`) goes under `files`; synced sources are
 filed by what they read. Files are converted through [`convert.rs`](./convert.rs): PDF,
-DOCX, PPTX and XLSX go through TinyMemory's `OfficeConverter` on Tokio's
-blocking pool when the `documents` feature is on, then `NativeConverter`
-handles text, markdown, HTML and code. Every ingest queues a belief build of
-the source's scope.
+DOCX, PPTX and XLSX are streamed to the configured TinyDocs module when the
+`documents` feature is on, then `NativeConverter` handles text, markdown, HTML
+and code. The host carries only the bus contract and current config; it has no
+local office parser fallback. Every ingest queues a belief build of the
+source's scope.
 
 Sources ([`sources/`](./sources/)) are the `[[memory.sources]]` registry in `config.toml`:
 a folder, a file, a web page, a GitHub repository or an RSS feed, plus how

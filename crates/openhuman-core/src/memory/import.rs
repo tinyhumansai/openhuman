@@ -26,6 +26,7 @@ use tinymemory_integrations::cortex::is_insufficient_credits;
 use tinymemory_integrations::import::{Checkpoint, ImportedItem};
 
 use crate::config::Config;
+use crate::security::secret_storage::file_store::write_atomic;
 
 use super::engine::{self, BoundEngine};
 use super::error::{MemoryError, MemoryResult};
@@ -274,8 +275,7 @@ fn write_file(workspace_dir: &Path, file: &ImportFile) {
     let result = serde_json::to_vec_pretty(file)
         .map_err(|error| error.to_string())
         .and_then(|json| {
-            crate::security::keyring::file_store::write_atomic(&file_path(workspace_dir), &json)
-                .map_err(|error| error.to_string())
+            write_atomic(&file_path(workspace_dir), &json).map_err(|error| error.to_string())
         });
     if let Err(error) = result {
         tracing::warn!(error = %error, "[memory:import] writing import state failed");

@@ -62,34 +62,26 @@ core_rpc_endpoint ----------------> registry::current -> (rpc_url, token)
 
 ### Provisioning a box
 
-`provision::provision` runs four tinybox steps and reports each through a
-progress callback, which the registry turns into `GatewayStatus::Activating
-{ step }`:
+`provision::provision` loads the persisted runtime config through the curated
+embed facade and calls the pinned TinyBox module before the core RPC server is
+started. The host reserves opaque resource, process, and forward ids before
+native work, then sends typed requests through `openhuman_rpc::embed::modules::tinybox`.
 
-1. Create the box (`create_box`). The spec from `box_spec` maps reach to a
-   tinybox `HostRef` (`local` or `ssh`) and confinement to a `SandboxRef`
-   (`passthrough` or `docker`). Docker boxes get `NetworkPolicy::Egress` and
-   publish the in-box core port `CORE_PORT_IN_BOX` (7788) to a host port.
-   That host port is chosen by the shell (a free local port, or a random
-   ephemeral port on a remote machine) because tinybox cannot report a port
-   Docker picked. Creation retries up to `PORT_ATTEMPTS` (8) times when
-   Docker says the port is taken. A passthrough box publishes nothing; the
-   core listens on 7788 on the target machine directly.
-2. Start the core detached (`start_core`). `core_command` runs
-   `<binary> serve` (or `openhuman-core serve` from the image's `PATH`) with
-   `OPENHUMAN_CORE_TOKEN` set to a freshly minted bearer,
-   `OPENHUMAN_CORE_HOST=0.0.0.0` and `OPENHUMAN_CORE_PORT=7788`.
-3. Forward the published port back to `127.0.0.1` on this machine
-   (`Host::forward`). For an SSH box the published port lives on the far
-   machine, so without this step nothing is reachable.
-4. Poll the unauthenticated `/health` every 250 ms for up to 120 s
-   (`wait_until_healthy`). An open tunnel does not prove the core is up.
+The gateway chooses the host (`Local` or configured `Ssh`), workspace
+(directory or OCI image), egress policy, and process environment. TinyBox owns
+creation, the detached core process, and its forward. Docker requests a dynamic
+host port; TinyBox returns the effective mapping and owns the forward rather
+than relying on shell-side Docker probing or port-conflict parsing. The core
+runs as `<binary> serve` (or `openhuman-core serve` from the image's `PATH`) with
+a freshly minted `OPENHUMAN_CORE_TOKEN`, `OPENHUMAN_CORE_HOST=0.0.0.0`, and
+`OPENHUMAN_CORE_PORT=7788`.
 
-A failure at any step stops the core and destroys the box before returning,
-so a failed activation leaves nothing behind. The resulting `Provisioned`
-value owns the tunnel (`Forward`), the sandbox, the box id and the process id.
-Dropping the `Forward` closes the tunnel, which is why the registry holds the
-value for as long as the gateway is active.
+After opening the module-owned forward, the gateway polls the unauthenticated
+`/health` endpoint every 250 ms for up to 120 seconds. A failure closes the
+caller-known resource reservation, which lets the module clean up even if a
+Create/Spawn/Forward reply was lost after native startup. The resulting
+`Provisioned` value retains the explicit config and resource handle; teardown
+uses TinyBox `Close` and logs a sanitized error if native cleanup remains pending.
 
 ### Activation and switching
 
@@ -100,8 +92,8 @@ terminal `Connected` or `Failed` status.
 
 The previous gateway is torn down only after the new one is up. A failed
 activation records `GatewayStatus::Failed { reason }` and leaves the working
-gateway active. `Provisioned::tear_down` stops the core and destroys the box,
-logging and continuing past each failure.
+gateway active. `Provisioned::tear_down` asks TinyBox to close the resource and waits for its
+cleanup acknowledgement; the module retains unacknowledged native ownership.
 
 At launch, and whenever nothing has been activated, `registry::current` falls
 back to the embedded core. Active state is in memory only; after a restart

@@ -1,7 +1,7 @@
 //! Unified keyring fallback policy gate.
 //!
 //! All code paths that read or write secrets should call [`check_secret_access`]
-//! instead of raw `keyring::is_available()`. This centralises the consent check
+//! instead of raw `secret_storage::is_available()`. This centralises the consent check
 //! so the app never silently falls back to local encrypted storage without the
 //! user's explicit agreement.
 
@@ -55,7 +55,7 @@ pub fn initialize(consent: Option<ConsentPreference>) -> bool {
 
 /// Check whether the caller is allowed to proceed with secret storage.
 pub fn check_secret_access() -> PolicyDecision {
-    if crate::security::keyring::is_available() {
+    if crate::security::secret_storage::is_available() {
         return PolicyDecision::Proceed;
     }
 
@@ -81,9 +81,10 @@ pub fn check_secret_access() -> PolicyDecision {
     }
 }
 
-/// Backend identifiers as [`crate::security::keyring::backend_name`]
+/// Backend identifiers as [`crate::security::secret_storage::backend_name`]
 /// reports them. Kept here rather than matched as bare literals so the mapping
 /// below reads as a table and a rename upstream fails in one place.
+const BACKEND_MEMORY: &str = "memory";
 const BACKEND_OS: &str = "os";
 const BACKEND_ENCRYPTED_FILE: &str = "encrypted_file";
 const BACKEND_FILE: &str = "file";
@@ -132,6 +133,7 @@ fn active_mode_for(
         }
         // Operator-configured backends. No consent was ever asked for, so the
         // consent cache says nothing about where these secrets are.
+        BACKEND_MEMORY => StorageMode::InMemory,
         BACKEND_ENCRYPTED_FILE => StorageMode::LocalEncryptedFile,
         BACKEND_FILE | BACKEND_MOCK => StorageMode::LocalPlaintextFile,
         // A backend added without extending this table. Reporting `os_keyring`
@@ -149,8 +151,8 @@ fn active_mode_for(
 
 /// Build the current keyring status for RPC / snapshot consumption.
 pub fn current_status() -> KeyringStatus {
-    let available = crate::security::keyring::is_available();
-    let backend_name = crate::security::keyring::backend_name();
+    let available = crate::security::secret_storage::is_available();
+    let backend_name = crate::security::secret_storage::backend_name();
     let cached = CONSENT_CACHE.read().clone();
 
     let active_mode = active_mode_for(available, &backend_name, cached.as_ref());
@@ -213,7 +215,7 @@ pub fn record_consent(mode: &str) -> ConsentPreference {
 /// Reset the cached keyring probe and re-run it.
 pub fn retry_probe() -> KeyringStatus {
     info!("{LOG_PREFIX} retry_probe: resetting availability cache");
-    crate::security::keyring::reset_availability_cache();
+    crate::security::secret_storage::reset_availability_cache();
     CONSENT_EVENT_PUBLISHED.store(false, Ordering::SeqCst);
     current_status()
 }

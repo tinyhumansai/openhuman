@@ -32,12 +32,13 @@ mod reconcile_orphaned_providers;
 mod remove_write_auto_approve;
 mod repair_http_request_limits;
 mod retire_chat_v1_model;
+pub(crate) mod retire_cloud_provider_type;
 mod retire_local_whisper_stt;
 mod retire_managed_tier_slugs;
 mod unify_ai_provider_settings;
 
 /// Current target schema version. Bumped alongside every new migration.
-pub const CURRENT_SCHEMA_VERSION: u32 = 13;
+pub const CURRENT_SCHEMA_VERSION: u32 = 14;
 
 /// Give a brand-new [`Config`] the managed `openhuman` cloud-provider entry.
 ///
@@ -648,6 +649,15 @@ pub async fn run_pending(config: &mut Config) {
                      will retry on next launch"
                 );
             }
+        }
+    }
+    // 13 -> 14: persist provider discriminators normalized before typed decode.
+    // Saves also retain the provider-native default_model used by BYOK routing.
+    if config.schema_version == 13 {
+        config.schema_version = 14;
+        if let Err(err) = config.save().await {
+            config.schema_version = 13;
+            log::warn!("[migrations] schema_version 14 save failed: {err:#}");
         }
     }
 }

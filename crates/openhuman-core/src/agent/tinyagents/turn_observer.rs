@@ -283,9 +283,15 @@ impl ModelMiddleware<(), OpenHumanRunContext> for ObserverScope {
     }
 }
 /// Existing TinyAgents exporter; this module adds no transport implementation.
+///
+/// Traces go out as OTLP: build requests from [`TraceSpan`]s with
+/// [`otlp_requests`] and send them with `LangfuseClient::send_otlp`, the
+/// supported Langfuse trace path. `create_score` still posts scores to the
+/// batch API, which remains supported for scores.
 #[cfg(feature = "langfuse")]
 pub mod langfuse {
     pub use tinyagents_harness::observability::{
+        trace_export::{otlp::otlp_requests, ExportBrand, SpanKind, SpanStatus, TraceSpan},
         LangfuseAuth, LangfuseClient, LangfuseScore, LangfuseScoreValue, LangfuseTraceConfig,
     };
 }

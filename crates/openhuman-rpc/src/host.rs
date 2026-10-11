@@ -45,6 +45,9 @@ use tokio_util::sync::CancellationToken;
 #[cfg(feature = "server")]
 pub use crate::server::EmbeddedReadySignal;
 
+#[path = "host/secret_storage.rs"]
+mod secret_storage;
+
 /// The CLI host's builder: the `cli` preset with this crate's server as the
 /// `run` / `serve` launcher and the `http_host.*` controllers registered.
 #[cfg(feature = "server")]
@@ -89,20 +92,21 @@ pub fn cli(args: &[String]) -> anyhow::Result<()> {
         args.first().map(String::as_str).unwrap_or("<none>"),
         args.len()
     );
+    // The preflight reads the URL before the dispatcher loads `.env`
+    // itself, so a URL supplied through the dotenv file must be loaded now.
+    if let Err(error) = crate::core_host::core::cli::load_dotenv_for_cli() {
+        log::warn!(
+            "[rpc:host] cli: early dotenv load failed ({error}); a host setting supplied only \
+         in that file will not be seen"
+        );
+    }
+    secret_storage::install();
     let mut builder = cli_builder();
     if cli_command_uses_storage(args, |namespace| {
         // `subsystems` only renders status; it never touches stored state.
         namespace != "subsystems"
             && crate::core_host::core::all::cli_handler_for_namespace(namespace).is_some()
     }) {
-        // The preflight reads the URL before the dispatcher loads `.env`
-        // itself, so a URL supplied through the dotenv file must be loaded now.
-        if let Err(error) = crate::core_host::core::cli::load_dotenv_for_cli() {
-            log::warn!(
-                "[rpc:host] cli: early dotenv load failed ({error}); a storage url set only \
-                 in that file will not be seen"
-            );
-        }
         // A one-shot command reads the same backend the server would: the
         // configured storage URL, opened on the core's storage runtime so the
         // backend outlives this call. No URL leaves the classic layout alone.
@@ -263,6 +267,7 @@ pub async fn desktop(
     shutdown_token: CancellationToken,
     ready_tx: tokio::sync::oneshot::Sender<EmbeddedReadySignal>,
 ) -> anyhow::Result<()> {
+    secret_storage::install();
     log::debug!("[rpc:host] desktop options={options:?}");
     serve_desktop(desktop_builder(&options), shutdown_token, ready_tx).await
 }
@@ -311,6 +316,7 @@ pub fn tui_builder() -> RuntimeBuilder {
 /// could not be built.
 #[cfg(feature = "session-store")]
 pub async fn tui() -> anyhow::Result<openhuman_tinyhumans::embed::Runtime> {
+    secret_storage::install();
     log::debug!("[rpc:host] tui: building connected runtime");
     let session_store = crate::session_store::provider_for_host().await?;
     let runtime = tui_builder()

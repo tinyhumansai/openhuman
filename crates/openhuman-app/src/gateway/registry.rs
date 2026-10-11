@@ -1,9 +1,7 @@
 //! Which gateway is active, and what is being held open for it.
 //!
-//! A provisioned gateway is only as alive as the values holding it open: drop
-//! the [`Forward`](tinybox_core::Forward) and the tunnel closes. So the process
-//! needs somewhere to keep them for as long as the gateway is selected, and
-//! that is here.
+//! A provisioned gateway is only as alive as its module-owned TinyBox resource.
+//! The selected resource handle stays here until `tear_down` awaits its cleanup.
 //!
 //! Everything is behind one lock and every write goes through
 //! [`activate`], so two screens racing to switch gateways cannot leave the

@@ -8,7 +8,9 @@
 
 use super::*;
 use crate::config::Config;
-use crate::tools::implementations::document::format::spec::{DocumentSpec, WirePresentationSpec};
+use crate::tools::implementations::document::format::spec::{
+    DocumentSection, DocumentSpec, WirePresentationSpec,
+};
 
 /// A config with modules enabled but nothing fetchable.
 fn offline_config() -> Config {
@@ -131,6 +133,10 @@ async fn a_disabled_host_reports_unavailable_without_starting_a_broker() {
         super::extract_document(&config, b"%PDF-1.4\n", &extraction).await,
         Err(DocumentCallError::Unavailable(_))
     ));
+    assert!(matches!(
+        super::convert_markdown(&config, tinydocs_bus::DocumentFormat::Pdf, b"%PDF-1.4\n").await,
+        Err(DocumentCallError::Unavailable(_))
+    ));
     let rendering = tinydocs_bus::RenderPdfSpec {
         pages: vec![1],
         max_dimension: 256,
@@ -141,6 +147,85 @@ async fn a_disabled_host_reports_unavailable_without_starting_a_broker() {
         super::render_pdf(&config, b"%PDF-1.4\n", &rendering).await,
         Err(DocumentCallError::Unavailable(_))
     ));
+}
+
+#[tokio::test]
+#[ignore = "needs a built TinyDocs module and its own process; set OPENHUMAN_MODULE_PATH"]
+async fn held_outputs_are_released_after_success_read_failure_and_cancellation() {
+    async fn held_docx(config: &Config) -> (tinybus::Proxy, OutputRef) {
+        let (runtime, record) = ready(config).await.expect("module should be ready");
+        let proxy = proxy(runtime, record).expect("proxy should resolve");
+        let spec = DocumentSpec {
+            title: "Output lifecycle".to_string(),
+            author: None,
+            sections: vec![DocumentSection {
+                heading: Some("Held output".to_string()),
+                paragraphs: vec!["the generated document".to_string()],
+                bullets: Vec::new(),
+            }],
+        };
+        let handle: OutputRef = proxy
+            .call(methods::GENERATE_DOCX, (spec,))
+            .await
+            .expect("module should retain generated output");
+        (proxy, handle)
+    }
+
+    async fn assert_output_is_gone(proxy: &tinybus::Proxy, output_id: &str) {
+        assert!(
+            proxy
+                .call::<String>(
+                    methods::READ_OUTPUT,
+                    (output_id.to_string(), 0_u64, READ_CHUNK)
+                )
+                .await
+                .is_err(),
+            "released output must no longer be readable"
+        );
+    }
+
+    let config = offline_config();
+
+    let (proxy, handle) = held_docx(&config).await;
+    let bytes = collect(&proxy, handle.clone())
+        .await
+        .expect("complete output should be collected");
+    assert!(!bytes.is_empty());
+    assert_output_is_gone(&proxy, &handle.output_id).await;
+
+    let (proxy, mut handle) = held_docx(&config).await;
+    handle.sha256 = "0".repeat(64);
+    let output_id = handle.output_id.clone();
+    assert!(matches!(
+        collect(&proxy, handle).await,
+        Err(DocumentCallError::Failed(_))
+    ));
+    assert_output_is_gone(&proxy, &output_id).await;
+
+    let (proxy, handle) = held_docx(&config).await;
+    let output_id = handle.output_id;
+    let release = OutputReleaseGuard {
+        proxy: proxy.clone(),
+        ids: vec![output_id.clone()],
+    };
+    let cancelled = tokio::spawn(async move {
+        let _release = release;
+        std::future::pending::<()>().await;
+    });
+    tokio::task::yield_now().await;
+    cancelled.abort();
+    let _ = cancelled.await;
+    for _ in 0..100 {
+        if proxy
+            .call::<String>(methods::READ_OUTPUT, (output_id.clone(), 0_u64, READ_CHUNK))
+            .await
+            .is_err()
+        {
+            return;
+        }
+        tokio::task::yield_now().await;
+    }
+    panic!("cancelling the collector should schedule output release");
 }
 
 #[test]
@@ -168,6 +253,8 @@ fn every_member_this_client_calls_is_one_the_contract_declares() {
         methods::GENERATE_PPTX,
         methods::EXTRACT_TEXT,
         methods::EXTRACT_DOCUMENT,
+        methods::CONVERT_MARKDOWN,
+        methods::INSPECT_IMAGE,
         methods::RENDER_PDF,
         methods::READ_OUTPUT,
         methods::RELEASE_OUTPUT,
@@ -182,6 +269,6 @@ fn every_member_this_client_calls_is_one_the_contract_declares() {
 
 #[test]
 fn pinned_release_exposes_intake_without_loading() {
-    assert_eq!(registry::find(MODULE_ID).unwrap().version, "0.1.22");
+    assert_eq!(registry::find(MODULE_ID).unwrap().version, "0.2.0");
     assert!(intake_available().is_ok());
 }

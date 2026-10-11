@@ -26,9 +26,9 @@ source "$RUNTIME_VALIDATOR_SCRIPT_DIR/strip-appimage-graphics-libs.sh"
 # — the previous code duplicated the list, and the stale copy (libcef.so)
 # outlived CEF by two weeks.
 #
-# Verified against a real linuxdeploy bundle on both Linux arches: usr/bin/OpenHuman
-# declares and bundles libxdo.so.3 and libwebkit2gtk-4.1.so.0.
-APPIMAGE_PRODUCTION_NEEDED="libxdo.so.3 libwebkit2gtk-4.1.so.0"
+# Wry remains linked in the host. libxdo is now owned by the loaded Computer
+# module and is checked independently of the host ELF.
+APPIMAGE_PRODUCTION_NEEDED="libwebkit2gtk-4.1.so.0"
 
 runtime_validation_error() {
   echo "[appimage-runtime] ERROR: $*" >&2
@@ -268,19 +268,11 @@ validate_extracted_appdir() {
     fi
   done
 
-  # Tripwire for libraries that have historically vanished from the bundle
-  # silently. libxdo is linked directly by enigo via #[link(name = "xdo")] - not
-  # through any crate, so it does not appear in Cargo.lock - and its absence
-  # segfaulted the app on launch (#4020). libcef.so used to be on this list; CEF
-  # was removed in #5456 and no build can produce it any more.
-  #
-  # Both halves are fatal, and they catch different regressions. A NEEDED entry
-  # that is not bundled is #4020 itself: the loader fails at startup. An entry
-  # that is no longer declared at all means the dependency was dropped upstream
-  # — no segfault, but a silent capability loss, which is precisely the class of
-  # regression this tripwire exists to surface. Warning instead would put it in a
-  # 90-minute release log where nobody reads it. If a drop is intentional, remove
-  # the name from APPIMAGE_PRODUCTION_NEEDED in the same commit.
+  # Loaded modules need their native runtime libraries in either layout, even
+  # when the host ELF has no corresponding NEEDED entry.
+  validate_module_runtime_libraries "$appdir" || return 1
+
+  # Host-linked dependencies still require both a NEEDED entry and a bundle.
   local expected_needed="${APPIMAGE_EXPECTED_NEEDED-$APPIMAGE_PRODUCTION_NEEDED}"
   local needed_name found
   for needed_name in $expected_needed; do

@@ -1,7 +1,7 @@
 //! JSON-RPC E2E coverage for the automation/scheduling controllers that no
 //! e2e target reached: `cron_remove` / `cron_run` / `cron_runs`,
 //! `task_sources_sync` / `task_sources_list_databases`, the whole `hooks`
-//! namespace, and `harness_init_run`.
+//! namespace, and removal of managed runtime provisioning RPCs.
 //!
 //! Every case boots the real Axum JSON-RPC router over HTTP against an
 //! isolated `HOME` and asserts on the **content** of the response. Nothing
@@ -15,7 +15,7 @@
 use crate::env_guard::EnvVarGuard;
 use std::net::SocketAddr;
 use std::path::Path;
-use std::sync::{OnceLock};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use axum::http::header::AUTHORIZATION;
@@ -48,7 +48,8 @@ fn env_lock() -> tokio::sync::MutexGuard<'static, ()> {
 async fn env_lock_async() -> tokio::sync::MutexGuard<'static, ()> {
     ENV_LOCK
         .get_or_init(|| tokio::sync::Mutex::new(()))
-        .lock().await
+        .lock()
+        .await
 }
 
 /// Initialise the process RPC token (idempotent) and return the bearer the
@@ -79,13 +80,8 @@ async fn serve_rpc() -> (
     (addr, token, join)
 }
 
-/// The config every case here runs against.
-///
-/// `[node] enabled = false` and `[runtime_python] enabled = false` are load-
-/// bearing: `harness_init_run` would otherwise **download** a managed Node.js
-/// and CPython. `Config` does not `deny_unknown_fields`, so a mistyped table
-/// name would be silently ignored and the download would happen anyway —
-/// [`assert_provisioning_is_disabled`] is the guard against exactly that.
+/// Offline config: local AI is disabled and the backend URL cannot reach a
+/// real service. Managed Node/Python provisioning no longer exists.
 const TEST_CONFIG_TOML: &str = r#"api_url = "http://127.0.0.1:9"
 default_model = "automation-e2e-model"
 default_temperature = 0.2
@@ -95,30 +91,17 @@ chat_onboarding_completed = true
 encrypt = false
 
 [local_ai]
-enabled = false
-
-[node]
-enabled = false
-
-[runtime_python]
-enabled = false
+runtime_enabled = false
 
 
 "#;
 
-/// Prove the disable switches actually bound to the fields harness-init reads,
-/// rather than being silently dropped as unknown keys.
-fn assert_provisioning_is_disabled() -> openhuman_core::config::Config {
+/// Validate the active offline settings against the typed schema.
+fn assert_offline_config() -> openhuman_core::config::Config {
     let parsed: openhuman_core::config::Config =
         toml::from_str(TEST_CONFIG_TOML).expect("test config must match the Config schema");
-    assert!(
-        !parsed.node.enabled,
-        "[node] enabled=false must bind — otherwise harness_init downloads Node.js"
-    );
-    assert!(
-        !parsed.runtime_python.enabled,
-        "[runtime_python] enabled=false must bind — otherwise harness_init downloads CPython"
-    );
+    assert!(!parsed.local_ai.runtime_enabled);
+    assert_eq!(parsed.api_url.as_deref(), Some("http://127.0.0.1:9"));
     parsed
 }
 
@@ -131,7 +114,7 @@ fn write_min_config(openhuman_dir: &Path) {
     // Runtime config resolution is user-scoped before login, so the pre-login
     // `users/local` layer needs the same file or the RPC handlers load defaults.
     write(&openhuman_dir.join("users").join("local"));
-    assert_provisioning_is_disabled();
+    assert_offline_config();
 }
 
 struct Harness {
@@ -826,116 +809,27 @@ async fn hooks_reload_surfaces_a_malformed_file_as_a_warning() {
     h.join.abort();
 }
 
-// ── harness_init ────────────────────────────────────────────────────────────
+// ── removed runtime provisioning ────────────────────────────────────────────
 
-/// `harness_init_run` is the retry behind the first-run setup overlay. With
-/// every provisioning backend switched off, each step's cheap probe reports it
-/// satisfied and the run must settle `done` **without downloading anything**.
-///
-/// `force` is the interesting parameter: it must bypass the probe and actually
-/// invoke each step, which is observable in the per-step message — the
-/// probe-satisfied path stamps "already provisioned" and the forced path does
-/// not.
 #[tokio::test]
-async fn harness_init_run_completes_offline_and_force_bypasses_the_probes() {
+async fn managed_runtime_provisioning_rpcs_are_not_registered() {
     let _lock = env_lock_async().await;
     let h = setup().await;
-
-    let snapshot = h.ok(2701, "openhuman.harness_init_run", json!({})).await;
-    let steps = snapshot
-        .pointer("/snapshot/steps")
-        .and_then(Value::as_array)
-        .unwrap_or_else(|| panic!("the snapshot carries a steps array: {snapshot}"));
-    assert_eq!(
-        snapshot
-            .pointer("/snapshot/overall")
-            .and_then(Value::as_str),
-        Some("done"),
-        "no required step can fail when every backend is off: {snapshot}"
-    );
-
-    let step_ids: Vec<&str> = steps.iter().map(|step| str_at(step, "/id")).collect();
-    for expected in [
-        "python_runtime",
-        "kompress",
-        "runtime_python_server",
+    for (id, method, params) in [
+        (2701, "openhuman.harness_init_run", json!({})),
+        (2702, "openhuman.harness_init_run", json!({ "force": true })),
+        (2703, "openhuman.harness_init_status", json!({})),
     ] {
-        assert!(
-            step_ids.contains(&expected),
-            "the registry step {expected} must appear in the snapshot, got {step_ids:?}"
+        let response = h.rpc(id, method, params).await;
+        assert_eq!(
+            response.pointer("/error/code").and_then(Value::as_i64),
+            Some(-32000),
+            "removed RPC {method} must be unavailable: {response}"
         );
+        let message = response["error"]["message"]
+            .as_str()
+            .expect("unknown method error");
+        assert_eq!(message, format!("unknown method: {method}"));
     }
-
-    for step in steps {
-        assert_eq!(
-            step.get("state").and_then(Value::as_str),
-            Some("done"),
-            "every disabled step probes satisfied: {step}"
-        );
-        assert_eq!(
-            step.get("message").and_then(Value::as_str),
-            Some("already provisioned"),
-            "the unforced path marks Done from the probe, without running: {step}"
-        );
-        assert_eq!(step.get("percent").and_then(Value::as_u64), Some(100));
-        assert_eq!(
-            step.get("required").and_then(Value::as_bool),
-            Some(false),
-            "every registered step is non-required today: {step}"
-        );
-        assert!(
-            step.get("updated_at").and_then(Value::as_str).is_some(),
-            "each state change is stamped: {step}"
-        );
-    }
-
-    let forced = h
-        .ok(2702, "openhuman.harness_init_run", json!({ "force": true }))
-        .await;
-    assert_eq!(
-        forced.pointer("/snapshot/overall").and_then(Value::as_str),
-        Some("done"),
-        "a forced re-run of disabled steps still settles done: {forced}"
-    );
-    let forced_steps = forced
-        .pointer("/snapshot/steps")
-        .and_then(Value::as_array)
-        .expect("forced steps array");
-    for step in forced_steps {
-        assert_eq!(
-            step.get("state").and_then(Value::as_str),
-            Some("done"),
-            "a forced disabled step returns Ok immediately: {step}"
-        );
-        assert!(
-            step.get("message").and_then(Value::as_str) != Some("already provisioned"),
-            "force must bypass the probe, so the probe's message cannot appear: {step}"
-        );
-    }
-    assert!(
-        forced
-            .pointer("/snapshot/finished_at")
-            .and_then(Value::as_str)
-            .is_some(),
-        "a finished run is stamped: {forced}"
-    );
-
-    // `harness_init_status` must report the same snapshot the run just left
-    // behind, not recompute one.
-    let status = h.ok(2703, "openhuman.harness_init_status", json!({})).await;
-    assert_eq!(
-        status.pointer("/snapshot/overall").and_then(Value::as_str),
-        Some("done"),
-        "status reads the store the run wrote: {status}"
-    );
-    assert_eq!(
-        status
-            .pointer("/snapshot/steps")
-            .and_then(Value::as_array)
-            .map(Vec::len),
-        forced_steps.len().into(),
-        "status and run agree on the step list: {status}"
-    );
-
     h.join.abort();
 }

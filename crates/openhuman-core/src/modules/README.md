@@ -8,7 +8,7 @@ binary: `tinycomputer`, `tinysearch`, `tinydocs`, `tinywallet`, `tinyjuice`,
 GitHub release, checks it against a digest compiled into this crate, lets
 tinybus admit it, attaches it to a private in-process broker, and then calls
 it like any other bus service. Domains reach a module through the per-module
-host files here ([`documents.rs`](./documents.rs), [`wallet.rs`](./wallet.rs), [`voice.rs`](./voice.rs), ...) rather than
+host files here ([`documents.rs`](./documents.rs), [`wallet.rs`](./wallet.rs), [`voice.rs`](./voice.rs), [`accessibility.rs`](./accessibility.rs), ...) rather than
 talking to tinybus themselves.
 
 The `//!` comments in [`mod.rs`](mod.rs), [`host.rs`](host.rs) and
@@ -210,7 +210,7 @@ download, its `dlopen`, or its resident memory.
 
 | Path | Module | What it does |
 | --- | --- | --- |
-| [`documents.rs`](documents.rs) | `tinydocs` | `generate_docx`, `generate_pptx`, `extract_text`, `extract_document`, `render_pdf`. Inbound bytes ride a tinybus stream; produced documents are held by the module and pulled with `ReadOutput`, then released. Feature `documents`. |
+| [`documents.rs`](documents.rs) | `tinydocs` | `generate_docx`, `generate_pptx`, `extract_text`, bounded `extract_document`, complete `convert_markdown`, `inspect_image`, and `render_pdf`. Inbound bytes ride a TinyBus stream; held results are pulled with `ReadOutput` and released. Feature `documents`. |
 | [`wallet.rs`](wallet.rs) | `tinywallet` | `derive_account`, `sign_transaction_in_module`, `sign_message`, `export_key`. Key material goes only to an attested module whose attested digest is one the registry pinned (`attested_proxy`). Feature `web3`. |
 | [`voice.rs`](voice.rs) | `tinyvoice` | Intent routing, command extraction, wake-word and hallucination checks, capture preparation, WAV encoding, frame energies, and a `VadSession` driven from the always-on capture loop. Every call returns a `VoiceCallError` the caller falls back from. Feature `voice`. |
 | [`desktop.rs`](desktop.rs) | `tinycomputer` | The shared proxy for TinyComputer: loads it with an 8 second bound, reinitializes it when its configuration fingerprint changes, and exposes `call`, `permissions`, `state`, `jev_ready`. |
@@ -225,8 +225,14 @@ download, its `dlopen`, or its resident memory.
 | [`search/proxy.rs`](search/proxy.rs) | `tinysearch` | Lazy load, private reinitialization on configuration change, and serialized `list_tools` / `execute_tool`; `refresh_loaded` after settings saves and credential changes. |
 | [`tokenjuice_host.rs`](tokenjuice_host.rs) | `tinyjuice` | The reverse direction: an `MlHost` object the host serves at the contract's `ML_HOST_NAME` / `ML_HOST_PATH` for the module's tool-less summary model call. |
 
-`tinymcp`, `tinybox`, `tinychannels` and `tinyhosts` have registry records but
-no host file in this folder.
+`channel_email.rs` delivers podcast attachments through TinyChannels' bounded
+confidential upload members. `tinybox.rs` supplies the pre-core gateway client.
+`channel_controller.rs` invokes TinyChannels' confidential controller member for
+Discord guild/channel discovery and permission checks, preserving the complete
+legacy RPC result types from the bus contract. OpenHuman resolves credentials
+and proxy scope; the module performs provider requests and permission analysis.
+The remaining channel runtime, MCP and core sandbox callers are still being
+migrated; their dependency exceptions remain explicit.
 
 ## Key types and entry points
 
@@ -251,6 +257,20 @@ no host file in this folder.
   status code answer without starting a broker.
 - `ops::set_bundled_releases_dir` (`ops.rs`) is called by the desktop host
   before the core starts.
+
+## Calls before core startup
+
+Hosts obtain `ModuleClient` through `openhuman_rpc::embed::modules`. Construct
+it with explicit configuration, and set bundled-artifact discovery before the
+first call. Construction starts nothing; calls use the same process-wide lazy
+loader as the core and require neither a core runtime nor a signed-in session.
+The client preserves argument tuple arity and offers confidential calls that
+require recipient attestation. A failed load or call returns a sanitized
+`ModuleCallError` and never executes an implementation library as a fallback.
+
+Stateful adapters must call the module's close, cancellation and shutdown
+members to release its resources. Keeping a native library mapped does not
+remove that obligation.
 
 ## RPC surface
 
@@ -312,8 +332,10 @@ loadable:
 
   Never redeclare a contract type here, and call members through the
   contract's constants rather than string literals. Contract crates stay
-  synchronous and free of I/O. Shared wire behavior belongs in the contract;
-  runtime, configuration and security policy stay in this host.
+  synchronous and free of I/O. Serialized types, errors, identifiers, versions,
+  schemas and static tool declarations belong in the contract. Component
+  algorithms execute inside the compiled module; configuration, execution
+  policy and approvals stay in this host.
 - Policy stays here even where the work moved into a module. For connectors
   that means egress policy (`crate::security::egress`, applied before
   `Execute`), route selection, and webhook delivery; scope enforcement belongs
@@ -334,9 +356,12 @@ loadable:
 
 ## Gotchas
 
-- `lib.rs` gates the whole folder on the `modules` feature, which is in both
-  the contributor default set and the shipped product set. `documents`,
-  `voice` and `web3` each imply `modules` and turn on their host file here.
+- The registry, configuration types and shared `ModuleClient` are available
+  without the `modules` feature. The loader and capability adapters are gated
+  on `modules`, which is in both the contributor default set and the shipped
+  product set. A client compiled without the loader returns an explicit
+  unavailable error on a call. `documents`, `voice` and `web3` each imply
+  `modules` and turn on their host file here.
   Never enable `modules` directly on the unconditional `tinybus` dependency;
   it is forwarded from this crate's own feature (`modules =
   ["tinybus/modules", ...]`), so a build without `modules` does not pull in
@@ -373,3 +398,10 @@ minimal build small.
 - [Loadable modules](../../../../gitbooks/developing/loadable-modules.md)
 - [tinybus submodule](../../../../vendor/tinybus/README.md)
 - [Architecture overview](../../../../gitbooks/developing/architecture.md)
+
+The connector host consumes verified release v0.14.0 (contract 1.13). The
+argument/default/filter/classification and trigger-archive adapters call bus
+members; no normal or build edge reaches `tinyconnectors` or its sync library.
+Provider messages remain product output, while terminal bus reports contain
+only the module/version/stage/platform/reason vocabulary. Credential-bearing
+configuration and direct reads use attested confidential calls.

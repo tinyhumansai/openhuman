@@ -72,6 +72,7 @@ pub use openhuman_core::backend::{
 };
 pub use openhuman_core::config::ComposioHostCredential;
 pub use openhuman_core::config::Config as RuntimeConfig;
+pub use openhuman_core::config::{SearchHostCredential, UnknownKeyedSearchProvider};
 pub use openhuman_core::security::TrustedAccess;
 pub use openhuman_core::tools::toolpacks::{GroupMode, ToolGroups};
 // The seam `AgentSpec::tools` needs: the belt types, and `Tool` itself from the
@@ -122,7 +123,6 @@ pub mod fanout;
 mod harness;
 pub mod identity;
 pub mod memory;
-#[cfg(feature = "modules")]
 pub mod modules;
 mod permission;
 pub use permission::PermissionFuture;
@@ -134,6 +134,7 @@ pub mod profiles;
 /// Explicit ordered fallback and truncation policies.
 pub mod routing;
 mod runtime;
+pub mod secret_storage;
 mod turn;
 mod turn_cancellation;
 mod turn_meter;

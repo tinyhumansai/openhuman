@@ -176,7 +176,7 @@ OpenHuman denkt die teuersten Teile neu: wie viel Text die KI lesen muss, wie si
 
 <p><a href="https://tinyhumans.gitbook.io/openhuman/developing/loadable-modules">So funktionieren Plug-ins</a></p>
 
-<p>Jede Funktion, etwa Suche, Dokumente oder Sprache, hängt an einem gemeinsamen Rust-Bus, eine Idee vom <a href="https://www.freedesktop.org/wiki/Software/dbus/">Linux-Systembus</a>. Eine Funktion wird nur bei Bedarf geladen, und wenn eine hängt, arbeiten die anderen weiter.</p>
+<p>Jede Funktion, etwa Suche, Dokumente oder Sprache, hängt an einem gemeinsamen Rust-Bus, eine Idee vom <a href="https://packages.debian.org/stable/dbus">Linux-Systembus</a>. Eine Funktion wird nur bei Bedarf geladen, und wenn eine hängt, arbeiten die anderen weiter.</p>
 
 </td>
 

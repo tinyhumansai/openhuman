@@ -343,7 +343,7 @@ pub async fn ingest(config: &Config, params: BrainIngestParams) -> MemoryResult<
             let mut meta = tinymemory_api::MemoryMeta::default();
             meta.file_path = Some(path.display().to_string());
             tinymemory_integrations::brain::brain_document(
-                super::convert::converter(),
+                &super::convert::converter(config),
                 &raw,
                 Some(source.unwrap_or_else(files_source)),
                 meta,

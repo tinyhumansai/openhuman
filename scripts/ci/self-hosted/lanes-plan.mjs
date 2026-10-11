@@ -67,7 +67,7 @@ export const HOSTED_GROUPS = [
   { group: "pester", lanes: ["pester"], maxParallel: 1, container: false },
 ];
 
-const PRODUCT = '"$(bash scripts/ci/product-features.sh)"';
+const CORE_PRODUCT = '"$(bash scripts/ci/product-features.sh --core)"';
 
 // The storage-drivers lane: the drivers it turns on, the root e2e targets that
 // run once per driver (tests/support/storage_drivers.rs), and the lib-test
@@ -90,7 +90,7 @@ const STORAGE_LIB_FILTERS = [
   "flows::",
   "security::approval::",
   "security::devices::",
-  "security::keyring::",
+  "security::secret_storage::",
   "security::credentials::",
   "desktop::notifications::",
   "integrations::task_sources::",
@@ -231,6 +231,11 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           name: "crate-chain",
           when: true,
           run: "node scripts/ci/check-crate-chain.mjs",
+        },
+        {
+          name: "module-boundaries",
+          when: rust || areas.scripts,
+          run: "bash scripts/ci-cancel-aware.sh node scripts/ci/check-module-boundaries.mjs",
         },
         {
           name: "module-pins",
@@ -409,7 +414,7 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
         {
           name: "clippy-product",
           when: core,
-          run: `cargo clippy -p openhuman --features ${PRODUCT} -- -D warnings`,
+          run: `cargo clippy -p openhuman --features ${CORE_PRODUCT} -- -D warnings`,
         },
         // No separate `cargo clippy -p openhuman` (contributor set): clippy
         // lints every workspace crate in the graph, and openhuman-embed's

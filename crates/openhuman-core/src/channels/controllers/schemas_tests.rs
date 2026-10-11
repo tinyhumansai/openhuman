@@ -2,6 +2,23 @@ use super::*;
 use crate::core::TypeSchema;
 use serde_json::json;
 
+#[tokio::test]
+async fn channel_test_handler_requires_module_before_provider_field_validation() {
+    let mut config = Config::default();
+    config.modules.enabled = false;
+    let error = test_with_config(
+        &config,
+        TestParams {
+            channel: " telegram ".into(),
+            auth_mode: "bot_token".into(),
+            credentials: Value::Null,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(error.contains("module unavailable"), "{error}");
+}
+
 #[test]
 fn schema_handler_parity() {
     let schemas = all_controller_schemas();
@@ -134,4 +151,26 @@ fn hosted_link_functions_are_not_served_by_the_core() {
         assert!(!registered.contains(f), "core still registers `{f}`");
     }
     assert!(names.contains(&"send_message"));
+}
+
+#[tokio::test]
+async fn channel_connect_handler_requires_module_before_provider_field_validation() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    config.modules.enabled = false;
+    config.workspace_dir = directory.path().join("workspace");
+    config.config_path = directory.path().join("config.toml");
+    let error = connect_with_config(
+        &config,
+        ConnectParams {
+            channel: " telegram ".into(),
+            auth_mode: "bot_token".into(),
+            credentials: Some(Value::Null),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(error.contains("module unavailable"), "{error}");
+    assert!(!config.config_path.exists());
+    assert!(!config.workspace_dir.exists());
 }

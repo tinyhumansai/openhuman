@@ -1,0 +1,82 @@
+//! A headless core persists both secret slots and config ciphertext across
+//! process restarts with explicit encrypted storage, without an OS provider or key injection.
+
+use openhuman_core::security::secret_storage;
+use std::process::Command;
+
+#[test]
+fn headless_core_reuses_its_workspace_key_after_restart() {
+    const STAGE: &str = "OPENHUMAN_TEST_HEADLESS_KEYRING_STAGE";
+    if let Ok(stage) = std::env::var(STAGE) {
+        let workspace = std::path::PathBuf::from(std::env::var("OPENHUMAN_WORKSPACE").unwrap());
+        secret_storage::init_workspace(&workspace);
+        secret_storage::init_master_key().unwrap();
+        assert_eq!(secret_storage::backend_name(), "encrypted_file");
+        assert!(secret_storage::is_available());
+        let config_secrets = secret_storage::SecretStore::new(&workspace, true);
+        let ciphertext_path = workspace.join("config-secret.txt");
+        if stage == "write" {
+            secret_storage::set("test-user", "token", "persisted-token").unwrap();
+            std::fs::write(
+                &ciphertext_path,
+                config_secrets.encrypt("config-secret").unwrap(),
+            )
+            .unwrap();
+        } else {
+            assert_eq!(
+                secret_storage::get("test-user", "token")
+                    .unwrap()
+                    .as_deref(),
+                Some("persisted-token")
+            );
+            let ciphertext = std::fs::read_to_string(&ciphertext_path).unwrap();
+            assert!(ciphertext.starts_with("enc2:"));
+            assert_eq!(
+                config_secrets.decrypt(&ciphertext).unwrap(),
+                "config-secret"
+            );
+        }
+        return;
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let key_path = dir.path().join("keyring/master.key");
+    let mut saved_key = None;
+    for stage in ["write", "read"] {
+        let result = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "headless_core_reuses_its_workspace_key_after_restart",
+            ])
+            .env(STAGE, stage)
+            .env("OPENHUMAN_WORKSPACE", dir.path())
+            .env("OPENHUMAN_APP_ENV", "development")
+            .env("OPENHUMAN_KEYRING_BACKEND", "encrypted_file")
+            .env_remove("OPENHUMAN_KEYRING_MASTER_KEY")
+            .env_remove("OPENHUMAN_KEYRING_MASTER_KEY_FILE")
+            .env_remove("OPENHUMAN_STORAGE_URL")
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "headless {stage} failed: {}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let key = std::fs::read(&key_path).unwrap();
+        if let Some(previous) = &saved_key {
+            assert!(previous == &key, "restart must not change the master key");
+        }
+        saved_key = Some(key);
+    }
+    assert!(dir.path().join("secrets.enc").exists());
+    assert!(!dir.path().join("dev-keychain.json").exists());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(key_path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+}

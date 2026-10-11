@@ -1,6 +1,6 @@
 #![allow(unused_imports)]
 
-pub use tinychannels::controllers::{
+pub use tinychannels_bus::controllers::{
     ChannelAccountSnapshot, ChannelAccountState, ChannelConnectionResult, ChannelLastDisconnect,
     ChannelReactionResult, ChannelSendMessageResult, ChannelStatusEntry, ChannelTestResult,
     ChannelThreadEntry, ChannelThreadListResult, ChannelThreadResult, DiscordChannelEntry,

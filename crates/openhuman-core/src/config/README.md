@@ -206,7 +206,7 @@ The `workspace` namespace (`file_read`, `file_write`, `file_reset`) is registere
 
 ## Boundaries
 
-- Secret encryption is done by `security::keyring::SecretStore`; this folder only decides which fields
+- Secret encryption is done by `security::secret_storage::SecretStore`; this folder only decides which fields
   are secrets and when to encrypt or decrypt them.
 - The autonomy policy is defined here as data (`AutonomyConfig`, `[autonomy] enabled = false` by
   default) but enforced by [`crates/openhuman-core/src/security/`](../security/) (`SecurityPolicy::from_config`).

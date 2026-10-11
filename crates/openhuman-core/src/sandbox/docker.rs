@@ -1,8 +1,8 @@
 //! Docker-backed sandbox execution backend.
 //!
-//! Policy mapping for the Docker sandbox; the one-shot container itself is
-//! `tinybox_docker::OneShot` / `DockerCli`. Commands run inside ephemeral
-//! containers with:
+//! Policy mapping for the Docker sandbox; TinyBox owns one-shot container
+//! creation, execution, and bounded output collection. Commands run inside
+//! ephemeral containers with:
 //! - Controlled workspace mounts (host `action_dir` → `/workspace`)
 //! - Network isolation (default: `none`)
 //! - Resource limits (memory, CPU)
@@ -18,7 +18,7 @@ use super::types::{
     SandboxBackendHandle, SandboxBackendKind, SandboxExecRequest, SandboxExecResult, SandboxPolicy,
     SandboxStatus,
 };
-use tinybox_docker::{DockerCli, OneShot};
+use tinybox_docker::DockerCli;
 
 /// Label applied to all sandbox containers for orphan cleanup.
 const CONTAINER_LABEL: &str = "openhuman.sandbox=true";
@@ -31,52 +31,19 @@ pub async fn is_docker_available() -> bool {
 /// Execute a command inside an ephemeral Docker container.
 ///
 /// Policy stays here (which image, network, limits and mounts the
-/// `SandboxPolicy` asks for); the one-shot `docker run --rm` command line and
-/// its execution are `tinybox_docker::{OneShot, DockerCli}`.
+/// `SandboxPolicy` asks for); TinyBox owns the one-shot container operation.
+/// There is no local Docker execution fallback when the module is unavailable.
+#[cfg(feature = "modules")]
 pub async fn docker_exec(
+    config: &crate::config::Config,
     policy: &SandboxPolicy,
     request: &SandboxExecRequest,
 ) -> anyhow::Result<SandboxExecResult> {
-    let overrides = policy.docker_overrides.as_ref();
-    let mut spec = OneShot::new(&policy.workspace_root, &request.command)
-        .with_label(CONTAINER_LABEL)
-        .with_read_only_mounts(policy.read_only_mounts.iter().cloned());
-    if let Some(ov) = overrides {
-        if let Some(image) = &ov.image {
-            spec = spec.with_image(image);
-        }
-        if let Some(network) = &ov.network {
-            spec = spec.with_network(network);
-        }
-        if let Some(mb) = ov.memory_limit_mb {
-            spec = spec.with_memory_mb(mb);
-        }
-        if let Some(cpu) = ov.cpu_limit {
-            spec = spec.with_cpus(cpu);
-        }
-        if let Some(ro) = ov.read_only_rootfs {
-            spec = spec.with_read_only_rootfs(ro);
-        }
-        spec = spec.with_extra_cap_drops(ov.extra_caps_drop.iter().cloned());
-    }
+    let run = build_docker_request(policy, request)?;
 
-    // Environment passthrough (explicit allowlist, only when set), then the
-    // request-specific environment.
-    let mut env: Vec<(std::ffi::OsString, std::ffi::OsString)> = policy
-        .env_passthrough
-        .iter()
-        .filter_map(|name| std::env::var(name).ok().map(|v| (name.into(), v.into())))
-        .collect();
-    env.extend(request.env.iter().map(|(k, v)| (k.clone(), v.clone())));
-    let spec = spec.with_env(env);
+    tracing::debug!("[sandbox:docker] launching container");
 
-    tracing::debug!(
-        workspace = %policy.workspace_root.display(),
-        command = %request.command,
-        "[sandbox:docker] launching container"
-    );
-
-    match DockerCli::new().run_one_shot(&spec, request.timeout).await {
+    match crate::modules::tinybox::run_docker(config, run).await {
         Ok(out) if out.timed_out => {
             tracing::warn!(
                 timeout_secs = request.timeout.as_secs(),
@@ -103,11 +70,89 @@ pub async fn docker_exec(
                 timed_out: false,
             })
         }
-        Err(e) => {
-            tracing::error!(error = %e, "[sandbox:docker] failed to spawn container");
-            anyhow::bail!("Docker execution failed: {e}")
+        Err(error) => anyhow::bail!("Docker execution failed: {error}"),
+    }
+}
+
+#[cfg(not(feature = "modules"))]
+pub async fn docker_exec(
+    _config: &crate::config::Config,
+    _policy: &SandboxPolicy,
+    _request: &SandboxExecRequest,
+) -> anyhow::Result<SandboxExecResult> {
+    anyhow::bail!("TinyBox module support is disabled; Docker sandbox execution is unavailable")
+}
+
+#[cfg(feature = "modules")]
+fn build_docker_request(
+    policy: &SandboxPolicy,
+    request: &SandboxExecRequest,
+) -> anyhow::Result<crate::modules::tinybox::contract::DockerRunRequest> {
+    use crate::modules::tinybox::contract::{DockerRunRequest, MAX_DOCKER_RUN_TIMEOUT_MS};
+    use std::collections::BTreeMap;
+
+    let workspace = path_string(&policy.workspace_root, "workspace")?;
+    let read_only_mounts = policy
+        .read_only_mounts
+        .iter()
+        .map(|path| path_string(path, "read-only mount"))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+
+    // Keep the existing allowlist as the only inherited environment surface.
+    // Per-request values override inherited values with the same name.
+    let mut env = BTreeMap::new();
+    for name in &policy.env_passthrough {
+        if let Ok(value) = std::env::var(name) {
+            env.insert(name.clone(), value);
         }
     }
+    for (name, value) in &request.env {
+        let name = name
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Docker environment name is not UTF-8"))?;
+        let value = value
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Docker environment value is not UTF-8"))?;
+        env.insert(name.to_owned(), value.to_owned());
+    }
+
+    let timeout_ms = request
+        .timeout
+        .as_nanos()
+        .saturating_add(999_999)
+        .checked_div(1_000_000)
+        .unwrap_or(0)
+        .max(1);
+    let timeout_ms = u64::try_from(timeout_ms)
+        .map_err(|_| anyhow::anyhow!("Docker timeout exceeds the supported limit"))?;
+    if timeout_ms > MAX_DOCKER_RUN_TIMEOUT_MS {
+        anyhow::bail!("Docker timeout exceeds the supported limit");
+    }
+
+    let overrides = policy.docker_overrides.as_ref();
+    Ok(DockerRunRequest {
+        workspace,
+        image: overrides.and_then(|config| config.image.clone()),
+        command: request.command.clone(),
+        network: overrides.and_then(|config| config.network.clone()),
+        memory_limit_mb: overrides.and_then(|config| config.memory_limit_mb),
+        cpus: overrides.and_then(|config| config.cpu_limit),
+        read_only_rootfs: overrides.and_then(|config| config.read_only_rootfs),
+        read_only_mounts,
+        extra_cap_drops: overrides
+            .map(|config| config.extra_caps_drop.clone())
+            .unwrap_or_default(),
+        env,
+        label: Some(CONTAINER_LABEL.to_owned()),
+        timeout_ms,
+    })
+}
+
+#[cfg(feature = "modules")]
+fn path_string(path: &std::path::Path, kind: &str) -> anyhow::Result<String> {
+    path.to_str()
+        .map(str::to_owned)
+        .ok_or_else(|| anyhow::anyhow!("Docker {kind} path is not UTF-8"))
 }
 
 /// Clean up orphaned sandbox containers (those labeled with

@@ -98,6 +98,8 @@ export const CORE_RPC_METHODS = {
 
 type CoreRpcMethod = (typeof CORE_RPC_METHODS)[keyof typeof CORE_RPC_METHODS];
 
+// keep until v0.66 (review after 2027-01-11): remove with the server table only
+// after shipped-client analytics and Sentry method-count evidence.
 export const LEGACY_METHOD_ALIASES: Record<string, CoreRpcMethod> = {
   // The session RPCs became the kind-agnostic credential pair once the core
   // stopped validating sessions itself. Mirrored in

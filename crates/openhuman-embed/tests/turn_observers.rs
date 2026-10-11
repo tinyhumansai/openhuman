@@ -69,3 +69,36 @@ fn existing_langfuse_exporter_builds_a_host_owned_batch_without_network() {
     assert_eq!(batch["batch"][0]["body"]["traceId"], "run");
     assert!(!batch.to_string().contains("fixture-token"));
 }
+
+#[cfg(feature = "langfuse")]
+#[test]
+fn existing_otlp_builder_turns_host_spans_into_requests_without_network() {
+    use openhuman_embed::observe::langfuse::{
+        otlp_requests, ExportBrand, LangfuseClient, SpanKind, SpanStatus, TraceSpan,
+    };
+    let root = TraceSpan {
+        trace_id: "trace".into(),
+        span_id: "root".into(),
+        parent_span_id: None,
+        name: "host.run".into(),
+        kind: SpanKind::Turn,
+        start_unix_ms: 1,
+        end_unix_ms: Some(2),
+        status: SpanStatus::Ok,
+        attributes: Default::default(),
+        input: None,
+        output: None,
+    };
+    let brand = ExportBrand {
+        product: "host",
+        version: "1.0.0",
+    };
+    let requests = otlp_requests(&[root], "development", &brand);
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0]["resourceSpans"][0]["scopeSpans"][0]["spans"].is_array());
+    let client = LangfuseClient::direct("https://lf.example.test", "pk", "sk").unwrap();
+    assert_eq!(
+        client.otlp_endpoint(),
+        "https://lf.example.test/api/public/otel/v1/traces"
+    );
+}

@@ -137,10 +137,13 @@ async fn push_recent_transcript_ignores_blank_and_caps_history() {
     assert_eq!(values.last().unwrap(), "line 6");
 }
 
-#[test]
-fn capture_expected_app_name_is_none_off_macos() {
+#[tokio::test]
+async fn capture_expected_app_name_is_none_off_macos() {
     if !cfg!(target_os = "macos") {
-        assert_eq!(capture_expected_app_name(), None);
+        assert_eq!(
+            capture_expected_app_name(&crate::config::Config::default()).await,
+            None
+        );
     }
 }
 

@@ -76,7 +76,7 @@ pub async fn sync_one(config: &Config, source: &MemorySourceConfig) -> MemoryRes
         reader.as_ref(),
         &entry,
         &config.action_dir,
-        crate::memory::convert::converter(),
+        &crate::memory::convert::converter(config),
     )
     .await
     .map_err(|error| MemoryError::Engine(format!("reading the source failed: {error}")))?;

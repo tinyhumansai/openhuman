@@ -243,21 +243,11 @@ fn inference_engine_compiled_in_when_feature_on() {
     const { assert!(crate::inference::INFERENCE_COMPILED_IN) };
 }
 
-/// With the `inference` feature off, the marker flips and `cpal` leaves the
-/// dependency graph. The observable effect is the microphone-permission probe:
-/// it reports `Unknown` rather than a real verdict, because there is no
-/// audio-device API compiled in to ask. Speech-to-text is unaffected in either
-/// direction — it is a hosted HTTP call now, not an in-process engine.
+/// The host marker follows the inference gate without linking audio-device code.
 #[test]
 #[cfg(not(feature = "inference"))]
 fn inference_engine_compiled_out_when_feature_off() {
-    use tinycomputer_accessibility::{detect_microphone_permission, PermissionState};
     const { assert!(!crate::inference::INFERENCE_COMPILED_IN) };
-    assert_eq!(
-        detect_microphone_permission(),
-        PermissionState::Unknown,
-        "without `inference` there is no audio-device API to probe"
-    );
 }
 
 /// With the `skills` feature on (the default), all three skill domains are

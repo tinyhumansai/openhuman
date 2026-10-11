@@ -176,7 +176,7 @@ OpenHuman en pahalıya mal olan kısımları yeniden düşünür: yapay zekanın
 
 <p><a href="https://tinyhumans.gitbook.io/openhuman/developing/loadable-modules">Eklentiler nasıl çalışır</a></p>
 
-<p>Arama, belgeler ya da ses gibi her özellik tek bir Rust veri yoluna takılır; bu fikir <a href="https://www.freedesktop.org/wiki/Software/dbus/">Linux sistem veri yolundan</a> ödünç alınmıştır. Bir özellik yalnızca gerektiğinde yüklenir ve biri takılırsa diğerleri çalışmaya devam eder.</p>
+<p>Arama, belgeler ya da ses gibi her özellik tek bir Rust veri yoluna takılır; bu fikir <a href="https://packages.debian.org/stable/dbus">Linux sistem veri yolundan</a> ödünç alınmıştır. Bir özellik yalnızca gerektiğinde yüklenir ve biri takılırsa diğerleri çalışmaya devam eder.</p>
 
 </td>
 

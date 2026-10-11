@@ -120,6 +120,8 @@ const TOOL_FAMILIES: &[ToolFamily] = &[
         ],
         default_enabled: false,
     },
+    // keep until v0.66 (review after 2027-01-11): persisted opt-in snapshots need
+    // a one-shot skill_manage -> workflow_manage migration before retirement.
     // Legacy alias: pre-rename `enabled_tool_names` snapshots stored this
     // family as `skill_manage`. Retain it (same rust_names) so users who had
     // already opted in keep these default-OFF tools enabled after the
@@ -211,6 +213,8 @@ fn family_for_rust_name(name: &str) -> Option<&'static ToolFamily> {
 /// - UI toggle IDs (legacy / partial-rollout format)
 ///
 /// Unknown entries are ignored.
+// keep until v0.66 (review after 2027-01-11): persisted app-state opt-in keys
+// need a one-shot rename before this alias can be removed safely.
 const LEGACY_ALIASES: &[(&str, &str)] = &[("skill_manage", "workflow_manage")];
 
 fn expand_enabled_tool_names(enabled_tool_names: &[String]) -> HashSet<String> {

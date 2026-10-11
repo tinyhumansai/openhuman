@@ -176,7 +176,7 @@ OpenHuman은 비용이 가장 많이 드는 부분을 다시 생각했습니다.
 
 <p><a href="https://tinyhumans.gitbook.io/openhuman/developing/loadable-modules">플러그인 작동 방식</a></p>
 
-<p>검색, 문서, 음성 같은 모든 기능이 하나의 Rust 버스에 연결됩니다. <a href="https://www.freedesktop.org/wiki/Software/dbus/">Linux 시스템 버스</a>에서 빌려 온 아이디어입니다. 기능은 필요할 때만 로드되고, 하나가 멈춰도 나머지는 계속 작동합니다.</p>
+<p>검색, 문서, 음성 같은 모든 기능이 하나의 Rust 버스에 연결됩니다. <a href="https://packages.debian.org/stable/dbus">Linux 시스템 버스</a>에서 빌려 온 아이디어입니다. 기능은 필요할 때만 로드되고, 하나가 멈춰도 나머지는 계속 작동합니다.</p>
 
 </td>
 

@@ -1,5 +1,5 @@
 use super::{
-    all_web_channel_controller_schemas, all_web_channel_registered_controllers, cancel_chat,
+    all_web_channel_controller_schemas, all_web_channel_registered_controllers, cancel_chat_scoped,
     channel_web_cancel, channel_web_queue_clear, channel_web_queue_remove,
     channel_web_queue_status, classify_inference_error, drain_queued_turns_for_test,
     event_session_id_for, generic_inference_error_user_message, in_flight_entries_for_test,

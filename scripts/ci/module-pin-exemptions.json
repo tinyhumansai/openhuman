@@ -11,11 +11,5 @@
     "Delete an entry the moment the pins are reconciled. An exemption that has",
     "stopped being true fails the gate too \u2014 `expect` must still match."
   ],
-  "exemptions": [
-    {
-      "id": "tinybox",
-      "expect": "v0.1.16-7-gb61c6bce",
-      "reason": "The upstream submodule includes seven unreleased commits while the registry continues to load the published v0.1.16 module. Remove this exception when the next TinyBox artifact is published and both pins advance."
-    }
-  ]
+  "exemptions": []
 }

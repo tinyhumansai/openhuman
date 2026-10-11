@@ -40,7 +40,7 @@ const LEGACY_LIMIT_ENTRIES = [
   // under the general 750 limit, so it needs no exception at all.
   // The session-todo integration added transcript metadata construction to
   // this already-exempt composition seam. Keep its allowance exact.
-  ["crates/openhuman-core/src/agent/session_host/runtime_session.rs", 1293],
+  ["crates/openhuman-core/src/agent/session_host/runtime_session.rs", 1184],
   // Session-host factory still assembles the product's deliberately coupled
   // provider, security, memory, tool and prompt policy.  Generic session
   // state moved to tinyagents-runtime; this remaining composition is split in
@@ -54,8 +54,8 @@ const LEGACY_LIMIT_ENTRIES = [
   // their current sizes while follow-up work separates their test concerns.
   // `core/` was pruned from the line limit by name until these pins; its
   // oversized files are pinned at the size they had when enforcement began.
-  ["crates/openhuman-core/src/core/all.rs", 1349],
-  ["crates/openhuman-core/src/core/all_tests.rs", 1522],
+  ["crates/openhuman-core/src/core/all.rs", 1340],
+  ["crates/openhuman-core/src/core/all_tests.rs", 1482],
   ["crates/openhuman-core/src/core/events.rs", 1789],
   ["crates/openhuman-core/src/core/events_tests.rs", 997],
   ["crates/openhuman-core/src/core/observability.rs", 3493],

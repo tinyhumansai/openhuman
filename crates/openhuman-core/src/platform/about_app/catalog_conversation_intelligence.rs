@@ -374,6 +374,16 @@ Capability {
         privacy: MEMORY_TO_REMOTE_ENGINE,
     },
 Capability {
+        id: "intelligence.tool_output_recovery",
+        name: "Tool Output Recovery",
+        domain: "tokenjuice",
+        category: CapabilityCategory::Intelligence,
+        description: "Large tool outputs stay recoverable by their saved handles. The assistant can search, extract or summarize selected parts without retrieving the entire original. Recovery and web-page extraction require the TinyJuice module; if it is unavailable, the affected operation reports an error.",
+        how_to: "The assistant uses juice_find, juice_extract, juice_summarize and juice_retrieve when a tool result includes a recovery handle.",
+        status: CapabilityStatus::Beta,
+        privacy: RAW_TO_INFERENCE_PROVIDER,
+    },
+Capability {
         id: "intelligence.context_breakdown",
         name: "Context Window Breakdown",
         domain: "agent",

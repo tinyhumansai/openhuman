@@ -13,16 +13,6 @@ use super::parallel_turn::{cancel_parallel_turn_by_request_id, cancel_parallel_t
 use super::start_chat::start_chat;
 use super::state::{cancel_in_flight_gracefully, cancel_should_target, in_flight, key_for};
 
-/// Cancel whatever turn is currently running on a thread (unscoped stop).
-///
-/// Back-compat entry point (Stop button / session teardown). For a cancel that
-/// must only affect a specific turn — so a stale cancel can't kill a newer turn
-/// on the same thread — use [`cancel_chat_scoped`] with the target `request_id`
-/// (#4760).
-pub async fn cancel_chat(client_id: &str, thread_id: &str) -> Result<Option<String>, String> {
-    cancel_chat_scoped(client_id, thread_id, None).await
-}
-
 /// Cancel the in-flight turn(s) for a thread.
 ///
 /// When `request_id` is `Some`, the cancel is **scoped**: it only tears down the

@@ -1,4 +1,4 @@
-# DESKTOP_PRODUCT_FEATURES — the core Cargo gates the shipped desktop app has.
+# DESKTOP_PRODUCT_FEATURES — the Cargo gates the shipped desktop app has.
 #
 # This file is the single source of truth for "what OpenHuman the product is",
 # as distinct from `[features] default` in Cargo.toml, which is now only the
@@ -32,8 +32,8 @@ channels
 # The media_generate_* agent tools.
 media
 
-# Local audio-device access (cpal): voice recording plus the accessibility
-# microphone-permission probe. `voice` requires it.
+# Compatibility marker for inference-backed features. Native microphone
+# permission checks execute through TinyComputer; `voice` requires this gate.
 inference
 
 # STT/TTS, dictation server, reply speech. Shipped MISSING from v0.58.19 to
@@ -106,3 +106,6 @@ tinymemes
 # on first open. Also serves `sqlite:` in `[storage] url`. MongoDB is not part
 # of the product.
 storage-sqlite
+
+# OS keychain providers owned by the RPC host layer.
+os-keyring

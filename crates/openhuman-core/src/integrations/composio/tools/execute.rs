@@ -236,8 +236,6 @@ impl ComposioExecuteTool {
             iana = %iana,
             "[composio][dispatcher] applying calendar query defaults pre-dispatch"
         );
-        let arguments =
-            tinyconnectors::execute::apply_calendar_query_defaults(&tool, arguments, &iana);
 
         // Task-recency window (morning briefing): when the calling agent
         // installed a window, inject best-effort server-side narrowing for
@@ -248,9 +246,22 @@ impl ComposioExecuteTool {
             chrono::Utc::now()
                 - chrono::Duration::from_std(w).unwrap_or_else(|_| chrono::Duration::zero())
         });
-        let arguments = match task_window_since {
-            Some(since) => tinyconnectors::execute::apply_window_args(&tool, arguments, since),
-            None => arguments,
+        let arguments = match super::super::processing::prepare(
+            self.config.as_ref(),
+            &tool,
+            arguments,
+            Some(iana),
+            task_window_since.map(|since| since.to_rfc3339()),
+        )
+        .await
+        {
+            Ok(arguments) => arguments,
+            Err(error) => {
+                return (
+                    Box::new(self.config.as_ref().clone()),
+                    Ok(ToolResult::error(error)),
+                )
+            }
         };
 
         // Resolve the client through the mode-aware factory on every
@@ -289,7 +300,17 @@ impl ComposioExecuteTool {
                 // slug is a curated task-fetch action. Runs before the
                 // markdown/JSON body decision so the agent reads filtered data.
                 let resp = match task_window_since {
-                    Some(since) => tinyconnectors::execute::filter_response(&tool, resp, since),
+                    Some(since) => match super::super::processing::filter(
+                        &live_config,
+                        &tool,
+                        resp,
+                        since.to_rfc3339(),
+                    )
+                    .await
+                    {
+                        Ok(response) => response,
+                        Err(error) => return (live_config, Ok(ToolResult::error(error))),
+                    },
                     None => resp,
                 };
                 tracing::info!(

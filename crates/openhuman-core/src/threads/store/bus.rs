@@ -31,8 +31,8 @@ use serde_json::json;
 use crate::core::events::DomainEvent;
 use tinybus::EventHandler;
 use tinybus::SubscriptionHandle;
-use tinychannels_bus::context::conversation_history_key;
 use tinychannels_bus::ChannelMessage;
+use tinychannels_runtime::context::conversation_history_key;
 
 use super::{
     append_message, ensure_thread, get_messages, ConversationMessage, CreateConversationThread,
@@ -424,7 +424,7 @@ fn persist_channel_turn(
 }
 
 fn tinychannels_session_key(envelope: &tinychannels_bus::ChannelInboundEnvelope) -> String {
-    tinychannels_bus::build_session_key_for_inbound_envelope(
+    tinychannels_runtime::channel::build_session_key_for_inbound_envelope(
         "main",
         envelope,
         tinychannels_bus::channel::SessionKeyPolicy::default(),

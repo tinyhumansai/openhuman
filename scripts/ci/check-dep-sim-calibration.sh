@@ -15,8 +15,10 @@
 # whenever scripts/kernel-floor.limits does and belongs in the same PR.
 # 264 -> 265 on 2026-08-21: the tinymemory #76/#77 bump adds exactly one
 # name, `tinymemory-bus`. 265 -> 267 on 2026-08-22: the MCP extraction
-# adds `tinymcp` and `tinymcp-bus`. 267 -> 268 on 2026-08-23: the
-# TinyJuice wire contract moved into `tinyjuice-bus`, which cannot be gated because
+# adds `tinymcp` and `tinymcp-bus`. 267 -> 268 on 2026-08-22: language
+# runtimes moved behind the `tinyruntime` TinyBus module, adding
+# `tinyruntime-bus`. 268 -> 269 on 2026-08-23: the TinyJuice wire
+# contract moved into `tinyjuice-bus`, which cannot be gated because
 # `inference::tokenjuice` compiles in every build. 269 -> 270 on
 # 2026-08-29: `tinytools` becomes the dependency behind the `Tool`
 # trait/types, which cannot be gated because `tools/` is kernel
@@ -108,13 +110,14 @@ cd "$(dirname "$0")/../.."
 # 315 -> 316 on 2026-10-09: cron and flows on the storage ports add the
 # first-party tinyflows-drivers crate (one package, one name; no new
 # external crate).
-# 316 -> 317 on 2026-10-10: storage-file is always on, adding the
-# first-party tinystoragedrivers-file crate (one package, one name; no new
-# external crate).
-# 339 -> 337 packages / 317 -> 315 names on 2026-10-10: removing the
-# managed-runtime dependency surface sheds two names; native builds stay at 2.
-# This matches the current `flows:337:315:2` entry in
+# 316 -> 317: storage-file adds the first-party file driver.
+# 317 -> 318: pre-core registry vocabulary adds the pure tinycomputer-bus.
+
+# This matches the current `flows:326:304:2` entry in
 # scripts/kernel-floor.limits; its preceding entries are historical.
-EXPECTED_NAMES=315
+# 318 -> 313: connector implementation cut (-8) and explicit flows loader (+3).
+# 313 -> 304: current-main runtime removal and combined released module cuts.
+# Measured by dep-sim --cut-nothing on the integrated branch.
+EXPECTED_NAMES=304
 
 exec python3 scripts/dep-sim.py --cut-nothing --expect-names "${EXPECTED_NAMES}"

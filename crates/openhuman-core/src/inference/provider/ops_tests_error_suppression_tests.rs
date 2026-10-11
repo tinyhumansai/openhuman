@@ -16,7 +16,6 @@ fn list_configured_models_accepts_slug() {
         label: "OpenAI".to_string(),
         endpoint: "https://api.openai.com/v1".to_string(),
         auth_style: AuthStyle::Bearer,
-        legacy_type: None,
         default_model: None,
     });
 
@@ -47,7 +46,6 @@ fn openrouter_detection_matches_builtin_slug_or_host() {
         label: slug.to_string(),
         endpoint: endpoint.to_string(),
         auth_style: AuthStyle::Bearer,
-        legacy_type: None,
         default_model: None,
     };
 

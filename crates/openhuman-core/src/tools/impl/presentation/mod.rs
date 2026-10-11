@@ -27,7 +27,6 @@
 //! #3026 Files panel, and the orchestrator grounding rule in #3029
 //! continue to work without change.
 
-use crate::tools::implementations::document::format::spec::ImageFormat;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -102,10 +101,11 @@ impl PresentationTool {
     /// The agent-registry constructor: the artifact metadata goes to
     /// `config.workspace_dir`, the deck to the files folder (#5505).
     pub fn for_config(config: &crate::config::Config, security: Arc<SecurityPolicy>) -> Self {
-        Self::new(
+        Self::with_config(
             config.workspace_dir.clone(),
             crate::agent::artifacts::FileRoots::from_config(config),
             security,
+            config.clone(),
         )
     }
 
@@ -479,24 +479,21 @@ impl PresentationTool {
             ));
         }
 
-        // Identification and measurement live in `crate::tools::implementations::document::format::spec::image`, which
-        // is ungated: a host resolving image bytes has to do this to build a
-        // spec, and it must not need the writer to do it. One implementation
-        // also means the host and the module cannot disagree about what is
-        // embeddable.
-        let format = ImageFormat::sniff(&bytes).ok_or_else(|| {
-            "unsupported image type (only PNG and JPEG are embeddable)".to_string()
-        })?;
-
-        let (width_px, height_px) = format
-            .dimensions(&bytes)
-            .ok_or_else(|| format!("could not read {format} dimensions (corrupt header?)"))?;
+        let config = match &self.config {
+            Some(config) => config.clone(),
+            None => crate::config::ops::load_current_or_init()
+                .await
+                .map_err(|error| format!("could not load runtime configuration: {error}"))?,
+        };
+        let facts = crate::modules::documents::inspect_image(&config, &bytes)
+            .await
+            .map_err(|error| error.to_string())?;
 
         Ok(ResolvedSlideImage {
             bytes,
-            format,
-            width_px,
-            height_px,
+            format: facts.format,
+            width_px: facts.width_px,
+            height_px: facts.height_px,
             caption: image.caption.clone(),
         })
     }

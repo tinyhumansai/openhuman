@@ -97,6 +97,11 @@ fn is_one_segment_under(users: &std::path::Path, dir: &std::path::Path, id: &str
 }
 
 proptest! {
+    #![proptest_config(ProptestConfig {
+        failure_persistence: None,
+        ..ProptestConfig::default()
+    })]
+
     /// `for_user` refuses exactly the documented inputs and otherwise yields an
     /// id in the charset, with no separator, that parses back to itself.
     #[test]
@@ -190,6 +195,7 @@ proptest! {
 
 proptest! {
     #![proptest_config(ProptestConfig {
+        failure_persistence: None,
         // Each case touches the filesystem.
         cases: ProptestConfig::default().cases.min(256),
         ..ProptestConfig::default()

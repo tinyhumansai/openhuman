@@ -448,15 +448,16 @@ fn config_schema_defaults_cover_dashboard_capability_memory_and_security_shapes(
         ..Default::default()
     };
     assert!(!local_ai.is_active());
-    #[allow(deprecated)]
-    {
-        assert!(!local_ai.use_local_for_embeddings());
-        local_ai.runtime_enabled = true;
-        assert!(local_ai.is_active());
-        assert!(local_ai.use_local_for_embeddings());
-        assert!(local_ai.use_local_for_heartbeat());
-        assert!(local_ai.use_local_for_subconscious());
-    }
+    local_ai.runtime_enabled = true;
+    assert!(local_ai.is_active());
+    let routing = openhuman_core::config::Config {
+        local_ai,
+        embeddings_provider: Some("ollama:nomic-embed-text".into()),
+        ..Default::default()
+    };
+    assert!(routing.workload_uses_local("embeddings"));
+    assert!(!routing.workload_uses_local("heartbeat"));
+    assert!(!routing.workload_uses_local("subconscious"));
 
     let mut search = openhuman_core::config::schema::SearchConfig {
         brave: openhuman_core::config::schema::SearchEngineCredentials {
@@ -1241,12 +1242,10 @@ async fn config_env_overlay_public_loader_applies_runtime_and_tool_overrides() {
     assert!(config.proxy.enabled);
     assert_eq!(config.proxy.scope, ProxyScope::Services);
     assert!(config.proxy.should_apply_to_service("tool.browser"));
-    assert!(!config.node.enabled);
-    assert_eq!(config.node.version, "v24.0.0");
-    assert!(!config.node.prefer_system);
-    assert!(!config.runtime_python.enabled);
-    assert_eq!(config.runtime_python.minimum_version, "3.13.0");
-    assert!(config.runtime_python.prefer_system);
+    // Deprecated runtime environment settings must not resurrect removed fields.
+    let serialized = serde_json::to_value(&config).expect("serialize config");
+    assert!(serialized.get("node").is_none());
+    assert!(serialized.get("runtime_python").is_none());
     assert!(!config.observability.analytics_enabled);
     assert_eq!(
         config.observability.sentry_dsn.as_deref(),
@@ -1698,8 +1697,8 @@ async fn credentials_public_ops_cover_service_and_missing_session_error_paths() 
     std::fs::create_dir_all(config.config_path.parent().expect("config parent"))
         .expect("create config parent");
 
-    openhuman_core::security::credentials::start_login_gated_services(&config).await;
-    openhuman_core::security::credentials::stop_login_gated_services(&config).await;
+    openhuman_core::security::credentials::start_credential_gated_services(&config).await;
+    openhuman_core::security::credentials::stop_credential_gated_services(&config).await;
 
     // The account-bound link-token and OAuth ops live in `openhuman-tinyhumans`
     // (`hosted::{channel_link, oauth}`); validation still runs first, and a
@@ -3812,7 +3811,7 @@ fn credentials_profile_store_public_api_persists_updates_and_recovers_bad_files(
 #[test]
 fn credentials_auth_service_selects_active_default_and_requested_profiles() {
     let _lock = env_lock();
-    let _keyring_guard = EnvVarGuard::set("OPENHUMAN_KEYRING_BACKEND", "disabled");
+    let _keyring_guard = EnvVarGuard::set("OPENHUMAN_KEYRING_BACKEND", "encrypted_file");
     let tmp = tempdir().expect("tempdir");
     let service = AuthService::new(&tmp.path().join("auth-service"), false);
 
@@ -4083,7 +4082,7 @@ fn credentials_profile_store_recovers_dropped_entries_empty_files_and_datetime_e
 #[test]
 fn credentials_profile_store_round_trips_oauth_secret_fields_after_backend_selection() {
     let _lock = env_lock();
-    let _keyring_guard = EnvVarGuard::set("OPENHUMAN_KEYRING_BACKEND", "disabled");
+    let _keyring_guard = EnvVarGuard::set("OPENHUMAN_KEYRING_BACKEND", "encrypted_file");
     let tmp = tempdir().expect("tempdir");
     let state_dir = tmp.path().join("json-fallback");
     let store = AuthProfilesStore::new(&state_dir, false);
@@ -4146,7 +4145,7 @@ fn credentials_profile_store_keychain_migration_and_fallback_paths_are_determini
     let hit_dir = tmp.path().join("keychain-hit");
     std::fs::create_dir_all(&hit_dir).expect("create keychain hit dir");
     let hit_profile_id = "github:main";
-    openhuman_core::security::keyring::set(
+    openhuman_core::security::secret_storage::set(
         "keychain-hit",
         &format!("auth:{hit_profile_id}"),
         &json!({
@@ -4245,7 +4244,7 @@ fn credentials_profile_store_keychain_migration_and_fallback_paths_are_determini
             .and_then(|profile| profile.token.as_deref()),
         Some("plain-token-for-migration")
     );
-    let migrated_keychain = openhuman_core::security::keyring::get(
+    let migrated_keychain = openhuman_core::security::secret_storage::get(
         "keychain-migrate",
         &format!("auth:{migrate_profile_id}"),
     )
@@ -4259,7 +4258,7 @@ fn credentials_profile_store_keychain_migration_and_fallback_paths_are_determini
     let fallback_dir = tmp.path().join("keychain-fallback");
     std::fs::create_dir_all(&fallback_dir).expect("create keychain fallback dir");
     let fallback_profile_id = "slack:bot";
-    openhuman_core::security::keyring::set(
+    openhuman_core::security::secret_storage::set(
         "keychain-fallback",
         &format!("auth:{fallback_profile_id}"),
         "not-json",
@@ -4305,7 +4304,7 @@ fn credentials_profile_store_keychain_migration_and_fallback_paths_are_determini
         "migrated profile should be removable"
     );
     assert!(
-        openhuman_core::security::keyring::get(
+        openhuman_core::security::secret_storage::get(
             "keychain-migrate",
             &format!("auth:{migrate_profile_id}"),
         )

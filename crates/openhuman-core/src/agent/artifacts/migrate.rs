@@ -54,6 +54,8 @@ const METADATA_FILES: &[&str] = &["meta.json", "args.json", "meta.json.tmp"];
 
 /// Migrate every legacy `Ready` artifact in `workspace_dir` into `files_dir`.
 /// Idempotent and safe to run on every boot.
+// keep until v0.66 (review after 2027-01-11): offline workspaces can still hold
+// pre-files Ready artifacts; remove only with an explicit upgrade/import boundary.
 pub async fn migrate_legacy_artifacts(workspace_dir: &Path, files_dir: &Path) -> MigrationReport {
     migrate_with(workspace_dir, files_dir, None).await
 }

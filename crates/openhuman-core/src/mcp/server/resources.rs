@@ -20,7 +20,7 @@
 //! a matching catalog entry fails that test and therefore CI.
 
 use serde_json::{json, Value};
-use tinymcp::{ResourceSpec, ToolCallError};
+use tinymcp_bus::{ResourceSpec, ToolCallError};
 
 /// Every bundled prompt is markdown.
 const MIME_TYPE: &str = "text/markdown";
@@ -164,7 +164,7 @@ pub fn resource_specs() -> Vec<ResourceSpec> {
 
 /// The `resources/read` result for `uri`, or
 /// [`ToolCallError::ResourceNotFound`] (`-32002`) when the catalog has no such
-/// entry. `tinymcp` has already rejected a missing or blank `uri`.
+/// entry. TinyMCP has already rejected a missing or blank `uri`.
 pub fn read_resource(uri: &str) -> Result<Value, ToolCallError> {
     let resource = RESOURCE_CATALOG
         .iter()

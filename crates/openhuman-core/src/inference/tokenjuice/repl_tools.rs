@@ -1,38 +1,13 @@
-//! Agent tools `juice_find`, `juice_extract` and `juice_summarize`: inspect a
-//! tool result the TinyJuice module stored behind a handle.
-//!
-//! With `[tokenjuice] repl_handle_enabled` on, the module replaces a large
-//! result with a stats line, a short head and a handle instead of a summary
-//! (see `docs/repl-tools.md` in the TinyJuice repository). These tools are how
-//! the model queries what is behind that handle without reading it whole.
-//!
-//! TinyJuice owns the ops and the tool declarations
-//! (`tinyjuice::repl::tools::repl_tools`, the `tinytools` feature). Its CCR
-//! store, though, lives inside the module behind the bus, so a store handed to
-//! `repl_tools` in this process would be empty. Each wrapper here therefore
-//! fetches the original through the same `Retrieve` call `juice_retrieve`
-//! makes, gives the stock tool a one-entry store holding it, and returns what
-//! the stock tool answers. The ops, argument parsing, size caps and
-//! read-only/concurrency flags are TinyJuice's, unchanged.
-//!
-//! Models also pass the `artifact_path` from a `[tool_result_preview]`
-//! envelope (an oversized output persisted under
-//! `<workspace>/artifacts/tool-results/`) where the handle goes. Such a path is
-//! read from that one directory — nowhere else, no traversal, no symlink out,
-//! and no larger than `file_read` would open — and queried the same way.
-//! Anything else that is not a handle (a tool call id such as `call_…`) gets a
-//! message saying what a handle looks like.
-//!
-//! Read-only, no side effects, no network access. Nothing here logs the
-//! handle's content or the query.
+//! Thin query adapters for the module-owned CCR store and REPL algorithms.
+//! OpenHuman authorizes tool-result artifacts; only their content crosses the bus.
 
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::Value;
-use tinyjuice::cache::store::{CcrPutResult, CcrStore};
-use tinyjuice::repl::ReplLimits;
+use tinyjuice_bus::repl::{ReplLimits, ReplOp};
+use tinyjuice_bus::wire::{QueryError, QueryRequest, QueryResponse, QueryTarget};
 use tinytools::{PermissionLevel, Tool, ToolResult};
 
 /// The query tools TinyJuice declares. The footer suggests a subset of these.
@@ -53,49 +28,33 @@ const MAX_ARTIFACT_BYTES: u64 = tinytools_std::filesystem::FileReadTool::MAX_FIL
 /// The relative pointer form older stores handed out (`artifacts/tool-results/…`).
 const RELATIVE_ARTIFACT_PREFIX: &str = "artifacts/tool-results/";
 
-/// Token the one-entry store files an artifact's content under.
-const ARTIFACT_TOKEN: &str = "artifact";
-
-/// Where the original behind a handle comes from.
+/// Contract requests are executed inside the compiled module.
 #[async_trait]
-pub(crate) trait OriginalSource: Send + Sync {
-    /// `Ok(None)` is an unknown or evicted handle.
-    async fn original(&self, handle: &str) -> Result<Option<String>, String>;
+pub(crate) trait QuerySource: Send + Sync {
+    async fn query(&self, request: QueryRequest) -> Result<QueryResponse, String>;
 }
 
-/// The TinyJuice module's CCR store, over the bus.
-struct ModuleSource;
+struct ModuleSource {
+    config: Option<Arc<crate::config::Config>>,
+}
 
 #[async_trait]
-impl OriginalSource for ModuleSource {
-    async fn original(&self, handle: &str) -> Result<Option<String>, String> {
-        super::retrieve(handle.to_string(), None).await
-    }
-}
-
-/// A [`CcrStore`] holding the one original a call is about.
-struct OneEntryStore {
-    token: String,
-    content: String,
-}
-
-impl CcrStore for OneEntryStore {
-    fn put(&self, _content: &str) -> CcrPutResult {
-        // Read-only ops never store; report "not retained" rather than lie.
-        CcrPutResult::new(String::new(), false)
-    }
-
-    fn get(&self, token: &str) -> Option<String> {
-        (token == self.token).then(|| self.content.clone())
+impl QuerySource for ModuleSource {
+    async fn query(&self, request: QueryRequest) -> Result<QueryResponse, String> {
+        match &self.config {
+            Some(config) => super::query_for_config(config, request).await,
+            None => super::query(request).await,
+        }
     }
 }
 
 struct ModuleReplTool {
     name: String,
+    op: String,
     description: String,
     schema: Value,
     cap: Option<usize>,
-    source: Arc<dyn OriginalSource>,
+    source: Arc<dyn QuerySource>,
     limits: ReplLimits,
     /// `<workspace>/artifacts/tool-results`, when known: the one directory an
     /// `artifact_path` passed as the handle may be read from.
@@ -105,7 +64,10 @@ struct ModuleReplTool {
 /// The three REPL tools, reading through the TinyJuice module. Without a
 /// workspace they cannot resolve an `artifact_path`; see [`repl_tools_for`].
 pub fn repl_tools() -> Vec<Box<dyn Tool>> {
-    repl_tools_with(Arc::new(ModuleSource), ReplLimits::default())
+    repl_tools_with(
+        Arc::new(ModuleSource { config: None }),
+        ReplLimits::default(),
+    )
 }
 
 /// The REPL tools, or none while large results are not stored behind a handle
@@ -121,7 +83,9 @@ pub fn repl_tools_for(config: &crate::config::Config) -> Vec<Box<dyn Tool>> {
         REPL_TOOL_NAMES.join(", ")
     );
     repl_tools_with_artifacts(
-        Arc::new(ModuleSource),
+        Arc::new(ModuleSource {
+            config: Some(Arc::new(config.clone())),
+        }),
         ReplLimits::default(),
         Some(crate::security::policy::tool_result_artifacts_dir(
             &config.workspace_dir,
@@ -129,31 +93,61 @@ pub fn repl_tools_for(config: &crate::config::Config) -> Vec<Box<dyn Tool>> {
     )
 }
 
+/// Rebuild only the REPL tools a resumed transcript already declared. Their
+/// schemas stay frozen while execution uses the current workspace and module
+/// policy. This deliberately does not consult `repl_handle_active`: that flag
+/// controls creating new handles, not reading handles a thread already has.
+pub(crate) fn repl_tools_for_recorded(
+    config: Option<&crate::config::Config>,
+    workspace_dir: &Path,
+    recorded: &[tinytools::ToolSpec],
+) -> Vec<Box<dyn Tool>> {
+    let declarations = tinyjuice_bus::tools::repl_tool_declarations();
+    recorded
+        .iter()
+        .filter(|spec| is_repl_tool(&spec.name))
+        .filter_map(|spec| {
+            let declaration = declarations.iter().find(|item| item.name == spec.name)?;
+            let limits = ReplLimits::default();
+            Some(Box::new(ModuleReplTool {
+                name: spec.name.clone(),
+                op: declaration.op.clone(),
+                description: spec.description.clone(),
+                schema: spec.parameters.clone(),
+                cap: Some(limits.max_output_chars.saturating_mul(2)),
+                source: Arc::new(ModuleSource {
+                    config: config.cloned().map(Arc::new),
+                }),
+                limits,
+                artifacts_dir: Some(crate::security::policy::tool_result_artifacts_dir(
+                    workspace_dir,
+                )),
+            }) as Box<dyn Tool>)
+        })
+        .collect()
+}
+
 pub(crate) fn repl_tools_with(
-    source: Arc<dyn OriginalSource>,
+    source: Arc<dyn QuerySource>,
     limits: ReplLimits,
 ) -> Vec<Box<dyn Tool>> {
     repl_tools_with_artifacts(source, limits, None)
 }
 
 pub(crate) fn repl_tools_with_artifacts(
-    source: Arc<dyn OriginalSource>,
+    source: Arc<dyn QuerySource>,
     limits: ReplLimits,
     artifacts_dir: Option<PathBuf>,
 ) -> Vec<Box<dyn Tool>> {
-    // The declarations come from TinyJuice; the probe store is never read.
-    let probe: Arc<dyn CcrStore> = Arc::new(OneEntryStore {
-        token: String::new(),
-        content: String::new(),
-    });
-    tinyjuice::repl::tools::repl_tools(probe, limits)
+    tinyjuice_bus::tools::repl_tool_declarations()
         .into_iter()
-        .map(|inner| {
+        .map(|declaration| {
             Box::new(ModuleReplTool {
-                name: inner.name().to_string(),
-                description: inner.description().to_string(),
-                schema: inner.parameters_schema(),
-                cap: inner.max_result_size_chars(),
+                name: declaration.name,
+                op: declaration.op,
+                description: declaration.description,
+                schema: declaration.parameters,
+                cap: Some(limits.max_output_chars.saturating_mul(2)),
                 source: Arc::clone(&source),
                 limits,
                 artifacts_dir: artifacts_dir.clone(),
@@ -283,24 +277,43 @@ fn miss_message() -> &'static str {
 }
 
 impl ModuleReplTool {
-    /// Run TinyJuice's own tool over `content`, filed under `token`.
-    async fn run_stock(
-        &self,
-        token: String,
-        content: String,
-        mut args: Value,
-    ) -> anyhow::Result<ToolResult> {
+    async fn run_query(&self, target: QueryTarget, mut args: Value) -> anyhow::Result<ToolResult> {
         if let Some(object) = args.as_object_mut() {
-            object.insert("handle".into(), Value::String(token.clone()));
+            object.insert("op".into(), Value::String(self.op.clone()));
         }
-        let store: Arc<dyn CcrStore> = Arc::new(OneEntryStore { token, content });
-        let Some(tool) = tinyjuice::repl::tools::repl_tools(store, self.limits)
-            .into_iter()
-            .find(|tool| tool.name() == self.name)
-        else {
-            return Ok(ToolResult::error("juice: unknown repl tool"));
+        let op: ReplOp = match serde_json::from_value(args) {
+            Ok(op) => op,
+            Err(error) => {
+                return Ok(ToolResult::error(format!(
+                    "juice: invalid arguments: {error}"
+                )))
+            }
         };
-        tool.execute(args).await
+        let response = self
+            .source
+            .query(QueryRequest {
+                target,
+                op,
+                limits: self.limits,
+                context_token: None,
+                scope: None,
+            })
+            .await;
+        Ok(match response {
+            Ok(Ok(output)) => ToolResult::json(serde_json::to_value(output)?),
+            Ok(Err(QueryError::HandleNotFound)) => ToolResult::failed(miss_message()),
+            Ok(Err(QueryError::InputTooLarge)) => {
+                ToolResult::error("juice: input exceeds module limit")
+            }
+            Ok(Err(QueryError::InvalidPattern(pattern))) => {
+                ToolResult::error(format!("juice: invalid pattern: {pattern}"))
+            }
+            Ok(Err(QueryError::EmptyQuery)) => ToolResult::error("juice: empty query"),
+            Ok(Err(QueryError::Unsupported(operation))) => {
+                ToolResult::error(format!("juice: {operation} support is not compiled in"))
+            }
+            Err(error) => ToolResult::error(format!("juice: {error}")),
+        })
     }
 
     /// The handle slot held a path: query the persisted artifact it names.
@@ -324,8 +337,7 @@ impl ModuleReplTool {
                     self.name,
                     content.len()
                 );
-                self.run_stock(ARTIFACT_TOKEN.to_string(), content, args)
-                    .await
+                self.run_query(QueryTarget::Content { content }, args).await
             }
             Err(message) => {
                 log::debug!("[tokenjuice][repl] {} artifact refused", self.name);
@@ -361,23 +373,8 @@ impl Tool for ModuleReplTool {
                 return Ok(ToolResult::error(not_a_handle_message()));
             }
         };
-        let content = match self.source.original(&handle).await {
-            Ok(Some(content)) => content,
-            Ok(None) => {
-                log::debug!("[tokenjuice][repl] {} handle miss", self.name);
-                return Ok(ToolResult::failed(miss_message()));
-            }
-            Err(error) => {
-                log::debug!("[tokenjuice][repl] {} source error: {error}", self.name);
-                return Ok(ToolResult::error(format!("juice: {error}")));
-            }
-        };
-        log::debug!(
-            "[tokenjuice][repl] {} handle={handle} bytes={}",
-            self.name,
-            content.len()
-        );
-        self.run_stock(handle, content, args).await
+        self.run_query(QueryTarget::Handle { token: handle }, args)
+            .await
     }
 
     fn permission_level(&self) -> PermissionLevel {

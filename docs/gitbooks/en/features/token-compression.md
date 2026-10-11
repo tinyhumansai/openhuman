@@ -45,7 +45,7 @@ raw tool result
 
 1. **Size gate.** If the router is off or the input is below `min_bytes_to_compress` (default 2048 bytes), it passes through untouched. Tiny outputs are not worth compressing.
 2. **Content detection** (`detect/kind.rs`). The result is classified into one of seven kinds. The order of precedence is an explicit hint, then a MIME or extension tag, then a per-tool prior (for example `grep` means Search, `git_operations` means Diff, `run_tests` means Log), then cheap structural heuristics (JSON, Diff, HTML, Search, Code, Log, PlainText). There is no regex on the hot path.
-3. **Compressor selection.** Each kind goes to its own compressor, honoring per-kind toggles (`search_enabled`, `code_enabled`, `html_enabled`, `ml_compression_enabled`).
+3. **Compressor selection.** Each kind goes to its own compressor, honoring per-kind toggles (`search_enabled`, `code_enabled`, `html_enabled`).
 4. **Compression.** The compressor runs. If it declines or its output is no smaller than the input, TokenJuice falls back to the generic compressor or passes the original through. It never makes things bigger.
 5. **CCR offload.** When a compression is lossy and the original is large enough (`ccr_min_tokens`, default about 500 tokens), the full original goes into the Compress-Cache-Retrieve (CCR) store, so nothing is lost for good.
 6. **Recovery marker.** A footer with the marker `⟦tj:<hash>⟧` is appended. It tells the agent the view is partial and how to fetch the rest.
@@ -63,7 +63,7 @@ Each content kind has a purpose-built compressor (`vendor/tinyjuice/src/compress
 | Search | Search | Groups grep and ripgrep `path:line:body` hits by file, ranks by query-term density, keeps the top matches per file and tallies `[+N more]`. |
 | Diff | Diff | Keeps changed lines and hunk headers and collapses long unchanged runs to an anchor. Lockfile hunks shrink to a one-line `+A/-B` summary. |
 | Html | HTML | Strips markup to readable text with sensible block-boundary newlines and entity decoding (allocation-light, no DOM). |
-| MlText | PlainText | Opt-in ML salience compression (see below). |
+| TextCrusher | PlainText | Deterministic salience compression that preserves sentence and paragraph boundaries. |
 | Generic | fallback | Head and tail summary for command output that no specific rule matched. It declines on structured results so they are preserved. |
 
 Multi-byte text (CJK, emoji, combining marks) is handled grapheme by grapheme and never split mid-character.
@@ -88,15 +88,6 @@ The model then queries the stored original with three read-only tools, none of w
 Answers are size-capped, and an unknown or evicted handle is an error. `juice_retrieve` still returns the whole original. A handle preview is built without a model call, so it also replaces the LLM summary for results big enough to get one. A slow summarizer cannot stall the turn. The three tools are registered (about 1.5 KB of schema) only while this mode is on.
 
 To turn off the whole feature, set `context.compaction_enabled = false` or `OPENHUMAN_COMPACTION=0`. To keep compaction but go back to one-blob compression and `juice_retrieve`, set `tokenjuice.repl_handle_enabled = false` (`OPENHUMAN_TOKENJUICE_REPL_HANDLE_ENABLED=0`). Set `tokenjuice.repl_save_enabled = true` to also write each stored original to `<workspace>/.tokenjuice/repl/<handle>.txt` (mode 0600) so an agent can script over it. That puts raw tool output on disk, and nothing prunes it.
-
-## ML compression (opt-in)
-
-Besides the deterministic compressors, TokenJuice can route plain text through a ModernBERT token-salience model that scores and drops low-information spans. TinyJuice exposes the optional ML slot, and OpenHuman connects it to Kompress in `crates/openhuman-core/src/inference/tokenjuice/ml/`.
-
-- Off by default. Enable it with `ml_compression_enabled = true` in `[tokenjuice]`.
-- It runs locally, as the `kompress` backend of the long-running Python host process OpenHuman keeps warm for Python-backed models (`crates/openhuman-core/src/runtime/python_server/`), reached over a private stdio protocol. No data leaves your machine.
-- Tunable keys: `ml_model_id` (default `answerdotai/ModernBERT-base`), `ml_target_ratio` (default `0.5`), `ml_max_input_chars` (default `200000`), `ml_device` (`cpu`/`auto`), `ml_sidecar_idle_timeout_secs`.
-- If that process is unavailable or an input exceeds the character cap, it falls back to the native compressors and never fails the agent loop.
 
 ## Nothing is lost: the CCR cache
 
@@ -135,7 +126,7 @@ Everything lives under the `[tokenjuice]` config block (`crates/openhuman-core/s
 - Handle preview: `repl_handle_enabled` (default `true`) and `repl_save_enabled` (default `false`).
 - Thresholds: `min_bytes_to_compress` and `ccr_min_tokens`.
 - CCR: `ccr_enabled`, `ccr_disk_enabled`, `max_cache_entries`, `max_cache_bytes` and `ccr_ttl_secs`.
-- Per kind: `search_enabled`, `code_enabled`, `html_enabled`, plus the `ml_*` keys.
+- Per kind: `search_enabled`, `code_enabled`, `html_enabled`.
 - RPC (`openhuman.tokenjuice_*`): `detect`, `compress` (dry-run the pipeline), `settings_get` and `settings_update` (live partial patch), `cache_stats`, `retrieve`, `savings_stats` and `savings_reset`.
 - Agent tools: `juice_retrieve` recovers a whole stored original. `juice_find`, `juice_extract` and `juice_summarize` query one by handle. All are read-only.
 - Debugging: start the core with `RUST_LOG=openhuman_core::inference::tokenjuice=debug` to watch detection, matching and how much each result is trimmed.

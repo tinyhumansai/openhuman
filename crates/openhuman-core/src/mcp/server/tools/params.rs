@@ -4,7 +4,7 @@ use tinymcp::server::args::{
     object_arguments, optional_non_empty_string, optional_positive_u64,
     reject_unexpected_arguments, required_non_empty_string, required_non_empty_string_array,
 };
-use tinymcp::ToolCallError;
+use tinymcp_bus::ToolCallError;
 
 use crate::core::all;
 

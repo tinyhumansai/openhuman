@@ -40,14 +40,11 @@ static JSON_RPC_AUTH_INIT: OnceLock<()> = OnceLock::new();
 /// process-global, so parallel tests would clobber each other and hit the wrong `config.toml` or
 /// inherited `VITE_BACKEND_URL`.
 static JSON_RPC_E2E_ENV_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-static JSON_RPC_E2E_KEYRING_INIT: OnceLock<()> = OnceLock::new();
 static CHAT_COMPLETION_MODELS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 static CHAT_COMPLETION_REQUESTS: OnceLock<Mutex<Vec<Value>>> = OnceLock::new();
 
 async fn json_rpc_e2e_env_lock_async() -> tokio::sync::MutexGuard<'static, ()> {
-    JSON_RPC_E2E_KEYRING_INIT.get_or_init(|| unsafe {
-        std::env::set_var("OPENHUMAN_KEYRING_BACKEND", "file");
-    });
+    env_guard::init_keyring_workspace();
     let mutex = JSON_RPC_E2E_ENV_LOCK.get_or_init(|| tokio::sync::Mutex::new(()));
     // A tokio mutex is never poisoned, so a panic in one test cannot cascade to the others.
     mutex.lock().await
@@ -1024,11 +1021,10 @@ async fn wait_for_chat_completion_request_with_message(message: &str) -> Value {
 }
 
 async fn encrypt_test_mnemonic() -> String {
-    let _keyring_backend_guard = EnvVarGuard::set("OPENHUMAN_KEYRING_BACKEND", "file");
     let config = openhuman_core::config::load_config_with_timeout()
         .await
         .expect("load config for encrypted test mnemonic");
-    openhuman_core::security::keyring::init_workspace(&config.workspace_dir);
+    openhuman_core::security::secret_storage::init_workspace(&config.workspace_dir);
     openhuman_core::security::encryption::rpc::encrypt_secret(
         &config,
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
@@ -1169,6 +1165,76 @@ fn ensure_test_rpc_auth() {
         let token_dir = std::env::temp_dir().join("openhuman-json-rpc-e2e-auth");
         init_rpc_token(&token_dir).expect("init rpc auth token for json_rpc_e2e");
     });
+}
+
+#[tokio::test]
+async fn json_rpc_legacy_provider_type_preserves_default_endpoint() {
+    let _env_lock = json_rpc_e2e_env_lock_async().await;
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    write_min_config(&home.join(".openhuman"), "http://127.0.0.1:9");
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+    for (index, method) in [
+        "openhuman.config_update_model_settings",
+        "openhuman.inference_update_model_settings",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let updated = post_json_rpc(
+            &rpc_base,
+            41_250 + index as i64,
+            method,
+            json!({
+                "cloud_providers": [{"slug": "legacy", "endpoint": "", "type": " anthropic ",
+                    "default_model": "claude-sonnet-4"}]
+            }),
+        )
+        .await;
+        let snapshot = peel_logs_envelope(assert_no_jsonrpc_error(
+            &updated,
+            "legacy provider endpoint update",
+        ));
+        let path = snapshot["config_path"].as_str().expect("saved config path");
+        let persisted: openhuman_core::config::Config =
+            toml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let provider = persisted
+            .cloud_providers
+            .iter()
+            .find(|p| p.slug == "legacy")
+            .unwrap();
+        assert_eq!(
+            provider.endpoint, "https://api.anthropic.com/v1",
+            "{method}"
+        );
+        assert_eq!(
+            provider.auth_style,
+            openhuman_core::config::schema::AuthStyle::Anthropic
+        );
+        assert_eq!(provider.default_model.as_deref(), Some("claude-sonnet-4"));
+        let updated = post_json_rpc(
+            &rpc_base,
+            41_260 + index as i64,
+            method,
+            json!({"cloud_providers": [{"slug": "legacy", "endpoint": "http://127.0.0.1:9/v1",
+                "type": "anthropic", "auth_style": "bearer"}]}),
+        )
+        .await;
+        let snapshot = peel_logs_envelope(assert_no_jsonrpc_error(
+            &updated,
+            "explicit provider values",
+        ));
+        let providers = snapshot["config"]["cloud_providers"].as_array().unwrap();
+        let provider = providers.iter().find(|p| p["slug"] == "legacy").unwrap();
+        assert_eq!(provider["endpoint"], "http://127.0.0.1:9/v1");
+        assert_eq!(provider["auth_style"], "bearer");
+    }
+    rpc_join.abort();
 }
 
 #[tokio::test]
@@ -1610,14 +1676,13 @@ async fn json_rpc_tool_registry_lists_and_gets_entries() {
 }
 
 #[tokio::test]
-async fn json_rpc_harness_init_status_returns_snapshot_envelope() {
+async fn json_rpc_removed_harness_init_status_is_not_found() {
     let _env_lock = json_rpc_e2e_env_lock_async().await;
     let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
     let rpc_base = format!("http://{rpc_addr}");
 
-    // status is read-only — no provisioning is triggered, so it is safe in CI
-    // (we deliberately do NOT call `openhuman.harness_init_run`, which would
-    // attempt real Python/Node/spaCy downloads).
+    // The obsolete provisioning flow was removed; its status method must not
+    // reappear through host controller registration.
     let resp = post_json_rpc(
         &rpc_base,
         44_711,
@@ -1625,30 +1690,11 @@ async fn json_rpc_harness_init_status_returns_snapshot_envelope() {
         json!({}),
     )
     .await;
-    let result = assert_no_jsonrpc_error(&resp, "harness_init_status");
-
-    let snapshot = result
-        .get("snapshot")
-        .expect("harness_init_status should return a snapshot object");
-    let overall = snapshot
-        .get("overall")
-        .and_then(Value::as_str)
-        .expect("snapshot.overall should be a string");
-    assert!(
-        ["idle", "running", "done", "failed"].contains(&overall),
-        "overall should be a known lifecycle state, got {overall}"
-    );
-    let steps = snapshot
-        .get("steps")
-        .and_then(Value::as_array)
-        .expect("snapshot.steps should be an array");
-    let ids: Vec<&str> = steps
-        .iter()
-        .filter_map(|s| s.get("id").and_then(Value::as_str))
-        .collect();
-    assert!(
-        ids.contains(&"python_runtime") && ids.contains(&"node_runtime"),
-        "snapshot should list the registered steps, got {ids:?}"
+    let error = resp.get("error").expect("removed method must fail");
+    assert_eq!(error.get("code").and_then(Value::as_i64), Some(-32000));
+    assert_eq!(
+        error.get("message").and_then(Value::as_str),
+        Some("unknown method: openhuman.harness_init_status")
     );
 
     rpc_join.abort();

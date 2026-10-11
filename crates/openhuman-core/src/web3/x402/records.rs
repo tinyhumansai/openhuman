@@ -31,6 +31,10 @@ pub fn pending_record(payment: &X402PaymentResult) -> PaymentRecord {
         tx_signature: None,
         status: PaymentStatus::Pending,
         timestamp: chrono::Utc::now(),
+        authorization_valid_until: payment.authorization_valid_until,
+        solana_last_valid_block_height: payment.solana_last_valid_block_height,
+        authorization_expired_at: None,
+        authorization_expiry_observed_height: None,
         session_id,
         thread_id: TaskLocalThread.current_thread(),
     }

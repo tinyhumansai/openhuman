@@ -57,7 +57,7 @@ export const INTENTIONALLY_NOT_FORWARDED = {
 /**
  * Gates the shell turns on on its `openhuman-rpc` dependency that are NOT
  * core gates, mapped to why. They are rpc's (and, for `jev`, tinyhumans')
- * own, so they never appear in `scripts/ci/product-features.txt`, and the
+ * own. Some, such as `os-keyring`, are also product gates; the
  * product assertion must not read them as "unexpected".
  */
 export const SHELL_RPC_LOCAL_GATES = {
@@ -280,6 +280,7 @@ export function parseProductFeatures(text) {
 export function checkProductForwarding({
   productFeatures,
   coreFeatureNames,
+  hostFeatureNames = [],
   shell,
   localGates = SHELL_RPC_LOCAL_GATES,
 }) {
@@ -293,17 +294,18 @@ export function checkProductForwarding({
   }
   const forwarded = new Set(shell.features);
   const product = new Set(productFeatures);
-  const known = new Set(coreFeatureNames);
+  const known = new Set([...coreFeatureNames, ...hostFeatureNames]);
   // In the product set, absent from the shell → compiled out of the shipped app.
   const missing = productFeatures.filter(gate => !forwarded.has(gate));
   // Forwarded by the shell but not in the product set → the product grew a
   // gate without anyone editing the file that says what the product is.
   // `openhuman-rpc`'s own gates (server, client, Jev ranker) are not core
-  // gates and never belong in the product file; they are exempt by name.
+  // gates and are exempt by name. Host gates explicitly listed in the product
+  // file, such as os-keyring, still require shell forwarding.
   const unexpected = shell.features.filter(
     gate => !product.has(gate) && !Object.prototype.hasOwnProperty.call(localGates, gate)
   );
-  // Named in the product set but not declared by the core → typo, or a gate
+  // Named in the product set but not declared by core or a host → typo, or a gate
   // renamed/deleted without updating this list.
   const unknown = productFeatures.filter(gate => !known.has(gate));
   return {
@@ -332,7 +334,7 @@ export function formatProductReport(result, { productFeatures, shell }) {
     `Shell forwards (${shell.features.length}): ${shell.features.join(', ') || '(none)'}`,
   ];
   if (result.unknown.length > 0) {
-    lines.push('', 'Product gates that are not declared in the core `[features]` table:');
+    lines.push('', 'Product gates that are not declared in core or host `[features]` tables:');
     for (const gate of result.unknown) lines.push(`  - ${gate}`);
     lines.push('Either the name is a typo or the gate was renamed/deleted.');
   }
@@ -480,6 +482,7 @@ export const CHAIN_LOCAL_GATES = {
     jev: 'This crate owns the gate: the Jev-backed `tool_search` ranker (`tinytools-jev` over the TinyHumans System One proxy).',
   },
   'openhuman-rpc': {
+    'os-keyring': 'Host-owned native secret storage and master-key providers; the core exposes only install ports.',
     'http-client':
       'The authenticated JSON-RPC HTTP client (`post_json_rpc`); transport code this crate owns, with no core twin.',
     server:
@@ -673,6 +676,6 @@ export function formatChainReport(result, { notForwarded = {} } = {}) {
 export function rpcForwardedGates(rpcFeatures) {
   const local = CHAIN_LOCAL_GATES['openhuman-rpc'] ?? {};
   return [...rpcFeatures.keys()].filter(
-    name => name !== 'default' && !Object.prototype.hasOwnProperty.call(local, name)
+    name => name !== 'default' && (name === 'os-keyring' || !Object.prototype.hasOwnProperty.call(local, name))
   );
 }

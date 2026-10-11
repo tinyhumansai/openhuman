@@ -474,7 +474,7 @@ async fn a_document_save_never_nests_process_key_ciphertext() {
     assert!(config.secrets.encrypt);
     // A field still sealed under this node's key, as a file-seeded config
     // holds it before the load decrypts.
-    let sealed = crate::security::keyring::SecretStore::new(tmp.path(), true)
+    let sealed = crate::security::secret_storage::SecretStore::new(tmp.path(), true)
         .encrypt("sk-node-local")
         .unwrap();
     assert!(sealed.starts_with("enc2:"));
@@ -503,7 +503,7 @@ async fn a_document_save_refuses_process_key_secrets_it_cannot_open() {
     let mut config = config_at(tmp.path(), "m");
     // Sealed under another node's key: this node cannot open it.
     config.api_key = Some(
-        crate::security::keyring::SecretStore::new(other_node.path(), true)
+        crate::security::secret_storage::SecretStore::new(other_node.path(), true)
             .encrypt("sk-elsewhere")
             .unwrap(),
     );

@@ -97,3 +97,22 @@ The code is at [github.com/tinyhumansai/openhuman](https://github.com/tinyhumans
 - [Frontend](frontend.md) and [Tauri shell](tauri-shell.md) for the two outer layers.
 - [Loadable modules](../loadable-modules.md) and [Pluggable engines](../engines.md) for what plugs into the core.
 - [`AGENTS.md`](https://github.com/tinyhumansai/openhuman/blob/main/AGENTS.md) for the repo-wide rules, including which `vendor/` submodule owns what.
+
+## Loadable component dependency boundary
+
+Hosts execute loadable component behavior through compiled TinyBus modules and
+link only the components' minimal `*-bus` vocabulary. Contract crates contain
+serialized types, errors, identifiers, versions, schemas and tool declarations;
+providers, parsers, cryptography, storage, native resources and execution
+algorithms belong inside modules. OpenHuman retains policy, credentials,
+approvals, cancellation and product orchestration. Stateful resources cross
+the bus as opaque handles with explicit cleanup operations.
+
+This boundary is still being migrated. The
+[module boundary inventory](../../../docs/module-boundary-inventory.md) names
+existing exceptions and required upstream work. `pnpm rust:module-boundaries`
+checks host normal/build dependency graphs and independently resolved contract
+graphs. Its transitional pass does not certify completion;
+`pnpm rust:module-boundaries:complete` requires an empty exception list and no
+pending contracts. Host adapters switch after compatible module artifacts are
+released and pinned, preserving lazy loading and cached resolution.

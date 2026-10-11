@@ -16,8 +16,7 @@ mod catalog_description_tests;
 
 pub(crate) use cache::sync_cache_with_connections;
 pub use cache::{
-    cached_active_integrations, cached_active_integrations_including_expired, connected_set_hash,
-    invalidate_connected_integrations_cache,
+    cached_active_integrations, connected_set_hash, invalidate_connected_integrations_cache,
 };
 #[cfg(test)]
 pub(crate) use cache::{composio_cache_test_lock, composio_cache_test_lock_async};

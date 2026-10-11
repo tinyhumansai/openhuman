@@ -35,7 +35,6 @@ fn entry(slug: &str, endpoint: &str) -> CloudProviderCreds {
         label: slug.to_string(),
         endpoint: endpoint.to_string(),
         auth_style: AuthStyle::Bearer,
-        legacy_type: None,
         default_model: None,
     }
 }

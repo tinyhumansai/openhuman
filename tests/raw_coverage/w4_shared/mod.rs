@@ -39,31 +39,25 @@ pub const SESSION_USER_ID: &str = "w4-user";
 static AUTH_INIT: OnceLock<String> = OnceLock::new();
 /// The crate-wide env mutex, not a private one — see the module note above.
 static ENV_LOCK: &OnceLock<tokio::sync::Mutex<()>> = &crate::SHARED_ENV_LOCK;
-static KEYRING_INIT: OnceLock<()> = OnceLock::new();
 
 /// Serializes every case that touches process-global env (`HOME`,
 /// `OPENHUMAN_WORKSPACE`, the backend-URL overrides) against every other
 /// aggregated suite. Poison is recovered so one panicking case cannot wedge the
 /// binary.
 pub fn env_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    crate::env_guard::init_keyring_workspace();
     let guard = ENV_LOCK
         .get_or_init(|| tokio::sync::Mutex::new(()))
         .blocking_lock();
-    // Under the lock, so this `set_var` cannot race a concurrent env read.
-    KEYRING_INIT.get_or_init(|| {
-        std::env::set_var("OPENHUMAN_KEYRING_BACKEND", "file");
-    });
     guard
 }
 
 pub async fn env_lock_async() -> tokio::sync::MutexGuard<'static, ()> {
+    crate::env_guard::init_keyring_workspace();
     let guard = ENV_LOCK
         .get_or_init(|| tokio::sync::Mutex::new(()))
-        .lock().await;
-    // Under the lock, so this `set_var` cannot race a concurrent env read.
-    KEYRING_INIT.get_or_init(|| {
-        std::env::set_var("OPENHUMAN_KEYRING_BACKEND", "file");
-    });
+        .lock()
+        .await;
     guard
 }
 

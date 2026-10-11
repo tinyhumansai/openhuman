@@ -98,7 +98,7 @@ revives a device another process revoked. With no backend configured (the deskto
 ## Dependencies
 
 - `crate::config` (`Config`, `config::rpc::load_config_with_timeout`): workspace paths and config loading for handlers.
-- `crate::security::keyring::SecretStore`: encrypt/decrypt the X25519 private key at rest.
+- `crate::security::secret_storage::SecretStore`: encrypt/decrypt the X25519 private key at rest.
 - `crate::platform::socket::global_socket_manager`: reuse the shared backend Socket.IO connection to emit `tunnel:*` events (no second WebSocket).
 - `crate::core::bus::BUS` (`.publish`, `.subscribe`) plus `crate::core::events::DomainEvent` and `tinybus::EventHandler`: pub/sub for device tunnel events.
 - `crate::core::all` (`ControllerFuture`, `RegisteredController`) and `crate::core::{ControllerSchema, FieldSchema, TypeSchema}`: controller registry contract.

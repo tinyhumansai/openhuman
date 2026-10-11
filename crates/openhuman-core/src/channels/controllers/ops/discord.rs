@@ -5,7 +5,15 @@
 
 use crate::config::Config;
 use crate::core::Outcome;
+use crate::modules::{
+    channel_controller::{self, DiscordReply},
+    client::ModuleClient,
+};
 use crate::security::credentials;
+use tinychannels_bus::{
+    controllers::{BotPermissionCheck, DiscordGuild, DiscordTextChannel},
+    ChannelControllerRequest,
+};
 
 use super::super::definitions::ChannelAuthMode;
 use super::connect::shared::credential_provider;
@@ -31,15 +39,19 @@ async fn discord_bot_token(config: &Config) -> Result<String, String> {
 }
 
 /// List Discord guilds (servers) the connected bot is a member of.
-pub async fn discord_list_guilds(
-    config: &Config,
-) -> Result<Outcome<Vec<crate::channels::providers::discord::api::DiscordGuild>>, String> {
-    use crate::channels::providers::discord::api;
-
+pub async fn discord_list_guilds(config: &Config) -> Result<Outcome<Vec<DiscordGuild>>, String> {
     let token = discord_bot_token(config).await?;
-    let guilds = api::list_bot_guilds(&token)
-        .await
-        .map_err(|e| format!("Discord API error: {e}"))?;
+    let guilds = channel_controller::discord(
+        &ModuleClient::new(config.clone()),
+        ChannelControllerRequest::DiscordListGuilds {
+            config: config.channels_config.clone(),
+            bot_token: token,
+            proxy: channel_controller::discord_proxy(config),
+        },
+        DiscordReply::Guilds,
+    )
+    .await
+    .map_err(|e| format!("Discord API error: {e}"))?;
     Ok(Outcome::single_log(guilds, "discord guilds listed"))
 }
 
@@ -47,16 +59,23 @@ pub async fn discord_list_guilds(
 pub async fn discord_list_channels(
     config: &Config,
     guild_id: &str,
-) -> Result<Outcome<Vec<crate::channels::providers::discord::api::DiscordTextChannel>>, String> {
-    use crate::channels::providers::discord::api;
-
+) -> Result<Outcome<Vec<DiscordTextChannel>>, String> {
     if guild_id.is_empty() {
         return Err("guild_id is required".to_string());
     }
     let token = discord_bot_token(config).await?;
-    let channels = api::list_guild_channels(&token, guild_id)
-        .await
-        .map_err(|e| format!("Discord API error: {e}"))?;
+    let channels = channel_controller::discord(
+        &ModuleClient::new(config.clone()),
+        ChannelControllerRequest::DiscordListChannels {
+            config: config.channels_config.clone(),
+            guild_id: guild_id.to_owned(),
+            bot_token: token,
+            proxy: channel_controller::discord_proxy(config),
+        },
+        DiscordReply::Channels,
+    )
+    .await
+    .map_err(|e| format!("Discord API error: {e}"))?;
     Ok(Outcome::single_log(
         channels,
         format!("discord channels listed for guild {guild_id}"),
@@ -68,16 +87,24 @@ pub async fn discord_check_permissions(
     config: &Config,
     guild_id: &str,
     channel_id: &str,
-) -> Result<Outcome<crate::channels::providers::discord::api::BotPermissionCheck>, String> {
-    use crate::channels::providers::discord::api;
-
+) -> Result<Outcome<BotPermissionCheck>, String> {
     if guild_id.is_empty() || channel_id.is_empty() {
         return Err("guild_id and channel_id are required".to_string());
     }
     let token = discord_bot_token(config).await?;
-    let check = api::check_channel_permissions(&token, guild_id, channel_id)
-        .await
-        .map_err(|e| format!("Discord API error: {e}"))?;
+    let check = channel_controller::discord(
+        &ModuleClient::new(config.clone()),
+        ChannelControllerRequest::DiscordCheckPermissions {
+            config: config.channels_config.clone(),
+            guild_id: guild_id.to_owned(),
+            channel_id: channel_id.to_owned(),
+            bot_token: token,
+            proxy: channel_controller::discord_proxy(config),
+        },
+        DiscordReply::Permissions,
+    )
+    .await
+    .map_err(|e| format!("Discord API error: {e}"))?;
     Ok(Outcome::single_log(
         check,
         format!("discord permissions checked for channel {channel_id}"),

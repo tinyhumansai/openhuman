@@ -7,7 +7,9 @@
 
 use std::sync::Arc;
 
-use tinytools_std::network::{HtmlExtractor, HttpLimits, HttpRequestTool, NetGate, WebFetchTool};
+use tinytools_std::network::{
+    AsyncHtmlExtractor, HttpLimits, HttpRequestTool, NetGate, WebFetchTool,
+};
 
 use crate::config::HttpRequestConfig;
 use crate::inference::tokenjuice::focus::{summary_focus_property, SUMMARY_FOCUS_ARG};
@@ -22,22 +24,26 @@ fn http_limits() -> HttpLimits {
     }
 }
 
-/// TinyJuice as `web_fetch`'s page engine. `tinyjuice` owns content
-/// transforms; see the dependency note in `Cargo.toml` for why this is a direct
-/// call and not a trip through the module bus.
+/// HTML detection and extraction execute in the lazily loaded TinyJuice module.
 #[derive(Debug)]
 struct TinyJuiceHtml;
 
-impl HtmlExtractor for TinyJuiceHtml {
-    fn looks_like_html(&self, body: &str) -> bool {
-        matches!(
-            tinyjuice::detect_content_kind(body, &tinyjuice::types::ContentHint::default()),
-            tinyjuice::types::ContentKind::Html
+#[async_trait::async_trait]
+impl AsyncHtmlExtractor for TinyJuiceHtml {
+    async fn looks_like_html(&self, body: &str) -> anyhow::Result<bool> {
+        let kind = crate::inference::tokenjuice::detect(
+            body.to_string(),
+            crate::inference::tokenjuice::types::ContentHint::default(),
         )
+        .await
+        .map_err(anyhow::Error::msg)?;
+        Ok(kind == "html")
     }
 
-    fn to_markdown(&self, html: &str) -> String {
-        tinyjuice::compressors::html::html_to_markdown(html)
+    async fn to_markdown(&self, html: &str) -> anyhow::Result<String> {
+        crate::inference::tokenjuice::extract_html(html.to_string())
+            .await
+            .map_err(anyhow::Error::msg)
     }
 }
 
@@ -68,7 +74,7 @@ pub fn web_fetch_tool(
     max_bytes: Option<usize>,
     timeout_secs: Option<u64>,
 ) -> WebFetchTool {
-    WebFetchTool::new(
+    WebFetchTool::new_async(
         gate,
         allowed_domains,
         max_bytes,

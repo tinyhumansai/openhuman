@@ -31,7 +31,7 @@
 use async_trait::async_trait;
 use log::debug;
 use serde_json::Value;
-use tinywallet_bus::rpc::{NetworkId, Transport, TransportError, TransportResult};
+use tinywallet_crypto::rpc::{NetworkId, Transport, TransportError, TransportResult};
 
 use tinywallet_web3::crypto::defaults::EvmNetwork;
 
@@ -103,7 +103,7 @@ fn join(base: &str, path: &str) -> String {
 /// transport failure are treated as retryable. Everything else is
 /// authoritative, so an unclassifiable error stops a failover rather than
 /// driving one.
-fn classify(network: NetworkId, message: String) -> TransportError {
+pub(crate) fn classify(network: NetworkId, message: String) -> TransportError {
     const TRANSPORT_MARKERS: [&str; 2] = ["transport failed", "read body failed"];
     if TRANSPORT_MARKERS.iter().any(|m| message.contains(m)) {
         TransportError::Unreachable { network, message }

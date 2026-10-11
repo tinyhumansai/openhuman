@@ -140,7 +140,6 @@ async fn provider_model_listing_covers_local_synthesis_and_openrouter_failures()
             label: "OpenRouter".to_string(),
             endpoint: format!("{base}/openrouter-error"),
             auth_style: CloudAuthStyle::Bearer,
-            legacy_type: None,
             default_model: None,
         },
         CloudProviderCreds {
@@ -149,7 +148,6 @@ async fn provider_model_listing_covers_local_synthesis_and_openrouter_failures()
             label: "Array Body".to_string(),
             endpoint: format!("{base}/array-body"),
             auth_style: CloudAuthStyle::None,
-            legacy_type: None,
             default_model: None,
         },
         CloudProviderCreds {
@@ -158,7 +156,6 @@ async fn provider_model_listing_covers_local_synthesis_and_openrouter_failures()
             label: "Status Body".to_string(),
             endpoint: format!("{base}/status-body"),
             auth_style: CloudAuthStyle::None,
-            legacy_type: None,
             default_model: None,
         },
     ];

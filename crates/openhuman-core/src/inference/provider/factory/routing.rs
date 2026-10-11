@@ -74,6 +74,8 @@ pub(crate) fn role_uses_implicit_cloud_fallback(role: &str, config: &Config) -> 
 /// precedence when `primary_cloud` still points at OpenHuman because
 /// migration 1→2 preserved the URL as a custom provider entry but older
 /// configs did not explicitly set per-workload routes.
+// keep until v0.66 (review after 2027-01-11): inference_url remains a supported
+// config.update input, and unfinished BYOK upgrades must not change billing route.
 pub fn provider_for_role(role: &str, config: &Config) -> String {
     let opt = configured_route_for_role(role, config);
     let s = opt.unwrap_or("").trim();

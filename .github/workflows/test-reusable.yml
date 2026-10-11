@@ -232,6 +232,7 @@ jobs:
           # `--features` names resolve against the package a command selects;
           # naming a gate the package lacks is a hard error.
           FEATURES="$(bash scripts/ci/product-features.sh)"
+          CORE_FEATURES="$(bash scripts/ci/product-features.sh --core)"
           CLI_FEATURES="${FEATURES},bin-tools"
           echo "[test-reusable] feature set: ${FEATURES} (cli: ${CLI_FEATURES})"
 
@@ -240,12 +241,12 @@ jobs:
           # `required-features = ["http-server", "bin-tools"]`, so without it
           # `--bins` silently skips it and this lane goes green having compiled
           # none of it. Its tests would vanish too, with no error.
-          bash scripts/ci-cancel-aware.sh cargo test -p openhuman --lib --features "${FEATURES}"
+          bash scripts/ci-cancel-aware.sh cargo test -p openhuman --lib --features "${CORE_FEATURES}"
           # The core binary and developer bins live in the CLI crate.
           bash scripts/ci-cancel-aware.sh cargo test -p openhuman-cli --bins --features "${CLI_FEATURES}"
-          bash scripts/ci-cancel-aware.sh cargo test -p openhuman --doc --features "${FEATURES}"
-          bash scripts/ci-cancel-aware.sh cargo test -p openhuman-embed --doc --features "${FEATURES}"
-          RUSTDOCFLAGS="-D warnings" bash scripts/ci-cancel-aware.sh cargo doc -p openhuman-embed --no-deps --features "${FEATURES}"
+          bash scripts/ci-cancel-aware.sh cargo test -p openhuman --doc --features "${CORE_FEATURES}"
+          bash scripts/ci-cancel-aware.sh cargo test -p openhuman-embed --doc --features "${CORE_FEATURES}"
+          RUSTDOCFLAGS="-D warnings" bash scripts/ci-cancel-aware.sh cargo doc -p openhuman-embed --no-deps --features "${CORE_FEATURES}"
           node scripts/run-embed-examples.mjs
 
           while IFS= read -r target; do

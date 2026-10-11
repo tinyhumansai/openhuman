@@ -5,8 +5,8 @@
 //! `providers::verify_email_credentials`); writing it to `config.toml` without
 //! the secret is this host's policy.
 
-use crate::channels::email_channel::EmailConfig;
 use crate::config::Config;
+use tinychannels_bus::config::EmailConfig;
 
 /// Persist an already-built + verified [`EmailConfig`] into
 /// `channels_config.email` so the supervised IMAP/SMTP listener picks it up on

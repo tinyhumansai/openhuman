@@ -1,0 +1,345 @@
+//! Host calls to the TinyBox sandbox module.
+//!
+//! This adapter owns only OpenHuman's module loading and bus boundary. Request
+//! and response types come from `tinybox-bus`; isolation, process ownership,
+//! file access, forwarding, and output collection stay in TinyBox.
+
+use std::time::Duration;
+
+use serde::{de::DeserializeOwned, Serialize};
+pub use tinybox_bus as contract;
+
+use crate::config::Config;
+
+use super::client::{ModuleCallError, ModuleClient};
+
+/// Registry id for the TinyBox module.
+pub const MODULE_ID: &str = "tinybox";
+
+const MODULE_CALL_TIMEOUT: Duration = Duration::from_secs(300);
+
+// `tinybox_bus::METHODS` is the canonical method catalogue. Its original
+// members retain their positions and additions are append-only; indexing here
+// avoids maintaining a second set of wire strings in the host.
+const DESCRIBE: &str = contract::METHODS[0];
+const CREATE: &str = contract::METHODS[1];
+const EXEC: &str = contract::METHODS[2];
+const INSPECT: &str = contract::METHODS[3];
+const CLOSE: &str = contract::METHODS[4];
+const SPAWN: &str = contract::METHODS[5];
+const IS_RUNNING: &str = contract::METHODS[6];
+const CANCEL: &str = contract::METHODS[7];
+const ANALYZE_SHELL: &str = contract::METHODS[8];
+const RESERVE: &str = contract::METHODS[9];
+const CAPABILITIES: &str = contract::METHODS[10];
+const SHUTDOWN: &str = contract::METHODS[11];
+const FORWARD: &str = contract::METHODS[12];
+const CLOSE_FORWARD: &str = contract::METHODS[13];
+const JAIL_STATUS: &str = contract::METHODS[14];
+const ANALYZE_COMMAND: &str = contract::METHODS[15];
+const BEGIN_FILE_READ: &str = contract::METHODS[16];
+const READ_FILE_CHUNK: &str = contract::METHODS[17];
+const FINISH_FILE_READ: &str = contract::METHODS[18];
+const BEGIN_FILE_WRITE: &str = contract::METHODS[19];
+const WRITE_FILE_CHUNK: &str = contract::METHODS[20];
+const FINISH_FILE_WRITE: &str = contract::METHODS[21];
+const ABORT_FILE_WRITE: &str = contract::METHODS[22];
+const START_EXEC: &str = contract::METHODS[23];
+const READ_OUTPUT: &str = contract::METHODS[24];
+const RELEASE_OUTPUT: &str = contract::METHODS[25];
+const START_JAILED_EXEC: &str = contract::METHODS[26];
+const RUN_DOCKER: &str = contract::METHODS[27];
+const DOCKER_CALL_GRACE: Duration = Duration::from_secs(5);
+
+#[cfg(test)]
+#[path = "tinybox_tests.rs"]
+mod tests;
+
+/// Resolve TinyBox, require the bus contract supported by this host, and
+/// return its proxy.
+///
+/// The capability check is deliberate: the registry artifact may be older
+/// than this compiled host while a release is being rolled out. A package
+/// version alone does not prove which additive bus members it serves.
+///
+/// # Errors
+///
+/// Returns a safe loading, transport, or contract-version error. It does not
+/// include request arguments or filesystem paths.
+fn require_compatible(version: (u32, u32)) -> Result<(), ModuleCallError> {
+    if contract::is_compatible(version) {
+        return Ok(());
+    }
+    ModuleClient::report_incompatible_contract(MODULE_ID);
+    Err(ModuleCallError::IncompatibleContract)
+}
+
+/// Describe the loaded TinyBox module.
+pub async fn describe(config: &Config) -> Result<String, String> {
+    call(config, DESCRIBE, (), false).await
+}
+
+/// Read module capabilities after enforcing contract compatibility.
+pub async fn capabilities(config: &Config) -> Result<contract::ModuleCapabilities, String> {
+    let client = module_client(config);
+    let capabilities: contract::ModuleCapabilities = client
+        .call(MODULE_ID, CAPABILITIES, ())
+        .await
+        .map_err(message)?;
+    require_compatible(capabilities.contract_version).map_err(message)?;
+    Ok(capabilities)
+}
+
+/// Read the native jail facts; the caller applies its own policy to them.
+pub async fn jail_status(config: &Config) -> Result<contract::JailStatus, String> {
+    call(config, JAIL_STATUS, (), false).await
+}
+
+/// Reserve an opaque identifier before native startup.
+pub async fn reserve(
+    config: &Config,
+    request: contract::ReserveRequest,
+) -> Result<contract::ResourceId, String> {
+    call(config, RESERVE, (request,), false).await
+}
+
+/// Create a sandbox using its caller-known reservation.
+pub async fn create(
+    config: &Config,
+    request: contract::CreateRequest,
+) -> Result<contract::ResourceInfo, String> {
+    call(config, CREATE, (request,), true).await
+}
+
+/// Execute a collected command in a resource.
+pub async fn exec(
+    config: &Config,
+    request: contract::ExecRequest,
+) -> Result<contract::ExecOutput, String> {
+    call(config, EXEC, (request,), true).await
+}
+
+/// Inspect a module-owned resource.
+pub async fn inspect(
+    config: &Config,
+    resource: contract::ResourceId,
+) -> Result<contract::ResourceInfo, String> {
+    call(config, INSPECT, (resource,), false).await
+}
+
+/// Close a resource and wait for the module's native cleanup acknowledgement.
+pub async fn close(config: &Config, resource: contract::ResourceId) -> Result<(), String> {
+    call(config, CLOSE, (resource,), false).await
+}
+
+/// Shut down the module-owned resources.
+pub async fn shutdown(config: &Config) -> Result<(), String> {
+    call(config, SHUTDOWN, (), false).await
+}
+
+/// Start a detached process using a pre-reserved process id.
+pub async fn spawn(
+    config: &Config,
+    request: contract::SpawnRequest,
+) -> Result<contract::ProcessRef, String> {
+    call(config, SPAWN, (request,), true).await
+}
+
+/// Start a supervised process with live output collection.
+pub async fn start_exec(
+    config: &Config,
+    request: contract::SpawnRequest,
+) -> Result<contract::ProcessRef, String> {
+    call(config, START_EXEC, (request,), true).await
+}
+
+/// Start a process in the explicitly requested native directory jail.
+pub async fn start_jailed_exec(
+    config: &Config,
+    request: contract::SpawnRequest,
+    jail: contract::NativeJailConfig,
+) -> Result<contract::ProcessRef, String> {
+    call(config, START_JAILED_EXEC, (request, jail), true).await
+}
+
+/// Run one bounded Docker-isolated command through TinyBox.
+///
+/// The caller applies authorization and Docker policy before sending this
+/// confidential request. The bus deadline includes a short reply grace after
+/// TinyBox's own command deadline so the timeout result can be delivered.
+pub async fn run_docker(
+    config: &Config,
+    request: contract::DockerRunRequest,
+) -> Result<contract::DockerRunOutput, String> {
+    let timeout = Duration::from_millis(request.timeout_ms).saturating_add(DOCKER_CALL_GRACE);
+    let client = ModuleClient::new(config.clone()).with_timeout(timeout);
+    call_run_docker_with_client(&client, request).await
+}
+
+async fn call_run_docker_with_client(
+    client: &ModuleClient,
+    request: contract::DockerRunRequest,
+) -> Result<contract::DockerRunOutput, String> {
+    call_with_client(client, RUN_DOCKER, (request,), true).await
+}
+
+/// Read a bounded output batch from a live or completed process.
+pub async fn read_output(
+    config: &Config,
+    process: contract::ProcessRef,
+    cursor: u64,
+) -> Result<contract::OutputBatch, String> {
+    call(config, READ_OUTPUT, (process, cursor), false).await
+}
+
+/// Release retained output and process ownership after terminal observation.
+pub async fn release_output(config: &Config, process: contract::ProcessRef) -> Result<(), String> {
+    call(config, RELEASE_OUTPUT, (process,), false).await
+}
+
+/// Check whether a detached process remains active.
+pub async fn is_running(config: &Config, process: contract::ProcessRef) -> Result<bool, String> {
+    call(config, IS_RUNNING, (process,), false).await
+}
+
+/// Cancel a detached process and wait for acknowledged cleanup.
+pub async fn cancel(config: &Config, process: contract::ProcessRef) -> Result<(), String> {
+    call(config, CANCEL, (process,), false).await
+}
+
+/// Open a module-owned port forward.
+pub async fn forward(
+    config: &Config,
+    request: contract::ForwardRequest,
+) -> Result<contract::ForwardInfo, String> {
+    call(config, FORWARD, (request,), false).await
+}
+
+/// Close a module-owned port forward.
+pub async fn close_forward(
+    config: &Config,
+    request: contract::CloseForwardRequest,
+) -> Result<(), String> {
+    call(config, CLOSE_FORWARD, (request,), false).await
+}
+
+/// Ask TinyBox for structural shell facts; this is not an authorization check.
+pub async fn analyze_shell(
+    config: &Config,
+    command: String,
+) -> Result<contract::ShellAnalysis, String> {
+    call(config, ANALYZE_SHELL, (command,), false).await
+}
+
+/// Ask TinyBox for generic command facts; the caller still decides policy.
+pub async fn analyze_command(
+    config: &Config,
+    command: String,
+) -> Result<contract::CommandAnalysis, String> {
+    call(config, ANALYZE_COMMAND, (command,), false).await
+}
+
+/// Open a bounded workspace file reader.
+pub async fn begin_file_read(
+    config: &Config,
+    request: contract::BeginFileReadRequest,
+) -> Result<contract::FileReadInfo, String> {
+    call(config, BEGIN_FILE_READ, (request,), false).await
+}
+
+/// Read one bounded range from an open file reader.
+pub async fn read_file_chunk(
+    config: &Config,
+    request: contract::ReadFileChunkRequest,
+) -> Result<contract::FileChunk, String> {
+    call(config, READ_FILE_CHUNK, (request,), false).await
+}
+
+/// Close a workspace file reader.
+pub async fn finish_file_read(
+    config: &Config,
+    request: contract::FinishFileReadRequest,
+) -> Result<(), String> {
+    call(config, FINISH_FILE_READ, (request,), false).await
+}
+
+/// Open an atomic staged workspace file writer.
+pub async fn begin_file_write(
+    config: &Config,
+    request: contract::BeginFileWriteRequest,
+) -> Result<contract::FileWriteInfo, String> {
+    call(config, BEGIN_FILE_WRITE, (request,), false).await
+}
+
+/// Write one bounded sequential chunk.
+pub async fn write_file_chunk(
+    config: &Config,
+    request: contract::WriteFileChunkRequest,
+) -> Result<contract::FileWriteProgress, String> {
+    call(config, WRITE_FILE_CHUNK, (request,), true).await
+}
+
+/// Atomically publish the staged workspace file.
+pub async fn finish_file_write(
+    config: &Config,
+    request: contract::FinishFileWriteRequest,
+) -> Result<contract::FileWriteProgress, String> {
+    call(config, FINISH_FILE_WRITE, (request,), false).await
+}
+
+/// Abort a staged workspace write without publishing it.
+pub async fn abort_file_write(
+    config: &Config,
+    request: contract::AbortFileWriteRequest,
+) -> Result<(), String> {
+    call(config, ABORT_FILE_WRITE, (request,), false).await
+}
+
+async fn call<Request, Reply>(
+    config: &Config,
+    member: &'static str,
+    request: Request,
+    confidential: bool,
+) -> Result<Reply, String>
+where
+    Request: Serialize + Send,
+    Reply: DeserializeOwned,
+{
+    call_with_client(&module_client(config), member, request, confidential).await
+}
+
+fn module_client(config: &Config) -> ModuleClient {
+    ModuleClient::new(config.clone()).with_timeout(MODULE_CALL_TIMEOUT)
+}
+
+fn message(error: ModuleCallError) -> String {
+    error.to_string()
+}
+
+async fn call_with_client<Request, Reply>(
+    client: &ModuleClient,
+    member: &'static str,
+    request: Request,
+    confidential: bool,
+) -> Result<Reply, String>
+where
+    Request: Serialize + Send,
+    Reply: DeserializeOwned,
+{
+    let capabilities: contract::ModuleCapabilities = client
+        .call(MODULE_ID, CAPABILITIES, ())
+        .await
+        .map_err(message)?;
+    require_compatible(capabilities.contract_version).map_err(message)?;
+    if confidential {
+        client
+            .call_confidential(MODULE_ID, member, request)
+            .await
+            .map_err(message)
+    } else {
+        client
+            .call(MODULE_ID, member, request)
+            .await
+            .map_err(message)
+    }
+}

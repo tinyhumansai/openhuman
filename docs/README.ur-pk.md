@@ -205,7 +205,7 @@ OpenHuman ان حصوں کو نئے سرے سے سوچتا ہے جن پر سب �
 
 <p><a href="https://tinyhumans.gitbook.io/openhuman/developing/loadable-modules">پلگ اِن کیسے کام کرتے ہیں</a></p>
 
-<p>سرچ، دستاویزات یا آواز جیسا ہر فیچر ایک ہی Rust بس میں جڑتا ہے، یہ خیال <a href="https://www.freedesktop.org/wiki/Software/dbus/">Linux سسٹم بس</a> سے لیا گیا ہے۔ فیچر صرف ضرورت پڑنے پر لوڈ ہوتا ہے، اور اگر کوئی ایک اٹک جائے تو باقی کام کرتے رہتے ہیں۔</p>
+<p>سرچ، دستاویزات یا آواز جیسا ہر فیچر ایک ہی Rust بس میں جڑتا ہے، یہ خیال <a href="https://packages.debian.org/stable/dbus">Linux سسٹم بس</a> سے لیا گیا ہے۔ فیچر صرف ضرورت پڑنے پر لوڈ ہوتا ہے، اور اگر کوئی ایک اٹک جائے تو باقی کام کرتے رہتے ہیں۔</p>
 
 </td>
 

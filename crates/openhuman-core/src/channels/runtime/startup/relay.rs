@@ -4,6 +4,7 @@ use super::super::dispatch::RuntimeChannelMessage;
 use anyhow::Result;
 use async_trait::async_trait;
 use std::sync::Arc;
+use tinychannels_runtime::config::RelayRuntimeConfigExt as _;
 use tokio::sync::mpsc;
 
 pub(super) struct RelayInboundMessageHandler {

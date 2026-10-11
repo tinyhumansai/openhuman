@@ -1,6 +1,14 @@
 //! Call path to the loaded TinySearch module: lazy load, private
 //! reconfiguration when the resolved configuration changes, and serialized
 //! `ListTools` / `ExecuteTool` calls.
+//!
+//! The module is one per process, but a call's configuration is the caller's:
+//! the reloaded `config.toml` for an ordinary agent, or the agent's own
+//! in-memory config when an embedder pinned search keys on it
+//! ([`crate::config::SearchConfig::pin_host_credential`]). Before each call
+//! the module is reconfigured if it holds anything else, and the call lock is
+//! held through the call, so agents with different keys take turns rather
+//! than ever sharing one configuration.
 
 use std::{
     future::Future,
@@ -44,9 +52,31 @@ pub(super) fn execute_tool_timeout_for(tool_budget_secs: u64) -> std::time::Dura
     )
 }
 
-fn last_config() -> &'static tokio::sync::Mutex<Option<u64>> {
-    static LAST: OnceLock<tokio::sync::Mutex<Option<u64>>> = OnceLock::new();
-    LAST.get_or_init(|| tokio::sync::Mutex::new(None))
+/// Fingerprint of the configuration the loaded module holds: recorded when
+/// this host builds its load-time configuration and after every
+/// reinitialization. `None` when unknown — the module was admitted from the
+/// module search path with no host configuration, or a reinitialization
+/// failed partway — so the next call reconfigures it.
+fn held() -> &'static std::sync::Mutex<Option<u64>> {
+    static HELD: OnceLock<std::sync::Mutex<Option<u64>>> = OnceLock::new();
+    HELD.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+fn set_held(value: Option<u64>) {
+    *held()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = value;
+}
+
+fn held_fingerprint() -> Option<u64> {
+    *held()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Record `configuration` as what the module is about to be loaded with.
+pub(super) fn record_load_configuration(configuration: &serde_json::Value) {
+    set_held(Some(fingerprint(configuration)));
 }
 
 fn fingerprint(value: &serde_json::Value) -> u64 {
@@ -55,6 +85,11 @@ fn fingerprint(value: &serde_json::Value) -> u64 {
     hasher.finish()
 }
 
+/// The module proxy, with the module reconfigured to `config` first when it
+/// holds anything else. Callers hold the module call lock
+/// ([`with_module_lock`]) through the bus call that follows, so a call never
+/// runs under another caller's configuration — two agents with different
+/// pinned keys take turns, each reconfiguring the module for its own call.
 async fn proxy(config: &Config) -> Result<tinybus::Proxy, String> {
     crate::modules::ops::ensure_loaded_within(
         config,
@@ -69,25 +104,15 @@ async fn proxy(config: &Config) -> Result<tinybus::Proxy, String> {
     let configuration =
         serde_json::to_value(module_config(config)).map_err(|error| error.to_string())?;
     let current = fingerprint(&configuration);
-    // Caller holds the module call lock through the subsequent bus call.
-    let mut previous = last_config().lock().await;
-    match *previous {
-        // The first call after a lazy load: `ensure_loaded_within` initialized
-        // the module with `module_config(config)` for this same config, so it
-        // already holds this configuration. Reinitializing now would race the
-        // module's own initialization.
-        None => {
-            tracing::debug!(
-                "[modules][search] first call; module holds the load-time configuration"
-            );
-        }
-        Some(last) if last == current => {}
-        Some(_) => {
-            tracing::debug!("[modules][search] configuration changed; reinitializing module");
-            reinitialize(runtime, configuration).await?;
-        }
+    if held_fingerprint() != Some(current) {
+        tracing::debug!(
+            host_pinned = config.search.is_host_pinned(),
+            "[modules][search] module holds another configuration; reinitializing"
+        );
+        set_held(None);
+        reinitialize(runtime, configuration).await?;
+        set_held(Some(current));
     }
-    *previous = Some(current);
     runtime
         .proxy(names::INTERFACE, names::OBJECT_PATH)
         .map_err(|error| format!("search module proxy unavailable: {error}"))
@@ -139,7 +164,20 @@ where
     result
 }
 
+/// The config a search call runs under.
+///
+/// A config carrying host-pinned search credentials
+/// ([`crate::config::SearchConfig::pin_host_credential`]) is authoritative:
+/// it is one agent's in-memory config, its keys exist nowhere else, and a
+/// reload of the shared `config_path` would drop them. Any other config is
+/// reloaded so a settings or login change is honoured on the next call.
 async fn current_config(config: &Config) -> Result<Config, String> {
+    if config.search.is_host_pinned() {
+        tracing::debug!(
+            "[modules][search] host-pinned search credentials; using the agent's config"
+        );
+        return Ok(config.clone());
+    }
     crate::config::ops::reload_config_from_paths(&config.config_path, &config.workspace_dir).await
 }
 

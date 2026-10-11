@@ -136,6 +136,16 @@ async fn an_off_profile_still_discloses_a_registered_summary() {
 #[tokio::test]
 async fn a_module_disabled_in_configuration_discloses_a_wanted_summary() {
     let _lock = crate::config::TEST_ENV_LOCK.lock().await;
+    let mut config = crate::config::Config::default();
+    config.modules.enabled = false;
+    let fixture_aware_call = client(&config)
+        .call::<()>("tinyjuice", methods::INSTALL, (install_request(&config),))
+        .await;
+    assert!(
+        fixture_aware_call.is_err(),
+        "a test module artifact must not override modules.enabled=false"
+    );
+
     let previous = std::env::var_os("TINYJUICE_TEST_MODULE");
     // SAFETY: serialized by TEST_ENV_LOCK; restored below for every exit path.
     unsafe { std::env::remove_var("TINYJUICE_TEST_MODULE") };
@@ -151,8 +161,6 @@ async fn a_module_disabled_in_configuration_discloses_a_wanted_summary() {
     }
     let _restore = RestoreEnv(previous);
 
-    let mut config = crate::config::Config::default();
-    config.modules.enabled = false;
     let config = std::sync::Arc::new(config);
 
     let output = compact_tool_output(ToolOutputCompaction {
@@ -187,90 +195,6 @@ fn passthrough_discloses_a_notice_only_when_a_summary_was_wanted() {
     assert_eq!(disclosed.text, "raw");
     assert_eq!(disclosed.notice, Some(summary_failed_notice()));
     assert_eq!(disclosed.summarized_from_bytes, None);
-}
-
-fn synthetic_compact_response(text: &str) -> types::CompactResponse {
-    types::CompactResponse {
-        text: text.to_string(),
-        original_bytes: text.len(),
-        compacted_bytes: text.len(),
-        rule_id: "none/plain_text".into(),
-        applied: false,
-        content_kind: "plain_text".into(),
-        compressor: "none".into(),
-        original_tokens: text.len().div_ceil(4) as u64,
-        compacted_tokens: text.len().div_ceil(4) as u64,
-        notice: None,
-    }
-}
-
-fn unknown_method_error() -> tinybus::Error {
-    tinybus::Error::UnknownMethod {
-        interface: tinybus::InterfaceName::new("ai.tinyhumans.tinyjuice.Compaction").unwrap(),
-        member: tinybus::MemberName::new("CompactWith").unwrap(),
-    }
-}
-
-fn method_failed_error() -> tinybus::Error {
-    tinybus::Error::MethodFailed {
-        name: "ai.tinyhumans.tinyjuice.Error.Internal".into(),
-        message: "boom".into(),
-    }
-}
-
-#[test]
-fn a_successful_compact_with_reply_is_used_as_is() {
-    let response = synthetic_compact_response("compacted");
-    match classify_compact_with_reply(Ok(response.clone()), "shell") {
-        CompactWithOutcome::Response(got) => assert_eq!(got.text, response.text),
-        _ => panic!("expected Response"),
-    }
-}
-
-#[test]
-fn an_unknown_method_error_asks_to_retry_as_compact() {
-    assert!(matches!(
-        classify_compact_with_reply(Err(unknown_method_error()), "shell"),
-        CompactWithOutcome::RetryAsCompact
-    ));
-}
-
-#[test]
-fn any_other_compact_with_error_gives_up() {
-    assert!(matches!(
-        classify_compact_with_reply(Err(method_failed_error()), "shell"),
-        CompactWithOutcome::GiveUp
-    ));
-}
-
-#[test]
-fn a_legacy_compact_reply_gains_the_summary_notice_when_one_was_wanted_and_missing() {
-    let response = synthetic_compact_response("legacy");
-    let finished = finish_legacy_compact_reply(Ok(response), true)
-        .expect("a successful reply is never dropped");
-    assert_eq!(finished.notice, Some(summary_failed_notice()));
-}
-
-#[test]
-fn a_legacy_compact_reply_keeps_its_own_notice_when_it_already_has_one() {
-    let mut response = synthetic_compact_response("legacy");
-    response.notice = Some("module notice".to_string());
-    let finished =
-        finish_legacy_compact_reply(Ok(response), true).expect("a successful reply is kept");
-    assert_eq!(finished.notice, Some("module notice".to_string()));
-}
-
-#[test]
-fn a_legacy_compact_reply_is_silent_when_no_summary_was_wanted() {
-    let response = synthetic_compact_response("legacy");
-    let finished = finish_legacy_compact_reply(Ok(response), false)
-        .expect("a successful reply is never dropped");
-    assert_eq!(finished.notice, None);
-}
-
-#[test]
-fn a_failed_legacy_compact_reply_gives_up() {
-    assert!(finish_legacy_compact_reply(Err(method_failed_error()), true).is_none());
 }
 
 #[test]
@@ -329,4 +253,77 @@ fn install_request_summarizes_only_on_request_under_a_64k_cap() {
         "ingest must never call the summary model on its own"
     );
     assert_eq!(request.options.llm_summary_max_input_tokens, 64_000);
+}
+
+/// Run against the verified release with the host's pinned TinyBus loader.
+#[tokio::test]
+async fn released_queries_keep_cached_originals_in_the_module_and_accept_artifact_content() {
+    if std::env::var_os("TINYJUICE_TEST_MODULE").is_none() {
+        eprintln!("SKIPPED: released TinyJuice artifact not configured");
+        return;
+    }
+    use tinyjuice_bus::{
+        repl::{FindMode, ReplLimits, ReplOp, ReplOutput, ScopeUnit},
+        wire::{QueryError, QueryRequest, QueryResponse, QueryTarget},
+    };
+    let workspace = tempfile::tempdir().unwrap();
+    let config = crate::config::Config {
+        workspace_dir: workspace.path().into(),
+        ..Default::default()
+    };
+    install_from_config(&config).await.unwrap();
+    let content = format!("{}\nmodule-owned-needle\n", "boring row\n".repeat(2000));
+    let compressed: types::CompressedOutput = client(&config)
+        .call(
+            "tinyjuice",
+            methods::COMPRESS,
+            (content.clone(), types::ContentHint::default()),
+        )
+        .await
+        .unwrap();
+    let handle = compressed
+        .ccr_token
+        .expect("released module retains original");
+    let make_request = |target| QueryRequest {
+        target,
+        op: ReplOp::Find {
+            query: "module-owned-needle".into(),
+            mode: FindMode::Text,
+            ignore_case: false,
+            context: 0,
+            top_k: None,
+            scope: None,
+            unit: ScopeUnit::Lines,
+        },
+        limits: ReplLimits::default(),
+        context_token: None,
+        scope: None,
+    };
+    for target in [
+        QueryTarget::Handle { token: handle },
+        QueryTarget::Content { content },
+    ] {
+        let reply: QueryResponse = client(&config)
+            .call("tinyjuice", methods::QUERY, (make_request(target),))
+            .await
+            .unwrap();
+        assert!(
+            matches!(reply, Ok(ReplOutput::Lines {hits, ..}) if hits.iter().any(|hit| hit.text.contains("module-owned-needle")))
+        );
+    }
+    let missing: QueryResponse = client(&config)
+        .call(
+            "tinyjuice",
+            methods::QUERY,
+            (make_request(QueryTarget::Handle {
+                token: "neverstored123".into(),
+            }),),
+        )
+        .await
+        .unwrap();
+    assert_eq!(missing, Err(QueryError::HandleNotFound));
+    let reply: tinyjuice_bus::wire::HtmlResponse = client(&config).call("tinyjuice", methods::EXTRACT_HTML, ("<html><body><h1>Fixture</h1><script>secret_script</script><p>hello</p></body></html>",)).await.unwrap();
+    let markdown = reply.unwrap();
+    assert!(markdown.contains("hello"));
+    assert!(!markdown.contains("secret_script"));
 }

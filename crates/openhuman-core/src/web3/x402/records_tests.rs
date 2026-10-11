@@ -23,6 +23,8 @@ fn payment() -> X402PaymentResult {
         recipient: "recipient".into(),
         network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp".into(),
         url: "https://x402.example.test/thing".into(),
+        authorization_valid_until: None,
+        solana_last_valid_block_height: None,
         reservation: ledger::reserve(2_500).unwrap().unwrap(),
     }
 }

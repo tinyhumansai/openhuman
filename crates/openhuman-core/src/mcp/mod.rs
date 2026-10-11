@@ -62,10 +62,16 @@
 pub fn start(config: &crate::config::Config) {
     registry::bus::init();
 
+    #[cfg(feature = "modules")]
+    module_client::McpConfiguredClient::register_shutdown_hook();
+
     if let Err(error) = host::init(config) {
         log::warn!("[mcp] the service could not be opened; continuing without it: {error}");
     }
 }
+
+#[cfg(feature = "mcp")]
+pub(crate) mod module_client;
 
 /// Brings this domain up — the build without it, where there is nothing to do.
 #[cfg(not(feature = "mcp"))]
@@ -102,25 +108,46 @@ pub fn start_boot_jobs(config: &crate::config::Config) {
 /// Lists every configured server and rewrites its cached tools.
 #[cfg(feature = "mcp")]
 pub(crate) async fn refresh_configured_tool_cache(config: &crate::config::Config) {
-    let registry = host::static_registry(config);
-    if registry.is_empty() {
-        return;
-    }
-    let service = match host::for_config(config) {
-        Ok(service) => service,
+    let client = match module_client::McpConfiguredClient::for_config(config) {
+        Ok(client) => client,
         Err(error) => {
-            tracing::debug!(?error, "[mcp] no host; configured tool cache not refreshed");
+            tracing::debug!(
+                ?error,
+                "[mcp] no module; configured tool cache not refreshed"
+            );
             return;
         }
     };
-    for (server, outcome) in registry.refresh_tool_cache(service.dynamic().store()).await {
+    let client_config = host::client_config(config);
+    let servers: Vec<String> = match client
+        .call(&client_config, tinymcp_bus::names::methods::STATIC_LIST, ())
+        .await
+    {
+        Ok(servers) => servers,
+        Err(error) => {
+            tracing::debug!(?error, "[mcp] static server list unavailable");
+            return;
+        }
+    };
+    for server in servers {
+        let outcome: Result<Vec<tinymcp_bus::McpRemoteTool>, _> = client
+            .call(
+                &client_config,
+                tinymcp_bus::names::methods::STATIC_LIST_TOOLS,
+                (server.clone(),),
+            )
+            .await;
         match outcome {
-            Ok(count) => {
-                tracing::debug!(server = %server, tools = count, "[mcp] refreshed configured tool cache")
-            }
-            Err(error) => {
-                tracing::debug!(server = %server, "[mcp] configured tool cache not refreshed: {error}")
-            }
+            Ok(tools) => tracing::debug!(
+                server = %server,
+                tools = tools.len(),
+                "[mcp] refreshed configured tool cache"
+            ),
+            Err(error) => tracing::debug!(
+                server = %server,
+                ?error,
+                "[mcp] configured tool cache not refreshed"
+            ),
         }
     }
 }

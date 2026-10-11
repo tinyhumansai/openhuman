@@ -131,7 +131,6 @@ pub fn apply(config: &mut crate::config::Config, route: EphemeralRoute) {
         label: "Per-call route".to_string(),
         endpoint: route.endpoint.clone(),
         auth_style: AuthStyle::Bearer,
-        legacy_type: None,
         default_model: Some(model.clone()),
     });
 

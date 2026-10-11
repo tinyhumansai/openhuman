@@ -1,36 +1,18 @@
-//! Channel implementations and runtime orchestration.
+//! Channel contracts and OpenHuman runtime orchestration.
 //!
-//! Compile-time gate (`channels`, default-ON — #4801): the whole domain lives
-//! behind the feature EXCEPT two dependency-free carve-outs that always-on code
-//! reaches directly:
+//! Provider orchestration is gated by `channels`. Serialized configuration,
+//! messages, and schemas come from `tinychannels-bus`. Podcast email delivery
+//! calls the loaded module even in a voice-only build.
 //!
-//! * `traits` — a one-line re-export of the `tinychannels` `Channel` /
-//!   `SendMessage` traits, named by the always-on agent-harness interactive
-//!   loop (`agent::session_host::runtime::run_interactive`).
-//! * `CliChannel` — the local stdin/stdout REPL the same interactive loop
-//!   drives in every build, re-exported from the lightweight
-//!   `tinychannels-runtime` crate.
-//! * `contract_schema` — the `tinychannels-bus` controller-schema conversion,
-//!   shared with `openhuman-tinyhumans`, which serves the managed-bot link
-//!   controllers (`channels.telegram_login_*`, `channels.discord_link_*`).
-//!
-//! Everything else (`providers`, `host`, `controllers`, `runtime`, `bus`,
-//! `proactive`, `commands`, `context`, `routes`,
-//! the provider re-exports,
-//! `doctor_channels`, `start_channels`, the `build_system_prompt` re-export and
-//! the `test_support` re-export) is `#[cfg(feature = "channels")]`.
-//! Nothing INSIDE those submodules changes when the gate flips.
-//!
-//! The gate sheds ZERO dependencies — `tinychannels` stays load-bearing for the
-//! config schema, the `DomainEvent` inbound envelope and security pairing — so
-//! its value is compile-time surface + binary size, not the dep tree. See
-//! AGENTS.md "channels gate".
+//! The local REPL is host orchestration. The legacy provider trait remains an
+//! explicit implementation exception during the runtime migration to TinyBus.
 
 // Always-compiled carve-outs (see module docs).
 pub mod contract_schema;
+#[cfg(any(feature = "voice", feature = "channels"))]
+pub(crate) mod credentials;
 pub mod traits;
 
-pub use tinychannels_runtime::CliChannel;
 pub use traits::{Channel, ChannelSendExt, SendMessage};
 
 #[cfg(feature = "channels")]

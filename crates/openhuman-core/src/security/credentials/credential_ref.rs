@@ -18,7 +18,7 @@
 //!
 //! ## Three refusals before the keychain is touched
 //!
-//! Resolution is deliberately not a bare [`keyring::get`]:
+//! Resolution is deliberately not a bare [`secret_storage::get`]:
 //!
 //! 1. **Consent.** [`keyring_consent::policy::check_secret_access`] must return
 //!    [`PolicyDecision::Proceed`]. A prompt that has not been answered is not a
@@ -37,7 +37,7 @@
 //! The order is enforced structurally, not by convention: [`preflight`] takes
 //! availability as a **closure**, so a refused consent decision returns before
 //! the probe can run. That matters because the probe is a real backend
-//! round-trip on its first call (`keyring::ops`' availability cache starts
+//! round-trip on its first call (`secret_storage::ops`' availability cache starts
 //! empty) — evaluating it eagerly would touch the keychain on exactly the paths
 //! this gate exists to stop.
 //!
@@ -53,7 +53,7 @@
 //! `subsystems_status` — pinned by
 //! `fallback_reason_never_contains_credential_ref_or_endpoint`.
 //!
-//! The sharp edge is [`KeyringError`](keyring::KeyringError), whose own
+//! The sharp edge is [`SecretStorageError`](secret_storage::SecretStorageError), whose own
 //! `Display` interpolates the key (`"OS keychain error for key '{key}':
 //! {source}"`) — and so does its `diagnostic()`, which is `{self:?}`.
 //! Propagating or logging one verbatim would leak the very name this module
@@ -67,7 +67,7 @@
 //! protecting the wrong half.
 //!
 //! **Scope of that promise.** It covers this module's errors, this module's
-//! logs, and the types it returns. It does **not** cover `keyring::get`, which
+//! logs, and the types it returns. It does **not** cover `secret_storage::get`, which
 //! logs its `key=` argument at `debug` as the whole keyring surface has always
 //! done for its fixed-name callers — a `credential_ref` is simply the first
 //! *operator-configured* key to reach it. Narrowing that is a shared-kernel
@@ -77,8 +77,8 @@
 
 use zeroize::Zeroizing;
 
-use crate::security::keyring;
 use crate::security::keyring_consent::{policy, PolicyDecision};
+use crate::security::secret_storage;
 
 /// Log prefix for this module's diagnostics.
 const LOG_PREFIX: &str = "[security:credential-ref]";
@@ -141,7 +141,7 @@ pub enum CredentialRefError {
     NotFound,
 
     /// The keychain backend failed. Detail is logged, never rendered — see the
-    /// module docs on [`KeyringError`](keyring::KeyringError).
+    /// module docs on [`SecretStorageError`](secret_storage::SecretStorageError).
     #[error("keychain lookup failed")]
     Backend,
 }
@@ -159,7 +159,7 @@ pub enum CredentialRefError {
 /// `keychain_available` is a **closure, not a `bool`**, so the order is a
 /// property of the code rather than of the call site. Passing the probe's
 /// result would evaluate it before this function is entered, and
-/// `keyring::is_available`'s first call is a real backend round-trip — the
+/// `secret_storage::is_available`'s first call is a real backend round-trip — the
 /// keychain would be touched on precisely the paths consent just refused.
 ///
 /// The decision is matched exhaustively rather than compared against
@@ -183,7 +183,7 @@ pub fn preflight(
     None
 }
 
-/// A fixed, name-free label for a [`KeyringError`](keyring::KeyringError).
+/// A fixed, name-free label for a [`SecretStorageError`](secret_storage::SecretStorageError).
 ///
 /// Both that type's `Display` and its `diagnostic()` interpolate the key, so
 /// neither may be logged from a path whose key is a credential reference. This
@@ -194,10 +194,9 @@ pub fn preflight(
 /// rather than a silent fall-through to a wrong label. The five folded into
 /// `"backend"` cannot arise from a `get`: they belong to `set`, migration and
 /// random generation.
-fn keyring_error_kind(e: &keyring::KeyringError) -> &'static str {
-    use keyring::KeyringError as E;
+fn keyring_error_kind(e: &secret_storage::SecretStorageError) -> &'static str {
+    use secret_storage::SecretStorageError as E;
     match e {
-        E::Os { .. } => "os-backend",
         E::InvalidUtf8 { .. } => "invalid-utf8",
         E::Crypto(_) => "crypto",
         E::VerifyFailed { .. }
@@ -212,7 +211,7 @@ fn keyring_error_kind(e: &keyring::KeyringError) -> &'static str {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum CredentialRefScheme {
-    /// `keychain:<name>` — resolved through [`keyring`].
+    /// `keychain:<name>` — resolved through [`secret_storage`].
     Keychain,
 }
 
@@ -390,10 +389,12 @@ impl CredentialRef {
     }
 
     fn resolve_keychain(&self, user_id: &str) -> Result<ResolvedSecret, CredentialRefError> {
-        // `keyring::is_available` is passed unevaluated: a consent refusal must
+        // `secret_storage::is_available` is passed unevaluated: a consent refusal must
         // return before the availability probe, whose first call is a real
         // backend round-trip. See `preflight`.
-        if let Some(refusal) = preflight(policy::check_secret_access(), keyring::is_available) {
+        if let Some(refusal) =
+            preflight(policy::check_secret_access(), secret_storage::is_available)
+        {
             log::debug!(
                 "{LOG_PREFIX} keychain access refused before lookup user_id={user_id} \
                  refusal={refusal}"
@@ -401,7 +402,7 @@ impl CredentialRef {
             return Err(refusal);
         }
 
-        match keyring::get(user_id, &self.name) {
+        match secret_storage::get(user_id, &self.name) {
             Ok(Some(secret)) => {
                 log::debug!("{LOG_PREFIX} resolved credential_ref user_id={user_id}");
                 Ok(ResolvedSecret::new(secret))
@@ -410,7 +411,7 @@ impl CredentialRef {
                 log::debug!("{LOG_PREFIX} no keychain entry for credential_ref user_id={user_id}");
                 Err(CredentialRefError::NotFound)
             }
-            // Classified, never rendered: `KeyringError`'s `Display` — and its
+            // Classified, never rendered: `SecretStorageError`'s `Display` — and its
             // `diagnostic()`, which is `{self:?}` — both interpolate the key.
             // Formatting either here would write the credential name to a
             // retained warn-level log, which is the leak this module's

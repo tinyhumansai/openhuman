@@ -178,27 +178,6 @@ impl LocalAiConfig {
     pub fn is_active(&self) -> bool {
         self.runtime_enabled
     }
-
-    /// **Deprecated** — read from `Config::workload_uses_local("embeddings")`
-    /// instead. This helper only consults the legacy `usage.*` booleans, which
-    /// are no longer the source of truth after the unified AI settings
-    /// migration (schema_version >= 2).
-    #[deprecated(note = "Use Config::workload_uses_local(\"embeddings\")")]
-    pub fn use_local_for_embeddings(&self) -> bool {
-        self.runtime_enabled && self.usage.embeddings
-    }
-
-    /// **Deprecated** — read from `Config::workload_uses_local("heartbeat")`.
-    #[deprecated(note = "Use Config::workload_uses_local(\"heartbeat\")")]
-    pub fn use_local_for_heartbeat(&self) -> bool {
-        self.runtime_enabled && self.usage.heartbeat
-    }
-
-    /// **Deprecated** — read from `Config::workload_uses_local("subconscious")`.
-    #[deprecated(note = "Use Config::workload_uses_local(\"subconscious\")")]
-    pub fn use_local_for_subconscious(&self) -> bool {
-        self.runtime_enabled && self.usage.subconscious
-    }
 }
 
 impl Default for LocalAiConfig {

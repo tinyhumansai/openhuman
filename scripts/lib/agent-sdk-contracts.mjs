@@ -5,7 +5,7 @@ const contracts = new Map([
     "pub use tinyinference_llm::model::budget::{Budget, BudgetExceeded, BudgetSnapshot, CallBudget, Spend, SpendLimits};",
   )],
   ["crates/openhuman-core/src/agent/tinyagents/turn_observer.rs", compact(
-    "pub use tinyagents_harness::observability::{LangfuseAuth, LangfuseClient, LangfuseScore, LangfuseScoreValue, LangfuseTraceConfig};",
+    "pub use tinyagents_harness::observability::{trace_export::{otlp::otlp_requests, ExportBrand, SpanKind, SpanStatus, TraceSpan}, LangfuseAuth, LangfuseClient, LangfuseScore, LangfuseScoreValue, LangfuseTraceConfig};",
   )],
 ]);
 

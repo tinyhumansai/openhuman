@@ -66,6 +66,8 @@
 //! with which it is, and [`sign_payload`] dispatches on the tag rather than on
 //! the chain — so a chain that changes scheme cannot silently sign wrongly.
 
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use tinywallet_bus::names::methods;
 use tinywallet_bus::wire::{
     DerivedAccount, ExportRequest, ExportedKey, Scheme, SecretMaterial, SignMessageRequest,
@@ -217,6 +219,42 @@ pub async fn export_key(
                 secret: secret.clone(),
             },),
         )
+        .await
+        .map_err(|error| classify(&error))
+}
+
+/// Call a typed Wallet, Web3, or x402 member with one request argument.
+/// Business rules stay in the module; the host only transports the request.
+pub async fn call<Request, Reply>(
+    config: &Config,
+    member: &str,
+    request: Request,
+) -> Result<Reply, WalletCallError>
+where
+    Request: Serialize + Send,
+    Reply: DeserializeOwned,
+{
+    let (runtime, record) = ready(config).await?;
+    proxy(runtime, record)?
+        .call::<Reply>(member, (request,))
+        .await
+        .map_err(|error| classify(&error))
+}
+
+/// Call a Wallet member carrying secret material over TinyBus's confidential
+/// transport. The loaded module must be attested and match this build's pin.
+pub async fn call_confidential<Request, Reply>(
+    config: &Config,
+    member: &str,
+    request: &Request,
+) -> Result<Reply, WalletCallError>
+where
+    Request: Serialize + Send,
+    Reply: DeserializeOwned,
+{
+    attested_proxy(config)
+        .await?
+        .call_confidential::<Reply>(member, (request,))
         .await
         .map_err(|error| classify(&error))
 }

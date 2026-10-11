@@ -1,36 +1,24 @@
 use super::*;
 
 #[tokio::test]
-async fn connect_yuanbao_persists_when_credentials_valid() {
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
-
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/v5/robotLogic/sign-token"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "code": 0,
-            "data": {
-                "token": "tok-abc",
-                "bot_id": "bot-123",
-                "product": "yuanbao",
-                "source": "openhuman",
-                "duration": 3600,
-            }
-        })))
-        .mount(&server)
-        .await;
-
-    let (_tmp, config) = yuanbao_test_config(&server.uri());
-    let result = connect_channel(
+async fn persist_prepared_yuanbao_without_plaintext_secret() {
+    let (_tmp, config) = isolated_test_config();
+    let mock_uri = "https://module-verified.invalid".to_owned();
+    let update = YuanbaoConfig {
+        app_key: "real-key".into(),
+        app_secret: String::new(),
+        api_domain: mock_uri.clone(),
+        ..Default::default()
+    };
+    let result = persist_module_fixture(
         &config,
         "yuanbao",
         ChannelAuthMode::ApiKey,
-        serde_json::json!({ "app_key": "real-key", "app_secret": "real-secret" }),
+        serde_json::json!({"app_key":"real-key", "app_secret":"real-secret"}),
+        tinychannels_bus::module_controller::ChannelConfigUpdate::Yuanbao(Box::new(update)),
     )
     .await
-    .expect("valid yuanbao credentials should succeed");
-
+    .expect("verified module configuration should persist");
     assert_eq!(result.value.status, "connected");
     assert!(result.value.restart_required);
 
@@ -72,64 +60,31 @@ async fn connect_yuanbao_persists_when_credentials_valid() {
 }
 
 #[tokio::test]
-async fn connect_yuanbao_verifies_against_overridden_api_domain() {
-    // Regression: previously, `verify_yuanbao_credentials` rebuilt the
-    // YuanbaoConfig from `config.channels_config.yuanbao` alone and
-    // ignored the `api_domain` / `env` / `route_env` overrides on the
-    // connect-channel payload. A user submitting `env = "pre"` could
-    // pass verification against PROD and then fail after restart when
-    // the persisted override took effect.
-    //
-    // Here the base TOML's `api_domain` deliberately points at an
-    // unreachable URL — verification only succeeds if the override
-    // supplied in `creds_map` is what actually gets used.
-    use wiremock::matchers::{header, method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
-
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/v5/robotLogic/sign-token"))
-        .and(header("X-Route-Env", "canary"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "code": 0,
-            "data": {
-                "token": "tok-override",
-                "bot_id": "bot-1",
-                "product": "yuanbao",
-                "source": "openhuman",
-                "duration": 3600,
-            }
-        })))
-        .mount(&server)
-        .await;
-
-    let (_tmp, mut config) = isolated_test_config();
-    // Base TOML points to a black hole so the test fails immediately if
-    // the verifier ignores the override.
-    config.channels_config.yuanbao = Some(YuanbaoConfig {
-        api_domain: "http://127.0.0.1:1".to_string(),
+async fn persist_yuanbao_module_verified_api_override() {
+    // TinyChannels verifies the override before returning this fixture. The
+    // host must preserve the returned endpoint and route during persistence.
+    let (_tmp, config) = isolated_test_config();
+    let mock_uri = "https://module-verified.invalid".to_owned();
+    let update = YuanbaoConfig {
+        app_key: "k".into(),
+        app_secret: String::new(),
+        api_domain: mock_uri.clone(),
+        env: "prod".into(),
+        route_env: "canary".into(),
         ..Default::default()
-    });
-
-    let mock_uri = server.uri();
-    let result = connect_channel(
+    };
+    let result = persist_module_fixture(
         &config,
         "yuanbao",
         ChannelAuthMode::ApiKey,
-        serde_json::json!({
-            "app_key": "k",
-            "app_secret": "s",
-            "api_domain": mock_uri.clone(),
-            "route_env": "canary",
-        }),
+        serde_json::json!({"app_key":"k", "app_secret":"s"}),
+        tinychannels_bus::module_controller::ChannelConfigUpdate::Yuanbao(Box::new(update)),
     )
     .await
-    .expect("override should be applied before verify");
-
+    .expect("verified module configuration should persist");
     assert_eq!(result.value.status, "connected");
+    assert!(result.value.restart_required);
 
-    // The override should also have been persisted (single source of
-    // truth between verify and persist).
     let raw = tokio::fs::read_to_string(&config.config_path)
         .await
         .expect("config should be persisted");
@@ -150,40 +105,28 @@ async fn connect_yuanbao_verifies_against_overridden_api_domain() {
 }
 
 #[tokio::test]
-async fn connect_yuanbao_persists_env_override() {
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
-
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/api/v5/robotLogic/sign-token"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "code": 0,
-            "data": {
-                "token": "tok-pre",
-                "bot_id": "bot-456",
-                "product": "yuanbao",
-                "source": "openhuman",
-                "duration": 3600,
-            }
-        })))
-        .mount(&server)
-        .await;
-
-    let (_tmp, config) = yuanbao_test_config(&server.uri());
-    connect_channel(
+async fn persist_prepared_yuanbao_environment_override() {
+    let (_tmp, config) = isolated_test_config();
+    let mock_uri = "https://module-verified.invalid".to_owned();
+    let update = YuanbaoConfig {
+        app_key: "k".into(),
+        app_secret: String::new(),
+        api_domain: mock_uri.clone(),
+        env: "pre".into(),
+        route_env: "canary".into(),
+        ..Default::default()
+    };
+    let result = persist_module_fixture(
         &config,
         "yuanbao",
         ChannelAuthMode::ApiKey,
-        serde_json::json!({
-            "app_key": "k",
-            "app_secret": "s",
-            "env": "pre",
-            "route_env": "canary",
-        }),
+        serde_json::json!({"app_key":"k", "app_secret":"s"}),
+        tinychannels_bus::module_controller::ChannelConfigUpdate::Yuanbao(Box::new(update)),
     )
     .await
-    .expect("valid yuanbao credentials should succeed");
+    .expect("verified module configuration should persist");
+    assert_eq!(result.value.status, "connected");
+    assert!(result.value.restart_required);
 
     let raw = tokio::fs::read_to_string(&config.config_path)
         .await
@@ -280,10 +223,11 @@ async fn disconnect_email_clears_channels_config() {
 }
 
 #[tokio::test]
-async fn connect_email_rejects_invalid_port_before_network() {
-    // All required fields present so validation passes; a non-numeric port makes
-    // build_email_config fail in the pre-verify step, before any IMAP dial.
-    let config = Config::default();
+async fn connect_email_requires_module_before_native_port_validation() {
+    // Native malformed-port coverage lives in TinyChannels. With no module,
+    // the host must not run a parser or dial a mailbox itself.
+    let mut config = Config::default();
+    config.modules.enabled = false;
     let err = connect_channel(
         &config,
         "email",
@@ -298,12 +242,13 @@ async fn connect_email_rejects_invalid_port_before_network() {
     )
     .await
     .expect_err("invalid port must be rejected");
-    assert!(err.contains("imap_port"), "{err}");
+    assert!(err.contains("module unavailable"), "{err}");
 }
 
 #[tokio::test]
-async fn test_channel_email_rejects_invalid_port_before_network() {
-    let config = Config::default();
+async fn test_channel_email_requires_the_module_before_native_verification() {
+    let mut config = Config::default();
+    config.modules.enabled = false;
     let err = test_channel(
         &config,
         "email",
@@ -317,6 +262,6 @@ async fn test_channel_email_rejects_invalid_port_before_network() {
         }),
     )
     .await
-    .expect_err("invalid smtp port must be rejected");
-    assert!(err.contains("smtp_port"), "{err}");
+    .expect_err("an unavailable module must not trigger host IMAP verification");
+    assert!(err.contains("module unavailable"), "{err}");
 }

@@ -85,7 +85,7 @@ pub async fn edit_message(request: EditMessageRequest) -> Result<Outcome<Value>,
     let thread_id = request.thread_id;
     let dir = workspace_dir().await.map_err(ThreadsError::Message)?;
 
-    crate::web_chat::cancel_chat(&client_id, &thread_id)
+    crate::web_chat::cancel_chat_scoped(&client_id, &thread_id, None)
         .await
         .map_err(ThreadsError::Message)?;
 
@@ -149,7 +149,7 @@ pub async fn regenerate(request: RegenerateRequest) -> Result<Outcome<Value>, Th
     let thread_id = request.thread_id;
     let dir = workspace_dir().await.map_err(ThreadsError::Message)?;
 
-    crate::web_chat::cancel_chat(&client_id, &thread_id)
+    crate::web_chat::cancel_chat_scoped(&client_id, &thread_id, None)
         .await
         .map_err(ThreadsError::Message)?;
 

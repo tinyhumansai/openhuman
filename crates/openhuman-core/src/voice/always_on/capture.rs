@@ -1,34 +1,62 @@
-//! Raw microphone capture for the always-on loop.
-//!
-//! The `cpal` stream, its realtime callback and the bounded-queue forwarding
-//! live in `tinyvoice::capture`. This file supplies the host's part: the
-//! microphone-permission policy. Downmixing and resampling live in the
-//! processor, not in the callback.
-
-use super::LOG_PREFIX;
-
-pub(super) use tinyvoice::capture::{CaptureFormat, RawChunk};
-
-/// Spawn the dedicated cpal capture thread. Blocks until the stream is set up
-/// (or fails), mirroring `audio_capture::start_recording`'s readiness handshake.
-pub(super) fn spawn_capture_thread(
-    tx: tokio::sync::mpsc::Sender<RawChunk>,
-) -> Result<CaptureFormat, String> {
-    tinyvoice::capture::spawn_capture_thread(tx, microphone_permission).map_err(|e| e.to_string())
+//! Bounded batch forwarding from module-owned continuous microphone capture.
+use crate::config::Config;
+use crate::voice::capture_lease::{CaptureLease, Kind};
+pub(super) use tinyvoice_bus::capture::{CaptureFormat, RawChunk};
+static STOP: std::sync::LazyLock<tokio::sync::watch::Sender<u64>> =
+    std::sync::LazyLock::new(|| tokio::sync::watch::channel(0).0);
+pub(super) fn stop_subscription() -> tokio::sync::watch::Receiver<u64> {
+    STOP.subscribe()
 }
-
-/// Surface the mic permission state explicitly — a denied/Unknown state is the
-/// most common reason always-on "does nothing" and it differs per OS (macOS TCC
-/// prompt, Windows privacy settings), so log it on every test build. Only a
-/// denied state stops capture.
-fn microphone_permission() -> Result<(), String> {
-    use tinycomputer_accessibility::{detect_microphone_permission, PermissionState};
-
-    let permission = detect_microphone_permission();
-    log::info!("{LOG_PREFIX} microphone permission: {permission:?}");
-    if matches!(permission, PermissionState::Denied) {
-        log::warn!("{LOG_PREFIX} microphone permission denied — always-on cannot capture audio");
-        return Err("microphone permission denied".to_string());
+pub(super) fn request_stop() {
+    STOP.send_modify(|generation| *generation = generation.wrapping_add(1));
+}
+/// Owns the forwarding task; cancellation closes its opaque capture lease.
+pub(super) struct CapturePump(tokio::task::JoinHandle<()>);
+impl Drop for CapturePump {
+    fn drop(&mut self) {
+        self.0.abort();
     }
-    Ok(())
+}
+/// Start a module stream and forward ordered batches to the bounded processor queue.
+pub(super) async fn spawn_capture_thread(
+    config: &Config,
+    tx: tokio::sync::mpsc::Sender<RawChunk>,
+) -> Result<(CaptureFormat, CapturePump), String> {
+    let lease = CaptureLease::reserve(config, Kind::Stream).await?;
+    let stream = lease.start_stream().await?;
+    let mut stopped = STOP.subscribe();
+    let task = tokio::spawn(async move {
+        loop {
+            if tx.is_closed() {
+                break;
+            }
+            let reply = tokio::select! {
+                biased;
+                _ = stopped.changed() => break,
+                reply = lease.poll() => reply,
+            };
+            let batch = match reply {
+                Ok(batch) => batch,
+                Err(error) => {
+                    log::warn!("[voice::always_on] capture batch unavailable: {error}");
+                    break;
+                }
+            };
+            for chunk in batch.chunks {
+                tokio::select! {
+                    biased;
+                    _ = stopped.changed() => return,
+                    result = tx.send(chunk) => if result.is_err() { return; },
+                }
+            }
+            if batch.closed {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        if let Err(error) = lease.close().await {
+            log::warn!("[voice::always_on] capture cleanup pending: {error}");
+        }
+    });
+    Ok((stream.format, CapturePump(task)))
 }

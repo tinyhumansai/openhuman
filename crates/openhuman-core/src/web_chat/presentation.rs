@@ -6,9 +6,9 @@ use crate::agent::tinyagents::host::LastTurnUsage;
 use crate::web_chat::{SubagentUsagePayload, TurnUsagePayload, WebChannelEvent};
 
 use super::publish_web_channel_event;
-use tinychannels_bus::delivery::segment_delay;
+use tinychannels_runtime::delivery::segment_delay;
 #[cfg(test)]
-use tinychannels_bus::delivery::segment_for_delivery;
+use tinychannels_runtime::delivery::segment_for_delivery;
 
 /// Convert a turn's [`LastTurnUsage`] into the wire payload carried on
 /// `chat_done`. Returns `None` for a turn that recorded no spend at all (e.g. a

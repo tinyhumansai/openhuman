@@ -123,6 +123,7 @@
     - [Local and custom models](developing/embed/integrations/local-models.md)
     - [MCP servers](developing/embed/integrations/mcp.md)
     - [Composio](developing/embed/integrations/composio.md)
+    - [Web search](developing/embed/integrations/web-search.md)
     - [Storage drivers](developing/embed/integrations/storage-drivers.md)
     - [Channels](developing/embed/integrations/channels.md)
   - [Cookbook](developing/embed/cookbook.md)

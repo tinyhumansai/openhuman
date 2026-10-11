@@ -1,3 +1,5 @@
+// keep until v0.66 (review after 2027-01-11): shipped-client analytics and
+// Sentry method-count coverage are required before removing both wire tables.
 //! Server-side legacy RPC method aliases.
 //!
 //! Mirrors the frontend's `LEGACY_METHOD_ALIASES` table in

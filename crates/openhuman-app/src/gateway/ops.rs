@@ -18,18 +18,17 @@
 //! Getting a core into a box and making it reachable is [`provision`]'s job;
 //! this module decides *which* of those a gateway needs and holds the result.
 
-use std::sync::Arc;
-
-use tinybox_core::{BoxId, Forward, ProcessId, Sandbox};
+use openhuman_rpc::embed::config::RuntimeConfig;
+use openhuman_rpc::embed::modules::tinybox::{self, contract};
 
 use super::provision;
 use super::types::{ActiveGateway, Gateway, GatewaySpec};
 
 /// A provisioned gateway, and everything that has to stay alive for it.
 ///
-/// Holding this *is* the gateway existing: dropping it closes the tunnel and
-/// the box stops being reachable. That is why the active one is kept in a
-/// long-lived registry rather than returned to the caller.
+/// The module-owned resource remains active while this handle is stored. The
+/// registry calls [`Self::tear_down`] to await acknowledged cleanup before
+/// releasing it.
 pub struct Provisioned {
     /// Where the frontend should send RPC.
     pub active: ActiveGateway,
@@ -39,13 +38,11 @@ pub struct Provisioned {
     /// it is the sibling that creates all of this, and moving it back in here
     /// would put four hundred lines of box mechanics in the module whose job is
     /// deciding which gateway needs them.
-    pub(super) _forward: Option<Forward>,
-    /// The sandbox the box lives in, for tearing it down.
-    pub(super) sandbox: Arc<dyn Sandbox>,
-    /// The box.
-    pub(super) box_id: BoxId,
-    /// The core process inside it.
-    pub(super) process: ProcessId,
+    pub(super) config: RuntimeConfig,
+    /// Caller-known module resource handle used for acknowledged cleanup.
+    pub(super) resource: contract::ResourceId,
+    /// Opaque process id used only in safe diagnostics; TinyBox owns the process.
+    pub(super) process: contract::ProcessRef,
 }
 
 impl std::fmt::Debug for Provisioned {
@@ -55,32 +52,26 @@ impl std::fmt::Debug for Provisioned {
         formatter
             .debug_struct("Provisioned")
             .field("id", &self.active.id)
-            .field("box", &self.box_id.as_str())
-            .field("process", &self.process.as_str())
+            .field("resource", &self.resource.0)
+            .field("process", &self.process.process.0)
             .finish_non_exhaustive()
     }
 }
 
 impl Provisioned {
-    /// Stop the core and destroy the box.
+    /// Close the TinyBox resource and wait for native cleanup acknowledgement.
     ///
-    /// Best-effort throughout: this runs when the user is switching away, and
-    /// a box that cannot be cleaned up must not block them from reaching a
-    /// gateway that works. Every failure is logged and the next step is still
-    /// attempted.
+    /// Best-effort at the gateway-switch boundary: cleanup failures are logged
+    /// without blocking the user from reaching another gateway. TinyBox keeps
+    /// any unacknowledged native ownership for module shutdown or retry.
     pub async fn tear_down(self) {
         log::debug!(
-            "[gateway][teardown] stopping {} in box {}",
-            self.process,
-            self.box_id
+            "[gateway][teardown] closing TinyBox resource {}",
+            self.resource.0
         );
-        if let Err(error) = self.sandbox.stop(&self.box_id, &self.process).await {
-            log::warn!("[gateway][teardown] stop failed: {error}");
+        if let Err(error) = tinybox::close(&self.config, self.resource).await {
+            log::warn!("[gateway][teardown] cleanup remains pending: {error}");
         }
-        if let Err(error) = self.sandbox.destroy(&self.box_id).await {
-            log::warn!("[gateway][teardown] destroy failed: {error}");
-        }
-        // The forward's own `Drop` closes the tunnel as this returns.
     }
 }
 

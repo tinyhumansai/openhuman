@@ -210,7 +210,7 @@ irm https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/instal
 
 <p><a href="https://tinyhumans.gitbook.io/openhuman/developing/loadable-modules">كيف تعمل الإضافات</a></p>
 
-<p>كل ميزة، مثل البحث أو المستندات أو الصوت، تتصل بناقل Rust واحد، وهي فكرة مستعارة من <a href="https://www.freedesktop.org/wiki/Software/dbus/">ناقل نظام Linux</a>. لا تُحمَّل الميزة إلا عند الحاجة، وإذا تعطلت إحداها تواصل البقية عملها.</p>
+<p>كل ميزة، مثل البحث أو المستندات أو الصوت، تتصل بناقل Rust واحد، وهي فكرة مستعارة من <a href="https://packages.debian.org/stable/dbus">ناقل نظام Linux</a>. لا تُحمَّل الميزة إلا عند الحاجة، وإذا تعطلت إحداها تواصل البقية عملها.</p>
 
 </td>
 

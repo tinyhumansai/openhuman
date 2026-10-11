@@ -99,6 +99,11 @@ fn scope() -> impl Strategy<Value = Scope> {
 }
 
 proptest! {
+    #![proptest_config(ProptestConfig {
+        failure_persistence: None,
+        ..ProptestConfig::default()
+    })]
+
     /// With the operator-plane tag the registry would give the name, a user
     /// scope admits exactly `USER_METHODS`, the operator scope exactly the
     /// operator plane, and a missing scope nothing.
@@ -195,6 +200,11 @@ fn in_documented_charset(id: &str) -> bool {
 }
 
 proptest! {
+    #![proptest_config(ProptestConfig {
+        failure_persistence: None,
+        ..ProptestConfig::default()
+    })]
+
     /// A user may mint exactly the documented charset; anything accepted
     /// carries no reserved prefix in any case and no colon of any script.
     #[test]

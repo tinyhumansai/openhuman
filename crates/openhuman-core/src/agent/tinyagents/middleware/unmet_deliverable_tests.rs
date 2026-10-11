@@ -381,10 +381,6 @@ async fn the_half_time_and_late_notes_ride_a_tool_result_once_each() {
     let half = run(&middleware, &mut ctx).await;
     assert!(half.contains("Half the turn's budget is gone"), "{half:?}");
     assert!(
-        ctx.take_repeat_noted(),
-        "the half-time note asks the loop for reasoning on the next call"
-    );
-    assert!(
         half.contains(&missing.display().to_string()),
         "names the absent path"
     );
@@ -397,7 +393,6 @@ async fn the_half_time_and_late_notes_ride_a_tool_result_once_each() {
     std::thread::sleep(std::time::Duration::from_millis(1_300));
     let late = run(&middleware, &mut ctx).await;
     assert!(late.contains("Stop exploring"), "{late:?}");
-    assert!(ctx.take_repeat_noted(), "so does the late note");
     assert!(
         !late.contains("Half the turn's budget"),
         "the late note stands alone"

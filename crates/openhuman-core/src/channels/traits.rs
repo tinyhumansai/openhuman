@@ -1,11 +1,10 @@
-//! The channel seam, re-exported from the contract crate.
+//! Legacy channel orchestration seam during the provider cutover.
 //!
-//! This carve-out is deliberately UNGATED: the always-on agent-harness
-//! interactive loop and `cron::bus` both name these, so they must resolve in a
-//! `channels`-less build. They come from `tinychannels-bus` rather than
-//! `tinychannels` for exactly that reason — the implementation crate is
-//! optional now, the vocabulary is not.
-pub use tinychannels_bus::{Channel, ChannelMessage, ChannelSendExt, SendMessage};
+//! Serialized messages come from the pure bus contract. The remaining
+//! in-process trait is an explicit `tinychannels-runtime` migration exception;
+//! it will be replaced when provider runtime callers switch to TinyBus.
+pub use tinychannels_bus::{ChannelMessage, SendMessage};
+pub use tinychannels_runtime::{Channel, ChannelSendExt};
 
 #[cfg(test)]
 #[path = "traits_tests.rs"]

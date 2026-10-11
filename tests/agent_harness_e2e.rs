@@ -44,7 +44,6 @@ const TEST_RPC_TOKEN: &str = "json-rpc-e2e-local-token";
 // ─── Env serialization (same rationale as json_rpc_e2e.rs:61-79) ───────────
 
 static AGENT_HARNESS_E2E_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-static AGENT_HARNESS_KEYRING_INIT: OnceLock<()> = OnceLock::new();
 
 /// Initialise the global `AgentDefinitionRegistry` with built-ins exactly once
 /// across all tests in this binary. Guard with OnceLock so repeated `boot_stack`
@@ -60,9 +59,7 @@ fn init_agent_def_registry() {
 }
 
 fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-    AGENT_HARNESS_KEYRING_INIT.get_or_init(|| unsafe {
-        std::env::set_var("OPENHUMAN_KEYRING_BACKEND", "file");
-    });
+    env_guard::init_keyring_workspace();
     let mutex = AGENT_HARNESS_E2E_ENV_LOCK.get_or_init(|| Mutex::new(()));
     match mutex.lock() {
         Ok(guard) => guard,

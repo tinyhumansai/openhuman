@@ -87,6 +87,8 @@ pub fn discovery_home_dir() -> Option<PathBuf> {
 ///
 /// Project-scope (workspace) skills still take precedence over user-scope
 /// on name collisions.
+// keep until v0.66 (review after 2027-01-11): this is the cached, ambient-user
+// discovery entry point; discover_workflows alone omits those host semantics.
 pub fn load_workflow_metadata(workspace_dir: &Path) -> Vec<Workflow> {
     let trusted = is_workspace_trusted(workspace_dir);
     let home = discovery_home_dir();

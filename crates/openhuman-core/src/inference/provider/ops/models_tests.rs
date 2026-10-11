@@ -196,7 +196,6 @@ fn workspace_with_provider(
         label: slug.to_string(),
         endpoint: endpoint.to_string(),
         auth_style,
-        legacy_type: None,
         default_model: None,
     });
     config

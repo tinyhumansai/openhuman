@@ -2,7 +2,7 @@
 
 Gates the fallback from the OS keyring to local encrypted storage behind
 explicit user consent. All code that reads or writes secrets should call
-`policy::check_secret_access()` instead of `keyring::is_available()` directly,
+`policy::check_secret_access()` instead of `secret_storage::is_available()` directly,
 so the app never silently drops to local storage without the user agreeing.
 
 ## Responsibilities
@@ -46,7 +46,7 @@ so the app never silently drops to local storage without the user agreeing.
   `check_secret_access()`.
 - `policy::check_secret_access() -> PolicyDecision`: the gate every secret
   read/write path should call. Returns `Proceed` immediately if
-  `keyring::is_available()`; otherwise consults the cached consent
+  `secret_storage::is_available()`; otherwise consults the cached consent
   (`local_encrypted` → `Proceed`, `declined` → `Declined`, none → publishes
   `KeyringConsentRequired` once and returns `ConsentRequired`).
 - `policy::current_status() -> KeyringStatus`: snapshot for RPC/UI.
@@ -85,7 +85,7 @@ unchanged value are a silent no-op.
 (`get`/`set`/`delete`, `SecretStore`, `encrypted_file_backend.rs`). This
 domain never stores a secret itself. It only gates and reports on *which*
 backend is active and whether the user consented to it. `active_mode_for`
-matches on `keyring::backend_name()`'s identifiers (`"os"`,
+matches on `secret_storage::backend_name()`'s identifiers (`"os"`,
 `"encrypted_file"`, `"file"`, `"mock"`) to answer that question.
 
 ## Used by

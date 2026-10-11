@@ -2,7 +2,7 @@
 //!
 //! Where the credential for a hosting provider comes from, and whether the
 //! `hosting_*` agent tools are offered at all. Read by
-//! [`crate::hosting::credentials`] when it resolves an account, and
+//! [`crate::hosting::Account`] when it resolves an account, and
 //! by the tool registry when it decides whether to register the tools.
 //!
 //! The key may be left empty here: an empty key falls back to the provider's own
@@ -26,7 +26,7 @@ pub struct HostingConfig {
     pub provider: String,
 
     /// The provider API key. Empty means "read it from the environment", which
-    /// is [`tinyhosts::ProviderKind::credentials_from_env`]'s search order.
+    /// is the `TINYHOSTS_VERCEL_TOKEN`, then `VERCEL_TOKEN` environment search.
     #[serde(default)]
     pub api_key: String,
 

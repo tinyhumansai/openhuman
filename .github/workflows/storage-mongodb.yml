@@ -37,7 +37,7 @@ on:
       - "crates/openhuman-core/src/flows/**"
       - "crates/openhuman-core/src/security/approval/**"
       - "crates/openhuman-core/src/security/devices/**"
-      - "crates/openhuman-core/src/security/keyring/**"
+      - "crates/openhuman-core/src/security/secret_storage/**"
       - "crates/openhuman-core/src/security/credentials/**"
       - "crates/openhuman-core/src/desktop/notifications/**"
       - "crates/openhuman-core/src/integrations/task_sources/**"

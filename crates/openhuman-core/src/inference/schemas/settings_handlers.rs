@@ -33,6 +33,8 @@ pub(super) struct InferenceCloudProviderUpdate {
     auth_style: Option<String>,
     #[serde(default)]
     ca_cert_pem: Option<String>,
+    // keep until v0.66 (review after 2027-01-11): incoming RPC discriminator
+    // remains accepted until shipped-client parameter coverage exists.
     #[serde(rename = "type", default)]
     legacy_type: Option<String>,
     #[serde(default)]
@@ -145,7 +147,7 @@ pub(super) fn handle_inference_update_model_settings(
                 .cloud_providers
                 .map(|entries| {
                     use crate::config::schema::cloud_providers::{
-                        generate_provider_id, is_slug_reserved, migrate_legacy_fields, AuthStyle,
+                        generate_provider_id, is_slug_reserved, builtin_cloud_provider, AuthStyle,
                         CloudProviderCreds,
                     };
                     let reserved_count = entries
@@ -181,10 +183,22 @@ pub(super) fn handle_inference_update_model_settings(
                             if slug.is_empty() {
                                 return Err("cloud provider slug must not be empty".to_string());
                             }
+                            let legacy_provider = entry.legacy_type.as_deref()
+                                .map(str::trim)
+                                .and_then(builtin_cloud_provider);
+                            let legacy_auth = legacy_provider
+                                .map(|provider| provider.auth_style.as_str())
+                                .unwrap_or("bearer");
+                            let endpoint = if entry.endpoint.is_empty() {
+                                legacy_provider.map(|provider| provider.endpoint.to_string())
+                                    .unwrap_or(entry.endpoint)
+                            } else {
+                                entry.endpoint
+                            };
                             let auth_style = match entry
                                 .auth_style
                                 .as_deref()
-                                .unwrap_or("bearer")
+                                .unwrap_or(legacy_auth)
                                 .to_ascii_lowercase()
                                 .as_str()
                             {
@@ -207,16 +221,14 @@ pub(super) fn handle_inference_update_model_settings(
                                 .label
                                 .filter(|s| !s.trim().is_empty())
                                 .unwrap_or_else(|| slug.clone());
-                            let mut provider = CloudProviderCreds {
+                            let provider = CloudProviderCreds {
                                 id,
                                 slug,
                                 label,
-                                endpoint: entry.endpoint,
+                                endpoint,
                                 auth_style,
-                                legacy_type: entry.legacy_type,
                                 default_model: entry.default_model,
                             };
-                            migrate_legacy_fields(&mut provider);
                             Ok(provider)
                         })
                         .collect::<Result<Vec<_>, String>>()

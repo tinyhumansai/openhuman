@@ -6,8 +6,7 @@
 //! resolves workload-to-provider strings against this list at runtime using
 //! the grammar `"<slug>:<model>"`.
 //!
-//! Legacy configs that use `type`/`default_model` are migrated in-memory on
-//! load via `migrate_legacy_fields()`.
+//! Legacy provider discriminators are decoded by the schema-14 config migration.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -193,7 +192,7 @@ pub const BUILTIN_CLOUD_PROVIDERS: &[BuiltinCloudProvider] = &[
     },
 ];
 
-fn builtin_cloud_provider(type_str: &str) -> Option<&'static BuiltinCloudProvider> {
+pub(crate) fn builtin_cloud_provider(type_str: &str) -> Option<&'static BuiltinCloudProvider> {
     BUILTIN_CLOUD_PROVIDERS
         .iter()
         .find(|provider| provider.slug == type_str)
@@ -353,11 +352,6 @@ impl AuthStyle {
 /// entries). The factory looks up the token at call time via
 /// `inference::provider::factory::auth_key_for_slug`.
 ///
-/// ## Back-compat
-///
-/// Old configs may have `type` and `default_model` fields. These are
-/// tolerated on read (via `legacy_type` / `default_model`) but never written.
-/// Call `migrate_legacy_fields()` after deserialising.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(default)]
 pub struct CloudProviderCreds {
@@ -376,14 +370,10 @@ pub struct CloudProviderCreds {
     /// Authentication header style.
     pub auth_style: AuthStyle,
 
-    // ── Back-compat: old `type` field ───────────────────────────────────────
-    /// Legacy discriminator written by older builds. Read-only; never emitted.
-    #[serde(rename = "type", default, skip_serializing)]
-    pub legacy_type: Option<String>,
-
-    // ── Back-compat: old `default_model` field ──────────────────────────────
-    /// Legacy default model written by older builds. Read-only; never emitted.
-    #[serde(default, skip_serializing)]
+    /// Default provider-native model used by BYOK routes without a model suffix.
+    // keep until v0.66 (review after 2027-01-11): active BYOK routes and the
+    // inference settings RPC depend on this field; replacement needs route migration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
 }
 
@@ -395,7 +385,6 @@ impl Default for CloudProviderCreds {
             label: String::new(),
             endpoint: String::new(),
             auth_style: AuthStyle::Bearer,
-            legacy_type: None,
             default_model: None,
         }
     }
@@ -418,70 +407,6 @@ impl Default for CloudProviderCreds {
 /// (Sentry TAURI-RUST-28Z fix). The same fallback applies to `lmstudio`.
 pub fn is_slug_reserved(s: &str) -> bool {
     matches!(s.trim(), "" | "cloud" | "openhuman" | "pid")
-}
-
-/// Apply legacy field migration in-place.
-///
-/// Idempotent: only fills in empty fields from the legacy `type`/`default_model`
-/// values. Safe to call on already-migrated entries.
-pub fn migrate_legacy_fields(entry: &mut CloudProviderCreds) {
-    let legacy_type = entry.legacy_type.clone().unwrap_or_default();
-    let lt = legacy_type.trim();
-
-    // Slug from legacy type when missing.
-    if entry.slug.is_empty() && !lt.is_empty() {
-        entry.slug = lt.to_string();
-        log::debug!(
-            "[config][cloud_providers] migrated slug from legacy type='{}' id={}",
-            lt,
-            entry.id
-        );
-    }
-
-    // Label from static map when missing.
-    if entry.label.is_empty() {
-        entry.label = legacy_label_for(if entry.slug.is_empty() {
-            lt
-        } else {
-            &entry.slug
-        })
-        .to_string();
-        log::debug!(
-            "[config][cloud_providers] migrated label='{}' for slug='{}' id={}",
-            entry.label,
-            entry.slug,
-            entry.id
-        );
-    }
-
-    // Endpoint from legacy defaults when missing.
-    if entry.endpoint.is_empty() {
-        let ep = legacy_default_endpoint(lt);
-        if !ep.is_empty() {
-            entry.endpoint = ep.to_string();
-        }
-    }
-
-    // Auth style from legacy type when still at default Bearer.
-    if entry.auth_style == AuthStyle::Bearer {
-        if let Some(provider) = builtin_cloud_provider(lt) {
-            entry.auth_style = provider.auth_style;
-        }
-    }
-}
-
-/// Map a legacy type string (or slug) to a human-readable label.
-fn legacy_label_for(type_str: &str) -> &'static str {
-    builtin_cloud_provider(type_str)
-        .map(|provider| provider.label)
-        .unwrap_or("Custom")
-}
-
-/// Map a legacy type string to its well-known default endpoint.
-fn legacy_default_endpoint(type_str: &str) -> &'static str {
-    builtin_cloud_provider(type_str)
-        .map(|provider| provider.endpoint)
-        .unwrap_or("")
 }
 
 /// Generate a short opaque id for a new provider entry.
@@ -520,72 +445,6 @@ pub fn generate_provider_id(slug: &str) -> String {
         .take(20)
         .collect();
     format!("p_{}_{}", safe_slug, suffix)
-}
-
-// ── Back-compat type alias ──────────────────────────────────────────────────
-// Kept so existing code that imports `CloudProviderType` compiles without
-// sweeping changes. New code should use `AuthStyle` directly.
-
-/// Legacy discriminator enum. **Deprecated**: use `AuthStyle` on new entries.
-/// Retained only to satisfy callers that still pattern-match on
-/// `CloudProviderType` (e.g. the migration module). Will be removed once all
-/// call sites are updated to slug-keyed lookups.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum CloudProviderType {
-    Openhuman,
-    Openai,
-    Anthropic,
-    Openrouter,
-    Orcarouter,
-    Custom,
-}
-
-impl CloudProviderType {
-    /// Well-known default base URL for each provider type.
-    pub fn default_endpoint(&self) -> &'static str {
-        match self {
-            Self::Openhuman => "https://api.openhuman.ai/v1",
-            Self::Openai => "https://api.openai.com/v1",
-            Self::Anthropic => "https://api.anthropic.com/v1",
-            Self::Openrouter => "https://openrouter.ai/api/v1",
-            Self::Orcarouter => "https://api.orcarouter.ai/v1",
-            Self::Custom => "",
-        }
-    }
-
-    /// Human-readable label used in logs and error messages.
-    pub fn label(&self) -> &'static str {
-        match self {
-            Self::Openhuman => "OpenHuman",
-            Self::Openai => "OpenAI",
-            Self::Anthropic => "Anthropic",
-            Self::Openrouter => "OpenRouter",
-            Self::Orcarouter => "OrcaRouter",
-            Self::Custom => "Custom",
-        }
-    }
-
-    /// Lowercase wire-format string (matches JSON serialisation).
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Openhuman => "openhuman",
-            Self::Openai => "openai",
-            Self::Anthropic => "anthropic",
-            Self::Openrouter => "openrouter",
-            Self::Orcarouter => "orcarouter",
-            Self::Custom => "custom",
-        }
-    }
-
-    /// Corresponding `AuthStyle`.
-    pub fn auth_style(&self) -> AuthStyle {
-        match self {
-            Self::Openhuman => AuthStyle::OpenhumanJwt,
-            Self::Anthropic => AuthStyle::Anthropic,
-            _ => AuthStyle::Bearer,
-        }
-    }
 }
 
 #[cfg(test)]

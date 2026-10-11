@@ -277,7 +277,7 @@ test('the real product file and the real shell list are equal', () => {
   // Guards the guard: empty input would make every assertion below vacuous.
   assert.ok(productFeatures.length > 0, 'expected to parse at least one product gate');
   assert.ok(coreFeatureNames.length > 0, 'expected to parse at least one core gate name');
-  const result = checkProductForwarding({ productFeatures, coreFeatureNames, shell });
+  const result = checkProductForwarding({ productFeatures, coreFeatureNames, hostFeatureNames: parseCoreFeatureNames(readFileSync(resolve(REPO_ROOT, "crates/openhuman-rpc/Cargo.toml"), "utf8")), shell });
   assert.deepEqual(result.missing, [], 'product gates the shell does not forward');
   assert.deepEqual(result.unexpected, [], 'gates the shell forwards that the product omits');
   assert.deepEqual(result.unknown, [], 'product gates that are not real core gates');
@@ -823,6 +823,7 @@ default = ["http-client", "server"]
 http-client = ["dep:reqwest"]
 server = ["http-server", "dep:axum", "session-store"]
 session-store = ["dep:tinyagents-session"]
+os-keyring = ["dep:keyring"]
 http-server = ["openhuman-tinyhumans/http-server"]
 voice = ["openhuman-tinyhumans/voice"]
 `);
@@ -894,4 +895,28 @@ test('the checker reports the chain and fails when a layer drops a gate', () => 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('product gates may be owned by a host crate while still requiring shell forwarding', () => {
+  const input = {
+    productFeatures: ['voice', 'os-keyring'],
+    coreFeatureNames: ['voice'],
+    hostFeatureNames: ['os-keyring'],
+    shell: { defaultFeatures: false, features: ['voice', 'os-keyring'] },
+  };
+  assert.ok(checkProductForwarding(input).ok);
+  assert.deepEqual(checkProductForwarding({ ...input, shell: { defaultFeatures: false, features: ['voice'] } }).missing, ['os-keyring']);
+  assert.deepEqual(checkProductForwarding({ ...input, hostFeatureNames: [] }).unknown, ['os-keyring']);
+});
+
+test('OS keychain is owned by RPC and must be forwarded by CLI and TUI', () => {
+  const rpc = parseFeatureTable('[features]\nos-keyring = ["dep:keyring"]\nserver = ["os-keyring"]\n');
+  assert.deepEqual(rpcForwardedGates(rpc), ['os-keyring']);
+});
+
+test('core product builds omit host-owned OS keychain features', () => {
+  const result = spawnSync('bash', ['scripts/ci/product-features.sh', '--core'], { cwd: REPO_ROOT, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.stdout.trim().split(',').includes('storage-sqlite'));
+  assert.ok(!result.stdout.trim().split(',').includes('os-keyring'));
 });

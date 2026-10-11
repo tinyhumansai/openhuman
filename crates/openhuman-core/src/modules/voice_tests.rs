@@ -386,12 +386,8 @@ async fn every_entry_point_degrades_rather_than_hanging_when_the_module_is_gone(
 
 #[test]
 fn every_member_this_client_calls_is_one_the_contract_declares() {
-    // The fifteen call sites in this module are written as `tinyvoice_bus`
-    // constants, so a rename upstream is a compile error here rather than a
-    // `MemberNotFound` at runtime. This pins the other direction: a member the
-    // contract declares and this client never calls is either a gap in the
-    // client or a member that should not be in the contract, and either way it
-    // should be noticed here rather than discovered later.
+    // Host adapters use contract constants for call sites. Keep the curated
+    // surface, including capture leases and hotkeys, aligned with the module.
     use tinyvoice_bus::names::methods;
     let called = [
         methods::ROUTE,
@@ -408,6 +404,24 @@ fn every_member_this_client_calls_is_one_the_contract_declares() {
         methods::ENCODE_WAV,
         methods::ENCODE_WAV_PCM16,
         methods::PREPARE_CAPTURE,
+        methods::CAPTURE_POLL,
+        methods::CAPTURE_SHUTDOWN,
+        methods::CAPTURE_START,
+        methods::CAPTURE_STOP,
+        methods::RESERVE_CAPTURE,
+        methods::LIST_INPUT_DEVICES,
+        methods::RECORDING_START,
+        methods::RECORDING_FINISH,
+        methods::RECORDING_SUMMARY,
+        methods::RECORDING_CANCEL,
+        methods::READ_AUDIO_OUTPUT,
+        methods::RELEASE_AUDIO_OUTPUT,
+        methods::HOTKEY_RESERVE,
+        methods::HOTKEY_START,
+        methods::HOTKEY_READ,
+        methods::HOTKEY_FEED,
+        methods::HOTKEY_STOP,
+        methods::HOTKEY_SHUTDOWN,
     ];
     // `Segment` is the one deliberate omission: it segments a complete energy
     // buffer in one call, and the always-on capture loop needs the stateful

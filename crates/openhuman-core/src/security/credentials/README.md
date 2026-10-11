@@ -86,7 +86,7 @@ inferred. API-key precedence and local-session behavior are unchanged.
 
 `AuthProfilesStore` (`profiles.rs`) writes `auth-profiles.json` in the config state directory (parent of `config.config_path`, user-scoped after activation). Layout: `schema_version` (current = 1), `updated_at`, `active_profiles` (provider → profile-id), [`profiles`](./profiles) (id → profile). The `app-session` profile's metadata carries `user_id`, `user_json` (the host-supplied payload) and `session_expires_at` (the JWT `exp`, for the local expiry precheck). Secret handling:
 
-- **OS keychain** when available (`crate::security::keyring::is_available`): all token fields stored under key `auth:{profile_id}` namespaced by a per-user id derived from the state dir; JSON keeps no secret fields.
+- **OS keychain** when available (`crate::security::secret_storage::is_available`): all token fields stored under key `auth:{profile_id}` namespaced by a per-user id derived from the state dir; JSON keeps no secret fields.
 - **Encrypted-JSON fallback** (headless/CI): token fields encrypted via `SecretStore` (ChaCha20-Poly1305).
 - Loads migrate legacy `enc:`/`enc2:` cipher fields and promote secrets into the keychain; unrecoverable (un-decryptable / bad-`kind`) profiles are dropped rather than poisoning the whole store; unparseable files are quarantined to `auth-profiles.corrupt-<ts>.json` and reset to empty.
 - Mutations are guarded by `auth-profiles.lock` (PID-stamped). Stale/leaked/malformed locks are reclaimed by liveness + age checks to avoid the "stuck on Initializing OpenHuman" hang.
@@ -105,7 +105,7 @@ across processes; the local file lock still serializes one host.
 ## Dependencies
 
 - `crate::config`: `Config`, config load (`load_config_with_timeout`), user-dir activation (`default_root_openhuman_dir`, `user_openhuman_dir`, `read/write/clear_active_user`, `pre_login_user_dir`), onboarding state.
-- `crate::security::keyring`: `SecretStore` (encrypt/decrypt) and OS keychain `get`/`set`/`delete`/`is_available`.
+- `crate::security::secret_storage`: `SecretStore` (encrypt/decrypt) and OS keychain `get`/`set`/`delete`/`is_available`.
 - `crate::cron::scheduler_gate`: signed-out override flipped on install/removal/expiry.
 - `crate::memory::conversations`: purge pre-login threads, bind conversation persistence after activation.
 - `crate::memory`: bind memory client to the active workspace after activation.
@@ -130,3 +130,7 @@ Many domains consume `AuthService` / session helpers / Composio-direct key, incl
 - [Parent module (`security`)](../README.md)
 - [OS keyring and secret storage](../../../../../gitbooks/features/os-keyring-and-secret-storage.md)
 - [Security architecture](../../../../../gitbooks/developing/architecture/security.md)
+
+`channel_credential_provider` owns the persisted `channel:<id>:<mode>` namespace.
+Managed login and channel setup use it through the host facade so existing
+credential profiles remain readable across module upgrades.

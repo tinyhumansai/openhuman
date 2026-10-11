@@ -21,7 +21,7 @@ use crate::security::devices::tunnel_client;
 use crate::security::devices::types::{
     CreatePairingResponse, ListDevicesResponse, PairingSession, RevokeDeviceResponse,
 };
-use crate::security::keyring::SecretStore;
+use crate::security::secret_storage::SecretStore;
 
 // ---------------------------------------------------------------------------
 // In-memory state (module-level singletons)

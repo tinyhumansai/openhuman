@@ -1,5 +1,7 @@
 use super::*;
-use crate::tools::{filter_tools_by_user_preference, http_request_tool, BrowserOpenTool};
+#[cfg(feature = "modules")]
+use crate::tools::BrowserOpenTool;
+use crate::tools::{filter_tools_by_user_preference, http_request_tool};
 use tinytools_std::filesystem::{ApplyPatchTool, CsvExportTool};
 
 #[tokio::test]

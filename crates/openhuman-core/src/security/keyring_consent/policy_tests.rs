@@ -225,3 +225,11 @@ fn status_payload_mode_and_backend_never_contradict() {
         }
     }
 }
+
+#[test]
+fn memory_status_never_claims_disk_storage_or_pending_consent() {
+    let mode = active_mode_for(true, BACKEND_MEMORY, Some(&consent("local_encrypted")));
+    assert_eq!(mode, StorageMode::InMemory);
+    assert_eq!(serde_json::to_value(mode).unwrap(), "in_memory");
+    assert_eq!(mode.to_string(), "in_memory");
+}

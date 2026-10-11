@@ -247,8 +247,8 @@ async fn start_chat_runs_distinct_threads_concurrently() {
     );
 
     // Cleanup: cancel both and clear the test hook.
-    let _ = cancel_chat("client-a", thread_a).await;
-    let _ = cancel_chat("client-b", thread_b).await;
+    let _ = cancel_chat_scoped("client-a", thread_a, None).await;
+    let _ = cancel_chat_scoped("client-b", thread_b, None).await;
     set_test_run_chat_task_block(None).await;
 }
 
@@ -283,7 +283,7 @@ async fn cancel_chat_cooperatively_stops_in_flight_turn() {
         "turn should still be parked, not yet dropped"
     );
 
-    let cancelled = cancel_chat("cancel-client", thread_id)
+    let cancelled = cancel_chat_scoped("cancel-client", thread_id, None)
         .await
         .expect("cancel_chat should succeed");
     assert_eq!(
@@ -422,7 +422,7 @@ async fn parallel_turn_runs_concurrently_with_primary_on_same_thread() {
     );
 
     // A thread-level cancel tears down BOTH the primary and the parallel turn.
-    cancel_chat("pp-client", thread_id)
+    cancel_chat_scoped("pp-client", thread_id, None)
         .await
         .expect("cancel should succeed");
     wait_for_in_flight(|e| !e.iter().any(|(k, _)| k == thread_id)).await;
