@@ -31,7 +31,9 @@ use tracing::debug;
 use crate::agent::harness::definition::AgentDefinition;
 use crate::agent::subagent_host;
 use crate::agent::tinyagents::host::OpenHumanRunContext;
-use crate::inference::tokenjuice::generate::{GenerateRequest, PreparedGenerate};
+use {
+    crate::inference::tokenjuice::generate::PreparedGenerate, tinyjuice_bus::wire::GenerateRequest,
+};
 
 /// Supplies the model call behind TinyJuice's summary stage.
 ///

@@ -1,5 +1,8 @@
 //! Host budget policy, scoped once at admission and carried explicitly to children.
 use std::sync::Arc;
+
+/// Product recursion ceiling shared by native and MCP delegation.
+pub(crate) const MAX_SPAWN_DEPTH: usize = 3;
 pub use tinyinference_llm::model::budget::{
     Budget, BudgetExceeded, BudgetSnapshot, CallBudget, Spend, SpendLimits,
 };
@@ -53,8 +56,8 @@ pub(crate) fn spawn_depth_limit() -> Option<usize> {
 pub(crate) fn depth(context: &super::host::OpenHumanRunContext) -> usize {
     context
         .max_spawn_depth
-        .unwrap_or(crate::agent::harness::MAX_SPAWN_DEPTH)
-        .min(crate::agent::harness::MAX_SPAWN_DEPTH)
+        .unwrap_or(crate::agent::tinyagents::budget::MAX_SPAWN_DEPTH)
+        .min(crate::agent::tinyagents::budget::MAX_SPAWN_DEPTH)
 }
 pub(super) fn install_depth(
     harness: &mut tinyagents_harness::runtime::AgentHarness<(), super::host::OpenHumanRunContext>,

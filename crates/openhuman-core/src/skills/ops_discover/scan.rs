@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use tinyskills::{resolve_collisions_with, CollisionPolicy, TieBreak};
 
-use crate::skills::ops_types::{Workflow, WorkflowScope};
+use {tinyskills::Skill as Workflow, tinyskills::SkillScope as WorkflowScope};
 
 /// Which on-disk root category a bundle was discovered under.
 ///

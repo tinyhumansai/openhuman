@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-pub use tinyskills::{BundledFile, BundledSkill, InstallReport};
+use tinyskills::{BundledFile, BundledSkill, InstallReport};
 
 #[cfg(test)]
 #[path = "mod_tests.rs"]

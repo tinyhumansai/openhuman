@@ -42,23 +42,6 @@ pub(crate) fn new_tool_result_store(
     )
 }
 
-/// A store over the layout releases before the detached store used,
-/// `<action_dir>/artifacts/tool-results/`. Never written to: it exists so the
-/// session host can keep sweeping stale sessions that older builds left in the
-/// user's project.
-pub(crate) fn legacy_action_dir_store(
-    action_dir: std::path::PathBuf,
-    session_key: impl Into<String>,
-) -> ToolResultArtifactStore {
-    ToolResultArtifactStore::new(
-        action_dir,
-        session_key,
-        std::sync::Arc::new(SanitizingRedactor),
-        READ_TOOL,
-        FileReadTool::MAX_FILE_SIZE_BYTES,
-    )
-}
-
 /// The artifact a tool call reads, if any — `file_read`, possibly wrapped in
 /// `use_skill` (#6284).
 ///

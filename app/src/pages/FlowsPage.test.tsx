@@ -13,8 +13,9 @@
  * template gallery inline.
  */
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { toast, Toaster } from '../components/ui/Toast';
 import { FLOW_TEMPLATES } from '../lib/flows/templates';
 import type { Flow } from '../services/api/flowsApi';
 import { renderWithProviders } from '../test/test-utils';
@@ -86,6 +87,7 @@ function openRowMenu(rowId = 'flow-1') {
 }
 
 describe('FlowsPage', () => {
+  afterEach(() => toast.close());
   beforeEach(() => {
     vi.clearAllMocks();
     // SuggestedWorkflows loads persisted suggestions on mount; default to none
@@ -161,7 +163,13 @@ describe('FlowsPage', () => {
       status: 'running',
       detached: true,
     });
-    renderWithProviders(<FlowsPage />, { initialEntries: ['/?view=main'] });
+    renderWithProviders(
+      <>
+        <Toaster />
+        <FlowsPage />
+      </>,
+      { initialEntries: ['/?view=main'] }
+    );
 
     await waitFor(() => expect(screen.getByTestId('flow-run-flow-1')).toBeInTheDocument());
     fireEvent.click(screen.getByTestId('flow-run-flow-1'));

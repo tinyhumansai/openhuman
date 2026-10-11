@@ -109,17 +109,10 @@ impl TurnModels {
 /// The **primary** is the model OpenHuman already chose for this turn — the
 /// user's per-thread `model_override`, else `config.default_model` — and for
 /// the turn's lead (the depth-0 agent, `is_team_lead`) it always wins. The
-/// harness forwards the definition's `[model] hint`/`model` as `model_pin`
-/// on every resolve; honouring it for the lead let the orchestrator's
-/// `hint = "coding"` silently reroute every chat turn onto `hint:coding`
-/// (DeepSeek V4 Pro) no matter which model the user picked in the UI, since
-/// `hint:coding` is always a registered tier route. A pin is advisory
-/// (`ModelResolveRequest::model_pin` docs) and the lead's selection is the
-/// stronger, more explicit signal.
-///
-/// Sub-agents (depth > 0) keep resolving their pin against the tier routes —
-/// that is how a sub-agent's `hint = "burst"` reaches `hint:burst` —
-/// and fall back to the primary when the pin names no built route.
+/// harness forwards exact model pins and typed routing hints separately.
+/// Both are advisory, so neither may replace the lead's stronger selection.
+/// Sub-agents resolve an exact pin first, otherwise `hint:<name>`, against
+/// prebuilt tier routes; an unavailable route falls back to the primary.
 ///
 /// Only the lead's model records into the turn's error slot (#6724). Sub-agents
 /// resolve through this same resolver, possibly in parallel, so they get the
@@ -162,7 +155,13 @@ impl ModelResolver<()> for TurnModelResolver {
         &self,
         request: &ModelResolveRequest,
     ) -> tinyagents_harness::Result<TurnChatModel> {
-        let pin = request.model_pin();
+        let hint_route = request
+            .model_hint
+            .as_deref()
+            .map(str::trim)
+            .filter(|hint| !hint.is_empty())
+            .map(|hint| format!("hint:{hint}"));
+        let pin = request.model_pin().or(hint_route.as_deref());
         if request.is_team_lead {
             if let Some(pin) = pin.filter(|pin| self.routes.contains_key(*pin)) {
                 tracing::debug!(

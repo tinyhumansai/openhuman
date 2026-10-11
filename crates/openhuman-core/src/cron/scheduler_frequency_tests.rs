@@ -1,9 +1,9 @@
 use super::*;
 
-use crate::cron::JobType;
-use crate::cron::Schedule;
-use crate::cron::TooFrequent;
-use crate::cron::MIN_AGENT_JOB_INTERVAL;
+use tinyflows_schedule::schedule::TooFrequent;
+use tinyflows_schedule::schedule::MIN_AGENT_JOB_INTERVAL;
+use tinyflows_schedule::types::JobType;
+use tinyflows_schedule::types::Schedule;
 #[tokio::test]
 async fn deliver_if_configured_empty_success_skips_chat_and_alert() {
     let tmp = TempDir::new().unwrap();

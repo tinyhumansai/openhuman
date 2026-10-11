@@ -18,9 +18,8 @@
 //!   from the catalog.
 //! - [`TodoTool`] — the session's todo list (whole-list write, thread-scoped).
 //!
-//! `crate::tools` re-exports everything here (`pub use
-//! crate::agent::tools::*;` in `tools/mod.rs`); `tools::ops` registers the
-//! tools into the catalog.
+//! `agent::registration` assembles the dialogue tools; `tools::ops` composes
+//! domain registrations and applies the runtime capability filters.
 mod delegate;
 mod plan_exit;
 // Pure `skill_runtime` client (spawn + await a workflow run) — compiled out

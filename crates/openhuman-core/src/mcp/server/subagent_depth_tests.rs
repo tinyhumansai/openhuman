@@ -37,3 +37,26 @@ fn parse_header_handles_missing_garbage_and_clamps() {
         MAX_SUBAGENT_DEPTH
     );
 }
+
+/// MCP ingress restores the same recursion facts the native harness reads.
+#[tokio::test]
+async fn incoming_mcp_depth_is_visible_to_the_native_harness_and_refuses_a_fourth_child() {
+    let incoming = parse_header(Some("3"));
+    scope(incoming, async {
+        let facts = tinyagents_harness::context::current_run_depth()
+            .expect("MCP ingress installs native recursion facts");
+        let native = crate::agent::tinyagents::host::OpenHumanRunContext::new().into_tinyagents(
+            tinyagents_harness::context::RunConfig::new("mcp-ingress")
+                .with_max_depth(MAX_SUBAGENT_DEPTH),
+        );
+        assert_eq!(native.config.depth(), 3);
+        assert_eq!(facts.depth, 3);
+        assert_eq!(facts.max_depth, MAX_SUBAGENT_DEPTH);
+        assert!(matches!(
+            facts.checked_child(),
+            Err(tinyagents_harness::TinyAgentsError::SubAgentDepth(3))
+        ));
+    })
+    .await;
+    assert_eq!(tinyagents_harness::context::current_run_depth(), None);
+}

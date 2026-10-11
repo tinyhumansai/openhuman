@@ -501,6 +501,23 @@ impl Tool for TaskSourceRemoveTool {
     }
 }
 
+/// Build this domain's tools in their persisted catalogue order.
+pub(crate) fn registered_tools(
+    config: std::sync::Arc<crate::config::Config>,
+) -> Vec<Box<dyn tinytools::Tool>> {
+    vec![
+        Box::new(TaskSourceListTool::new(config.clone())),
+        Box::new(TaskSourceGetTool::new(config.clone())),
+        Box::new(TaskSourceFetchTool::new(config.clone())),
+        Box::new(TaskSourceListTasksTool::new(config.clone())),
+        Box::new(TaskSourcePreviewFilterTool::new(config.clone())),
+        Box::new(TaskSourceStatusTool::new(config.clone())),
+        Box::new(TaskSourceAddTool::new(config.clone())),
+        Box::new(TaskSourceUpdateTool::new(config.clone())),
+        Box::new(TaskSourceRemoveTool::new(config.clone())),
+    ]
+}
+
 #[cfg(test)]
 #[path = "tools_tests.rs"]
 mod tests;

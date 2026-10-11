@@ -26,7 +26,7 @@ use tinyagents_harness::multimodal::{
     AttachmentStash,
 };
 
-pub use tinyagents_harness::multimodal::{FilePayload, MultimodalError};
+use tinyagents_harness::multimodal::{FilePayload, MultimodalError};
 
 /// Hard upper bound on how long the `tinydocs` module may spend extracting a
 /// PDF's text layer before the attempt is abandoned and the file degrades to a
@@ -157,16 +157,6 @@ impl TextExtractor for DocumentsTextExtractor {
 }
 
 // ── Marker helpers over `TranscriptMessage` ────────────────────────────────────
-
-/// Strip every `[IMAGE:…]` marker and return `(cleaned_text, refs_in_order)`.
-pub fn parse_image_markers(content: &str) -> (String, Vec<String>) {
-    markers::parse_image_markers(content)
-}
-
-/// Strip every `[FILE:…]` marker and return `(cleaned_text, refs_in_order)`.
-pub fn parse_file_markers(content: &str) -> (String, Vec<String>) {
-    markers::parse_file_markers(content)
-}
 
 /// The base64 payload Ollama's `images` array expects, or `None`.
 pub fn extract_ollama_image_payload(image_ref: &str) -> Option<String> {

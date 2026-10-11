@@ -153,8 +153,10 @@ fn local_module_config() -> Config {
 
 #[cfg(feature = "documents")]
 #[tokio::test]
-#[ignore = "needs a built TinyDocs module and its own process; set OPENHUMAN_MODULE_PATH"]
 async fn a_pdf_converts_to_its_text() {
+    if crate::util::module_test_process::run(module_path!(), "a_pdf_converts_to_its_text") {
+        return;
+    }
     let raw = RawDocument::new(pdf_saying("The vendor code is PV-7023")).with_filename("brief.pdf");
     let converted = converter(&local_module_config())
         .convert(&raw)
@@ -171,8 +173,13 @@ async fn a_pdf_converts_to_its_text() {
 
 #[cfg(feature = "documents")]
 #[tokio::test]
-#[ignore = "needs the released TinyDocs module in OPENHUMAN_MODULE_PATH and its own process"]
 async fn the_released_module_extracts_all_memory_office_formats() {
+    if crate::util::module_test_process::run(
+        module_path!(),
+        "the_released_module_extracts_all_memory_office_formats",
+    ) {
+        return;
+    }
     let config = local_module_config();
     let cases = [
         (
@@ -279,8 +286,10 @@ async fn an_unknown_binary_is_still_refused_with_a_clear_error() {
 
 #[cfg(feature = "documents")]
 #[tokio::test]
-#[ignore = "needs a built TinyDocs module and its own process; set OPENHUMAN_MODULE_PATH"]
 async fn brain_ingest_files_a_pdf_by_path() {
+    if crate::util::module_test_process::run(module_path!(), "brain_ingest_files_a_pdf_by_path") {
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let config = config_in(&tmp);
     let mut config = config;

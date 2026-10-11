@@ -69,6 +69,10 @@ Use a disposable staging account/workspace and synthetic facts. Keep inference r
 
 - [ ] **`scripts/install.sh` downloads the latest asset on a proxy/VPN network** — From a clean checkout, run `bash scripts/install.sh --dry-run --verbose`, then run the public `curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.sh | bash` flow on one macOS or Linux host. Expected: release metadata resolves, the asset downloads successfully, and transient GitHub/CDN HTTP/2 failures retry over HTTP/1.1 instead of surfacing `curl: (16) Error in the HTTP2 framing layer`.
 
+### Archived conversations
+
+- [ ] **An older conversation remains usable after tool retirement (4.4.7)** — In a staging profile, reopen a conversation saved before one of its tools was retired and send a follow-up. Expected: prior tool results remain visible, the turn can finish, and any attempted retired call returns an unavailable-tool result without executing the old tool. Check that an explicit current tool override or permission restriction still applies.
+
 ### Terminal agent cockpit
 
 - [ ] **`openhuman-tui --last` completes an interactive agent turn and restores the terminal** — In a real PTY, first run `openhuman-tui --new`, send `Remember marker TUI-SMOKE-42`, wait for completion, and exit with Ctrl+C. Run `openhuman-tui --last`, verify that marker and its answer are restored, send a multiline prompt, steer the active turn with Enter, then type a follow-up and press Tab while streaming; verify the queued follow-up executes after the active turn. Open `/help` and `/status`, exit with Ctrl+C, and confirm shell echo/line editing still work. Repeat the resume, one turn, and exit flow with `openhuman-tui --last --no-alt-screen`; confirm history renders in the current buffer and the shell is usable afterward.

@@ -8,8 +8,11 @@
 //! delivery the caller states explicitly always wins.
 
 use crate::config::Config;
-use crate::cron::{
-    self, delivery_mode, AgentJobSpec, CronJob, DeliveryConfig, JobOrigin, Schedule, SessionTarget,
+use {
+    crate::cron, tinyflows_schedule::types::delivery_mode, tinyflows_schedule::types::CronJob,
+    tinyflows_schedule::types::DeliveryConfig, tinyflows_schedule::types::JobOrigin,
+    tinyflows_schedule::types::Schedule, tinyflows_schedule::types::SessionTarget,
+    tinyflows_sqlite::schedule::AgentJobSpec,
 };
 
 /// What an agent job creation request carries; everything defaults.
@@ -171,6 +174,9 @@ pub fn create_agent_job(
     input: AgentJobInput,
     origin: Option<JobOrigin>,
 ) -> Result<CronJob, String> {
+    if cron::limits::enforced(config) && origin.is_none() {
+        return Err("cron jobs can only be created from a conversation".to_string());
+    }
     let session_target = input.session_target.unwrap_or(if origin.is_some() {
         SessionTarget::Current
     } else {

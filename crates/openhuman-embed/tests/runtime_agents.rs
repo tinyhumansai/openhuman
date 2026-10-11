@@ -27,17 +27,19 @@ struct RecordingBudgetStopHook {
 }
 
 #[async_trait::async_trait]
-impl openhuman_core::agent::stop_hooks::StopHook for RecordingBudgetStopHook {
+impl openhuman_embed::seams::StopHook<openhuman_embed::seams::TurnCost>
+    for RecordingBudgetStopHook
+{
     fn name(&self) -> &str {
         "budget"
     }
 
     async fn check(
         &self,
-        state: &openhuman_core::agent::stop_hooks::TurnState<'_>,
-    ) -> openhuman_core::agent::stop_hooks::StopDecision {
-        let decision = openhuman_core::agent::stop_hooks::StopHook::check(&self.inner, state).await;
-        if let openhuman_core::agent::stop_hooks::StopDecision::Stop { reason } = &decision {
+        state: &openhuman_embed::seams::TurnState<'_>,
+    ) -> openhuman_embed::seams::StopDecision {
+        let decision = openhuman_embed::seams::StopHook::check(&self.inner, state).await;
+        if let openhuman_embed::seams::StopDecision::Stop { reason } = &decision {
             *self.reason.lock().expect("stop reason lock") = Some(reason.clone());
         }
         decision

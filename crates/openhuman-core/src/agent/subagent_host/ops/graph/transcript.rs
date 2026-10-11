@@ -26,9 +26,11 @@ pub(super) fn failed_run_history(
     let base = snapshot.request_base_len.min(snapshot.messages.len());
     let end = snapshot.accepted_end();
     let mut recovered = original.to_vec();
-    recovered.extend(crate::agent::message_convert::messages_to_history(
-        &snapshot.messages[base..end],
-    ));
+    recovered.extend(
+        snapshot.messages[base..end]
+            .iter()
+            .filter_map(tinyagents_runtime::transcript::message_to_native_transcript),
+    );
     (
         recovered,
         crate::agent::tinyagents::render_unanswered_steps(&snapshot.messages[end..]),

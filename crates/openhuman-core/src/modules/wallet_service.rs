@@ -222,10 +222,14 @@ async fn signing_secret(
     chain: tinywallet_bus::wire::WalletChain,
 ) -> Result<tinywallet_bus::wire::SecretMaterial, WalletCallError> {
     let local_chain = match chain {
-        tinywallet_bus::wire::WalletChain::Evm => crate::web3::wallet::WalletChain::Evm,
-        tinywallet_bus::wire::WalletChain::Btc => crate::web3::wallet::WalletChain::Btc,
-        tinywallet_bus::wire::WalletChain::Solana => crate::web3::wallet::WalletChain::Solana,
-        tinywallet_bus::wire::WalletChain::Tron => crate::web3::wallet::WalletChain::Tron,
+        tinywallet_bus::wire::WalletChain::Evm => tinywallet_web3::crypto::wallet::WalletChain::Evm,
+        tinywallet_bus::wire::WalletChain::Btc => tinywallet_web3::crypto::wallet::WalletChain::Btc,
+        tinywallet_bus::wire::WalletChain::Solana => {
+            tinywallet_web3::crypto::wallet::WalletChain::Solana
+        }
+        tinywallet_bus::wire::WalletChain::Tron => {
+            tinywallet_web3::crypto::wallet::WalletChain::Tron
+        }
     };
     let stored = crate::web3::wallet::secret_material(local_chain)
         .await
@@ -344,12 +348,18 @@ fn native_wallet_config_request() -> NativeWalletConfigRequest {
         }
     }
     for (chain, key) in [
-        (crate::web3::wallet::WalletChain::Btc, RpcEndpointKey::Btc),
         (
-            crate::web3::wallet::WalletChain::Solana,
+            tinywallet_web3::crypto::wallet::WalletChain::Btc,
+            RpcEndpointKey::Btc,
+        ),
+        (
+            tinywallet_web3::crypto::wallet::WalletChain::Solana,
             RpcEndpointKey::Solana,
         ),
-        (crate::web3::wallet::WalletChain::Tron, RpcEndpointKey::Tron),
+        (
+            tinywallet_web3::crypto::wallet::WalletChain::Tron,
+            RpcEndpointKey::Tron,
+        ),
     ] {
         let name = crate::web3::wallet::endpoints::env_var_for_chain(chain);
         if nonempty_env(name) {

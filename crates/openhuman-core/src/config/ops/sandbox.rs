@@ -25,10 +25,10 @@ pub async fn get_sandbox_settings() -> Result<Outcome<serde_json::Value>, String
     // daemon cannot hang the settings read.
     let docker_available = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        crate::sandbox::docker::is_docker_available(),
+        crate::sandbox::docker::is_docker_available(&config),
     )
     .await
-    .unwrap_or(false);
+    .map_err(|_| "Docker status probe timed out".to_owned())??;
 
     let backend_str = match sandbox.backend {
         crate::config::SandboxBackend::Auto => "auto",
@@ -51,7 +51,9 @@ pub async fn get_sandbox_settings() -> Result<Outcome<serde_json::Value>, String
         "detected_backend": detected_backend,
         "env_passthrough": crate::sandbox::ops::SANDBOX_ENV_PASSTHROUGH,
     });
-    log::debug!("[config][sandbox] get_sandbox_settings: backend={backend_str}, docker_available={docker_available}");
+    log::debug!(
+        "[config][sandbox] get_sandbox_settings: backend={backend_str}, docker_available={docker_available}"
+    );
     Ok(Outcome::single_log(value, "sandbox settings read"))
 }
 

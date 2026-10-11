@@ -1,9 +1,9 @@
 use super::*;
 use crate::config::Config;
 use crate::cron::job_builder::validate_delivery;
-use crate::cron::ActiveHours;
 use crate::security::AutonomyLevel;
 use tempfile::TempDir;
+use tinyflows_schedule::types::ActiveHours;
 
 async fn test_config(tmp: &TempDir) -> Arc<Config> {
     let config = Config {

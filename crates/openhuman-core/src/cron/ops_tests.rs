@@ -1,6 +1,7 @@
 use super::*;
-use crate::cron::ActiveHours;
+use crate::cron::get_job;
 use tempfile::TempDir;
+use tinyflows_schedule::types::ActiveHours;
 
 fn test_config(tmp: &TempDir) -> Config {
     let config = Config {

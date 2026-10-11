@@ -306,10 +306,7 @@ impl Tool for RemovalTool {
     fn parameters_schema(&self) -> serde_json::Value {
         serde_json::json!({"type": "object", "properties": {}})
     }
-    async fn execute(
-        &self,
-        _: serde_json::Value,
-    ) -> anyhow::Result<openhuman_core::tools::ToolResult> {
+    async fn execute(&self, _: serde_json::Value) -> anyhow::Result<tinytools::ToolResult> {
         let _guard = BlockingDecisionDrop {
             barrier: self.barrier.clone(),
             dropping: self.dropping.clone(),

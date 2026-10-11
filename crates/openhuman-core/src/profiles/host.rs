@@ -83,6 +83,7 @@ pub(super) struct Slot {
 /// The open profiles of one SaaS process.
 pub struct ProfileHost {
     pub(super) saas: SaasConfig,
+    capabilities: Option<Arc<super::capabilities::ProfileCapabilities>>,
     pub(super) operator: Arc<CoreContext>,
     pub(super) node: String,
     pub(super) open: Mutex<HashMap<ProfileId, Slot>>,
@@ -140,6 +141,8 @@ impl ProfileHost {
         operator: Arc<CoreContext>,
         backend: Option<Arc<dyn StorageBackend>>,
     ) -> Result<Self, String> {
+        super::provider_settings::ProfileProviderSettings::from_saas(&saas)
+            .map_err(|error| error.to_string())?;
         let node = saas.resolve_node_id(None).to_owned();
         let leases = profile_lease::store_for(
             &saas.root,
@@ -153,6 +156,7 @@ impl ProfileHost {
             None => ProfileRegistry::files(&saas.root),
         };
         Ok(Self {
+            capabilities: None,
             saas,
             operator,
             node,
@@ -163,6 +167,15 @@ impl ProfileHost {
             fences: crate::storage::fence::registry(),
             registry,
         })
+    }
+
+    /// Install immutable operator adapters before this host is shared.
+    pub fn with_capabilities(
+        mut self,
+        capabilities: Option<Arc<super::capabilities::ProfileCapabilities>>,
+    ) -> Self {
+        self.capabilities = capabilities;
+        self
     }
 
     /// This host registering its fences in `fences` instead of the process
@@ -200,12 +213,34 @@ impl ProfileHost {
     /// storage backend) resolves to that profile. For operator-plane work on
     /// a profile's records; it carries no policy and runs no turns.
     pub(crate) fn records_context(&self, id: &ProfileId) -> Arc<CoreContext> {
-        let config = layout::profile_config(&self.layout_of(id), id);
+        let config = self.forced_config(&self.layout_of(id), id);
         self.operator.derive_with(
             ContextOverlay::new(config, user_domains(), ToolGroups::none())
                 .without_user_skill_roots()
                 .profile(id.as_str()),
         )
+    }
+
+    /// [`layout::profile_config`] plus the operator's cron limits, which no
+    /// profile config can loosen.
+    fn forced_config(&self, layout: &ProfileLayout, id: &ProfileId) -> Config {
+        let mut config = layout::profile_config(layout, id);
+        let cron = &self.saas.cron;
+        config.cron.agent_jobs_only = cron.agent_jobs_only;
+        config.cron.min_interval_secs = cron.min_interval_secs;
+        config.cron.max_active_jobs = cron.max_active_jobs;
+        config.agent.max_tool_iterations_override = self.saas.max_tool_iterations;
+        config
+    }
+
+    /// [`Self::forced_config`] plus the operator's direct providers, for any
+    /// config that serves chat, relay or cron turns.
+    fn serving_config(&self, layout: &ProfileLayout, id: &ProfileId) -> Result<Config, String> {
+        let mut config = self.forced_config(layout, id);
+        super::provider_settings::ProfileProviderSettings::from_saas(&self.saas)
+            .map_err(|error| error.to_string())?
+            .bind(&mut config);
+        Ok(config)
     }
 
     /// The forced config of provisioned profile `id`, without opening it (and
@@ -214,7 +249,7 @@ impl ProfileHost {
         if self.registry.get(id).await?.is_none() {
             return Err(format!("profile {id} is not provisioned"));
         }
-        Ok(layout::profile_config(&self.layout_of(id), id))
+        self.serving_config(&self.layout_of(id), id)
     }
 
     /// Profile `id`, opening it — and taking its lease — if it is provisioned
@@ -288,13 +323,12 @@ impl ProfileHost {
             profile_lease::release_all(self, vec![(id.clone(), grant)]).await;
             return Err(OpenError::Storage(error));
         }
-        let config = layout::profile_config(&layout, id);
-        let context = self.operator.derive_with(
-            ContextOverlay::new(config.clone(), user_domains(), ToolGroups::none())
-                .without_user_skill_roots()
-                .profile(id.as_str())
-                .agent_policy(profile_policy(&config)),
-        );
+        let mut config = self
+            .serving_config(&layout, id)
+            .map_err(OpenError::Storage)?;
+        if let Some(capabilities) = &self.capabilities {
+            capabilities.configure(&mut config);
+        }
         let fence = super::fence::for_grant(
             Arc::clone(&self.leases),
             &self.node,
@@ -302,6 +336,21 @@ impl ProfileHost {
             &grant,
             self.saas.lease_ttl(),
         );
+        let mut overlay = ContextOverlay::new(config.clone(), user_domains(), ToolGroups::none())
+            .without_user_skill_roots()
+            .profile(id.as_str())
+            .agent_policy(profile_policy(&config));
+        if let Some(capabilities) = &self.capabilities {
+            let mut overrides = crate::agent::host_overrides::HostOverrides::default();
+            overrides.parent = self.operator.host_overrides();
+            overrides.profile_capabilities = Some(Arc::clone(capabilities));
+            overrides.tool_hook(
+                "profile.can_use_tool",
+                Some(capabilities.hook(id, Arc::clone(&fence))),
+            );
+            overlay = overlay.host_overrides(Arc::new(overrides));
+        }
+        let context = self.operator.derive_with(overlay);
         // Registered before recovery so its writes are already guarded.
         // Once fenced, it refuses writes for as long as work on this context
         // could still issue them.
@@ -402,7 +451,7 @@ impl ProfileHost {
 
     async fn summarize(&self, meta: ProfileMeta) -> ProfileSummary {
         let id = meta.profile_id;
-        let config = layout::profile_config(&self.layout_of(&id), &id);
+        let config = self.forced_config(&self.layout_of(&id), &id);
         let has_credential = CoreContext::scope(self.records_context(&id), async {
             super::credentials::has(&config)
         })

@@ -245,13 +245,11 @@ per tick would multiply request count for text the client discards.
 | [`server.rs`](./server.rs), [`server/`](./server/) | The `VoiceServer` dictation runtime: hotkey loop, recording lifecycle, gates, delivery, global singleton. [README](server/README.md). |
 | [`always_on.rs`](./always_on.rs), [`always_on/`](./always_on/) | VAD-driven continuous listening, screen-lock pause, wake word and intent routing. [README](always_on/README.md). |
 | [`audio_capture.rs`](./audio_capture.rs) | Microphone recording to 16 kHz mono WAV (`start_recording`, `RecordingHandle`, `RecordingResult`, `list_input_devices`) with peak RMS and the host microphone-permission policy. The `cpal` stream is `tinyvoice::capture`. |
-| [`hotkey.rs`](./hotkey.rs) | Re-export of TinyVoice bus hotkey vocabulary. TinyVoice owns native listener parsing and lifecycle. |
 | [`dictation_listener.rs`](./dictation_listener.rs) | The two broadcast channels and host event-forwarding lifecycle over TinyVoice's native listener. |
 | [`bus.rs`](./bus.rs) | `publish_ptt_transcript_committed`. |
 | `live/` | Live voice agents: `providers.rs`, `session.rs`, `ws.rs` (`http-server` only), `persist.rs`, `ops.rs` / `schemas.rs` (`voice.live_*`), `types.rs`, `error.rs`, and `prompt.md` (voice guidance for the model). |
 | [`realtime.rs`](./realtime.rs) | `mint_voice_agent_signed_url`: a short-lived signed WebSocket URL from the backend's `/voice-agent/get-signed-url`. The provider API key never leaves the server. |
 | [`realtime_harness.rs`](./realtime_harness.rs), [`realtime_harness/`](./realtime_harness/) | `voice:harness` turn handler: `prompt.rs` (prompt extraction), `agent.rs` (per-turn orchestrator), `chat_delivery.rs` (socket emits, deferred chat delivery), `turn_handler.rs`. |
-| [`audio_toolkit/`](./audio_toolkit/) | Podcast generation and email delivery (`audio_toolkit` RPC namespace and agent tools), under the same `voice` gate. [README](audio_toolkit/README.md). |
 | [`cli.rs`](./cli.rs) | `openhuman voice` / `openhuman dictate`: a blocking standalone dictation server. Domain-owned because it never returns and does not fit the controller registry. |
 | [`compile_status.rs`](./compile_status.rs) | `VOICE_COMPILED_IN`, compiled in both feature states. |
 | [`stub.rs`](./stub.rs) | The disabled-voice facade, compiled only when `voice` is off. |
@@ -309,8 +307,7 @@ All methods are in the `voice` namespace and registered through
 
 The CLI adapter in [`cli.rs`](./cli.rs) is registered in `core/all.rs` without a feature
 gate, so a voice-less build answers `openhuman voice` with a "voice disabled"
-error from the stub. The [`audio_toolkit`](./audio_toolkit) namespace is documented in its own
-README.
+error from the stub.
 
 ## Persistence
 
@@ -361,14 +358,13 @@ registration), `web_chat/run_task.rs` (reply speech, PTT events),
 `security/credentials/ops/gated_services.rs` (starts and stops the dictation
 server, listener and always-on mode when gating credentials change),
 `config/schemas/controllers/voice.rs`, `desktop/overlay/`,
-`inference/host_runtime/service/speech.rs`, `tools/mod.rs` (re-exports
-`audio_toolkit` tools) and `crates/openhuman-app/src/lib.rs` (asserts
+`inference/host_runtime/service/speech.rs` and `crates/openhuman-app/src/lib.rs` (asserts
 `VOICE_COMPILED_IN`).
 
 ## Gotchas
 
-- The `voice` feature is default-on, but `pub mod voice` always compiles as a
-  facade. With the feature off, [`stub.rs`](./stub.rs) replaces the real modules and mirrors
+- The desktop product enables `voice` explicitly; contributor defaults leave
+  it off. `pub mod voice` always compiles as a facade. With the feature off, [`stub.rs`](./stub.rs) replaces the real modules and mirrors
   the surface other code depends on (`server`, `dictation_listener`,
   `always_on`, `streaming`, `live::ws`, `reply_speech`, `cloud_transcribe`,
   `cli`, `create_stt_provider`, `effective_stt_provider`, `SttProvider`,
@@ -377,9 +373,7 @@ server, listener and always-on mode when gating credentials change),
   (`cargo check --no-default-features --features "<all-but-voice>"`), so change
   both sides together. `VOICE_COMPILED_IN` is ungated so the desktop shell can
   assert at compile time that it did not get the stub (#4901).
-- `voice` pulls in `inference`, `modules`, `tinyvoice`
-  and the email channel (for `audio_toolkit`), so a voice-less build sheds a
-  large dependency stack. `streaming` additionally needs `http-server`.
+- `voice` pulls in `inference`, `modules` and the `tinyvoice-bus` contract. `streaming` additionally needs `http-server`.
 - macOS hotkeys (#2677): rdev's former CGEventTap callback called
   `TSMGetInputSourceProperty` off the main thread, which crashes with
   `EXC_BREAKPOINT` on macOS 26. On macOS `dictation_listener::start_if_enabled`

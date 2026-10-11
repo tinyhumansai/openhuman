@@ -127,6 +127,44 @@ async fn subagent_pin_without_route_falls_back_to_primary() {
     );
 }
 
+#[tokio::test]
+async fn subagent_typed_hint_resolves_to_its_tier_route() {
+    let request = ModelResolveRequest::new("integrations_agent").with_model_hint("burst");
+    let model = resolver().resolve(&request).await.expect("resolves");
+    assert_eq!(name_of(&model).await, "hint:burst");
+}
+
+#[tokio::test]
+async fn lead_keeps_selected_primary_over_typed_hint() {
+    let request = ModelResolveRequest::new("orchestrator")
+        .as_team_lead()
+        .with_model_hint("coding");
+    let model = resolver().resolve(&request).await.expect("resolves");
+    assert_eq!(
+        name_of(&model).await,
+        "openrouter/deepseek/deepseek-v4.1-flash"
+    );
+}
+
+#[tokio::test]
+async fn explicit_pin_takes_precedence_over_typed_hint() {
+    let request = ModelResolveRequest::new("worker")
+        .with_model_pin("hint:coding")
+        .with_model_hint("burst");
+    let model = resolver().resolve(&request).await.expect("resolves");
+    assert_eq!(name_of(&model).await, "hint:coding");
+}
+
+#[tokio::test]
+async fn unconfigured_typed_hint_falls_back_to_primary() {
+    let request = ModelResolveRequest::new("worker").with_model_hint("vision");
+    let model = resolver().resolve(&request).await.expect("resolves");
+    assert_eq!(
+        name_of(&model).await,
+        "openrouter/deepseek/deepseek-v4.1-flash"
+    );
+}
+
 /// Streams the next scripted terminal item on each call.
 struct ScriptedTerminalModel(std::sync::Mutex<Vec<tinyinference_llm::model::ModelStreamItem>>);
 

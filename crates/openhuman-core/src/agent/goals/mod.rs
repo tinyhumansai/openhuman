@@ -4,13 +4,13 @@
 //! graph continuation, and native harness tools. This module contains the
 //! remaining OpenHuman-specific adapters: workspace-store resolution, domain
 //! events, and bridges for
-//! OpenHuman's `Tool` and `StopHook` traits.
+//! the shared tool contract and TinyAgents' stop-hook contract.
 
 pub mod runtime;
 pub mod store;
 pub mod tools;
 
-pub use tinyagents_graph::goals::{ThreadGoal, ThreadGoalStatus};
+use tinyagents_graph::goals::ThreadGoal;
 pub use tools::goal_tools;
 
 /// Serialize a [`ThreadGoal`] for the `goal` field on `ThreadGoalUpdated` /

@@ -22,13 +22,12 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 
 use tinyagents_graph::goals::budget as crate_budget;
-use tinyagents_graph::goals::{BudgetVerdict, GoalBudgetGuard};
+use tinyagents_graph::goals::{BudgetVerdict, GoalBudgetGuard, ThreadGoal, ThreadGoalStatus};
 
 use super::store::{self, goals_store};
-use super::{ThreadGoal, ThreadGoalStatus};
-use crate::agent::stop_hooks::{StopDecision, StopHook, TurnState};
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
+use tinyagents_harness::middleware::{StopDecision, StopHook, TurnState};
 
 /// Load the goal for an explicitly supplied chat thread.
 pub async fn load_for_thread(workspace_dir: &Path, thread_id: Option<&str>) -> Option<ThreadGoal> {
@@ -248,12 +247,12 @@ impl GoalBudgetStopHook {
 }
 
 #[async_trait]
-impl StopHook for GoalBudgetStopHook {
+impl StopHook<crate::agent::cost::TurnCost> for GoalBudgetStopHook {
     fn name(&self) -> &str {
         "thread_goal_budget"
     }
 
-    async fn check(&self, ctx: &TurnState<'_>) -> StopDecision {
+    async fn check(&self, ctx: &TurnState<'_, crate::agent::cost::TurnCost>) -> StopDecision {
         let store = goals_store(&self.workspace_dir);
         let in_flight = turn_tokens(ctx.cost.input_tokens, ctx.cost.output_tokens);
         match self.guard.check(&store, in_flight).await {

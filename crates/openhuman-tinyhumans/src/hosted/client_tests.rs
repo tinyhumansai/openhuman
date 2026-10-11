@@ -1,8 +1,8 @@
 use super::*;
+use crate::hosted::test_support::store_session;
 use openhuman_embed::__host::core::observability::{
     expected_error_kind, is_api_key_rejected_message, is_session_expired_message,
 };
-use openhuman_embed::__host::security::credentials::{AuthService, APP_SESSION_PROVIDER};
 use serde_json::json;
 use tempfile::TempDir;
 use wiremock::matchers::{header, method, path};
@@ -16,18 +16,6 @@ fn test_config(tmp: &TempDir, api_url: &str) -> Config {
         api_url: Some(api_url.to_string()),
         ..Config::default()
     }
-}
-
-fn store_session(config: &Config, token: &str) {
-    AuthService::from_config(config)
-        .store_provider_token(
-            APP_SESSION_PROVIDER,
-            "default",
-            token,
-            std::collections::HashMap::new(),
-            true,
-        )
-        .expect("store session token");
 }
 
 #[test]
@@ -170,8 +158,14 @@ async fn session_client_sends_bearer_and_product_identity() {
         .mount(&server)
         .await;
 
-    let client =
-        HostedClient::with_credential(&server.uri(), BackendCredential::Session("jwt.a.b".into()));
+    // The runtime-builder tests temporarily override the process identity.
+    // Snapshot the default while holding the same guard those writers use;
+    // the constructed client's headers are immutable after this block.
+    let client = {
+        let _identity = crate::backend::product::product_identity_test_lock();
+        crate::backend::product::reset_product_identity_for_test();
+        HostedClient::with_credential(&server.uri(), BackendCredential::Session("jwt.a.b".into()))
+    };
     assert_eq!(client.kind(), CredentialKind::Session);
     let value = client
         .finish_value(

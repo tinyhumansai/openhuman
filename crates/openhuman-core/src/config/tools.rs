@@ -164,6 +164,21 @@ read_tool!(
     "Return the resolved on-disk data directories and workspace marker."
 );
 
+/// Build this domain's tools in their persisted catalogue order.
+pub(crate) fn registered_tools(
+    config: std::sync::Arc<crate::config::Config>,
+) -> Vec<Box<dyn tinytools::Tool>> {
+    vec![
+        Box::new(ConfigSnapshotTool::new(config.clone())),
+        Box::new(ConfigClientConfigTool),
+        Box::new(ConfigAutonomyTool),
+        Box::new(ConfigSearchTool),
+        Box::new(ConfigRuntimeFlagsTool),
+        Box::new(ConfigResolveApiUrlTool),
+        Box::new(ConfigDataPathsTool),
+    ]
+}
+
 #[cfg(test)]
 #[path = "tools_tests.rs"]
 mod tests;

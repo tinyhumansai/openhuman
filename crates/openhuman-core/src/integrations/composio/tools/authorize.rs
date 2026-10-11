@@ -11,8 +11,9 @@ use crate::config::Config;
 use tinytools::{PermissionLevel, Tool, ToolCategory, ToolResult};
 
 use super::super::client::{resolve_composio_route, ComposioRoute};
-use super::super::module_client::{self as connectors, methods};
+use super::super::module_client::{self as connectors};
 use super::super::types::{ComposioAuthorizeRequest, ComposioAuthorizeResponse};
+use tinyconnectors_bus::names::methods;
 
 pub struct ComposioAuthorizeTool {
     /// Held instead of a pre-resolved route so the

@@ -4,7 +4,7 @@
 //! [`super`]). It mirrors the subset of the real `voice` public surface that
 //! always-on / other-gated callers depend on, with no-op / disabled-error
 //! bodies so the crate still compiles, boots, and serves `/rpc` without the
-//! voice + audio_toolkit domains.
+//! voice domain.
 //!
 //! The signatures here MUST match the real ones exactly (return types included).
 //! The disabled build

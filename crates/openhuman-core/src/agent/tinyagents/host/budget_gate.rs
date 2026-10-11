@@ -10,7 +10,7 @@
 //! * **admission / back-pressure** — [`scheduler_gate::wait_for_capacity`],
 //!   which owns the single-slot global LLM semaphore and the
 //!   AC-power / CPU / signed-out policy backoff;
-//! * **pricing hints and budgets** — [`cost::catalog::estimate_cost_usd`] on
+//! * **pricing hints and budgets** — [`tinyagents_registry::pricing::estimate_cost_usd`] on
 //!   the way in, and the opt-in `[[cost.budgets]]` policies, which can refuse a
 //!   call (`BUDGET_EXCEEDED`). The legacy `monthly_limit_usd` still refuses
 //!   nothing. Nothing here writes the cost ledger: the event bridge records
@@ -68,8 +68,8 @@ use tinyinference_llm::usage::Usage;
 
 use crate::config::{Config, DEFAULT_MODEL};
 use crate::cron::scheduler_gate;
-use crate::inference::tokenjuice::AgentTokenjuiceCompression;
 use crate::platform::cost;
+use tinyjuice_bus::types::AgentTokenjuiceCompression;
 
 /// OpenHuman's [`BudgetGate`]: scheduler-gate back-pressure, cost-tracker
 /// budget enforcement, and TokenJuice-profile-aware compression advice.
@@ -233,7 +233,7 @@ impl OpenHumanBudgetGate {
         let call = cost::budget::CallUnderCheck {
             model: &model,
             scope: &scope,
-            estimated_usd: cost::catalog::estimate_cost_usd(
+            estimated_usd: tinyagents_registry::pricing::estimate_cost_usd(
                 &model,
                 est.estimated_input_tokens,
                 est.estimated_output_tokens,
@@ -304,7 +304,7 @@ impl BudgetGate for OpenHumanBudgetGate {
         // uncatalogued model, which means "unknown", not "free" — and a zero
         // estimate can only ever make `check_budget` more permissive, never
         // less, so it can't manufacture a refusal.
-        let estimated_usd = cost::catalog::estimate_cost_usd(
+        let estimated_usd = tinyagents_registry::pricing::estimate_cost_usd(
             &est.model,
             est.estimated_input_tokens,
             est.estimated_output_tokens,

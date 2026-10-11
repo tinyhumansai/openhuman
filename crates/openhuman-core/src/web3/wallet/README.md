@@ -144,7 +144,7 @@ None. The module publishes or subscribes no `DomainEvent`s and has no `bus.rs`. 
 
 ## Used by
 
-- `crates/openhuman-core/src/tools/mod.rs` re-exports `wallet::tools::*`; `crates/openhuman-core/src/tools/ops.rs` registers the six wallet agent tools (gated on the `web3` feature) and reserves the `wallet_`/`web3_`/`x402_` name prefixes as Web3-exclusive.
+- `registration::registered_tools` constructs the six wallet agent tools from `tinywallet-web3`; `crates/openhuman-core/src/tools/ops.rs` adds that domain factory (gated on the `web3` feature) and reserves the `wallet_`/`web3_`/`x402_` name prefixes as Web3-exclusive.
 - `crates/openhuman-core/src/core/all.rs` wires controllers/schemas/capability description.
 - `crates/openhuman-core/src/test_support/introspect.rs`: `wallet_prepared_quotes` introspection helper used in tests, backed by `wallet::prepared_quotes_for_test`.
 

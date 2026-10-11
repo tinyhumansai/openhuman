@@ -11,11 +11,11 @@ use serde_json::Value;
 
 use crate::config::Config;
 
-use super::super::ops::load_user_scope_pref;
-use super::super::providers::{
+use super::super::contract::{
     catalog_for_toolkit, classify_unknown, find_curated, toolkit_from_slug, ToolScope,
     UserScopePref,
 };
+use super::super::ops::load_user_scope_pref;
 
 /// Decision returned by [`evaluate_tool_visibility`].
 pub(super) enum ToolDecision {

@@ -1,5 +1,4 @@
 use super::*;
-use std::path::PathBuf;
 
 #[test]
 fn tokio_command_selects_platform_shell() {
@@ -51,20 +50,14 @@ fn std_command_selects_platform_shell() {
 }
 
 #[test]
-fn output_redirection_wraps_per_platform() {
-    let stdout = PathBuf::from("/tmp/openhuman/out.log");
-    let stderr = PathBuf::from("/tmp/openhuman/err.log");
-    let wrapped = wrap_with_output_redirection("echo hi", &stdout, &stderr);
+fn std_preserving_builder_does_not_add_pipefail() {
+    let command = "false | true";
+    let std = build_std_command_preserving_pipe_status(command);
+    let tokio = build_tokio_command_preserving_pipe_status(command);
 
-    if cfg!(windows) {
-        assert_eq!(
-            wrapped,
-            r#"echo hi > "/tmp/openhuman/out.log" 2> "/tmp/openhuman/err.log""#
-        );
-    } else {
-        assert_eq!(
-            wrapped,
-            "{ echo hi ; } > '/tmp/openhuman/out.log' 2> '/tmp/openhuman/err.log'"
-        );
-    }
+    assert_eq!(std.get_program(), tokio.as_std().get_program());
+    assert_eq!(
+        std.get_args().collect::<Vec<_>>(),
+        tokio.as_std().get_args().collect::<Vec<_>>()
+    );
 }

@@ -27,7 +27,9 @@ function setFaultRules(rules) {
 test.beforeEach(async () => {
   await stopMockServer();
   resetMockBehavior();
-  await startMockServer();
+  const started = await startMockServer(0);
+  assert.equal(started.requestedPort, 0, "explicit port zero must ask the OS for a free port");
+  assert.ok(started.port > 0);
 });
 
 test.afterEach(async () => {

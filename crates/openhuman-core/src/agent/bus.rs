@@ -31,7 +31,7 @@ use tinyagents_session::transcript::TranscriptMessage;
 use tinytools::Tool;
 
 use super::harness::definition::{AgentDefinitionRegistry, SandboxMode};
-use super::harness::{run_channel_turn_via_graph, with_current_sandbox_mode};
+use super::harness::run_channel_turn_via_graph;
 use tinytools_std::file_state::with_file_state_agent_id;
 
 /// Method name used to dispatch an agentic turn through the native bus.
@@ -264,8 +264,8 @@ async fn handle_agent_run_turn(req: AgentTurnRequest) -> Result<AgentTurnRespons
     }
 
     // Resolve the target agent's declared sandbox mode so any
-    // tool executed inside the loop can read it via the
-    // `CURRENT_AGENT_SANDBOX_MODE` task-local. Falls back to
+    // tool executed inside the loop receives it through the explicit
+    // host operation context. Falls back to
     // `SandboxMode::None` when the request doesn't pin an agent
     // id (legacy "generic unfiltered turn" path) or when the
     // global registry hasn't been initialised (tests that stub
@@ -298,34 +298,32 @@ async fn handle_agent_run_turn(req: AgentTurnRequest) -> Result<AgentTurnRespons
         origin,
         crate::memory::scope::within_agent(
             &memory_agent,
-            with_file_state_agent_id(
-                file_state_id,
-                with_current_sandbox_mode(sandbox_mode, async {
-                    // Channel/CLI turns run through the tinyagents harness
-                    // (issue #4249); the legacy `run_tool_call_loop` is removed.
-                    // `on_progress` mirrors the harness event stream (tool
-                    // timeline, text deltas, cost footer) — production channel
-                    // dispatch always supplies it and now expects it live.
-                    // `on_delta` (raw Sender<String>) is superseded by
-                    // `on_progress` text deltas, so it's intentionally unused.
-                    let _ = (&provider_name, silent, &channel_name, on_delta);
-                    run_channel_turn_via_graph(
-                        turn_model_source.clone(),
-                        &mut history,
-                        tools_registry.clone(),
-                        extra_tools,
-                        visible_tool_names.as_ref(),
-                        &model,
-                        temperature,
-                        max_tool_iterations,
-                        multimodal.clone(),
-                        multimodal_files.clone(),
-                        on_progress,
-                        Some(graph_origin),
-                    )
-                    .await
-                }),
-            ),
+            with_file_state_agent_id(file_state_id, async {
+                // Channel/CLI turns run through the tinyagents harness
+                // (issue #4249); the legacy `run_tool_call_loop` is removed.
+                // `on_progress` mirrors the harness event stream (tool
+                // timeline, text deltas, cost footer) — production channel
+                // dispatch always supplies it and now expects it live.
+                // `on_delta` (raw Sender<String>) is superseded by
+                // `on_progress` text deltas, so it's intentionally unused.
+                let _ = (&provider_name, silent, &channel_name, on_delta);
+                run_channel_turn_via_graph(
+                    turn_model_source.clone(),
+                    &mut history,
+                    tools_registry.clone(),
+                    extra_tools,
+                    visible_tool_names.as_ref(),
+                    &model,
+                    temperature,
+                    max_tool_iterations,
+                    multimodal.clone(),
+                    multimodal_files.clone(),
+                    on_progress,
+                    Some(graph_origin),
+                    sandbox_mode,
+                )
+                .await
+            }),
         ),
     )
     .await

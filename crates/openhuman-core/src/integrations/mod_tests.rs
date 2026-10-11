@@ -5,6 +5,7 @@
 //! `integrations` module.
 
 use super::*;
+use tinytools::ToolScope;
 
 #[test]
 fn tool_scope_equality() {

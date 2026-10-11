@@ -96,8 +96,8 @@ export function bundledAssets(source, hostKey) {
     if (!urls.has(record.id)) throw new Error(`missing release URL for ${record.id}`);
     return record.id;
   });
-  // A module that publishes nothing for this OS (tinycomputer has no Linux
-  // build) is not bundled there; one that publishes the OS but not this key is
+  // A module that publishes nothing for this OS is not bundled there;
+  // one that publishes the OS but not this key is
   // a registry hole and fails below.
   const osPrefix = hostKey.split("-")[0];
   const byId = new Map([...records.values()].map((r) => [r.id, r]));

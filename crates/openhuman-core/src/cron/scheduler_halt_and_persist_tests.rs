@@ -1,8 +1,8 @@
 use super::*;
 
-use crate::cron::JobType;
-use crate::cron::Schedule;
-use crate::cron::SessionTarget;
+use tinyflows_schedule::types::JobType;
+use tinyflows_schedule::types::Schedule;
+use tinyflows_schedule::types::SessionTarget;
 // TAURI-RUST-514 — a BYO provider insufficient-credits 402 ("requires more
 // credits") leaks from a cron-fired agent job through `last_agent_error`.
 // `is_insufficient_credits_failure` must consult the message classifier so the
@@ -437,7 +437,7 @@ async fn persist_job_result_success_deletes_one_shot() {
     let job = cron::add_agent_job(
         &config,
         Some("one-shot".into()),
-        crate::cron::Schedule::At { at },
+        tinyflows_schedule::types::Schedule::At { at },
         "Hello",
         SessionTarget::Isolated,
         None,
@@ -462,7 +462,7 @@ async fn persist_job_result_failure_disables_one_shot() {
     let job = cron::add_agent_job(
         &config,
         Some("one-shot".into()),
-        crate::cron::Schedule::At { at },
+        tinyflows_schedule::types::Schedule::At { at },
         "Hello",
         SessionTarget::Isolated,
         None,
@@ -493,7 +493,7 @@ async fn persist_job_result_disables_at_job_without_delete_flag() {
     let job = cron::add_agent_job(
         &config,
         Some("at-no-delete".into()),
-        crate::cron::Schedule::At { at },
+        tinyflows_schedule::types::Schedule::At { at },
         "Hello",
         SessionTarget::Isolated,
         None,

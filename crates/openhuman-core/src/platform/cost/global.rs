@@ -275,7 +275,7 @@ pub(super) fn build_token_usage(model: &str, usage: &BilledUsage) -> Option<Toke
 /// `"<provider>/<model>"` model key so it matches the embedding `CostRecord`
 /// shape used elsewhere (e.g. `voyage/voyage-3`).
 ///
-/// Pricing resolution: [`catalog::estimate_cost_usd`] prices `input_tokens` at
+/// Pricing resolution: [`tinyagents_registry::pricing::estimate_cost_usd`] prices `input_tokens` at
 /// the catalogued per-token input rate. Embedding models are frequently **not**
 /// in the pricing catalog; in that case `estimate_cost_usd` returns `0.0` and
 /// we record the usage with **zero** cost (and log it) rather than fabricating a
@@ -304,7 +304,7 @@ pub fn record_embedding_usage(
         );
         return;
     };
-    let cost_usd = super::catalog::estimate_cost_usd(model, input_tokens, 0, 0);
+    let cost_usd = tinyagents_registry::pricing::estimate_cost_usd(model, input_tokens, 0, 0);
     if cost_usd == 0.0 {
         log::debug!(
             "[cost][embed] no catalog embedding rate for model={model}; recording usage with \

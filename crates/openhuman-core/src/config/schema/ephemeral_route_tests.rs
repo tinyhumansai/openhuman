@@ -181,3 +181,15 @@ fn the_route_cannot_be_serialized_into_a_config_file() {
     assert!(!encoded.contains("mdl-token"));
     assert!(!encoded.contains("ephemeral_route"));
 }
+
+#[test]
+fn debug_never_discloses_route_bearer_or_header_values() {
+    let route = EphemeralRoute {
+        endpoint: "https://fixture.example/v1".into(),
+        api_key: "u2-unique-route-secret".into(),
+        headers: vec![("x-private".into(), "u2-unique-header-secret".into())],
+    };
+    let debug = format!("{route:?}");
+    assert!(!debug.contains("u2-unique-route-secret"));
+    assert!(!debug.contains("u2-unique-header-secret"));
+}

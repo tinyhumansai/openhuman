@@ -147,7 +147,7 @@ fn handle_run(params: Map<String, Value>) -> ControllerFuture {
                 id.trim(),
                 input,
                 inputs,
-                crate::flows::FlowRunTrigger::Rpc,
+                tinyflows_catalog::FlowRunTrigger::Rpc,
             )
             .await?,
         )
@@ -166,7 +166,7 @@ fn handle_run_detached(params: Map<String, Value>) -> ControllerFuture {
                 id.trim(),
                 input,
                 inputs,
-                crate::flows::FlowRunTrigger::Rpc,
+                tinyflows_catalog::FlowRunTrigger::Rpc,
             )
             .await?,
         )
@@ -336,7 +336,7 @@ fn handle_list_suggestions(params: Map<String, Value>) -> ControllerFuture {
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|s| !s.is_empty())
-            .map(crate::flows::SuggestionStatus::from_str_lossy);
+            .map(tinyflows_catalog::SuggestionStatus::from_str_lossy);
         to_json(ops::flows_list_suggestions(&config, status).await?)
     })
 }
@@ -446,7 +446,7 @@ fn handle_draft_create(params: Map<String, Value>) -> ControllerFuture {
             .get("origin")
             .and_then(Value::as_str)
             .and_then(|s| serde_json::from_value(Value::String(s.to_string())).ok())
-            .unwrap_or(crate::flows::DraftOrigin::Canvas);
+            .unwrap_or(tinyflows_catalog::DraftOrigin::Canvas);
         to_json(ops::flows_draft_create(
             &config, flow_id, name, graph, origin,
         )?)

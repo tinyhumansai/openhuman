@@ -157,14 +157,14 @@ pub async fn flows_list_all_runs(
 }
 
 /// Manually prunes a flow's run history down to the retention cap
-/// ([`store::MAX_FLOW_RUNS_PER_FLOW`]), deleting only terminal runs outside the
+/// ([`tinyflows_sqlite::flows::MAX_FLOW_RUNS_PER_FLOW`]), deleting only terminal runs outside the
 /// newest-N window. Never removes a `running` or `pending_approval` run — a
 /// parked run must survive for a later `flows_resume`. Pruning also happens
 /// automatically on every new-run insert; this RPC exposes it for an explicit
 /// on-demand sweep (e.g. a maintenance action). Returns the number of runs
 /// pruned.
 pub async fn flows_prune_runs(config: &Config, flow_id: &str) -> Result<Outcome<Value>, String> {
-    let keep = store::MAX_FLOW_RUNS_PER_FLOW;
+    let keep = tinyflows_sqlite::flows::MAX_FLOW_RUNS_PER_FLOW;
     let pruned = store::prune_flow_runs(config, flow_id, keep).map_err(|e| e.to_string())?;
     tracing::info!(target: "flows", flow_id, pruned, keep, "[flows] flows_prune_runs: manual retention sweep");
     Ok(Outcome::single_log(

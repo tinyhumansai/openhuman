@@ -17,7 +17,7 @@ use crate::config::Config;
 // macOS keeps the Tauri-owned global shortcut. Other platforms use TinyVoice's
 // module-owned native listener through the same adapter as the voice server.
 #[cfg(not(target_os = "macos"))]
-use super::hotkey::{ActivationMode, HotkeyEvent};
+use tinyvoice_bus::hotkey::{ActivationMode, HotkeyEvent};
 
 const LOG_PREFIX: &str = "[dictation_listener]";
 

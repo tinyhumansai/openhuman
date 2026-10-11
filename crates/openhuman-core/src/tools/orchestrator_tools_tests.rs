@@ -27,13 +27,12 @@ fn def(id: &str, when_to_use: &str, delegate_name: Option<&str>) -> AgentDefinit
         timeout_secs: None,
         sandbox_mode: SandboxMode::None,
         background: false,
-        tokenjuice_compression: crate::inference::tokenjuice::AgentTokenjuiceCompression::Auto,
+        tokenjuice_compression: tinyjuice_bus::types::AgentTokenjuiceCompression::Auto,
         subagents: vec![],
         delegate_name: delegate_name.map(String::from),
         agent_tier: crate::agent::harness::definition::AgentTier::Worker,
         searches_connected_mcp: false,
         source: DefinitionSource::Builtin,
-        graph: Default::default(),
     }
 }
 

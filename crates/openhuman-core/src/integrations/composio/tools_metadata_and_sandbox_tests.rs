@@ -378,11 +378,11 @@ fn agent_tools_register_when_direct_mode_with_stored_key_and_no_backend_session(
 #[tokio::test]
 async fn sandbox_read_only_blocks_write_scope_action() {
     let t = ComposioExecuteTool::new(fake_config_arc());
-    let result = crate::agent::harness::with_current_sandbox_mode(SandboxMode::ReadOnly, async {
-        t.execute(serde_json::json!({ "tool": "GMAIL_SEND_EMAIL" }))
-            .await
-            .unwrap()
-    })
+    let result = execute_in_agent_mode(
+        &t,
+        serde_json::json!({ "tool": "GMAIL_SEND_EMAIL" }),
+        SandboxMode::ReadOnly,
+    )
     .await;
     assert!(
         result.is_error,
@@ -396,11 +396,11 @@ async fn sandbox_read_only_blocks_write_scope_action() {
 #[tokio::test]
 async fn sandbox_read_only_blocks_admin_scope_action() {
     let t = ComposioExecuteTool::new(fake_config_arc());
-    let result = crate::agent::harness::with_current_sandbox_mode(SandboxMode::ReadOnly, async {
-        t.execute(serde_json::json!({ "tool": "GMAIL_DELETE_EMAIL" }))
-            .await
-            .unwrap()
-    })
+    let result = execute_in_agent_mode(
+        &t,
+        serde_json::json!({ "tool": "GMAIL_DELETE_EMAIL" }),
+        SandboxMode::ReadOnly,
+    )
     .await;
     assert!(result.is_error);
     let msg = error_text(&result);
@@ -432,11 +432,11 @@ async fn sandbox_read_only_passes_through_read_scope_actions_to_downstream_gates
     config.save().await.expect("save fake config to disk");
 
     let t = ComposioExecuteTool::new(Arc::new(config));
-    let result = crate::agent::harness::with_current_sandbox_mode(SandboxMode::ReadOnly, async {
-        t.execute(serde_json::json!({ "tool": "GMAIL_FETCH_EMAILS" }))
-            .await
-            .unwrap()
-    })
+    let result = execute_in_agent_mode(
+        &t,
+        serde_json::json!({ "tool": "GMAIL_FETCH_EMAILS" }),
+        SandboxMode::ReadOnly,
+    )
     .await;
     let msg = error_text(&result);
     assert!(
@@ -447,7 +447,7 @@ async fn sandbox_read_only_passes_through_read_scope_actions_to_downstream_gates
 
 #[tokio::test]
 async fn sandbox_unset_leaves_all_scopes_to_downstream_gates() {
-    // Outside any `with_current_sandbox_mode` scope the task-local
+    // Without an explicit agent context there is no agent-specific mode; the tool
     // returns `None` and the gate becomes a no-op (backward
     // compatible — this is the CLI / JSON-RPC / unit-test path).
     //
@@ -503,11 +503,11 @@ async fn sandbox_sandboxed_mode_does_not_trigger_readonly_gate() {
     config.save().await.expect("save fake config to disk");
 
     let t = ComposioExecuteTool::new(Arc::new(config));
-    let result = crate::agent::harness::with_current_sandbox_mode(SandboxMode::Sandboxed, async {
-        t.execute(serde_json::json!({ "tool": "GMAIL_SEND_EMAIL" }))
-            .await
-            .unwrap()
-    })
+    let result = execute_in_agent_mode(
+        &t,
+        serde_json::json!({ "tool": "GMAIL_SEND_EMAIL" }),
+        SandboxMode::Sandboxed,
+    )
     .await;
     let msg = error_text(&result);
     assert!(
@@ -685,4 +685,22 @@ fn empty_uncurated_toolkits_message_names_agent_unsupported_toolkits() {
 fn empty_uncurated_toolkits_message_ignores_catalogued_toolkits() {
     assert!(empty_uncurated_toolkits_message(&["gmail".to_string()]).is_none());
     assert!(empty_uncurated_toolkits_message(&["googlesheets".to_string()]).is_none());
+}
+
+/// Builds the same typed operation carrier the harness passes to real tools.
+async fn execute_in_agent_mode(
+    tool: &dyn Tool,
+    args: serde_json::Value,
+    mode: SandboxMode,
+) -> tinytools::ToolResult {
+    let mut host = crate::agent::tinyagents::host::OpenHumanRunContext::new();
+    host.sandbox_mode = Some(mode);
+    let run = host.into_tinyagents(tinyagents_harness::context::RunConfig::new("composio-test"));
+    let context = tinyagents_harness::tool::ToolExecutionContext::from_run_context(
+        &run,
+        tinyagents_harness::ids::CallId::new("execute"),
+    );
+    tool.execute_with_context(args, Default::default(), Some(&context))
+        .await
+        .unwrap()
 }

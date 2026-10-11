@@ -23,7 +23,7 @@
 //! The manual's bytes live in `tinyflows-copilot`; this host only converts the
 //! portable file list into its native bundled-skill registration.
 
-use crate::skills::bundled::{BundledFile, BundledSkill};
+use {tinyskills::BundledFile, tinyskills::BundledSkill};
 
 /// The `flow-authoring` bundle, embedded from the sibling directory.
 ///

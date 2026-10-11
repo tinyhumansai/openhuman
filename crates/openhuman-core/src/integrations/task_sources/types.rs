@@ -88,7 +88,7 @@ pub enum FilterSpec {
         /// How to fetch: Composio connection, local `gh`/REST, or `auto`
         /// (Composio-first with local fallback). Defaults to `auto`.
         #[serde(default)]
-        fetch_mode: crate::integrations::composio::providers::GithubFetchMode,
+        fetch_mode: crate::integrations::composio::contract::GithubFetchMode,
         #[serde(default)]
         extra: Value,
     },

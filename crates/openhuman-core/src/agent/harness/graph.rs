@@ -57,6 +57,7 @@ pub(crate) async fn run_channel_turn_via_graph(
     multimodal_files: MultimodalFileConfig,
     on_progress: Option<Sender<AgentProgress>>,
     origin: Option<crate::agent::turn_origin::AgentTurnOrigin>,
+    sandbox_mode: crate::agent::harness::SandboxMode,
 ) -> Result<crate::agent::tinyagents::TinyagentsTurnOutcome> {
     let extra_arc = Arc::new(extra_tools);
 
@@ -139,6 +140,7 @@ pub(crate) async fn run_channel_turn_via_graph(
     let turn_origin = origin.clone();
     let mut run_context = crate::agent::tinyagents::host::OpenHumanRunContext::new();
     run_context.origin = origin;
+    run_context.sandbox_mode = Some(sandbox_mode);
     run_context.workspace = attachment_workspace.map(tinytools::WorkspaceDescriptor::new);
     seed_channel_attachments(&mut run_context, &prepared);
     // The channel dispatcher owns this explicit sink. It wins over an embedder

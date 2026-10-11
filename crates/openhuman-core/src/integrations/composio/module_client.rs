@@ -12,11 +12,9 @@
 //!
 //! # What the member names do *not* depend on
 //!
-//! [`methods`] comes from `tinyconnectors_bus`, an ordinary dependency with no
+//! The method constants come from `tinyconnectors_bus`, an ordinary dependency with no
 //! feature gate. A gates-off build can still name a member and match on the
 //! contract; it just cannot call one.
-
-pub use tinyconnectors_bus::names::methods;
 
 /// Whether a member failure is the module refusing an operation the live route
 /// does not offer.

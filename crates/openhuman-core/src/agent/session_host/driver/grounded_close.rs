@@ -7,12 +7,13 @@
 //! its usage in a sidecar; it never owns transcript history or persistence.
 
 use futures::StreamExt;
+use tinyagents_runtime::transcript::message_to_native_transcript as message_to_native_chat_message;
 use tinyagents_session::transcript::TranscriptMessage;
 use tinyinference_llm::model::{ModelRequest, ModelStreamItem};
 use tinytools_agent::dialect::ToolDialect;
 
 use crate::agent::{
-    message_convert::{dialect_response_from_provider, message_to_native_chat_message},
+    message_convert::dialect_response_from_provider,
     session_host::turn_checkpoint::{
         self, build_deterministic_checkpoint, build_deterministic_final_summary,
         close_repair_instruction, close_verification_prompt, final_answer_instruction,

@@ -159,6 +159,12 @@ run_integration_target() {
   fi
 }
 
+run_build_only_reaper_test() {
+  suite "openhuman reaper (isolated)" llvm_cov --no-report --no-fail-fast -p openhuman --lib -- \
+    agent::tinyagents::reaper::tests::a_build_only_runtime_is_swept_before_it_can_be_invoked \
+    --exact --test-threads=1
+}
+
 if [ "${OH_COV_RUNNER:-cargo}" = "nextest" ]; then
   # One process per test means one .profraw per process by default (the name
   # carries %p): ~11,800 files and ~50 GB for the core alone, which the report
@@ -215,9 +221,7 @@ else
     --skip a_build_only_runtime_is_swept_before_it_can_be_invoked
 
   log "running isolated build-only reaper test"
-  suite "openhuman reaper (isolated)" llvm_cov --no-report --no-fail-fast -p openhuman --lib -- \
-    openhuman::agent::tinyagents::reaper::tests::a_build_only_runtime_is_swept_before_it_can_be_invoked \
-    --exact --test-threads=1
+  run_build_only_reaper_test
 fi
 
 # Run every root-workspace Rust support crate rather than only crates named by

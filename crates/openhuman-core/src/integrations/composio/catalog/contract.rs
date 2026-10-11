@@ -9,9 +9,10 @@ use crate::config::Config;
 use crate::integrations::composio::client::{
     direct_list_tools, resolve_composio_route, ComposioRoute,
 };
-use crate::integrations::composio::module_client::{self as connectors, methods};
+use crate::integrations::composio::module_client::{self as connectors};
 use crate::integrations::composio::types::{ComposioListToolsRequest, ComposioToolsResponse};
 use tinyagents_harness::tool::{compute_primary_array_path, response_fields_from_schema};
+use tinyconnectors_bus::names::methods;
 
 /// One Composio action's LIVE, ground-truth contract — the source of truth
 /// [Part 1 of the systemic tool-contract fix] grounds the Workflow builder
@@ -272,7 +273,7 @@ pub(crate) async fn fetch_live_toolkit_catalog(
     config: &Config,
     toolkit: &str,
 ) -> Option<Vec<ToolContract>> {
-    use crate::integrations::composio::providers::{catalog_for_toolkit, find_curated};
+    use crate::integrations::composio::contract::{catalog_for_toolkit, find_curated};
 
     let key = toolkit.trim().to_ascii_lowercase();
     if key.is_empty() {

@@ -2,9 +2,8 @@
 //!
 //! Consolidates the "which shell binary do we spawn?" decision so
 //! [`NativeRuntime::build_shell_command`](super::host_runtime::NativeRuntime)
-//! and the sandbox execution paths in
-//! [`crate::sandbox::ops`] can share one Windows-aware
-//! implementation. Prior to this module the sandbox paths hardcoded
+//! and command adapters can share one Windows-aware implementation. Prior to
+//! this module the sandbox paths hardcoded
 //! `Command::new("sh")`, which fails at `CreateProcessW` on Windows in
 //! ~30ms because `sh` is not in `PATH` (#4705).
 //!
@@ -12,9 +11,7 @@
 //!
 //! - **Windows** → `cmd.exe /C <command>`. Chosen over PowerShell because
 //!   Windows users expect `%VAR%` expansion (`echo %USERPROFILE%`) and
-//!   byte-transparent `>` / `2>` redirection for the sandboxed output-
-//!   capture path in
-//!   [`crate::sandbox::ops::execute_local_jail`]. PowerShell
+//!   byte-transparent `>` / `2>` redirection for shell commands. PowerShell
 //!   5.1's `>` writes UTF-16LE and does not expand `%VAR%`.
 //! - **Unix** → `bash -lc "set -o pipefail\n<command>"` when bash is
 //!   available at `/usr/bin/bash` or `/bin/bash`, otherwise `sh -lc
@@ -207,12 +204,21 @@ fn build_tokio_command_with(command: &str, pipefail: PipeFail) -> tokio::process
     cmd
 }
 
-/// [`std::process::Command`] variant for callers that hand the command
-/// to [`crate::sandbox::cwd_jail::spawn`], which is built around
-/// `std::process::Command` (not the tokio variant).
+/// [`std::process::Command`] variant for adapters that need the platform
+/// shell's program and arguments as an owned request.
 pub fn build_std_command(command: &str) -> std::process::Command {
+    build_std_command_with(command, PipeFail::Surface)
+}
+
+/// [`build_std_command`] without changing a shell pipeline's default exit
+/// status, for callers whose retry/settlement behavior depends on it.
+pub fn build_std_command_preserving_pipe_status(command: &str) -> std::process::Command {
+    build_std_command_with(command, PipeFail::AsShellDefault)
+}
+
+fn build_std_command_with(command: &str, pipefail: PipeFail) -> std::process::Command {
     let mut cmd = std::process::Command::new(shell_program());
-    configure_shell_args(&mut cmd, command, PipeFail::Surface);
+    configure_shell_args(&mut cmd, command, pipefail);
     // Same contract as the tokio builder: the child leads its own process
     // group so a deadline can reach the whole pipeline (see
     // `crate::tools::timeout::kill_process_group`).
@@ -236,12 +242,8 @@ fn shell_program() -> &'static str {
 /// On Windows the payload MUST go through `raw_arg`, not `arg`: Rust's `arg`
 /// applies MSVCRT (`CommandLineToArgvW`) quoting, escaping any interior `"` as
 /// `\"`. But `cmd.exe` does not understand `\"` — it only toggles quote state
-/// on a bare `"`. Handed to `cmd /C` via `arg`, the `>` / `2>` operators in a
-/// redirect wrap (see [`wrap_with_output_redirection`]) land inside a cmd
-/// quote-span, so no redirection happens and the sandbox's `stdout` /
-/// `stderr` capture files are never written. `raw_arg` passes the
-/// string to cmd verbatim, which is exactly the byte-transparent contract this
-/// module promises. `/C` itself has no special characters.
+/// on a bare `"`. `raw_arg` passes the string to cmd verbatim. `/C` itself has
+/// no special characters.
 #[cfg(windows)]
 fn configure_shell_args(cmd: &mut std::process::Command, command: &str, _pipefail: PipeFail) {
     use std::os::windows::process::CommandExt;
@@ -258,44 +260,6 @@ fn configure_shell_args(cmd: &mut std::process::Command, command: &str, pipefail
         cmd.arg("-lc").arg(format!("set -o pipefail\n{command}"));
     } else {
         cmd.arg("-lc").arg(command);
-    }
-}
-
-/// Wrap `command` so that stdout and stderr redirect to the given file
-/// paths, using shell syntax compatible with the platform's default
-/// shell as selected by [`build_tokio_command`] / [`build_std_command`].
-///
-/// Used by [`crate::sandbox::ops::execute_local_jail`] to
-/// capture output on backends (macOS Seatbelt) that rebuild the command
-/// internally and don't forward piped stdio settings.
-pub fn wrap_with_output_redirection(
-    command: &str,
-    stdout_path: &Path,
-    stderr_path: &Path,
-) -> String {
-    if cfg!(windows) {
-        // cmd.exe has no `{ … }` command grouping, but `>`/`2>` bind to
-        // the whole /C payload when placed at the end, so a plain
-        // trailing redirect captures the full output for both single
-        // commands and pipelines. Double-quote paths so backslashes,
-        // spaces, and `(` / `)` inside typical Windows workspace paths
-        // (e.g. `C:\Program Files (x86)\…`) don't break parsing.
-        format!(
-            "{command} > \"{}\" 2> \"{}\"",
-            stdout_path.display(),
-            stderr_path.display()
-        )
-    } else {
-        // sh/bash need `{ … ; }` grouping so a semicolon- or pipe-
-        // separated multi-stage `command` routes *all* stages' output
-        // to the temp files. Without the group `a; b > out` would only
-        // redirect `b`. Single-quote paths so shell metacharacters in
-        // the workspace path stay literal.
-        format!(
-            "{{ {command} ; }} > '{}' 2> '{}'",
-            stdout_path.display(),
-            stderr_path.display()
-        )
     }
 }
 

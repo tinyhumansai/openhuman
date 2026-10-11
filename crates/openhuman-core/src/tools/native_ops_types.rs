@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use crate::skills::types::ToolResult;
+use tinytools::ToolResult;
 
 /// Agent-callable tool metadata exposed through `javascript.list_tools`.
 #[derive(Debug, Clone, Serialize)]

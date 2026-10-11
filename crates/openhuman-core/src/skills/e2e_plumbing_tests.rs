@@ -33,7 +33,6 @@ use crate::config::{Config, MultimodalConfig, MultimodalFileConfig};
 use crate::skills::ops_create::{
     create_workflow_inner, CreateWorkflowParams, WorkflowCreateInputDef,
 };
-use crate::skills::ops_types::WorkflowScope;
 use crate::skills::registry::get_workflow;
 use crate::skills::run_log;
 use crate::skills::runtime::await_run_outcome;
@@ -41,6 +40,7 @@ use tinyagents_session::transcript::TranscriptMessage;
 use tinyinference_llm::message::AssistantMessage;
 use tinyinference_llm::model::{ChatModel, ModelProfile, ModelRequest, ModelResponse};
 use tinyinference_llm::tool::ToolCall;
+use tinyskills::SkillScope as WorkflowScope;
 use tinytools::Tool;
 
 // ── Mock LLM ─────────────────────────────────────────────────────────────
@@ -209,6 +209,7 @@ async fn mock_llm_orchestrator_lists_and_runs_workflows_through_the_loop() {
         MultimodalFileConfig::default(),
         None,
         None,
+        crate::agent::harness::SandboxMode::None,
     )
     .await
     .expect("tool loop should run to completion");

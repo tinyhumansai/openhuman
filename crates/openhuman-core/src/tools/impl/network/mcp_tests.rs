@@ -2,6 +2,7 @@ use super::*;
 use crate::config::{Config, McpServerConfig};
 use base64::Engine as _;
 use serde_json::{json, Value};
+use tinymcp::tools::{McpListServersTool, McpListToolsTool};
 use tinytools::{Tool, ToolCallOptions, ToolResult};
 
 fn test_registry() -> Arc<McpServerRegistry> {

@@ -16,7 +16,7 @@ use crate::config::Config;
 /// in the toolkit's live catalog — so callers can skip the preflight rather
 /// than block execution on a catalog hiccup.
 pub(crate) async fn composio_required_args(config: &Config, slug: &str) -> Option<Vec<String>> {
-    let toolkit = crate::integrations::composio::providers::toolkit_from_slug(slug)?;
+    let toolkit = crate::integrations::composio::contract::toolkit_from_slug(slug)?;
     let contracts = fetch_live_toolkit_catalog(config, &toolkit).await?;
     contracts
         .iter()
@@ -37,7 +37,7 @@ pub(crate) async fn composio_required_args(config: &Config, slug: &str) -> Optio
 /// unknown" rather than blocking or guessing. `Some(vec![])` means the
 /// schema was found but names no top-level properties.
 pub(crate) async fn composio_response_fields(config: &Config, slug: &str) -> Option<Vec<String>> {
-    let toolkit = crate::integrations::composio::providers::toolkit_from_slug(slug)?;
+    let toolkit = crate::integrations::composio::contract::toolkit_from_slug(slug)?;
     let contracts = fetch_live_toolkit_catalog(config, &toolkit).await?;
     let contract = contracts
         .iter()

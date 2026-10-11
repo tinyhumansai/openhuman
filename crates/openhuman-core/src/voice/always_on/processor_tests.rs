@@ -2,13 +2,22 @@ use super::*;
 
 #[test]
 fn core_shutdown_stops_and_joins_always_on_processing() {
+    const CHILD_ENV: &str = "OPENHUMAN_ALWAYS_ON_SHUTDOWN_FIXTURE";
+    if std::env::var(CHILD_ENV).as_deref() == Ok("1") {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(shutdown_fixture());
+        return;
+    }
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
-            "--ignored",
             "--exact",
-            "voice::always_on::processor::tests::shutdown_fixture",
+            "voice::always_on::processor::tests::core_shutdown_stops_and_joins_always_on_processing",
             "--nocapture",
         ])
+        .env(CHILD_ENV, "1")
         .output()
         .unwrap();
     assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
@@ -21,8 +30,6 @@ fn core_shutdown_stops_and_joins_always_on_processing() {
 }
 
 // A child process isolates the process-wide capture and processor state.
-#[tokio::test]
-#[ignore = "invoked by the isolated shutdown regression"]
 async fn shutdown_fixture() {
     ENABLED.store(true, Ordering::SeqCst);
     let mut stopped = super::super::capture::stop_subscription();

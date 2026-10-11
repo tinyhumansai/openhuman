@@ -27,7 +27,7 @@ use super::types::{
     FetchReason, FilterSpec, ProviderSlug, SourceTarget, TaskSource, TaskSourcePatch,
 };
 use crate::config::Config;
-use crate::integrations::composio::providers::NormalizedTask;
+use crate::integrations::composio::contract::NormalizedTask;
 use crate::storage::documents::{compare_and_swap, text, Repo};
 use crate::storage::local::{self, ImportPlan};
 use crate::storage::{DocumentStoreExt, StorageError};

@@ -142,7 +142,7 @@ fn prompt_runtime_metadata() {
 #[test]
 fn prompt_skills_compact_list() {
     let ws = make_workspace();
-    let skills = vec![crate::skills::Workflow {
+    let skills = vec![tinyskills::Skill {
         name: "code-review".into(),
         description: "Review code for bugs".into(),
         version: "1.0.0".into(),

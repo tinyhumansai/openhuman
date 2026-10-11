@@ -8,7 +8,7 @@ use crate::agent::OpenHumanSessionHost;
 use crate::config::Config;
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
-use crate::cron::{CronJob, SessionTarget};
+use {tinyflows_schedule::types::CronJob, tinyflows_schedule::types::SessionTarget};
 
 /// Recency window the morning briefing installs around its turn so Composio
 /// task-fetch tools only surface tasks created/changed in the last day. Read
@@ -199,7 +199,7 @@ pub(super) async fn run_agent_job_for_run(
                             recency_window_secs = MORNING_BRIEFING_TASK_RECENCY_SECS,
                             "[cron] applying morning-briefing task recency window"
                         );
-                        crate::agent::harness::with_task_recency_window(
+                        crate::integrations::composio::task_recency_context::with_task_recency_window(
                             std::time::Duration::from_secs(MORNING_BRIEFING_TASK_RECENCY_SECS),
                             turn,
                         )

@@ -73,6 +73,11 @@ impl Tool for HealthSystemInfoTool {
     }
 }
 
+/// Build this domain's tools in their persisted catalogue order.
+pub(crate) fn registered_tools() -> Vec<Box<dyn tinytools::Tool>> {
+    vec![Box::new(HealthSnapshotTool), Box::new(HealthSystemInfoTool)]
+}
+
 #[cfg(test)]
 #[path = "tools_tests.rs"]
 mod tests;

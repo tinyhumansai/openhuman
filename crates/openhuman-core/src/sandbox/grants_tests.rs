@@ -68,7 +68,11 @@ fn credential_dirs_are_never_granted_even_when_extras_ask() {
 #[test]
 fn credential_floor_holds_for_a_symlink_into_a_credential_dir() {
     let home = fake_home();
+    #[cfg(unix)]
     std::os::unix::fs::symlink(home.path().join(".ssh"), home.path().join("innocent")).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(home.path().join(".ssh"), home.path().join("innocent"))
+        .unwrap();
     let cfg = LocalJailConfig {
         extra_read_only: vec!["~/innocent".into()],
         ..LocalJailConfig::default()
@@ -233,7 +237,11 @@ fn gitconfig_symlink_and_include_targets_are_canonicalized() {
          [include]\n path = ~/.ssh/leaky\n",
     )
     .unwrap();
+    #[cfg(unix)]
     std::os::unix::fs::symlink(dots.join("gitconfig"), home.path().join(".gitconfig")).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_file(dots.join("gitconfig"), home.path().join(".gitconfig"))
+        .unwrap();
     // The credential include must be dropped even though the file exists.
     fs::write(home.path().join(".ssh/leaky"), "").unwrap();
 

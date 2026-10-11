@@ -157,6 +157,7 @@ async fn readonly_blocks_mutating_actions() {
 
     let list = tool.execute(json!({"action": "list"})).await.unwrap();
     assert!(!list.is_error);
+    assert!(list.output().contains("No scheduled jobs"));
 }
 
 #[tokio::test]

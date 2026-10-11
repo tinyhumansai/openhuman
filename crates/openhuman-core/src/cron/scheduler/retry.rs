@@ -8,10 +8,13 @@ use super::failure_classification::{
 };
 use super::shell_job::run_job_command;
 use crate::config::Config;
-use crate::cron::{CronJob, JobType, SessionTarget};
 use crate::security::SecurityPolicy;
 use chrono::Utc;
 use tokio::time::{self, Duration};
+use {
+    tinyflows_schedule::types::CronJob, tinyflows_schedule::types::JobType,
+    tinyflows_schedule::types::SessionTarget,
+};
 
 pub(super) fn agent_session_target_tag(target: &SessionTarget) -> &'static str {
     match target {
@@ -48,11 +51,16 @@ pub(super) async fn execute_job_with_retry_for_run(
 ) -> (bool, String) {
     let mut last_output = String::new();
     let mut last_agent_error: Option<String> = None;
-    // A per-job override (`cron::policy`) wins; `Some(0)` is one attempt.
-    let retries = crate::cron::policy::effective_retries(
-        config,
-        &crate::cron::policy::policy_or_default(config, &job.id),
-    );
+    // A per-job override (`cron::policy`) wins; `Some(0)` is one attempt. An
+    // unreadable policy refuses the run (and any later attempt) outright.
+    if let Err(error) = crate::cron::limits::check_run(config, job) {
+        return (false, error.to_string());
+    }
+    let policy = match crate::cron::policy::get_policy(config, &job.id) {
+        Ok(policy) => policy,
+        Err(error) => return (false, error.to_string()),
+    };
+    let retries = crate::cron::policy::effective_retries(config, &policy);
     let mut backoff_ms = config.reliability.provider_backoff_ms.max(200);
     let mut session_expired = false;
     let mut credits_exhausted = false;
@@ -61,6 +69,11 @@ pub(super) async fn execute_job_with_retry_for_run(
     let mut local_unreachable = false;
 
     for attempt in 0..=retries {
+        if attempt > 0 {
+            if let Err(error) = crate::cron::policy::get_policy(config, &job.id) {
+                return (false, error.to_string());
+            }
+        }
         let (success, output, agent_error) = match job.job_type {
             JobType::Shell => {
                 let (success, output) = run_job_command(config, security, job).await;

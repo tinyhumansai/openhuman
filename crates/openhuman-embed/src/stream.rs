@@ -1,9 +1,9 @@
 //! Owned turn streaming over the harness's existing progress sink.
 use crate::{AgentProgress, CoreError, Turn, TurnOutcome};
 use futures_core::Stream;
-pub use openhuman_core::agent::host_overrides::CancellationToken;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+pub use tinyagents_harness::cancel::CancellationToken;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 

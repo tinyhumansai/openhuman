@@ -8,7 +8,10 @@ use std::sync::{Arc, Mutex};
 
 use futures::future::BoxFuture;
 
-use super::types::{CompactRequest, CompactResponse, GenerateRequest};
+use {
+    tinyjuice_bus::wire::CompactRequest, tinyjuice_bus::wire::CompactResponse,
+    tinyjuice_bus::wire::GenerateRequest,
+};
 
 pub(crate) type StubCompactor =
     Arc<dyn Fn(CompactRequest) -> BoxFuture<'static, CompactResponse> + Send + Sync>;

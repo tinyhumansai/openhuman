@@ -316,6 +316,7 @@ export const ThreadListItem: FC<{
         </ThreadListItemPrimitive.Trigger>
       )}
       <ThreadListItemMore
+        isRenaming={isRenaming}
         onRename={() => setIsRenaming(true)}
         showArchive={showArchive}
         extras={menuExtras}
@@ -390,10 +391,11 @@ const ThreadListItemRename: FC<{ onDone: (restoreFocus: boolean) => void }> = ({
 };
 
 const ThreadListItemMore: FC<{
+  isRenaming: boolean;
   onRename: () => void;
   showArchive: boolean;
   extras?: ReactNode;
-}> = ({ onRename, showArchive, extras }) => {
+}> = ({ isRenaming, onRename, showArchive, extras }) => {
   const { t } = useT();
   return (
     <ThreadListItemMorePrimitive.Root sharedFocusGroup>
@@ -410,6 +412,14 @@ const ThreadListItemMore: FC<{
         <span className="sr-only">{t('assistantUi.threadList.moreOptions', 'More options')}</span>
       </ThreadListItemMorePrimitive.Trigger>
       <ThreadListItemMorePrimitive.Content
+        // The closed menu remains mounted during its exit animation. It must
+        // not move focus away from the editor and commit a cancelled rename.
+        onEscapeKeyDown={event => {
+          if (isRenaming) event.preventDefault();
+        }}
+        onCloseAutoFocus={event => {
+          if (isRenaming) event.preventDefault();
+        }}
         side="right"
         align="start"
         sideOffset={6}

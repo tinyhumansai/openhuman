@@ -332,7 +332,7 @@ async fn committed_goal_accounting_uses_direct_and_completed_child_usage() {
     );
     assert_eq!(
         goal.status,
-        crate::agent::goals::ThreadGoalStatus::BudgetLimited,
+        tinyagents_graph::goals::ThreadGoalStatus::BudgetLimited,
         "receipt-backed accounting advances continuation/budget state"
     );
 }

@@ -62,6 +62,9 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 1
+      - name: Trust container checkout and submodules
+        shell: bash
+        run: bash scripts/ci/trust-checkout.sh
       - name: Cache pnpm store
         uses: actions/cache@v6
         with:
@@ -87,6 +90,9 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 1
+      - name: Trust container checkout and submodules
+        shell: bash
+        run: bash scripts/ci/trust-checkout.sh
       # The RPC-catalog drift-guard test (rpcMethods.test.ts) reads
       # vendor/tinychannels/crates/tinychannels-bus/src/controllers/schemas.rs
       # at test time (controller metadata is contract, so it lives in the bus
@@ -153,6 +159,9 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
           submodules: recursive
+      - name: Trust container checkout and submodules
+        shell: bash
+        run: bash scripts/ci/trust-checkout.sh
       # Single dep-cache strategy repo-wide: Swatinem rust-cache (full target/).
       # sccache was removed here to match the ci-lite lanes — layered on a warm
       # rust-cache it logged 0% additional hits and just doubled cache footprint.
@@ -162,34 +171,13 @@ jobs:
           workspaces: . -> target
           cache-on-failure: true
           key: core
-      - name: Build native test modules
+      - name: Install checksum-pinned native test modules
         run: |
-          # Connector and other module tests exercise host/module seams. Supplying
-          # local native fixtures keeps them independent of GitHub's release
-          # metadata API and mirrors the Rust E2E and desktop-E2E jobs.
-          # tinybus validates every directory ancestor, so a container-root
-          # owned directory outside the runner-owned checkout is required.
+          # Module-loaded unit regressions execute in isolated test processes.
           module_root="/opt/openhuman-test-modules/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          juice_dir="$module_root/tinyjuice"
-          connectors_dir="$module_root/tinyconnectors"
-          search_dir="$module_root/tinysearch"
-          rm -rf "$module_root"
-          mkdir -p "$juice_dir" "$connectors_dir" "$search_dir"
-          bash scripts/ci-cancel-aware.sh cargo build --release \
-            --manifest-path vendor/tinyjuice/crates/tinyjuice-module/Cargo.toml
-          cp vendor/tinyjuice/target/release/libtinyjuice_module.so \
-            "$juice_dir/libtinyjuice_module.so"
-          bash scripts/ci-cancel-aware.sh cargo build --release \
-            --manifest-path vendor/tinyconnectors/crates/tinyconnectors/Cargo.toml
-          cp vendor/tinyconnectors/target/release/libtinyconnectors.so \
-            "$connectors_dir/libtinyconnectors.so"
-          bash scripts/ci-cancel-aware.sh cargo build --release \
-            --manifest-path vendor/tinysearch/crates/tinysearch/Cargo.toml
-          cp vendor/tinysearch/target/release/libtinysearch.so \
-            "$search_dir/libtinysearch.so"
-          echo "TINYJUICE_TEST_MODULE=$juice_dir/libtinyjuice_module.so" >> "$GITHUB_ENV"
-          echo "TINYCONNECTORS_TEST_MODULE=$connectors_dir/libtinyconnectors.so" >> "$GITHUB_ENV"
-          echo "TINYSEARCH_TEST_MODULE=$search_dir/libtinysearch.so" >> "$GITHUB_ENV"
+          bash scripts/ci/self-hosted/install-test-modules.sh \
+            "$module_root" "$module_root/modules.env"
+          cat "$module_root/modules.env" >> "$GITHUB_ENV"
       - name: Test core crate (openhuman)
         # This script uses Bash-only process substitution below. Reusable
         # workflows do not inherit the caller's `defaults.run.shell`, and
@@ -271,14 +259,24 @@ jobs:
               # environment. A single parallel libtest process lets one case
               # leak its route into another; run each case in a fresh process,
               # matching scripts/test-rust-with-mock.sh and test-rust-e2e.sh.
+              if ! listing="$(
+                cargo test -p openhuman-cli --features "${CLI_FEATURES}" \
+                  --test "${target}" -- --list
+              )"; then
+                echo "::error::could not enumerate JSON-RPC tests"
+                exit 1
+              fi
+              test_names="$(printf '%s\n' "$listing" | sed -n 's/: test$//p')"
+              if [ -z "$test_names" ]; then
+                echo "::error::JSON-RPC enumeration returned no tests"
+                exit 1
+              fi
               while IFS= read -r test_name; do
-                [ -n "${test_name}" ] || continue
                 echo "[test-reusable] JSON-RPC E2E test: ${test_name}"
-                bash scripts/ci-cancel-aware.sh cargo test -p openhuman-cli --test "${target}" "${test_name}" -- --exact --test-threads=1
-              done < <(
-                cargo test -p openhuman-cli --test "${target}" -- --list \
-                  | sed -n 's/: test$//p'
-              )
+                bash scripts/ci-cancel-aware.sh cargo test -p openhuman-cli \
+                  --features "${CLI_FEATURES}" --test "${target}" "${test_name}" \
+                  -- --exact --test-threads=1
+              done <<< "$test_names"
             else
               bash scripts/ci-cancel-aware.sh cargo test -p openhuman-cli --features "${CLI_FEATURES}" --test "${target}"
             fi
@@ -341,6 +339,9 @@ jobs:
           # Required for crates/openhuman-app/vendor/tauri-cef.
           persist-credentials: false
           submodules: recursive
+      - name: Trust container checkout and submodules
+        shell: bash
+        run: bash scripts/ci/trust-checkout.sh
       # See rust-core-tests: rust-cache only, sccache dropped (0% hits warm).
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2

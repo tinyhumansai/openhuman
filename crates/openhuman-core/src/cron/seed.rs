@@ -18,11 +18,12 @@
 //! scheduler can't double-deliver.
 
 use crate::config::Config;
-use crate::cron::{
-    add_agent_job_with_definition, dedup_named_jobs, list_jobs, remove_job, DeliveryConfig,
-    Schedule, SessionTarget,
-};
 use anyhow::Result;
+use {
+    crate::cron::add_agent_job_with_definition, crate::cron::dedup_named_jobs,
+    crate::cron::list_jobs, crate::cron::remove_job, tinyflows_schedule::types::DeliveryConfig,
+    tinyflows_schedule::types::Schedule, tinyflows_schedule::types::SessionTarget,
+};
 
 /// Well-known job names used to detect whether seeding has already run.
 const MORNING_BRIEFING_JOB_NAME: &str = "morning_briefing";
@@ -128,7 +129,7 @@ pub fn prune_retired_jobs(config: &Config) -> Result<usize> {
 /// cron entry fire alongside that would double-deliver. Best-effort:
 /// log but don't fail seeding on a prune error, and scan all entries
 /// because the ID is a UUID — we key on the stable `name` field.
-fn prune_legacy_welcome(config: &Config, existing: &[crate::cron::CronJob]) {
+fn prune_legacy_welcome(config: &Config, existing: &[tinyflows_schedule::types::CronJob]) {
     let stale_ids: Vec<String> = existing
         .iter()
         .filter(|j| j.name.as_deref() == Some(LEGACY_WELCOME_JOB_NAME))

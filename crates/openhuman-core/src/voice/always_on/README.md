@@ -47,4 +47,3 @@ Transcription is forced to English (`Some("en")`) because auto-detect rendered t
 ## See also
 
 - [../README.md](../README.md): the voice domain overview, including the RPC surface and the dictation server that hotkey-based dictation uses.
-- [../audio_toolkit/README.md](../audio_toolkit/README.md): the sibling podcast-generation toolkit under the same `voice` feature gate.

@@ -12,10 +12,11 @@ use crate::config::rpc as config_rpc;
 use crate::config::Config;
 use crate::core::events::DomainEvent;
 use crate::integrations::composio::client::{resolve_composio_route, ComposioRoute};
-use crate::integrations::composio::module_client::{self as connectors, methods};
+use crate::integrations::composio::module_client::{self as connectors};
 use crate::integrations::composio::ops;
 use crate::integrations::composio::types::ComposioConnectionsResponse;
 use crate::integrations::composio::FetchConnectedIntegrationsStatus;
+use tinyconnectors_bus::names::methods;
 
 /// How long to keep polling after `composio_authorize` returns a
 /// `connectUrl`, waiting for the user to finish the hosted OAuth flow.
@@ -173,7 +174,7 @@ async fn on_connection_created(toolkit: String, connection_id: String) {
         );
         return;
     }
-    if !crate::integrations::composio::providers::has_native_provider(&toolkit) {
+    if !crate::integrations::composio::contract::has_native_provider(&toolkit) {
         tracing::debug!(
             toolkit = %toolkit,
             "[composio:bus] no native identity provider for toolkit; skipping profile fetch"

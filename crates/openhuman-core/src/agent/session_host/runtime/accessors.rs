@@ -182,7 +182,7 @@ impl OpenHumanSessionHost {
     }
 
     /// The agent's loaded workflows, if any.
-    pub fn workflows(&self) -> &[crate::skills::Workflow] {
+    pub fn workflows(&self) -> &[tinyskills::Skill] {
         &self.workflows
     }
 

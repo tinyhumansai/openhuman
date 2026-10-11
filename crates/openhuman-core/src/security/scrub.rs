@@ -10,8 +10,6 @@
 use serde_json::Value;
 use tinymemory_integrations::safety::{Policy, Sanitized};
 
-pub use tinymemory_integrations::safety::has_likely_secret;
-
 /// The scrubbing policy every caller in this process applies.
 #[must_use]
 pub const fn host_policy() -> Policy {

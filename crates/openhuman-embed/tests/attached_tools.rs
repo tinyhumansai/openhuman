@@ -26,11 +26,8 @@ impl Tool for Marker {
     fn parameters_schema(&self) -> serde_json::Value {
         serde_json::json!({"type":"object", "properties":{"message":{"type":"string"}}, "required":["message"]})
     }
-    async fn execute(
-        &self,
-        _: serde_json::Value,
-    ) -> anyhow::Result<openhuman_core::tools::ToolResult> {
-        Ok(openhuman_core::tools::ToolResult::success("accepted"))
+    async fn execute(&self, _: serde_json::Value) -> anyhow::Result<tinytools::ToolResult> {
+        Ok(tinytools::ToolResult::success("accepted"))
     }
 }
 #[test]

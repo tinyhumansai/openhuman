@@ -53,7 +53,7 @@ pub(crate) fn toolkit_has_curated_catalog(toolkit: &str) -> bool {
     // to `catalog_for_toolkit(toolkit)` for every toolkit that had one, and
     // tinymemory v1.13.4 deleted the registry outright, so the hop is gone
     // rather than merely unnecessary.
-    use crate::integrations::composio::providers::catalog_for_toolkit;
+    use crate::integrations::composio::contract::catalog_for_toolkit;
     catalog_for_toolkit(toolkit).is_some()
 }
 

@@ -70,6 +70,8 @@ pub fn profile_config(layout: &ProfileLayout, id: &ProfileId) -> Config {
     config.memory.agent_id = Some(id.to_string());
     config.memory.root = Some(memory_root(id));
     config.memory.layout = MemoryLayoutMode::Legacy;
+    config.agent.channel_permissions =
+        std::collections::HashMap::from([("profile".into(), "readonly".into())]);
 
     let autonomy = &mut config.autonomy;
     autonomy.enabled = true;

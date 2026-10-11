@@ -4,7 +4,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::super::ops_types::WorkflowScope;
+use tinyskills::SkillScope as WorkflowScope;
 
 /// Input for [`uninstall_workflow`]. Mirrors the `skills.uninstall` JSON-RPC payload.
 #[derive(Debug, Clone, Deserialize)]

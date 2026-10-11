@@ -1,5 +1,5 @@
 use super::*;
-use crate::skills::ops_types::{Workflow, WorkflowFrontmatter};
+use {tinyskills::Skill as Workflow, tinyskills::SkillFrontmatter as WorkflowFrontmatter};
 
 fn skill_with_triggers(name: &str, triggers: Vec<&str>) -> Workflow {
     Workflow {

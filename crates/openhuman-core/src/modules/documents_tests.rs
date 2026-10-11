@@ -137,6 +137,10 @@ async fn a_disabled_host_reports_unavailable_without_starting_a_broker() {
         super::convert_markdown(&config, tinydocs_bus::DocumentFormat::Pdf, b"%PDF-1.4\n").await,
         Err(DocumentCallError::Unavailable(_))
     ));
+    assert!(matches!(
+        super::inspect_image(&config, b"image").await,
+        Err(DocumentCallError::Unavailable(_))
+    ));
     let rendering = tinydocs_bus::RenderPdfSpec {
         pages: vec![1],
         max_dimension: 256,

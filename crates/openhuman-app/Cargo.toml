@@ -290,6 +290,7 @@ e2e-test-support = ["openhuman-rpc/e2e-test-support"]
 # `Tool` trait. Without this, MCP tools would not satisfy the harness's trait.
 tinytools = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinytools" }
 tinytools-agent = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinytools-agent" }
+tinytools-std = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinytools-std" }
 
 [patch."https://github.com/tinyhumansai/tinyinference"]
 # Crates in this world name tinyinference by git rev; without this the shell

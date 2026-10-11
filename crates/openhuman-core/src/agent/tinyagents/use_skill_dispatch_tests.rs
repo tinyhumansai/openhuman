@@ -32,11 +32,12 @@ use tinytools::{Tool, ToolCallOptions, ToolResult};
 /// A stub archetype-delegate tool: only its name has to match `image_agent`'s
 /// `delegate_name` ("create_image", set in
 /// `agent/registry/agents/image_agent/agent.toml`) for
-/// `DelegationDispatch::for_tool` to select the archetype path. Real
-/// archetype dispatch never calls the wrapped tool's own `execute` — it
-/// dispatches straight to `execute_archetype_delegation_with_live_parent` —
-/// so this stub's body is unreachable in a passing run.
-struct StubCreateImage;
+/// `DelegationDispatch::for_tool` to select the archetype path. The typed
+/// archetype test dispatches straight to
+/// `execute_archetype_delegation_with_live_parent`; the separate packed-target
+/// binding regression intentionally exercises this stub's own authorization
+/// and execution methods.
+struct StubCreateImage(&'static str);
 
 #[async_trait]
 impl Tool for StubCreateImage {
@@ -50,7 +51,14 @@ impl Tool for StubCreateImage {
         json!({})
     }
     async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        unreachable!("archetype dispatch must not fall back to the wrapped tool's own execute")
+        Ok(ToolResult::success(self.0))
+    }
+
+    async fn prepare_authorization(
+        &self,
+        _args: &serde_json::Value,
+    ) -> anyhow::Result<Option<serde_json::Value>> {
+        Ok(Some(json!({"target": self.0})))
     }
 }
 
@@ -116,13 +124,13 @@ fn parent_execution_context(workspace_dir: &Path) -> ParentExecutionContext {
 /// real `UseSkillTool` plus one packed archetype-delegate stub, a
 /// `PackRegistryHandle` bound to it, and the `CanonicalSharedToolAdapter`
 /// wrapping `use_skill` that the harness would have registered.
-fn build_use_skill_dispatch() -> UseSkillDispatch {
+fn build_use_skill_dispatch_with_handle() -> (UseSkillDispatch, PackRegistryHandle) {
     let handle = PackRegistryHandle::default();
     let use_skill_tool: Box<dyn Tool> = Box::new(UseSkillTool::new(
         handle.clone(),
         crate::tools::toolpacks::CATALOG,
     ));
-    let create_image_tool: Box<dyn Tool> = Box::new(StubCreateImage);
+    let create_image_tool: Box<dyn Tool> = Box::new(StubCreateImage("original"));
     let durable: Arc<Vec<Box<dyn Tool>>> = Arc::new(vec![use_skill_tool, create_image_tool]);
     handle.bind(Arc::downgrade(&durable));
 
@@ -131,7 +139,57 @@ fn build_use_skill_dispatch() -> UseSkillDispatch {
         tinyagents_harness::tool::packs::USE_SKILL,
     )
     .expect("use_skill resolves in the durable registry it was just placed in");
-    UseSkillDispatch::new(Arc::new(adapter), handle)
+    (
+        UseSkillDispatch::new(Arc::new(adapter), handle.clone()),
+        handle,
+    )
+}
+
+fn build_use_skill_dispatch() -> UseSkillDispatch {
+    build_use_skill_dispatch_with_handle().0
+}
+
+#[tokio::test]
+async fn use_skill_dispatch_keeps_authorized_target_after_registry_rebind() {
+    let _ = AgentDefinitionRegistry::init_global_builtins();
+    let (dispatch, handle) = build_use_skill_dispatch_with_handle();
+    let arguments = json!({
+        "skill": "media",
+        "tool": "create_image",
+        "args": { "prompt": "a red bicycle", "blocking": true },
+    });
+    let pinned = dispatch
+        .bind_call(&arguments)
+        .expect("bind succeeds")
+        .expect("known packed target binds");
+    assert_eq!(
+        pinned.output_origin(),
+        tinyagents_harness::host::ContentOrigin::Agent,
+        "typed packed dispatch must keep the delegated-agent output policy"
+    );
+
+    let replacement: Arc<Vec<Box<dyn Tool>>> = Arc::new(vec![
+        Box::new(UseSkillTool::new(
+            handle.clone(),
+            crate::tools::toolpacks::CATALOG,
+        )),
+        Box::new(StubCreateImage("replacement")),
+    ]);
+    handle.bind(Arc::downgrade(&replacement));
+
+    let facts = pinned
+        .tool()
+        .prepare_authorization(&arguments)
+        .await
+        .expect("authorization facts are returned");
+    let result = pinned
+        .tool()
+        .execute(arguments)
+        .await
+        .expect("bound call returns a result");
+
+    assert_eq!(facts, Some(json!({"target": "original"})));
+    assert_eq!(result.text(), "original");
 }
 
 /// The regression itself: `use_skill { skill: "media", tool: "create_image",

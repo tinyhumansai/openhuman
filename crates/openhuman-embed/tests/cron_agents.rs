@@ -41,15 +41,12 @@ impl Tool for Ping {
     fn parameters_schema(&self) -> serde_json::Value {
         serde_json::json!({ "type": "object", "properties": {} })
     }
-    async fn execute(
-        &self,
-        _args: serde_json::Value,
-    ) -> anyhow::Result<openhuman_core::tools::ToolResult> {
+    async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<tinytools::ToolResult> {
         self.seen
             .lock()
             .unwrap()
             .push(openhuman_core::agent::turn_origin::current());
-        Ok(openhuman_core::tools::ToolResult::success("pinged"))
+        Ok(tinytools::ToolResult::success("pinged"))
     }
 }
 
@@ -291,6 +288,78 @@ fn background_services_drive_the_scheduler_and_stop_with_the_runtime() {
                 .await
                 .expect("a runtime builds once the first is gone");
             drop(second);
+        })
+        .await
+        .expect("library host task did not panic");
+    });
+}
+
+/// A deferred runtime leaves its scheduler stopped until the host starts it,
+/// so a system job already due at boot finds its handler in place: here the
+/// job is stored and due before the handler exists, and the first run the
+/// scheduler records is the handler's.
+#[test]
+fn deferred_services_wait_for_the_host_so_a_due_job_finds_its_handler() {
+    let _lock = RUNTIME_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    runtime().block_on(async {
+        tokio::spawn(async {
+            let backend = stub_backend().await;
+            let mut config = offline_config();
+            config.reliability.scheduler_poll_secs = 5;
+            let runtime = Runtime::builder()
+                .config(config)
+                .workspace(Workspace::Ephemeral)
+                .backend_url(backend.uri())
+                .services(ServiceSet {
+                    cron: true,
+                    ..ServiceSet::none()
+                })
+                .defer_services()
+                .build()
+                .await
+                .expect("runtime builds");
+
+            // Stored and due before any handler exists.
+            runtime
+                .cron()
+                .upsert(JobSpec::system(
+                    "deferred-tick",
+                    "deferred-tick",
+                    JobSchedule::Every { ms: 1_000 },
+                ))
+                .unwrap();
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            assert!(
+                !openhuman_core::cron::scheduler::is_running(),
+                "a deferred build must not start the scheduler"
+            );
+
+            let fired = Arc::new(Mutex::new(0usize));
+            let sink = Arc::clone(&fired);
+            runtime
+                .on_system_job("deferred-tick", move |_ctx| {
+                    *sink.lock().unwrap() += 1;
+                    async { Ok(()) }
+                })
+                .unwrap();
+            runtime.start_services().await;
+            wait_for(
+                "the scheduler to start",
+                openhuman_core::cron::scheduler::is_running,
+            )
+            .await;
+            wait_for("the handler to run the due job", || {
+                *fired.lock().unwrap() > 0
+            })
+            .await;
+
+            drop(runtime);
+            wait_for("the scheduler to stop with the runtime", || {
+                !openhuman_core::cron::scheduler::is_running()
+            })
+            .await;
         })
         .await
         .expect("library host task did not panic");

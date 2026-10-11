@@ -10,4 +10,3 @@
 //!   the agent transcript.
 
 pub mod ops;
-pub mod types;

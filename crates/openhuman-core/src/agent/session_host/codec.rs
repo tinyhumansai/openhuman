@@ -20,7 +20,9 @@ pub struct OpenHumanTranscriptCodec;
 
 impl TranscriptCodec<OpenHumanRunContext> for OpenHumanTranscriptCodec {
     fn decode_history(&self, transcript: &SessionTranscript) -> Result<Vec<Message>, RuntimeError> {
-        Ok(message_convert::history_to_messages(&transcript.messages))
+        let rows = replayable_host_rows(&transcript.messages);
+        tinyagents_runtime::transcript::native_transcript_to_messages(&rows)?;
+        Ok(message_convert::history_to_messages(&rows))
     }
 
     fn reconcile(
@@ -30,9 +32,12 @@ impl TranscriptCodec<OpenHumanRunContext> for OpenHumanTranscriptCodec {
         next: &[Message],
         options: &TranscriptTurnOptions<OpenHumanRunContext>,
     ) -> Result<Vec<TranscriptMessage>, RuntimeError> {
+        // Match against the same adopted view used by decode_history; dropped
+        // legacy head results must not shift retained rows' metadata.
+        let prior = replayable_host_rows(prior);
         let mut rows = next
             .iter()
-            .filter_map(message_convert::message_to_native_chat_message)
+            .filter_map(tinyagents_runtime::transcript::message_to_native_transcript)
             .collect::<Vec<_>>();
 
         // `Message` intentionally cannot represent all durable transcript
@@ -76,8 +81,15 @@ impl TranscriptCodec<OpenHumanRunContext> for OpenHumanTranscriptCodec {
             .filter(|outcome| !outcome.success)
             .map(|outcome| outcome.call_id.clone())
             .collect::<std::collections::HashSet<_>>();
-        for row in &mut rows {
-            if row.role == "tool" && row.id.as_ref().is_some_and(|id| failures.contains(id)) {
+        // Only this turn's rows: providers reuse call ids across turns
+        // (`call_0`, `call_1`, ...), and re-flagging a carried-over row would
+        // rewrite a persisted result, so the commit would stop extending the
+        // transcript and open a new generation.
+        for (row, is_fresh) in rows.iter_mut().zip(&fresh) {
+            if *is_fresh
+                && row.role == "tool"
+                && row.id.as_ref().is_some_and(|id| failures.contains(id))
+            {
                 row.tool_failure = Some(ToolFailure {
                     failed: true,
                     detail: None,
@@ -308,3 +320,34 @@ fn attach_text_dialect_rounds(
         });
     }
 }
+
+/// Apply OpenHuman's historical orphan-head adoption to the replay view only.
+fn replayable_host_rows(rows: &[TranscriptMessage]) -> std::borrow::Cow<'_, [TranscriptMessage]> {
+    // Old unpaired trims could persist tool results immediately after the
+    // frozen system prefix (#6721). Later orphan results still fail native
+    // validation. Merely resuming never rewrites the durable source.
+    let prefix = rows.iter().take_while(|row| row.role == "system").count();
+    let orphan_count = rows[prefix..]
+        .iter()
+        .take_while(|row| row.role == "tool")
+        .count();
+    if orphan_count == 0 {
+        std::borrow::Cow::Borrowed(rows)
+    } else {
+        tracing::warn!(
+            orphan_count,
+            "[session_host::codec] repaired legacy orphaned tool head"
+        );
+        std::borrow::Cow::Owned(
+            rows[..prefix]
+                .iter()
+                .chain(&rows[prefix + orphan_count..])
+                .cloned()
+                .collect(),
+        )
+    }
+}
+
+#[cfg(test)]
+#[path = "codec_adoption_tests.rs"]
+mod adoption_tests;

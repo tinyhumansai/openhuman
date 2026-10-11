@@ -14,12 +14,13 @@ use tinyskills::{
 };
 
 use super::registry::skill_registry;
-use super::types::{
-    CatalogDetail, CatalogEntry, CatalogPage, CatalogQuery, RegistryCatalogEntry, RegistryFacets,
-    DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE,
-};
 use crate::skills::ops_install::{
     fetch_scanned, gate_install, ScanAcknowledgement, SkillInstallOutcome,
+};
+use {
+    super::types::CatalogDetail, super::types::CatalogPage, super::types::CatalogQuery,
+    super::types::RegistryCatalogEntry, super::types::DEFAULT_PAGE_SIZE,
+    super::types::MAX_PAGE_SIZE, tinyskills::CatalogEntry, tinyskills::RegistryFacets,
 };
 
 const REFRESH_ON_BOOT_ENV: &str = "OPENHUMAN_SKILL_REGISTRY_REFRESH_ON_BOOT";

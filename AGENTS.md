@@ -363,8 +363,11 @@ Additional rules:
   namespace branches to `cli.rs` or the JSON-RPC server.
 - RPC namespace strings are wire contracts and do not follow directory
   renames.
-- Domain tools live with their domain and are re-exported through
-  `crates/openhuman-core/src/tools/mod.rs`. Keep only cross-cutting tools in
+- Domain tools live with their domain. Each domain builds its tool family
+  through a registration function; `tools::ops` composes those families before
+  applying capability filters. Preserve catalogue order when moving
+  registrations. Import concrete tools from their owning domain instead of
+  adding domain globs to `tools/mod.rs`. Keep only cross-cutting tools in
   `tools/impl/`.
 - Memory scope comes from the namespace, never from metadata or model
   arguments: `memory::scope` resolves the acting identity to a layout root

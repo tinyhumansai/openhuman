@@ -286,6 +286,23 @@ impl Tool for McpRegistryUninstallTool {
     }
 }
 
+/// Build this domain's tools in their persisted catalogue order.
+pub(crate) fn registered_tools(
+    config: std::sync::Arc<crate::config::Config>,
+) -> Vec<Box<dyn tinytools::Tool>> {
+    vec![
+        Box::new(McpRegistrySearchTool::new(config.clone())),
+        Box::new(McpRegistryGetTool::new(config.clone())),
+        Box::new(McpRegistryInstalledListTool::new(config.clone())),
+        Box::new(McpRegistryStatusTool::new(config.clone())),
+        Box::new(McpRegistryListToolsTool::new(config.clone())),
+        Box::new(McpRegistryConnectTool::new(config.clone())),
+        Box::new(McpRegistryDisconnectTool::new(config.clone())),
+        Box::new(McpRegistryToolCallTool::new(config.clone())),
+        Box::new(McpRegistryUninstallTool::new(config.clone())),
+    ]
+}
+
 #[cfg(test)]
 #[path = "tools_tests.rs"]
 mod tests;

@@ -32,7 +32,7 @@
 //! internals.
 
 use crate::config::Config;
-use crate::skills::{Workflow, WorkflowScope};
+use {tinyskills::Skill as Workflow, tinyskills::SkillScope as WorkflowScope};
 
 /// How many flows the catalogue will surface.
 ///
@@ -87,7 +87,7 @@ pub fn flow_entries(config: &Config) -> Vec<Workflow> {
     entries
 }
 
-fn entry_for(flow: super::types::Flow) -> Workflow {
+fn entry_for(flow: tinyflows_catalog::types::Flow) -> Workflow {
     Workflow {
         name: flow.name.clone(),
         // The flow id, because that is what `run_workflow` / `get_flow` take.
@@ -105,7 +105,7 @@ fn entry_for(flow: super::types::Flow) -> Workflow {
 }
 
 /// A structural summary of the flow graph.
-fn describe(flow: &super::types::Flow) -> String {
+fn describe(flow: &tinyflows_catalog::types::Flow) -> String {
     describe_shape(flow)
 }
 
@@ -114,7 +114,7 @@ fn describe(flow: &super::types::Flow) -> String {
 /// Deliberately structural — trigger, size, paused-ness — because that is all
 /// the record carries. See the module docs: inventing a purpose from node
 /// internals would read as authoritative and frequently be wrong.
-fn describe_shape(flow: &super::types::Flow) -> String {
+fn describe_shape(flow: &tinyflows_catalog::types::Flow) -> String {
     // Read out of the trigger node's free-form config, which is where the
     // engine keeps it — the same way `tinyflows`' own `trigger_kind` does.
     // A graph with zero or several triggers has no single answer, and

@@ -3,9 +3,10 @@
 use crate::config::Config;
 use crate::core::Outcome;
 
-use super::super::module_client::{self as connectors, methods};
+use super::super::module_client::{self as connectors};
 use super::super::types::{ComposioListToolsRequest, ComposioToolsResponse};
 use super::error_utils::{report_composio_op_error, should_forward_tags, OpResult};
+use tinyconnectors_bus::names::methods;
 
 /// List the actions the agent may pick from.
 ///

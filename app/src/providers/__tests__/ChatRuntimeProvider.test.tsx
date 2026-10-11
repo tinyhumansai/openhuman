@@ -115,6 +115,45 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
   });
 
   describe('dedupe', () => {
+    it('stops completed-turn snapshot polling when the provider unmounts', async () => {
+      vi.useFakeTimers();
+      let listeners: chatService.ChatEventListeners = {};
+      vi.mocked(chatService.subscribeChatEvents).mockImplementation(value => {
+        listeners = value;
+        return () => {};
+      });
+      store.dispatch(setStatusForUser({ userId: '__pending__', status: 'connected' }));
+      const view = render(
+        <Provider store={store}>
+          <ChatRuntimeProvider>
+            <div />
+          </ChatRuntimeProvider>
+        </Provider>
+      );
+      try {
+        await act(async () => {
+          listeners.onDone?.({
+            thread_id: 'unmounted-snapshot',
+            request_id: 'unmounted-request',
+            full_response: 'Delivered reply',
+            rounds_used: 1,
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+          });
+        });
+        expect(threadApi.getTurnState).toHaveBeenCalledWith('unmounted-snapshot');
+        view.unmount();
+        const callsBeforeUnmount = vi.mocked(threadApi.getTurnState).mock.calls.length;
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2_000);
+        });
+        expect(threadApi.getTurnState).toHaveBeenCalledTimes(callsBeforeUnmount);
+      } finally {
+        view.unmount();
+        vi.useRealTimers();
+      }
+    });
+
     it('finds pending spawn and async delegation tool rows', () => {
       const entries = [
         { id: 'ignored', name: 'search', round: 0, status: 'running' },

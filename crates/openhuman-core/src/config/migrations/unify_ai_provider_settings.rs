@@ -111,7 +111,6 @@ pub(super) fn seed_cloud_providers(config: &mut Config, stats: &mut MigrationSta
         endpoint: oh_endpoint,
         auth_style: AuthStyle::OpenhumanJwt,
         default_model: Some(oh_default_model),
-        ..Default::default()
     });
     stats.cloud_providers_seeded += 1;
 
@@ -139,7 +138,6 @@ pub(super) fn seed_cloud_providers(config: &mut Config, stats: &mut MigrationSta
                 endpoint: trimmed.to_string(),
                 auth_style: AuthStyle::Bearer,
                 default_model,
-                ..Default::default()
             });
             stats.cloud_providers_seeded += 1;
             log::info!(

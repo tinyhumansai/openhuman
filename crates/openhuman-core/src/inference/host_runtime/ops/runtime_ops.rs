@@ -7,7 +7,10 @@ use chrono::Utc;
 use crate::config::Config;
 use crate::core::Outcome;
 use crate::inference::host_runtime as local_ai;
-use crate::inference::{LocalAiSpeechResult, LocalAiStatus, LocalAiTtsResult};
+use {
+    tinyinference_local::status::LocalAiSpeechResult, tinyinference_local::status::LocalAiStatus,
+    tinyinference_local::status::LocalAiTtsResult,
+};
 
 use super::turn_guards::enforce_user_prompt_or_reject;
 

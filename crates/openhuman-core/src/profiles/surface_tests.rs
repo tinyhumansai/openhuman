@@ -143,7 +143,7 @@ fn delete_purge_and_the_channel_relay_are_open_to_users() {
 fn users_still_cannot_mint_channel_threads() {
     // The relay derives `channel:` ids itself; a user choosing one is refused.
     let relayed =
-        crate::channels::bus::derive_inbound_thread_id("telegram", Some("1"), Some("2"), None);
+        tinychannels::channel::derive_inbound_thread_id("telegram", Some("1"), Some("2"), None);
     assert!(relayed.starts_with("channel:"), "{relayed}");
     assert!(validate_user_thread_id(&relayed).is_err());
 }

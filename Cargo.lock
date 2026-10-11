@@ -1716,26 +1716,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "enumflags2"
-version = "0.7.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1027f7680c853e056ebcec683615fb6fbbc07dbaa13b4d5d9442b146ded4ecef"
-dependencies = [
- "enumflags2_derive",
-]
-
-[[package]]
-name = "enumflags2_derive"
-version = "0.7.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67c78a4d8fdf9953a5c9d458f9efe940fd97a0cab0941c075a813ac594733827"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
 name = "env_filter"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3081,17 +3061,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf36173d4167ed999940f804952e6b08197cae5ad5d572eb4db150ce8ad5d58f"
 
 [[package]]
-name = "landlock"
-version = "0.4.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4cca98e95f35b29d469dade6724c6f96cec9236640f745a0e99b0334ec320ab1"
-dependencies = [
- "enumflags2",
- "libc",
- "thiserror 2.0.20",
-]
-
-[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3945,7 +3914,6 @@ dependencies = [
  "hmac 0.13.0",
  "hostname",
  "iana-time-zone",
- "lettre",
  "libc",
  "log",
  "nu-ansi-term",
@@ -3981,8 +3949,6 @@ dependencies = [
  "tinyagents-tasks",
  "tinybox-bus",
  "tinybox-core",
- "tinybox-docker",
- "tinybox-jail",
  "tinybus",
  "tinychannels",
  "tinychannels-bus",
@@ -4025,7 +3991,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite 0.29.0",
  "tokio-util",
- "toml",
+ "toml 1.1.6+spec-1.1.0",
  "tower",
  "tracing",
  "tracing-appender",
@@ -4059,7 +4025,6 @@ dependencies = [
  "futures",
  "futures-util",
  "hex",
- "lettre",
  "libc",
  "log",
  "openhuman",
@@ -4088,13 +4053,15 @@ dependencies = [
  "tinyinference-voice",
  "tinymcp",
  "tinymcp-bus",
+ "tinysearch-bus",
+ "tinystoragedrivers-core",
  "tinytools",
  "tinytools-agent",
  "tokio",
  "tokio-stream",
  "tokio-tungstenite 0.29.0",
  "tokio-util",
- "toml",
+ "toml 1.1.6+spec-1.1.0",
  "tower",
  "tracing",
  "tracing-subscriber",
@@ -4123,6 +4090,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",
+ "tinyagents-harness",
  "tinyagents-session",
  "tinyinference-embeddings",
  "tinyinference-llm",
@@ -5731,6 +5699,15 @@ dependencies = [
 
 [[package]]
 name = "serde_spanned"
+version = "0.6.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf41e0cfaf7226dca15e8197172c295a782857fcb97fad1808a166870dee75a3"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "serde_spanned"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6662b5879511e06e8999a8a235d848113e942c9124f211511b16466ee2995f26"
@@ -6262,7 +6239,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.60.2",
@@ -6438,9 +6415,13 @@ dependencies = [
 name = "tinyagents-definition"
 version = "2.1.4"
 dependencies = [
+ "anyhow",
  "async-trait",
  "serde",
+ "serde_json",
  "tinytools",
+ "toml 0.8.23",
+ "tracing",
 ]
 
 [[package]]
@@ -6524,6 +6505,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "tinyagents-definition",
  "tinyagents-graph",
  "tinyagents-harness",
  "tinyagents-runtime",
@@ -6612,42 +6594,19 @@ dependencies = [
 
 [[package]]
 name = "tinybox-bus"
-version = "0.1.19"
+version = "0.1.21"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "tinybox-core"
-version = "0.1.19"
+version = "0.1.21"
 dependencies = [
  "async-trait",
  "serde",
  "thiserror 2.0.20",
  "tinybox-bus",
-]
-
-[[package]]
-name = "tinybox-docker"
-version = "0.1.19"
-dependencies = [
- "async-trait",
- "serde_json",
- "tinybox-core",
- "tokio",
- "uuid",
-]
-
-[[package]]
-name = "tinybox-jail"
-version = "0.1.19"
-dependencies = [
- "landlock",
- "log",
- "serde",
- "serde_json",
- "tinybox-core",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6665,7 +6624,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tinybus-macros",
  "tokio",
- "toml",
+ "toml 1.1.6+spec-1.1.0",
  "tracing",
  "ureq",
  "zip",
@@ -7134,6 +7093,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "chrono-tz",
+ "regex",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -7348,7 +7308,7 @@ dependencies = [
 
 [[package]]
 name = "tinywallet"
-version = "0.13.0"
+version = "0.7.3"
 dependencies = [
  "coins-bip32",
  "coins-bip39",
@@ -7366,16 +7326,16 @@ dependencies = [
 
 [[package]]
 name = "tinywallet-bus"
-version = "0.13.0"
+version = "0.7.3"
 dependencies = [
  "serde",
- "serde_json",
- "thiserror 2.0.20",
+ "tinywallet-crypto",
+ "tinywallet-x402",
 ]
 
 [[package]]
 name = "tinywallet-crypto"
-version = "0.13.0"
+version = "0.7.3"
 dependencies = [
  "async-trait",
  "bech32 0.12.0",
@@ -7386,18 +7346,17 @@ dependencies = [
  "sha2 0.11.0",
  "sha3 0.12.0",
  "thiserror 2.0.20",
- "tinywallet-bus",
 ]
 
 [[package]]
 name = "tinywallet-web3"
-version = "0.13.0"
+version = "0.7.3"
 dependencies = [
  "anyhow",
  "async-trait",
- "base64 0.23.1",
+ "base64 0.22.1",
  "bs58",
- "curve25519-dalek 5.0.0",
+ "curve25519-dalek 4.1.3",
  "hex",
  "log",
  "parking_lot",
@@ -7412,24 +7371,23 @@ dependencies = [
 
 [[package]]
 name = "tinywallet-x402"
-version = "0.13.0"
+version = "0.7.3"
 dependencies = [
  "anyhow",
  "async-trait",
- "base64 0.23.1",
+ "base64 0.22.1",
  "bs58",
  "chrono",
- "curve25519-dalek 5.0.0",
+ "curve25519-dalek 4.1.3",
  "hex",
  "log",
- "reqwest 0.13.5",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "sha3 0.12.0",
  "thiserror 2.0.20",
  "tinytools",
- "tinywallet-bus",
  "tinywallet-crypto",
  "uuid",
 ]
@@ -7579,17 +7537,38 @@ dependencies = [
 
 [[package]]
 name = "toml"
+version = "0.8.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc1beb996b9d83529a9e75c17a1686767d148d70663143c7854d8b4a09ced362"
+dependencies = [
+ "serde",
+ "serde_spanned 0.6.9",
+ "toml_datetime 0.6.11",
+ "toml_edit",
+]
+
+[[package]]
+name = "toml"
 version = "1.1.6+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "920602543f0911ab71da12c50d59701da54c196d1a2bf5cb4b75667f137a406a"
 dependencies = [
  "indexmap",
  "serde_core",
- "serde_spanned",
- "toml_datetime",
+ "serde_spanned 1.1.1",
+ "toml_datetime 1.1.1+spec-1.1.0",
  "toml_parser",
  "toml_writer",
  "winnow 1.0.4",
+]
+
+[[package]]
+name = "toml_datetime"
+version = "0.6.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22cddaf88f4fbc13c51aebbf5f8eceb5c7c5a9da2ac40a13519eb5b0a0e8f11c"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -7602,6 +7581,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "toml_edit"
+version = "0.22.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41fe8c660ae4257887cf66394862d21dbca4a6ddd26f04a3560410406a2f819a"
+dependencies = [
+ "indexmap",
+ "serde",
+ "serde_spanned 0.6.9",
+ "toml_datetime 0.6.11",
+ "toml_write",
+ "winnow 0.7.15",
+]
+
+[[package]]
 name = "toml_parser"
 version = "1.1.3+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7609,6 +7602,12 @@ checksum = "1d38ac1cf9b95face32296c0a3ede1fdc270627c9d9c02a7274dd6d960dc4d56"
 dependencies = [
  "winnow 1.0.4",
 ]
+
+[[package]]
+name = "toml_write"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
 
 [[package]]
 name = "toml_writer"

@@ -1,10 +1,10 @@
 //! Serde types exchanged with the frontend: the persisted local app-state
 //! blob, the patch applied to it, and the polled `app_state_snapshot` shape.
 
-use crate::inference::LocalAiStatus;
 use crate::platform::service::ServiceStatus;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tinyinference_local::status::LocalAiStatus;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]

@@ -7,7 +7,7 @@
 #[cfg(target_os = "linux")]
 pub(super) async fn wait(pid: u32) -> std::io::Result<()> {
     loop {
-        let active = tokio::task::spawn_blocking(move || active_members(pid))
+        let active = crate::core::runtime::spawn_blocking_scoped(move || active_members(pid))
             .await
             .map_err(std::io::Error::other)??;
         if !active {
@@ -44,7 +44,7 @@ fn active_members(group: u32) -> std::io::Result<bool> {
 
 /// Zombies and dead tasks cannot execute further side effects.
 #[cfg(target_os = "linux")]
-fn is_active_member(stat: &str, group: u32) -> bool {
+pub(super) fn is_active_member(stat: &str, group: u32) -> bool {
     let Some((_, fields)) = stat.rsplit_once(") ") else {
         return false;
     };

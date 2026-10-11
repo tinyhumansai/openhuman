@@ -28,7 +28,7 @@ fn the_thread_id_is_a_reserved_channel_id() {
     assert_eq!(id, "channel:telegram/42/-100123");
     assert_eq!(
         id,
-        crate::channels::bus::derive_inbound_thread_id(
+        tinychannels::channel::derive_inbound_thread_id(
             "telegram",
             Some("42"),
             Some("-100123"),

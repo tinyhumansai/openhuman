@@ -360,7 +360,8 @@ fn live_image_turn_request_carries_a_real_image_block() {
 /// provider-bound row).
 #[test]
 fn typed_and_legacy_rows_bridge_to_identical_model_messages() {
-    use crate::agent::message_convert::{history_to_messages, message_to_native_chat_message};
+    use crate::agent::message_convert::history_to_messages;
+    use tinyagents_runtime::transcript::message_to_native_transcript as message_to_native_chat_message;
     use tinyinference_llm::message::{
         AssistantMessage, ContentBlock, ImageRef, Message, ToolMessage, UserMessage,
     };

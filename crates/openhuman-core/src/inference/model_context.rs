@@ -56,7 +56,7 @@ pub(crate) fn static_context_window_for_model(model: &str) -> Option<u64> {
         return Some(window);
     }
 
-    if let Some(price) = crate::platform::cost::catalog::lookup(normalized) {
+    if let Some(price) = tinyagents_registry::pricing::lookup(normalized) {
         tracing::debug!(
             model = normalized,
             catalog_model = price.model_id,

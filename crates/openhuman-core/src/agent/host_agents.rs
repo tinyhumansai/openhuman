@@ -70,14 +70,26 @@ impl HostAgent {
             "[host_agents] building session for host agent"
         );
         self.hooks.clone().sync_scope(|| {
-            CoreContext::sync_scope(Arc::clone(&self.context), || match &self.host_tools {
-                Some(host) => OpenHumanSessionHost::from_config_with_host_tools(
-                    config,
-                    &self.definition,
-                    host,
-                    session_id,
-                ),
-                None => OpenHumanSessionHost::from_config_with_definition(config, &self.definition),
+            CoreContext::sync_scope(Arc::clone(&self.context), || {
+                if crate::profiles::capabilities::ProfileCapabilities::current().is_some() {
+                    return OpenHumanSessionHost::from_config_host_only(
+                        config,
+                        &self.definition,
+                        self.host_tools.as_ref(),
+                        session_id,
+                    );
+                }
+                match &self.host_tools {
+                    Some(host) => OpenHumanSessionHost::from_config_with_host_tools(
+                        config,
+                        &self.definition,
+                        host,
+                        session_id,
+                    ),
+                    None => {
+                        OpenHumanSessionHost::from_config_with_definition(config, &self.definition)
+                    }
+                }
             })
         })
     }

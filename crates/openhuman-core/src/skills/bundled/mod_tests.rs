@@ -74,7 +74,7 @@ fn a_materialised_bundle_is_discoverable_and_readable_end_to_end() {
             });
         assert_eq!(
             entry.scope,
-            crate::skills::ops_types::WorkflowScope::Builtin,
+            tinyskills::SkillScope::Builtin,
             "a materialised bundle must carry the Builtin scope"
         );
         assert!(
@@ -88,7 +88,7 @@ fn a_materialised_bundle_is_discoverable_and_readable_end_to_end() {
         // discovery pipeline including `dirs::home_dir()`, which is fine here:
         // it can only ADD skills, and we look up ours by name.
         for file in skill.files {
-            if file.path == super::super::ops_types::WORKFLOW_MD {
+            if file.path == tinyskills::WORKFLOW_MD {
                 continue;
             }
             let body = crate::skills::read_workflow_resource(

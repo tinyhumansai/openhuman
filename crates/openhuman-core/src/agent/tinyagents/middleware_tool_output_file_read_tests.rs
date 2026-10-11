@@ -10,10 +10,7 @@ async fn run_shell(
     id: &str,
     command: &str,
     output: &str,
-) -> (
-    String,
-    Vec<crate::inference::tokenjuice::types::CompactRequest>,
-) {
+) -> (String, Vec<tinyjuice_bus::wire::CompactRequest>) {
     let mut ctx = ctx();
     let mut call = TaToolCall::new(id, "shell", json!({ "command": command }));
     mw.before_tool(&mut ctx, &(), &mut call).await.unwrap();

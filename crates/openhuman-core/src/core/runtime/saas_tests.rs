@@ -221,3 +221,38 @@ fn the_pre_rename_max_agents_open_key_still_sets_the_limit() {
     std::fs::write(&path, "root = \"/srv/openhuman\"\nmax_agents_open = 7\n").unwrap();
     assert_eq!(SaasConfig::load(&path).unwrap().max_profiles_open, 7);
 }
+
+#[test]
+fn reads_the_operators_cron_limits() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("operator.toml");
+    std::fs::write(
+        &path,
+        "root = \"/srv/oh\"\n[cron]\nagent_jobs_only = true\nmax_active_jobs = 5\n",
+    )
+    .unwrap();
+    let cron = SaasConfig::load(&path).unwrap().cron;
+    assert!(cron.agent_jobs_only);
+    assert_eq!((cron.min_interval_secs, cron.max_active_jobs), (300, 5));
+}
+
+#[test]
+fn debug_output_redacts_the_storage_url() {
+    let mut config = SaasConfig::new("/srv/oh");
+    config.storage_url = Some("mongodb://admin:hunter2@db.internal/oh".into());
+    let shown = format!("{config:?}");
+    assert!(
+        !shown.contains("hunter2") && !shown.contains("db.internal"),
+        "{shown}"
+    );
+    assert!(shown.contains("<redacted>"));
+    assert!(!format!("{:?}", SaasConfig::new("/srv/oh")).contains("<redacted>"));
+}
+
+#[test]
+fn reads_the_tool_iteration_cap() {
+    let config: SaasConfig =
+        toml::from_str("root = \"/srv/oh\"\nmax_tool_iterations = 4\n").unwrap();
+    assert_eq!(config.max_tool_iterations, Some(4));
+    assert_eq!(SaasConfig::new("/srv/oh").max_tool_iterations, None);
+}

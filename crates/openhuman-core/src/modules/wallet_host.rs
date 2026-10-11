@@ -67,13 +67,13 @@ pub(crate) fn bind_endpoint_references(
                 crate::web3::wallet::endpoints::rpc_url_for_evm_network(network)
             }
             RpcEndpointKey::Btc => crate::web3::wallet::endpoints::rpc_url_for_chain(
-                crate::web3::wallet::WalletChain::Btc,
+                tinywallet_web3::crypto::wallet::WalletChain::Btc,
             ),
             RpcEndpointKey::Solana => crate::web3::wallet::endpoints::rpc_url_for_chain(
-                crate::web3::wallet::WalletChain::Solana,
+                tinywallet_web3::crypto::wallet::WalletChain::Solana,
             ),
             RpcEndpointKey::Tron => crate::web3::wallet::endpoints::rpc_url_for_chain(
-                crate::web3::wallet::WalletChain::Tron,
+                tinywallet_web3::crypto::wallet::WalletChain::Tron,
             ),
         };
         if endpoint.reference.trim().is_empty()

@@ -32,9 +32,13 @@ use crate::config::Config;
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
 use crate::core::runtime::CoreContext;
-use crate::cron::policy::policy_or_default;
-use crate::cron::{next_run_for_schedule, record_run, update_job, CronJob, CronJobPatch, Schedule};
+use crate::cron::policy::get_policy;
 use crate::security::SecurityPolicy;
+use {
+    crate::cron::record_run, crate::cron::update_job,
+    tinyflows_schedule::schedule::next_run_for_schedule, tinyflows_schedule::types::CronJob,
+    tinyflows_schedule::types::CronJobPatch, tinyflows_schedule::types::Schedule,
+};
 
 /// Output recorded for a single-flight slot missed while a run was in flight.
 pub(crate) const SKIPPED_OUTPUT: &str = "skipped: the previous run was still in flight";
@@ -68,6 +72,17 @@ impl JobDispatcher {
                 skip_in_flight(config, &job);
                 continue;
             };
+            // Fail closed: an unreadable policy refuses the job before its slot
+            // is advanced, so the occurrence is retried once the read recovers.
+            if get_policy(config, &job.id).is_err() {
+                continue;
+            }
+            // Operator limits (`cron::limits`) also bind rows stored before
+            // they were switched on.
+            if let Err(error) = crate::cron::limits::check_run(config, &job) {
+                tracing::warn!(job_id = %job.id, %error, "[cron:dispatch] job refused by operator limits");
+                continue;
+            }
             claim_slot(config, &job);
             let config = config.clone();
             let security = Arc::clone(security);
@@ -143,8 +158,8 @@ fn claim_slot(config: &Config, job: &CronJob) {
 
 /// A due job whose previous run is still going.
 fn skip_in_flight(config: &Config, job: &CronJob) {
-    let policy = policy_or_default(config, &job.id);
-    if !policy.single_flight || matches!(job.schedule, Schedule::At { .. }) {
+    let single_flight = get_policy(config, &job.id).is_ok_and(|policy| policy.single_flight);
+    if !single_flight || matches!(job.schedule, Schedule::At { .. }) {
         tracing::trace!(job_id = %job.id, "[cron:dispatch] still running; not dispatched again");
         return;
     }

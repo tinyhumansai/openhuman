@@ -14,7 +14,11 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use tinyflows_drivers::schedule::CronDocuments;
 use tinyflows_schedule::DeliveryStatus;
-use tinyflows_schedule::{CronJob, CronJobPatch, CronRun, DeliveryConfig, Schedule, SessionTarget};
+use tinyflows_schedule::{
+    CronJob, CronJobPatch, CronRun, DeliveryConfig, JobType, Schedule, SessionTarget,
+};
+
+use super::limits;
 use tinyflows_sqlite::schedule::{self as upstream, AgentJobSpec, CronStoreOptions};
 
 /// The job database for `config`: `<workspace>/cron/jobs.db`, or the agent's
@@ -52,6 +56,12 @@ fn run<T: Send + 'static>(
 }
 
 pub fn add_job(config: &Config, expression: &str, command: &str) -> Result<CronJob> {
+    let schedule = Schedule::Cron {
+        expr: expression.to_string(),
+        tz: None,
+        active_hours: None,
+    };
+    limits::check_new(config, &JobType::Shell, &schedule, None)?;
     if let Some(docs) = documents(config)? {
         let (expression, command) = (expression.to_string(), command.to_string());
         return run(async move { docs.add_job(&expression, &command).await });
@@ -65,6 +75,7 @@ pub fn add_shell_job(
     schedule: Schedule,
     command: &str,
 ) -> Result<CronJob> {
+    limits::check_new(config, &JobType::Shell, &schedule, None)?;
     if let Some(docs) = documents(config)? {
         let command = command.to_string();
         return run(async move { docs.add_shell_job(name, schedule, &command).await });
@@ -83,6 +94,7 @@ pub fn add_agent_job(
     delivery: Option<DeliveryConfig>,
     delete_after_run: bool,
 ) -> Result<CronJob> {
+    limits::check_new(config, &JobType::Agent, &schedule, delivery.as_ref())?;
     if let Some(docs) = documents(config)? {
         let prompt = prompt.to_string();
         return run(async move {
@@ -125,6 +137,7 @@ pub fn add_agent_job_with_definition(
     agent_id: Option<String>,
     enabled: bool,
 ) -> Result<CronJob> {
+    limits::check_new(config, &JobType::Agent, &schedule, delivery.as_ref())?;
     if let Some(docs) = documents(config)? {
         let prompt = prompt.to_string();
         return run(async move {
@@ -158,6 +171,12 @@ pub fn add_agent_job_with_definition(
 
 /// Adds an agent job described by `spec`, including its origin conversation.
 pub fn add_agent_job_from_spec(config: &Config, spec: AgentJobSpec) -> Result<CronJob> {
+    limits::check_new(
+        config,
+        &JobType::Agent,
+        &spec.schedule,
+        spec.delivery.as_ref(),
+    )?;
     if let Some(docs) = documents(config)? {
         return run(async move { docs.add_agent_job_from_spec(spec).await });
     }
@@ -171,6 +190,7 @@ pub fn add_flow_schedule_job(
     flow_id: &str,
     schedule: Schedule,
 ) -> Result<CronJob> {
+    limits::check_new(config, &JobType::Flow, &schedule, None)?;
     if let Some(docs) = documents(config)? {
         let flow_id = flow_id.to_string();
         return run(async move { docs.add_flow_schedule_job(&flow_id, schedule).await });
@@ -248,6 +268,7 @@ pub fn due_jobs(config: &Config, now: DateTime<Utc>) -> Result<Vec<CronJob>> {
 }
 
 pub fn update_job(config: &Config, job_id: &str, patch: CronJobPatch) -> Result<CronJob> {
+    limits::check_patch(config, &patch)?;
     if let Some(docs) = documents(config)? {
         let job_id = job_id.to_string();
         return run(async move { docs.update_job(&job_id, patch).await });

@@ -11,7 +11,7 @@ fn core_job(job_type: JobType, command: &str) -> CronJob {
         prompt: Some("check in".into()),
         name: Some("named".into()),
         job_type,
-        session_target: openhuman_core::cron::SessionTarget::Isolated,
+        session_target: tinyflows_schedule::types::SessionTarget::Isolated,
         model: None,
         agent_id: Some("teeny".into()),
         enabled: true,
@@ -46,7 +46,7 @@ fn a_cron_schedule_drops_active_hours_it_cannot_express() {
     let core = Schedule::Cron {
         expr: "0 * * * *".into(),
         tz: None,
-        active_hours: Some(openhuman_core::cron::ActiveHours {
+        active_hours: Some(tinyflows_schedule::types::ActiveHours {
             start: "09:00".into(),
             end: "17:00".into(),
         }),

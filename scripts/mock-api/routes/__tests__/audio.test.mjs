@@ -73,7 +73,7 @@ test("mock audio speech route honors behavior overrides", async () => {
 });
 
 test("mock audio transcription route returns deterministic text", async () => {
-  setMockBehavior("audioTranscriptionText", "Podcast transcription.");
+  setMockBehavior("audioTranscriptionText", "Speech transcription.");
   const res = createRes();
   const handled = await handleAudio({
     method: "POST",
@@ -83,5 +83,5 @@ test("mock audio transcription route returns deterministic text", async () => {
   });
 
   assert.equal(handled, true);
-  assert.equal(JSON.parse(res.body).text, "Podcast transcription.");
+  assert.equal(JSON.parse(res.body).text, "Speech transcription.");
 });

@@ -35,6 +35,12 @@ fn into_embed_stays_unconnected() {
 }
 
 #[test]
+fn deferred_builder_connects_through_tinyhumans_wrapper() {
+    let summary = connected(RuntimeBuilder::new().defer_services());
+    assert!(summary.has_backend_transport);
+}
+
+#[test]
 fn hosted_controllers_and_jev_can_be_turned_off() {
     let summary = connected(
         RuntimeBuilder::new()

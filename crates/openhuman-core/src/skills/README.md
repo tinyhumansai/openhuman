@@ -137,7 +137,6 @@ there only while its bytes still match the binary
 | [`ops_types.rs`](./ops_types.rs) | Ungated. OpenHuman names for the `tinyskills` model (`Workflow`, `WorkflowFrontmatter`, `WorkflowScope`), `SKILL_TOML`, `WORKFLOW_TOML`, the trust marker name. |
 | [`types.rs`](./types.rs) | Ungated. `ToolResult` and `ToolContent` re-exported from `tinytools` for older import paths. |
 | [`ops_discover.rs`](./ops_discover.rs), [`ops_discover/`](./ops_discover/) | `api.rs` (public entry points, metadata cache, trust check), `scan.rs` (root order and scan engine), `resource.rs` (`read_workflow_resource`). |
-| [`ops_parse.rs`](./ops_parse.rs) | Frontmatter and body split, resource inventory. |
 | [`ops_create.rs`](./ops_create.rs) | Scaffold a new skill with its sidecar. |
 | [`ops_install.rs`](./ops_install.rs), [`ops_install/`](./ops_install/) | `fetch.rs` (URL installer: fetches through `tinyskills::fetch_skill_document`, then validates and writes with `install_validated_document`, which catalog installs share), `scan_gate.rs` (supply-chain scan with one re-fetch before refusing), `url_validation.rs`, `uninstall.rs`. |
 | [`registry.rs`](./registry.rs) | Skills as agent definitions with inputs; `render_inputs_block`, `prune_legacy_default_workflows`. |

@@ -26,12 +26,23 @@ use crate::core::types::HostKind;
 use crate::tools::toolpacks::ToolGroups;
 
 /// The operator's SaaS deployment settings.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+///
+/// `Debug` redacts `storage_url`, which can carry database credentials.
+#[derive(Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SaasConfig {
     /// Root of every user's state and the operator's own. Must be an absolute,
     /// existing directory that is not world-writable.
     pub root: PathBuf,
+    /// Validated direct inference defaults shared by profile chat, relay, and cron.
+    #[serde(default)]
+    pub chat_provider: Option<super::direct_profile_provider::DirectProfileProvider>,
+    /// Operator-owned direct Exa/Gemini policy; never a user settings RPC.
+    #[serde(default)]
+    pub search: Option<crate::config::SearchConfig>,
+    /// Advertised names for the three search roles. Missing entries retain canonical names.
+    #[serde(default)]
+    pub search_role_names: std::collections::BTreeMap<tinysearch_bus::Role, String>,
     /// The gateway's bearer, one line in a `0600` file. Defaults to
     /// `<root>/service.token`.
     #[serde(default)]
@@ -97,6 +108,82 @@ pub struct SaasConfig {
     /// nodes sharing one root each set their own.
     #[serde(default)]
     pub operator_dir: Option<PathBuf>,
+    /// Cron limits forced onto every profile; a user's own config cannot
+    /// loosen them.
+    #[serde(default)]
+    pub cron: SaasCronConfig,
+    /// Most tool-call rounds one profile turn may take (chat, relay and cron
+    /// alike). Forced onto every profile as `agent.max_tool_iterations_override`,
+    /// so it wins over any agent definition's own cap. `None` leaves the
+    /// definition in charge.
+    #[serde(default)]
+    pub max_tool_iterations: Option<usize>,
+}
+
+impl std::fmt::Debug for SaasConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SaasConfig")
+            .field("root", &self.root)
+            .field("chat_provider", &self.chat_provider)
+            .field("search", &self.search)
+            .field("search_role_names", &self.search_role_names)
+            .field("service_token_file", &self.service_token_file)
+            .field("tool_allowlist", &self.tool_allowlist)
+            .field("sandbox", &self.sandbox)
+            .field("rpc_allowlist_extra", &self.rpc_allowlist_extra)
+            .field("max_profiles_open", &self.max_profiles_open)
+            .field("profile_ids", &self.profile_ids)
+            .field("idle_evict_secs", &self.idle_evict_secs)
+            .field("shared_backend_api_key", &self.shared_backend_api_key)
+            .field("custom_definitions", &self.custom_definitions)
+            .field("require_user_signature", &self.require_user_signature)
+            .field(
+                "storage_url",
+                &self.storage_url.as_ref().map(|_| "<redacted>"),
+            )
+            .field("node_id", &self.node_id)
+            .field("advertise_url", &self.advertise_url)
+            .field("lease_ttl_secs", &self.lease_ttl_secs)
+            .field("operator_dir", &self.operator_dir)
+            .field("cron", &self.cron)
+            .field("max_tool_iterations", &self.max_tool_iterations)
+            .finish()
+    }
+}
+
+/// `[cron]`: the operator's cron limits for hosted profiles (see
+/// [`crate::cron::limits`]).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SaasCronConfig {
+    /// Allow only agent jobs bound to the conversation that created them:
+    /// no shell or flow jobs, no chosen delivery destination.
+    #[serde(default)]
+    pub agent_jobs_only: bool,
+    /// With `agent_jobs_only`: seconds between runs of a recurring job, at least.
+    #[serde(default = "default_cron_min_interval_secs")]
+    pub min_interval_secs: u64,
+    /// With `agent_jobs_only`: most enabled jobs one profile may hold.
+    #[serde(default = "default_cron_max_active_jobs")]
+    pub max_active_jobs: u32,
+}
+
+impl Default for SaasCronConfig {
+    fn default() -> Self {
+        Self {
+            agent_jobs_only: false,
+            min_interval_secs: default_cron_min_interval_secs(),
+            max_active_jobs: default_cron_max_active_jobs(),
+        }
+    }
+}
+
+fn default_cron_min_interval_secs() -> u64 {
+    300
+}
+
+fn default_cron_max_active_jobs() -> u32 {
+    20
 }
 
 /// `[sandbox]`: the one-shot container a user's shell command runs in. The
@@ -169,6 +256,9 @@ impl SaasConfig {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self {
             root: root.into(),
+            chat_provider: None,
+            search: None,
+            search_role_names: std::collections::BTreeMap::new(),
             service_token_file: None,
             tool_allowlist: Vec::new(),
             sandbox: SaasSandboxConfig::default(),
@@ -184,6 +274,8 @@ impl SaasConfig {
             advertise_url: None,
             lease_ttl_secs: default_lease_ttl_secs(),
             operator_dir: None,
+            cron: SaasCronConfig::default(),
+            max_tool_iterations: None,
         }
     }
 
@@ -191,8 +283,10 @@ impl SaasConfig {
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let raw = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("reading SaaS config {}: {e}", path.display()))?;
-        let config: Self = toml::from_str(&raw)
-            .map_err(|e| anyhow::anyhow!("parsing SaaS config {}: {e}", path.display()))?;
+        let config: Self = toml::from_str(&raw).map_err(|e| {
+            // `message()` omits the source excerpt, which could hold a key.
+            anyhow::anyhow!("parsing SaaS config {}: {}", path.display(), e.message())
+        })?;
         log::debug!(
             "[saas] loaded operator config from {} (root={})",
             path.display(),
@@ -301,10 +395,24 @@ impl DomainSet {
 /// Boot a SaaS core: check the deployment, lock the process to SaaS, and
 /// build the operator plane.
 pub async fn build(
-    mut config: SaasConfig,
+    config: SaasConfig,
     host: Option<String>,
     port: Option<u16>,
 ) -> anyhow::Result<CoreRuntime> {
+    build_with_profile_capabilities(config, host, port, None).await
+}
+
+/// Boot with immutable operator adapters for authenticated profile turns.
+///
+/// # Errors
+/// As [`build`].
+pub async fn build_with_profile_capabilities(
+    mut config: SaasConfig,
+    host: Option<String>,
+    port: Option<u16>,
+    capabilities: Option<Arc<crate::profiles::capabilities::ProfileCapabilities>>,
+) -> anyhow::Result<CoreRuntime> {
+    crate::profiles::provider_settings::ProfileProviderSettings::from_saas(&config)?;
     if CoreContext::current().is_some() {
         anyhow::bail!(
             "[saas] a core is already running in this process; a SaaS core must be the only one"
@@ -317,7 +425,9 @@ pub async fn build(
     let token = ServiceToken::read(&config.service_token_path());
     let env: Vec<(String, String)> = std::env::vars().collect();
     let sandbox_available = if boot_guard::needs_sandbox(&config) {
-        crate::sandbox::docker::is_docker_available().await
+        crate::sandbox::docker::is_docker_available(&crate::config::Config::default())
+            .await
+            .unwrap_or(false)
     } else {
         false
     };
@@ -409,7 +519,8 @@ pub async fn build(
     }
     let host = Arc::new(
         crate::profiles::ProfileHost::with_backend(config, runtime.context().clone(), backend)
-            .map_err(|e| anyhow::anyhow!("[saas] {e}"))?,
+            .map_err(|e| anyhow::anyhow!("[saas] {e}"))?
+            .with_capabilities(capabilities),
     );
     crate::profiles::host::install(Arc::clone(&host));
     crate::profiles::lease::heartbeat(Arc::clone(&host), runtime.context().clone());

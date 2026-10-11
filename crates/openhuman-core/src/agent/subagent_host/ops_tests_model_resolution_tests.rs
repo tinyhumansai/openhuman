@@ -1,6 +1,6 @@
 use super::*;
-use crate::agent::harness::spawn_depth_context::current_spawn_depth;
 use crate::agent::subagent_host::run_subagent;
+use tinyagents_harness::context::{current_run_depth, with_run_depth, RunDepth};
 
 #[tokio::test]
 async fn runner_rejects_spawn_beyond_max_depth() {
@@ -9,9 +9,13 @@ async fn runner_rejects_spawn_beyond_max_depth() {
     let def = make_def_named_tools(&[]);
 
     let result = with_parent_context(parent, async {
-        with_spawn_depth(MAX_SPAWN_DEPTH, async {
-            run_subagent(&def, "x", SubagentRunOptions::default()).await
-        })
+        with_run_depth(
+            RunDepth {
+                depth: MAX_SPAWN_DEPTH,
+                max_depth: MAX_SPAWN_DEPTH,
+            },
+            async { run_subagent(&def, "x", SubagentRunOptions::default()).await },
+        )
         .await
     })
     .await;
@@ -31,8 +35,8 @@ async fn runner_rejects_spawn_beyond_max_depth() {
         "depth rejection must happen before provider dispatch"
     );
     assert_eq!(
-        current_spawn_depth(),
-        0,
+        current_run_depth(),
+        None,
         "depth task-local must not leak after rejection"
     );
 }

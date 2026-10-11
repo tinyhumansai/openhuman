@@ -1676,27 +1676,35 @@ async fn json_rpc_tool_registry_lists_and_gets_entries() {
 }
 
 #[tokio::test]
-async fn json_rpc_removed_harness_init_status_is_not_found() {
+async fn json_rpc_removed_harness_provisioning_is_unavailable() {
     let _env_lock = json_rpc_e2e_env_lock_async().await;
     let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
     let rpc_base = format!("http://{rpc_addr}");
 
-    // The obsolete provisioning flow was removed; its status method must not
-    // reappear through host controller registration.
-    let resp = post_json_rpc(
-        &rpc_base,
-        44_711,
-        "openhuman.harness_init_status",
-        json!({}),
-    )
-    .await;
-    let error = resp.get("error").expect("removed method must fail");
-    assert_eq!(error.get("code").and_then(Value::as_i64), Some(-32000));
-    assert_eq!(
-        error.get("message").and_then(Value::as_str),
-        Some("unknown method: openhuman.harness_init_status")
-    );
-
+    // Runtime provisioning was removed; these legacy calls must not start
+    // Python/Node downloads or expose a stale provisioning snapshot.
+    for (id, method, params) in [
+        (44_711, "openhuman.harness_init_status", json!({})),
+        (44_712, "openhuman.harness_init_run", json!({})),
+        (
+            44_713,
+            "openhuman.harness_init_run",
+            json!({ "force": true }),
+        ),
+    ] {
+        let response = post_json_rpc(&rpc_base, id, method, params).await;
+        assert_eq!(
+            response.pointer("/error/code").and_then(Value::as_i64),
+            Some(-32000),
+            "removed RPC {method} must be unavailable: {response}"
+        );
+        let expected = format!("unknown method: {method}");
+        assert_eq!(
+            response.pointer("/error/message").and_then(Value::as_str),
+            Some(expected.as_str())
+        );
+        assert!(response.get("result").is_none(), "{response}");
+    }
     rpc_join.abort();
 }
 
@@ -10142,7 +10150,7 @@ async fn json_rpc_task_sources_crud_and_status() {
 ///
 /// This test used to register a stub `ComposioProvider` (deleted by
 /// tinymemory v1.13.4 with the whole in-process provider registry — see
-/// `crate::integrations::composio::providers`'s module docs) and
+/// `crate::integrations::composio::contract`'s module docs) and
 /// exercise the full fetch → enrich → route → ingest pipeline against it.
 /// `task_sources::pipeline::fetch_tasks_unavailable` documents why that
 /// capability was not ported forward: tinyconnectors' `Sync` member returns

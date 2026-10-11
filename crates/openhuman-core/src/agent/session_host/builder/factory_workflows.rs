@@ -1,7 +1,7 @@
 //! The skill and flow catalogue exposed to a newly constructed session.
 
 use crate::config::Config;
-use crate::skills::Workflow;
+use tinyskills::Skill as Workflow;
 
 pub(super) fn session_workflows(config: &Config, host_only: bool) -> Vec<Workflow> {
     if host_only {

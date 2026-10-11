@@ -1,8 +1,9 @@
 use super::*;
-use crate::security::{AutonomyLevel, PairingGuard, SecretStore, SecurityPolicy};
+use crate::security::{AutonomyLevel, SecretStore, SecurityPolicy};
+use tinychannels_runtime::security::PairingGuard;
 
 #[test]
-fn reexported_policy_and_pairing_types_are_usable() {
+fn host_policy_and_portable_pairing_types_are_usable() {
     let policy = SecurityPolicy::default();
     assert_eq!(policy.autonomy, AutonomyLevel::Supervised);
 

@@ -59,7 +59,9 @@ pub(super) fn assemble_turn_harness(
     context_window: Option<u64>,
     early_exit_tools: &[&str],
     context_mw: TurnContextMiddleware,
-    stop_hooks: Vec<Arc<dyn crate::agent::stop_hooks::StopHook>>,
+    stop_hooks: Vec<
+        Arc<dyn tinyagents_harness::middleware::StopHook<crate::agent::cost::TurnCost>>,
+    >,
     tool_policy: Option<ToolPolicyEnforcement>,
     required_capabilities: Option<CapabilitySet>,
     deterministic_cacheable: bool,
@@ -324,7 +326,6 @@ pub(super) fn assemble_turn_harness(
         &mut harness,
         handle.as_ref(),
         model,
-        max_iterations,
         stop_hooks,
         halt_summary.clone(),
     );
@@ -480,7 +481,7 @@ pub(super) fn assemble_turn_harness(
     //      tracker's per-run token accounting matches the authoritative runtime
     //      `AgentRun.usage` on every model call.
     //   2. A pricing table wired via `BudgetMiddleware::with_pricing(..)` at
-    //      parity with `cost::catalog::estimate_cost_usd`, so the crate can own
+    //      parity with `tinyagents_registry::pricing::estimate_cost_usd`, so the crate can own
     //      MONEY (USD) budgets. Today the shadow compares TOKENS only (the
     //      observe-only crate middleware has no pricing, so its cost stays $0)
     //      and the local gate is the sole money-budget authority.

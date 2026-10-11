@@ -89,8 +89,8 @@ impl Tool for Probe {
     fn parameters_schema(&self) -> Value {
         json!({"type":"object","properties":{"owner":{"type":"string"}},"required":["owner"]})
     }
-    async fn execute(&self, _: Value) -> anyhow::Result<openhuman_core::tools::ToolResult> {
-        Ok(openhuman_core::tools::ToolResult::success("observed"))
+    async fn execute(&self, _: Value) -> anyhow::Result<tinytools::ToolResult> {
+        Ok(tinytools::ToolResult::success("observed"))
     }
 }
 

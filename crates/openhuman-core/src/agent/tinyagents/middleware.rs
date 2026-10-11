@@ -34,7 +34,6 @@ mod failure_policy;
 mod fetched_site;
 mod loop_guards;
 mod memory_pack;
-mod nudge_injector;
 mod packed_tool_route;
 mod repeated_failure;
 mod research_budget;

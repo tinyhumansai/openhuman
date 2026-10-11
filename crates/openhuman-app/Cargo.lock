@@ -648,7 +648,7 @@ dependencies = [
  "cap-primitives",
  "cap-std",
  "io-lifetimes 3.0.1",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -665,7 +665,7 @@ dependencies = [
  "maybe-owned",
  "rustix",
  "rustix-linux-procfs",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
  "winx",
 ]
 
@@ -3140,17 +3140,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "landlock"
-version = "0.4.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4cca98e95f35b29d469dade6724c6f96cec9236640f745a0e99b0334ec320ab1"
-dependencies = [
- "enumflags2",
- "libc",
- "thiserror 2.0.20",
-]
-
-[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3455,7 +3444,7 @@ dependencies = [
  "png 0.18.1",
  "serde",
  "thiserror 2.0.20",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4007,7 +3996,6 @@ dependencies = [
  "hmac 0.13.0",
  "hostname",
  "iana-time-zone",
- "lettre",
  "libc",
  "log",
  "nu-ansi-term",
@@ -4041,9 +4029,6 @@ dependencies = [
  "tinyagents-session",
  "tinyagents-tasks",
  "tinybox-bus",
- "tinybox-core",
- "tinybox-docker",
- "tinybox-jail",
  "tinybus",
  "tinychannels",
  "tinychannels-bus",
@@ -4076,7 +4061,7 @@ dependencies = [
  "tinystoragedrivers",
  "tinytools",
  "tinytools-agent",
- "tinytools-std 0.5.0",
+ "tinytools-std",
  "tinyvoice-bus",
  "tinywallet-bus",
  "tinywallet-crypto",
@@ -4160,6 +4145,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",
+ "tinyagents-harness",
  "tinyagents-session",
  "tinyinference-embeddings",
  "tinyinference-llm",
@@ -5961,7 +5947,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6835,9 +6821,13 @@ dependencies = [
 name = "tinyagents-definition"
 version = "2.1.4"
 dependencies = [
+ "anyhow",
  "async-trait",
  "serde",
+ "serde_json",
  "tinytools",
+ "toml 0.8.2",
+ "tracing",
 ]
 
 [[package]]
@@ -6891,7 +6881,7 @@ dependencies = [
  "tinystoragedrivers-core",
  "tinytools",
  "tinytools-agent",
- "tinytools-std 0.5.0",
+ "tinytools-std",
  "tokio",
  "tracing",
  "uuid",
@@ -6921,6 +6911,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "tinyagents-definition",
  "tinyagents-graph",
  "tinyagents-harness",
  "tinyagents-runtime",
@@ -7009,42 +7000,9 @@ dependencies = [
 
 [[package]]
 name = "tinybox-bus"
-version = "0.1.19"
+version = "0.1.21"
 dependencies = [
  "serde",
-]
-
-[[package]]
-name = "tinybox-core"
-version = "0.1.19"
-dependencies = [
- "async-trait",
- "serde",
- "thiserror 2.0.20",
- "tinybox-bus",
-]
-
-[[package]]
-name = "tinybox-docker"
-version = "0.1.19"
-dependencies = [
- "async-trait",
- "serde_json",
- "tinybox-core",
- "tokio",
- "uuid",
-]
-
-[[package]]
-name = "tinybox-jail"
-version = "0.1.19"
-dependencies = [
- "landlock",
- "log",
- "serde",
- "serde_json",
- "tinybox-core",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7487,7 +7445,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tinymcp-bus",
  "tinytools",
- "tinytools-std 0.5.0 (git+https://github.com/tinyhumansai/tinytools?rev=360721bc3c7a26221b61f6629f5f0415cfccb568)",
+ "tinytools-std",
  "tokio",
  "tokio-stream",
  "tracing",
@@ -7527,6 +7485,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "chrono-tz",
+ "regex",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -7571,7 +7530,7 @@ dependencies = [
 
 [[package]]
 name = "tinysearch-bus"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -7693,31 +7652,6 @@ dependencies = [
 [[package]]
 name = "tinytools-std"
 version = "0.5.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64 0.23.1",
- "fs2",
- "futures-util",
- "glob",
- "libc",
- "log",
- "parking_lot",
- "regex",
- "reqwest 0.12.28",
- "rustix",
- "serde_json",
- "sha2 0.11.0",
- "tinytools",
- "tokio",
- "tracing",
- "walkdir",
-]
-
-[[package]]
-name = "tinytools-std"
-version = "0.5.0"
-source = "git+https://github.com/tinyhumansai/tinytools?rev=360721bc3c7a26221b61f6629f5f0415cfccb568#360721bc3c7a26221b61f6629f5f0415cfccb568"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8200,7 +8134,7 @@ dependencies = [
  "png 0.18.1",
  "serde",
  "thiserror 2.0.20",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8290,7 +8224,7 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset",
  "tempfile",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

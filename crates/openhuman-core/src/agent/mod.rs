@@ -61,6 +61,7 @@ pub(crate) mod progress_tracing;
 pub mod prompts;
 /// Host-owned payload carried through TinyAgents run queues.
 pub mod queued_turn;
+pub(crate) mod registration;
 pub mod registry;
 mod schemas;
 pub mod session_db;

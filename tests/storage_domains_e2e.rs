@@ -9,7 +9,7 @@ use chrono::Utc;
 use openhuman_core::config::Config;
 use openhuman_core::desktop::notifications::store as notifications;
 use openhuman_core::desktop::notifications::types::{IntegrationNotification, NotificationStatus};
-use openhuman_core::integrations::composio::providers::NormalizedTask;
+use openhuman_core::integrations::composio::contract::NormalizedTask;
 use openhuman_core::integrations::task_sources::store as task_sources;
 use openhuman_core::integrations::task_sources::types::{FilterSpec, ProviderSlug, SourceTarget};
 use openhuman_core::security::devices::store as devices;

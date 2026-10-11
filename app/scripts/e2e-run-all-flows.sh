@@ -420,7 +420,6 @@ if should_run_suite "system"; then
   echo "## Running suite: system"
   run "test/e2e/specs/local-model-runtime.spec.ts"            "local-model"               "system"
   run "test/e2e/specs/voice-mode.spec.ts"                     "voice-mode"                "system"
-  run "test/e2e/specs/audio-toolkit-flow.spec.ts"             "audio-toolkit"             "system"
   run "test/e2e/specs/tauri-commands.spec.ts"                 "tauri-commands"            "system"
   # service-connectivity-flow tests the old sidecar service model removed in
   # PR #1061 (core is now in-process). Skip by not setting OPENHUMAN_SERVICE_MOCK=1.

@@ -3,7 +3,10 @@
 //! preamble saying the run is unattended.
 
 use crate::config::Config;
-use crate::cron::{channel_bridge, CronJob, JobOrigin};
+use {
+    crate::cron::channel_bridge, tinyflows_schedule::types::CronJob,
+    tinyflows_schedule::types::JobOrigin,
+};
 
 /// At most this many trailing messages of the origin conversation.
 pub(crate) const CONTEXT_MAX_MESSAGES: usize = 10;
@@ -98,7 +101,7 @@ pub(crate) fn compose_current_prompt(job_id: &str, name: &str, prompt: &str, tai
 /// plain tagged prompt; `current` and `main` get the context and preamble.
 pub(crate) async fn build_run_prompt(config: &Config, job: &CronJob, name: &str) -> String {
     let prompt = job.prompt.clone().unwrap_or_default();
-    use crate::cron::SessionTarget;
+    use tinyflows_schedule::types::SessionTarget;
     match (&job.session_target, &job.origin) {
         (SessionTarget::Isolated, _) => format!("[cron:{} {name}] {prompt}", job.id),
         (target, origin) => {

@@ -46,11 +46,9 @@ mod ops;
 pub(crate) mod rpc;
 
 #[cfg(feature = "web3")]
-mod schemas;
-/// The wallet agent tools, re-exported from `tinywallet-web3`. The host builds
-/// them over the process-wide engine in `tools/ops.rs`.
+pub(crate) mod registration;
 #[cfg(feature = "web3")]
-pub mod tools;
+mod schemas;
 /// The host side of the wallet primitives' `Transport` seam — endpoint resolution,
 /// failover and redaction stay here, where the config lives.
 #[cfg(feature = "web3")]
@@ -72,22 +70,21 @@ pub use execution::{
 #[cfg(feature = "web3")]
 pub(crate) use ops::secret_material;
 #[cfg(feature = "web3")]
-pub use ops::{
-    reveal_recovery_phrase, setup, status, RevealRecoveryPhraseResult, WalletAccount, WalletChain,
-    WalletSetupParams, WalletSetupSource, WalletStatus, WALLET_NOT_CONFIGURED_MESSAGE,
-};
-#[cfg(feature = "web3")]
 pub use schemas::{
     all_controller_schemas, all_registered_controllers, all_wallet_controller_schemas,
     all_wallet_registered_controllers, schemas, wallet_schemas,
 };
 #[cfg(feature = "web3")]
-pub use tinywallet_web3::crypto::abi::encode_erc20_transfer;
-#[cfg(feature = "web3")]
-pub use tinywallet_web3::crypto::defaults::{
-    evm_asset_catalog, explorer_tx_url, EvmNetwork, RpcSource, SolanaCluster,
-    WalletAssetDefinition, WalletNetworkDefaults,
+pub use {
+    ops::reveal_recovery_phrase, ops::setup, ops::status, ops::RevealRecoveryPhraseResult,
+    ops::WalletSetupParams,
 };
+
+// Retained for the always-on RPC/observability boundary until #7406 exposes
+// this shared producer error through the released TinyWallet bus contract.
+// Embed must not acquire an implementation dependency for this sentinel.
+#[cfg(feature = "web3")]
+pub use tinywallet_web3::quote::WALLET_NOT_CONFIGURED_MESSAGE;
 
 // ---------------------------------------------------------------------------
 // Disabled facade — compiled only when the `web3` feature is OFF.

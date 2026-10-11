@@ -10,12 +10,9 @@
 //! workspace mounts, network policy, environment passthrough, and
 //! explicit elevated escape paths.
 
-/// The CWD jail (Landlock / Seatbelt / AppContainer / noop) is owned by
-/// `tinybox-jail`; re-exported here so host call sites stay stable. Deciding
-/// WHEN to jail stays in [`ops`].
-pub use tinybox_jail as cwd_jail;
 pub mod docker;
 pub mod grants;
+pub(crate) mod native_jail;
 pub mod ops;
 pub mod schemas;
 pub mod types;

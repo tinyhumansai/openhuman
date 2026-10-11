@@ -77,7 +77,6 @@ const DOMAIN_ALLOWLIST = new Set([
   'agent_experience',
   'agent_meetings',
   'announcements',
-  'audio_toolkit',
   'devices',
   'harness_init',
   'http_host',

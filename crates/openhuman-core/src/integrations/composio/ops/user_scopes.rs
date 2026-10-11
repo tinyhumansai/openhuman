@@ -13,7 +13,7 @@ use crate::integrations::composio::file_store::{self, USER_SCOPES_FILE};
 
 /// The stored type: the contract's scope pref, which is also the wire shape of
 /// both handlers' replies.
-pub(crate) use crate::integrations::composio::providers::UserScopePref;
+pub(crate) use crate::integrations::composio::contract::UserScopePref;
 
 /// The stored map: normalised toolkit slug → pref.
 type ScopeFile = BTreeMap<String, UserScopePref>;

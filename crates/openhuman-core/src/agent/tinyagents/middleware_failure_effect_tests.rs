@@ -230,9 +230,13 @@ fn a_missing_shell_command_gets_one_correction() {
         recovery_policy("shell", "bash: jq: command not found", false),
         Some(("missing_app", 1))
     );
-    // Other tools keep the zero-retry `unsupported` verdict.
     assert_eq!(
         recovery_policy("shell", "executable not found", false),
+        Some(("missing_app", 1))
+    );
+    // Other tools keep the zero-retry `unsupported` verdict.
+    assert_eq!(
+        recovery_policy("desktop_launch_app", "executable not found", false),
         Some(("unsupported", 0))
     );
 }

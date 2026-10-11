@@ -29,8 +29,8 @@ use tinyagents_harness::{LangfuseAuth, LangfuseClient, LangfuseTraceConfig};
 use tinyflows::engine::GraphObservation as FlowObservation;
 
 use crate::config::Config;
-use crate::flows::FlowRunTrigger;
 use crate::security::credentials::session_support::direct_backend_credential;
+use tinyflows_catalog::FlowRunTrigger;
 
 const LOG_TARGET: &str = "flows::langfuse";
 /// Backend proxy route for Langfuse ingestion (relative to the backend

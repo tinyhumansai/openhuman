@@ -69,13 +69,12 @@ fn def_with_scope(scope: ToolScope) -> AgentDefinition {
         timeout_secs: None,
         sandbox_mode: SandboxMode::None,
         background: false,
-        tokenjuice_compression: crate::inference::tokenjuice::AgentTokenjuiceCompression::Auto,
+        tokenjuice_compression: tinyjuice_bus::types::AgentTokenjuiceCompression::Auto,
         subagents: vec![],
         delegate_name: None,
         agent_tier: crate::agent::harness::definition::AgentTier::Worker,
         searches_connected_mcp: false,
         source: DefinitionSource::Builtin,
-        graph: Default::default(),
     }
 }
 

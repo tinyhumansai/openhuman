@@ -243,7 +243,7 @@ fn http_summary(name: &str, scheme: &str) -> HttpCredentialSummary {
 // ── Flow Scout suggestion lifecycle ──────────────────────────────────────────
 
 fn seed_suggestion(config: &Config, id: &str) {
-    let s = crate::flows::FlowSuggestion {
+    let s = tinyflows_catalog::FlowSuggestion {
         id: id.to_string(),
         title: format!("Idea {id}"),
         one_liner: "does a thing".to_string(),
@@ -254,7 +254,7 @@ fn seed_suggestion(config: &Config, id: &str) {
         suggested_slugs: vec![],
         build_prompt: "Build a workflow…".to_string(),
         confidence: 0.5,
-        status: crate::flows::SuggestionStatus::New,
+        status: tinyflows_catalog::SuggestionStatus::New,
         created_at: "2026-07-05T00:00:00Z".to_string(),
         source_run_id: None,
     };

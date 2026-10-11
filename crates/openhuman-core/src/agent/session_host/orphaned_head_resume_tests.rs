@@ -101,33 +101,46 @@ async fn resumed_orphaned_tool_head_is_repaired_before_the_request() {
 
     let mut host = new_host();
     host.set_thread_id(Some("thread-orphaned-head"));
-    // Self-proving fixture: the real codec must decode the orphans as `Tool`
-    // rows right after the system prefix, or the request assertions below
-    // would pass without the repair ever having anything to drop.
+    // The raw durable source still contains both leading orphans; the codec
+    // must heal only its model-visible replay view before strict validation.
+    let raw = tinyagents_session::transcript::read_transcript(&transcripts[0]).unwrap();
+    let raw_prefix = raw
+        .messages
+        .iter()
+        .take_while(|row| row.role == "system")
+        .count();
+    assert_eq!(
+        raw.messages[raw_prefix..]
+            .iter()
+            .take_while(|row| row.role == "tool")
+            .map(|row| row.id.as_deref().unwrap())
+            .collect::<Vec<_>>(),
+        ["call_orphan_a", "call_orphan_b"],
+    );
     assert!(host.resume_bound_session().await.unwrap());
-    let decoded: Vec<Message> = host
+    let decoded = host
         .runtime_session
         .as_ref()
         .expect("resumed runtime session")
-        .history()
-        .to_vec();
-    let prefix = decoded
-        .iter()
-        .take_while(|m| matches!(m, Message::System(_)))
-        .count();
-    let orphan_ids: Vec<&str> = decoded[prefix..]
-        .iter()
-        .map_while(|m| match m {
-            Message::Tool(t) => Some(t.tool_call_id.as_str()),
-            _ => None,
-        })
-        .collect();
+        .history();
+    assert!(!decoded.iter().any(
+        |message| matches!(message, Message::Tool(tool) if tool.tool_call_id.starts_with("call_orphan"))
+    ));
     assert_eq!(
-        orphan_ids,
-        ["call_orphan_a", "call_orphan_b"],
-        "the resumed head must decode the two orphans as leading Tool rows"
+        std::fs::read_to_string(&transcripts[0]).unwrap(),
+        spliced.join("\n") + "\n",
+        "adoption must not rewrite the durable source merely on resume",
     );
     assert_eq!(host.turn("second message").await.unwrap(), "second reply");
+    let committed_history = host.runtime_session.as_ref().unwrap().history().to_vec();
+    let mut resumed_again = new_host();
+    resumed_again.set_thread_id(Some("thread-orphaned-head"));
+    assert!(resumed_again.resume_bound_session().await.unwrap());
+    assert_eq!(
+        resumed_again.runtime_session.as_ref().unwrap().history(),
+        committed_history.as_slice(),
+        "the healed committed head must retain aligned native rows across a fresh resume",
+    );
 
     let requests = model.requests();
     let sent = &requests

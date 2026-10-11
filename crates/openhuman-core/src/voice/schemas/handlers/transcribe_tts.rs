@@ -119,7 +119,7 @@ pub(crate) fn handle_voice_cloud_transcribe(params: Map<String, Value>) -> Contr
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         let p = deserialize_params::<CloudTranscribeParams>(params)?;
-        let opts = crate::voice::cloud_transcribe::CloudTranscribeOptions {
+        let opts = tinyinference_voice::cloud::CloudTranscribeOptions {
             model: p.model,
             language: p.language,
             mime_type: p.mime_type,

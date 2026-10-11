@@ -316,36 +316,110 @@ async fn attested_proxy(config: &Config) -> Result<tinybus::Proxy, WalletCallErr
     Ok(proxy)
 }
 
-/// Whether `sha256` is one of the artifacts this build pinned for `record`.
+// Library checksums verified against modules.toml and the library bytes in each
+// registry-pinned TinyWallet v0.13.0 archive. A library is trusted only while
+// its corresponding archive remains pinned in the supplied ModuleRecord.
+const PINNED_WALLET_LIBRARIES: &[(&str, &str)] = &[
+    // ubuntu-24.04-x86_64
+    (
+        "284983d01c548109b3e9d5bbca1951787912f713b4a98920b9b45cfd034b6760",
+        "f9a13c65e14b7cf9de57beeb40e8753a212234795a75fe8d8d11564a4ccabb67",
+    ),
+    // ubuntu-24.04-arm64
+    (
+        "18ef8ffe518f731dc594d1606554ca12c840219e54f230382937061c395ab860",
+        "66961c39b0e2ebcb3c69ab1f6c1aa7cb59a830d787565b7fbb91339ca594d644",
+    ),
+    // ubuntu-22.04-x86_64
+    (
+        "92d0d0fe9ab20fdf4c44aa58d762b7e28b6a08876899a5b2d368df3feabcd2d5",
+        "7b6fdd843622a29b610633e0f5cabf6f48c8aa7566a466696916e99d1221eb08",
+    ),
+    // ubuntu-22.04-arm64
+    (
+        "4d0e17d778c0c84df17e4c5b7fa60aa9296efecc5726902008946409b3a3c9e1",
+        "6f91352fbf5bdf69b7c76ae33f100b67320e3239573d4bb5402ba21ed51e7680",
+    ),
+    // macos-26-arm64
+    (
+        "e01a70efbcece8e134abfa84c70181425802415525303d7ba2a7798afbab1041",
+        "a8181f4a927f86182fadc4c65f12854cf7f719dc57b00ac1ff7da2e0a1ecc5b4",
+    ),
+    // macos-26-x86_64
+    (
+        "c48f1f7807d0b25c2b54dca97237f6e64d02ec3a9396370cd8e3b1857419296a",
+        "684f2d74d3abaca8712eddafa0e7dd67ddfa9fa64ca03427959a03d20e31e3c0",
+    ),
+    // macos-15-arm64
+    (
+        "95f69f2e17ff1785d032f6e1017e12de5c6dc09af9633e67fc9c225dfcef9ce6",
+        "39f3674672bfaef485838eba98a60fb21c173d5f161449abc0dacc4c2a8aa8ff",
+    ),
+    // macos-15-x86_64
+    (
+        "f3114694e2d666ea1b030db952c589f08d79c60ab79aadb844327e273c5faaf5",
+        "3ed1c36990a6fde7710d6616f7ddc2d68d0ed029c73f93aef859a0a023ed5e4b",
+    ),
+    // windows-2025-x86_64
+    (
+        "7b79a25a1fccef17a4c6e0d400f49646c3a5f321821bb03ddc23e76d6030717a",
+        "66278854fe0843d46f3029baa9e5deccaf9fa20d757eea20ceae321f3ee72310",
+    ),
+    // windows-2022-x86_64
+    (
+        "0b7126be04b23dd5fad883d7f1dd33dd65c1042af68f93593590ea07c5daa95e",
+        "b547c227e56400f92ffd21829d510f455e4be446d049106e7490039919acb267",
+    ),
+    // windows-11-arm64
+    (
+        "483d3fda2c46de71c8efd5dfa4ec828c0b6c86bb164c8362c1356f85cb8ec231",
+        "ee10089c09b5e3b5f178484816fc90f297ad7c23e209d3281a10e0668d0aeaca",
+    ),
+    // archlinux-arm64
+    (
+        "ad2222bd1d2dd680568f486e40389c0b963cf5ba2d170f9d658985f31cabb511",
+        "66766056becbb6d55078952989ae542c88758075bae58ce5e9c9294b7712701e",
+    ),
+    // archlinux-x86_64
+    (
+        "d67f541330f7712106238b90d993550d2e2e55f33d3c8c9f50669a1a51c1e981",
+        "725a256ded1ee0f2bc0f6360f1dac84f94423b8816162c4202b6c71d2194f1b1",
+    ),
+    // fedora-43-arm64
+    (
+        "a2d62b03f2e99008ee3fe7ea84290fd050e12016ce36e89fda24d5449e795261",
+        "3fb82b1ae8dbce52999be065b8e64bcc3668d056a2fba90a5f6f067343ea6161",
+    ),
+    // fedora-43-x86_64
+    (
+        "0c8c5dbf2aa7b7caa371aa6366c7cfdd232fda41e2dbd894d2ef344c7c2cfa0a",
+        "7be79421594597b6fc8b9c15a16a7df3218f8d78651a3ac85153f6cb88d6532e",
+    ),
+    // fedora-44-arm64
+    (
+        "272b535910fc4bc84099887b7ccfbdd9d41a6d187616086c174f86cb77f21757",
+        "09226fb7f644746cd9ed12523ffc08962be035d5a2f1d5004f5e1bc70d74cb0d",
+    ),
+    // fedora-44-x86_64
+    (
+        "3dcad60a65d4f0bbb1af838468a2f52d648d22b2fbc849ae0548a30ed9806646",
+        "b6eab1fc5076a55764cb44a04e500cc52928604a8c1b42ed9426e4ba9966ba4b",
+    ),
+];
+
+/// Whether the attested archive or library belongs to a currently pinned release.
 ///
-/// Case-insensitive because the release manifest and the pinned table are
-/// written by different hands and both are hex of the same bytes. Nothing
-/// compared here is a secret, so a constant-time comparison would buy nothing.
-///
-/// Every asset is checked rather than just the one for this platform: which
-/// artifact loaded is not recorded, and a host that fell through to an older
-/// build after an admission failure is running a pinned artifact either way.
+/// The release loader attests the verified archive; local discovery attests the
+/// library from modules.toml. Library checksums therefore require their paired
+/// archive to remain in this record, so retiring a release also retires its
+/// libraries. Check every platform because the attestation carries no host key.
 fn digest_is_pinned(record: &super::ModuleRecord, sha256: &str) -> bool {
-    let release_archive_is_pinned = record
-        .assets
-        .iter()
-        .any(|asset| asset.sha256.eq_ignore_ascii_case(sha256));
-
-    // `load_github_release` attests the checksum of its verified archive. A
-    // locally discovered artifact is instead attested from the module's own
-    // `modules.toml`, which records the library checksum. Accept the latter
-    // for the checked release artifact too, so an operator can preload the
-    // official module without changing the confidential-call policy.
-    //
-    // This is the linux x86_64 library shipped inside
-    // tinywallet-module-0.5.3-ubuntu-22.04-x86_64.tar.gz. Its archive checksum
-    // remains in the registry above; the two digests intentionally cover
-    // different bytes.
-    const TINYWALLET_0_5_3_UBUNTU_22_04_X86_64_LIBRARY_SHA256: &str =
-        "d2e663e465c6c245cbf9b37c037ae655db7df0f93a0df9b7fa17a28027ebaa9d";
-
-    release_archive_is_pinned
-        || sha256.eq_ignore_ascii_case(TINYWALLET_0_5_3_UBUNTU_22_04_X86_64_LIBRARY_SHA256)
+    record.assets.iter().any(|asset| {
+        asset.sha256.eq_ignore_ascii_case(sha256)
+            || PINNED_WALLET_LIBRARIES.iter().any(|(archive, library)| {
+                asset.sha256.eq_ignore_ascii_case(archive) && library.eq_ignore_ascii_case(sha256)
+            })
+    })
 }
 
 /// Load the wallet module if it is not already serving.

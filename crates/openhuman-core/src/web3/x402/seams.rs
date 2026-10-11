@@ -36,7 +36,7 @@ use tinywallet_x402::wire::PaymentChain;
 use crate::security::approval::APPROVAL_CHAT_CONTEXT;
 use crate::security::SecurityPolicy;
 use crate::web3::wallet::transport::OpenHumanTransport;
-use crate::web3::wallet::WalletChain;
+use tinywallet_web3::crypto::wallet::WalletChain;
 
 const LOG_PREFIX: &str = "[x402::seams]";
 

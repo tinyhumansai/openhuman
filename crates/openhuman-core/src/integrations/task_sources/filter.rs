@@ -6,7 +6,7 @@
 //! `FilterSpec` variant into the shared filter envelope and stamps the
 //! per-fetch cap.
 
-use crate::integrations::composio::providers::TaskFetchFilter;
+use crate::integrations::composio::contract::TaskFetchFilter;
 
 use super::types::FilterSpec;
 

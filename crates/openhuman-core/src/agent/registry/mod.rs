@@ -10,7 +10,6 @@ mod defaults;
 mod ops;
 mod rpc;
 mod schemas;
-pub mod tools;
 pub mod types;
 
 pub use defaults::{default_agents, definition_from_registry_entry};

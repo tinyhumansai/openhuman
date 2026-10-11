@@ -182,6 +182,7 @@ fn tool_snapshot_with_no_executable_source_fails_closed_before_graph() {
         &visible,
         &Arc::new(Vec::new()),
         &Arc::new(Vec::new()),
+        &HashSet::new(),
     )
     .expect_err("a declared tool must have a request-scoped executable source");
     assert!(error.error.to_string().contains("revoked_tool"));
@@ -254,4 +255,16 @@ fn final_call_tokens_prefer_the_newest_call_that_reached_the_provider() {
         (90_000, 400)
     );
     assert_eq!(final_call_tokens(None, None, None), (0, 0));
+}
+
+#[test]
+fn recorded_declarations_allow_missing_executors_without_authorizing_fresh_names() {
+    let historical = HashSet::from(["retired_tool".to_string()]);
+    let empty = Arc::new(Vec::new());
+    assert!(ensure_snapshot_tools_are_executable(&historical, &empty, &empty, &historical).is_ok());
+    let mixed = HashSet::from(["retired_tool".to_string(), "invented_tool".to_string()]);
+    let error = ensure_snapshot_tools_are_executable(&mixed, &empty, &empty, &historical)
+        .expect_err("historical declarations never permit an unrecorded name");
+    assert!(error.error.to_string().contains("invented_tool"));
+    assert!(!error.error.to_string().contains("retired_tool"));
 }

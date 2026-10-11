@@ -31,7 +31,7 @@ pub struct ThreadGoalGetResponse {
 /// thread has never written one.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ThreadTodosGetResponse {
-    pub todos: Vec<crate::agent::todos::ops::TodoItem>,
+    pub todos: Vec<tinyagents_graph::todos::TodoItem>,
 }
 
 /// `threads.goal_get` — read a thread's current goal without waiting for the

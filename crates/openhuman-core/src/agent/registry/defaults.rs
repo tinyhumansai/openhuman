@@ -115,7 +115,6 @@ pub fn definition_from_registry_entry(entry: &AgentRegistryEntry) -> AgentDefini
         agent_tier: AgentTier::Worker,
         searches_connected_mcp: false,
         source: DefinitionSource::CustomRegistry,
-        graph: Default::default(),
     }
 }
 

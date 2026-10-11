@@ -21,6 +21,11 @@ fn server() -> ServerRef {
 }
 
 #[test]
+fn an_unknown_supervisor_event_has_no_host_domain_event() {
+    assert!(domain_events_for(workspace(), &[SupervisorEvent::Unknown]).is_empty());
+}
+
+#[test]
 fn an_answered_probe_is_not_an_event() {
     // One row per server per minute would bury everything else in the log.
     let events = domain_events_for(

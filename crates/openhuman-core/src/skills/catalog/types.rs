@@ -3,9 +3,7 @@
 
 use serde::Serialize;
 
-pub use tinyskills::{
-    CatalogEntry, Facet, Freshness, RegistryErrorKind, RegistryErrorSummary, RegistryFacets,
-};
+use tinyskills::{CatalogEntry, Freshness, RegistryErrorSummary};
 
 /// Entries per page when a caller pages without naming a size.
 pub const DEFAULT_PAGE_SIZE: usize = 25;

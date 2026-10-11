@@ -21,7 +21,7 @@ fn an_uncatalogued_model_has_no_price_and_no_estimate() {
 #[test]
 fn a_catalogued_model_is_estimated_at_its_list_rates() {
     let pricing = lookup_pricing(CATALOGUED).expect("catalogued");
-    assert_eq!(pricing.model, "claude-sonnet-4-6");
+    assert_eq!(pricing.input_per_token, Some(3.0 / 1_000_000.0));
     // 1M uncached input at $3 + 1M cached at $0.30 + 1M output at $15.
     let usage = counts(2_000_000, 1_000_000, 1_000_000);
     let estimate = estimate_call_cost_usd(CATALOGUED, &usage).expect("priced");

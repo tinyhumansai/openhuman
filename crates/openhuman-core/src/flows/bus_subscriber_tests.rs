@@ -1,6 +1,6 @@
 use super::*;
-use crate::flows::types::FlowRun;
 use tinyflows::model::TriggerKind;
+use tinyflows_catalog::types::FlowRun;
 
 #[test]
 fn pinned_trigger_inputs_reads_values_an_author_fixed_for_unattended_runs() {
@@ -324,7 +324,7 @@ async fn digest_writes_run_digest_entry_for_completed_run() {
         "2026-01-01T00:00:00Z",
     )
     .unwrap();
-    let step = crate::flows::FlowRunStep {
+    let step = tinyflows_catalog::FlowRunStep {
         node_id: "n1".to_string(),
         output: json!({ "sent": 3 }),
         port: None,
@@ -474,7 +474,7 @@ fn render_run_digest_is_bounded_and_includes_key_fields() {
         status: "completed".to_string(),
         started_at: "2026-01-01T00:00:00Z".to_string(),
         finished_at: Some("2026-01-01T00:05:00Z".to_string()),
-        steps: vec![crate::flows::FlowRunStep {
+        steps: vec![tinyflows_catalog::FlowRunStep {
             node_id: "n1".to_string(),
             output: json!({ "ok": true }),
             port: None,

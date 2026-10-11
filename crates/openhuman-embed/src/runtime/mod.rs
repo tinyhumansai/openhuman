@@ -194,9 +194,8 @@ pub(crate) struct CoreGuard {
     workspace: ResolvedWorkspace,
     /// The provider this runtime installed, if any. It is removed only while
     /// it still owns the process slot.
-    session_store: Option<Arc<dyn openhuman_core::agent::session_store::SessionStoreProvider>>,
-    previous_session_store:
-        Option<Arc<dyn openhuman_core::agent::session_store::SessionStoreProvider>>,
+    session_store: Option<Arc<dyn tinyagents_session::port::SessionStoreProvider>>,
+    previous_session_store: Option<Arc<dyn tinyagents_session::port::SessionStoreProvider>>,
     /// The resolver through which the core's cron and workflow drivers find
     /// this runtime's agents; removed with the runtime.
     host_agents: Arc<dyn openhuman_core::agent::host_agents::HostAgentResolver>,
@@ -582,10 +581,8 @@ impl Runtime {
     pub(crate) fn new(
         core: Core,
         workspace: ResolvedWorkspace,
-        session_store: Option<Arc<dyn openhuman_core::agent::session_store::SessionStoreProvider>>,
-        previous_session_store: Option<
-            Arc<dyn openhuman_core::agent::session_store::SessionStoreProvider>,
-        >,
+        session_store: Option<Arc<dyn tinyagents_session::port::SessionStoreProvider>>,
+        previous_session_store: Option<Arc<dyn tinyagents_session::port::SessionStoreProvider>>,
         seams: Option<seams::InstalledSeams>,
         base_config: Config,
         config_unavailable: Option<String>,

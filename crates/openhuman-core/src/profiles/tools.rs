@@ -109,6 +109,14 @@ pub const HARD_DENIED: &[&str] = &[
     "pushover",
 ];
 
+/// Tools outside a profile's domain families that an operator may still admit
+/// by naming them in `tool_scope(ToolScopeSpec::Named(..))`: the scheduler
+/// (`cron`, an Automation tool, bounded by `[cron] agent_jobs_only`) and the
+/// two clock tools (`current_time`, `resolve_time`, Platform tools with no
+/// reach beyond the wall clock). Nothing else in those families qualifies, and
+/// a name not in the operator's scope is never registered.
+pub const OPERATOR_ADMITTABLE: &[&str] = &["cron", "current_time", "resolve_time"];
+
 /// Whether `tool` is hard-denied to users.
 pub fn is_hard_denied(tool: &str) -> bool {
     HARD_DENIED.contains(&tool)
@@ -161,7 +169,15 @@ pub fn admits(tool: &str, domain_ok: bool) -> bool {
     if !is_saas() {
         return domain_ok;
     }
-    let admitted = admits_with(tool, domain_ok, &allowlisted());
+    let mut admitted = admits_with(tool, domain_ok, &allowlisted());
+    if !admitted
+        && !domain_ok
+        && !is_hard_denied(tool)
+        && super::capabilities::ProfileCapabilities::current()
+            .is_some_and(|caps| caps.names_admittable(tool))
+    {
+        admitted = true;
+    }
     if !admitted && domain_ok {
         log::debug!("[profiles][tools] withholding `{tool}` from profiles");
     }
@@ -181,7 +197,13 @@ pub fn gate_verdict_with(tool: &str, groups: &[SaasToolGroup]) -> Result<(), Str
 
 /// [`gate_verdict_with`] for the running deployment.
 pub fn gate_verdict(tool: &str) -> Result<(), String> {
-    let verdict = gate_verdict_with(tool, &allowlisted());
+    let verdict = if super::capabilities::ProfileCapabilities::current()
+        .is_some_and(|caps| caps.authorizes_approval(tool))
+    {
+        super::host::ensure_hosted()
+    } else {
+        gate_verdict_with(tool, &allowlisted())
+    };
     log::debug!(
         "[profiles][tools] approval gate tool={tool} allowed={}",
         verdict.is_ok()

@@ -121,7 +121,7 @@ pub async fn start_if_enabled(app_config: &Config) {
 
     let onset_threshold = vad.onset_threshold;
     let mut stopped = super::capture::stop_subscription();
-    let processor = tokio::spawn(async move {
+    let processor = crate::core::runtime::spawn_scoped(async move {
         let _running = running;
         let _pump = pump;
         // The segmenter lives in the module now, so opening it can fail for

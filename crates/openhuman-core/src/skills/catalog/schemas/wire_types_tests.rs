@@ -2,7 +2,7 @@ use super::*;
 
 use serde_json::json;
 
-use crate::skills::catalog::types::{CatalogEntry, RegistryCatalogEntry};
+use {crate::skills::catalog::types::RegistryCatalogEntry, tinyskills::CatalogEntry};
 
 fn params(value: serde_json::Value) -> CatalogParams {
     serde_json::from_value(value).expect("params")

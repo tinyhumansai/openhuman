@@ -144,10 +144,10 @@ async fn flow_tool_allowed(
     slug: &str,
     connected_toolkits: Option<&[String]>,
 ) -> bool {
-    use crate::integrations::composio::ops::load_user_scope_pref;
-    use crate::integrations::composio::providers::{
+    use crate::integrations::composio::contract::{
         catalog_for_toolkit, classify_unknown, find_curated, toolkit_from_slug,
     };
+    use crate::integrations::composio::ops::load_user_scope_pref;
 
     let Some(toolkit) = toolkit_from_slug(slug) else {
         tracing::debug!(target: "flows", %slug, "[flows] tool_call curation: reject — slug has no extractable toolkit prefix");
@@ -214,7 +214,7 @@ async fn flow_tool_allowed(
 /// offline (a registry lookup) so the common cataloged-toolkit path never pays
 /// for a connected-set fetch.
 fn slug_needs_connected_set(slug: &str) -> bool {
-    use crate::integrations::composio::providers::{catalog_for_toolkit, toolkit_from_slug};
+    use crate::integrations::composio::contract::{catalog_for_toolkit, toolkit_from_slug};
     match toolkit_from_slug(slug) {
         Some(toolkit) => catalog_for_toolkit(&toolkit).is_none(),
         None => false,
@@ -262,7 +262,7 @@ async fn connected_toolkit_slugs(config: &Config) -> Option<Vec<String>> {
 /// [`CommandClass`] the autonomy-tier gate ([`enforce_node_tier_gate`])
 /// evaluates it under.
 ///
-/// Reuses [`curated_scope_for`](crate::integrations::composio::providers::curated_scope_for),
+/// Reuses [`curated_scope_for`](crate::integrations::composio::contract::curated_scope_for),
 /// the same catalog walk `composio::ops`'s `gated_tools` hints use — a
 /// registered native provider's `curated_tools()` first, then the static
 /// `catalog_for_toolkit` fallback. **Fail-safe by construction:** only a
@@ -275,7 +275,7 @@ async fn connected_toolkit_slugs(config: &Config) -> Option<Vec<String>> {
 /// (prompts under Supervised/Full, blocks under ReadOnly).
 ///
 /// Deliberately does **not** fall back to
-/// [`classify_unknown`](crate::integrations::composio::providers::classify_unknown)
+/// [`classify_unknown`](crate::integrations::composio::contract::classify_unknown)
 /// for uncurated slugs: that heuristic is tuned for the *curation*
 /// allowlist (`flow_tool_allowed`'s Path B — "is this slug even visible to
 /// the agent"), not for deciding whether a real side-effecting call skips
@@ -286,7 +286,7 @@ async fn connected_toolkit_slugs(config: &Config) -> Option<Vec<String>> {
 /// from what actually gates (a parallel re-implementation would list
 /// permissions that never prompt, or miss ones that do).
 pub(crate) async fn classify_composio_action_for_tier(slug: &str) -> CommandClass {
-    use crate::integrations::composio::providers::{curated_scope_for, ToolScope};
+    use crate::integrations::composio::contract::{curated_scope_for, ToolScope};
 
     match curated_scope_for(slug) {
         Some(ToolScope::Read) => CommandClass::Read,
@@ -506,7 +506,7 @@ pub(crate) fn reject_unsuccessful_composio_response(
 /// rather than a false "Completed".
 pub(crate) fn reject_failed_native_tool_result(
     slug: &str,
-    result: &crate::skills::types::ToolResult,
+    result: &tinytools::ToolResult,
 ) -> Result<()> {
     if !result.is_error {
         return Ok(());
@@ -540,8 +540,8 @@ pub(crate) fn reject_failed_native_tool_result(
 /// binds with the same `=nodes.<id>.item.json.<field>` shape used everywhere
 /// else. Anything else (plain text, or mixed/multiple blocks) collapses to
 /// `{ "text": <output()> }` so there is always a predictable field to bind.
-pub(crate) fn native_tool_payload(result: &crate::skills::types::ToolResult) -> Value {
-    use crate::skills::types::ToolContent;
+pub(crate) fn native_tool_payload(result: &tinytools::ToolResult) -> Value {
+    use tinytools::ToolContent;
     match result.content.as_slice() {
         [ToolContent::Json { data }] => data.clone(),
         _ => json!({ "text": result.output() }),

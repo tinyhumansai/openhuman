@@ -5,6 +5,7 @@
 //! reachable without touching the network, which is what keeps them in the unit
 //! suite instead of behind an ignore.
 
+use super::*;
 use crate::config::Config;
 use crate::modules::ops::{self, install_dir, list};
 use crate::modules::registry;
@@ -547,4 +548,26 @@ async fn disabled_modules_are_reported_then_demoted_at_product_boundaries() {
     assert!(crate::core::observability::is_module_unavailable_message(
         &reason
     ));
+}
+
+#[test]
+fn native_juice_fixture_is_resolved_without_a_unit_test_adapter() {
+    let fixture = std::path::PathBuf::from("fixture/libtinyjuice_module.so");
+    let _env = crate::config::test_env::EnvVarGuard::locked_set("TINYJUICE_TEST_MODULE", &fixture);
+    assert_eq!(
+        local_override(&Config::default(), "tinyjuice"),
+        Some(fixture)
+    );
+    let mut configured = Config::default();
+    configured
+        .modules
+        .overrides
+        .push(crate::config::schema::ModuleOverride {
+            id: "tinyjuice".into(),
+            path: "explicit/libtinyjuice_module.so".into(),
+        });
+    assert_eq!(
+        local_override(&configured, "tinyjuice"),
+        Some("explicit/libtinyjuice_module.so".into())
+    );
 }

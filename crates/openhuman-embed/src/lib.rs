@@ -66,6 +66,16 @@
 /// Complete definition accepted by [`AgentDefinitionSpec::from_base`].
 pub use openhuman_core::agent::harness::definition::AgentDefinition;
 pub use openhuman_core::agent::turn_origin::{AgentTurnOrigin, TrustedAutomationSource};
+
+/// The origin of the executing turn, with its original chat or channel route.
+///
+/// Read this inside a host tool or permission callback. The value belongs to
+/// this task's turn, so overlapping messages never replace its sender or
+/// reply target. `None` means the caller installed no origin; it grants no
+/// authority. Scheduled turns retain their existing automation origin.
+pub fn current_turn_origin() -> Option<AgentTurnOrigin> {
+    openhuman_core::core::runtime::CoreContext::current_turn_origin()
+}
 pub use openhuman_core::backend::{
     install_backend_transport, installed_backend_transport, BackendRequest, BackendTransport,
     BackendTransportError, BaseUrlPurpose, TransportProfile,
@@ -73,6 +83,8 @@ pub use openhuman_core::backend::{
 pub use openhuman_core::config::ComposioHostCredential;
 pub use openhuman_core::config::Config as RuntimeConfig;
 pub use openhuman_core::config::{SearchHostCredential, UnknownKeyedSearchProvider};
+/// The exact ambient tenant, inherited across profile turns and their scoped tasks.
+pub use openhuman_core::core::runtime::{current_tenant, NoTenant, Tenant};
 pub use openhuman_core::security::TrustedAccess;
 pub use openhuman_core::tools::toolpacks::{GroupMode, ToolGroups};
 // The seam `AgentSpec::tools` needs: the belt types, and `Tool` itself from the
@@ -80,12 +92,12 @@ pub use openhuman_core::tools::toolpacks::{GroupMode, ToolGroups};
 // would build tools of a different, incompatible type.
 pub use openhuman_core::agent::tinyagents::host::LastTurnUsage;
 pub use openhuman_core::agent::{HostTools, HostTurnTools, TurnContext};
-pub use openhuman_core::tools::{PermissionLevel, Tool, ToolExposure, ToolResult};
 pub use openhuman_core::{
     CoreBuilder, CoreRuntime, DaemonConfig, DomainSet, HostKind, ServiceSet, TokenSource,
 };
 /// Declarative execution requirements for host-owned tools, from the core's vendored contract.
 pub use tinytools::ToolPolicy;
+pub use tinytools::{PermissionLevel, Tool, ToolExposure, ToolResult};
 
 /// Live agent-turn progress for in-process embedders.
 pub mod agent_progress {
@@ -129,7 +141,7 @@ pub use permission::PermissionFuture;
 pub mod observe;
 
 pub mod process;
-#[cfg(feature = "channels")]
+#[cfg(feature = "profiles")]
 pub mod profiles;
 /// Explicit ordered fallback and truncation policies.
 pub mod routing;
@@ -175,12 +187,14 @@ pub use harness::{
 };
 #[cfg(feature = "mcp")]
 pub use harness::{HttpHeader, McpAuthConfig, McpServer};
-#[cfg(feature = "channels")]
+#[cfg(feature = "profiles")]
 pub use profiles::{
-    ChatReply, OpenError, ProfileError, ProfileEvents, ProfileHandle, ProfileId, ProfileIdMode,
-    ProfileRuntime, ProfileRuntimeBuilder, ProfileSummary, Provisioned, RelayAccepted,
-    RelayMessage, SaasConfig,
+    ChatReply, CronDelivery, CronReply, CronSweepReport, DirectProfileProvider, JobOrigin,
+    OpenError, ProfileError, ProfileEvents, ProfileHandle, ProfileId, ProfileIdMode,
+    ProfileRuntime, ProfileRuntimeBuilder, ProfileSummary, Provisioned, SaasConfig,
 };
+#[cfg(all(feature = "profiles", feature = "channels"))]
+pub use profiles::{RelayAccepted, RelayMessage};
 pub use runtime::builder::DEFAULT_MAX_AGENTS;
 /// Read-only view of a [`RuntimeBuilder`], for the layered crates' tests.
 #[doc(hidden)]
@@ -200,9 +214,11 @@ pub use runtime::{
 pub mod seams {
     pub use openhuman_core::agent::hooks::{PostTurnHook, ToolHook};
     pub use openhuman_core::agent::hooks::{ToolHookContext, ToolHookDecision, TurnContext};
-    pub use openhuman_core::agent::stop_hooks::{
-        BudgetStopHook, StopDecision, StopHook, TurnState,
-    };
+    pub use openhuman_core::agent::stop_hooks::BudgetStopHook;
+    pub use openhuman_core::agent::stop_hooks::TurnCost;
+    pub use tinyagents_harness::middleware::{StopDecision, StopHook};
+    /// Product cost snapshot passed to harness-owned stop policies.
+    pub type TurnState<'a> = tinyagents_harness::middleware::TurnState<'a, TurnCost>;
     pub use openhuman_core::core::all::{ControllerExtension, DomainGroup};
     pub use openhuman_core::core::server_launcher::{HostBoot, ServeRequest, ServerLauncher};
     pub use openhuman_core::security::SecurityPolicy;
@@ -214,9 +230,14 @@ pub mod seams {
 /// The session store port: what a host implements to keep every agent's
 /// conversations in its own database ([`RuntimeBuilder::session_store`]),
 /// with the in-memory provider and the conformance suites a host's provider
-/// is held to.
+/// is held to. The persisted record types are the harness's own serde codecs,
+/// so hosts can encode and decode stored state without duplicating wire shapes.
 pub mod session_store {
-    pub use openhuman_core::agent::session_store::{AgentStores, SessionStoreProvider};
+    pub use tinyagents_graph::todos::TodoList;
+    pub use tinyagents_harness::events::{AgentEvent, HarnessRunStatus};
+    pub use tinyagents_harness::ids::ExecutionStatus;
+    pub use tinyagents_harness::observability::AgentObservation;
+    pub use tinyagents_session::port::{AgentStores, SessionStoreProvider};
     pub use tinyagents_session::port::{
         AppendStore, InMemorySessionStores, InMemoryTranscriptLocator, InMemoryTurnStates, Store,
         TurnStates,
@@ -224,6 +245,7 @@ pub mod session_store {
     pub use tinyagents_session::testkit::conformance::{
         session_store_conformance, session_store_isolation_conformance,
     };
+    pub use tinyagents_session::transcript::import::types::{JournalMessage, SessionDescriptor};
     /// The transcript seam a provider's [`AgentStores::transcripts`] implements.
     pub use tinyagents_session::transcript::{
         SessionRef, SessionTranscript, TranscriptHistory, TranscriptLocator, TranscriptMessage,

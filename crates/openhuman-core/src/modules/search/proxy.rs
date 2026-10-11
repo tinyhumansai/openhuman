@@ -172,6 +172,16 @@ where
 /// reload of the shared `config_path` would drop them. Any other config is
 /// reloaded so a settings or login change is honoured on the next call.
 async fn current_config(config: &Config) -> Result<Config, String> {
+    if config.profile_providers.is_some() {
+        let context = crate::core::runtime::CoreContext::scoped()
+            .ok_or_else(|| "profile search requires its authenticated context".to_owned())?;
+        let current = context
+            .embedder_config()
+            .filter(|current| current.config_path == config.config_path)
+            .filter(|_| context.profile().is_some())
+            .ok_or_else(|| "profile search configuration belongs to another context".to_owned())?;
+        return Ok(current.clone());
+    }
     if config.search.is_host_pinned() {
         tracing::debug!(
             "[modules][search] host-pinned search credentials; using the agent's config"
@@ -201,13 +211,85 @@ pub async fn refresh_loaded(config: &Config) -> Result<(), String> {
 pub async fn list_tools(config: &Config) -> Result<ListToolsResponse, String> {
     let current = current_config(config).await?;
     with_module_lock(|| async {
-        proxy(&current)
+        let mut listed: ListToolsResponse = proxy(&current)
             .await?
             .call(names::methods::LIST_TOOLS, ())
             .await
-            .map_err(|error| format!("search ListTools failed: {error}"))
+            .map_err(|error| format!("search ListTools failed: {error}"))?;
+        if let Some(binding) = &current.profile_providers {
+            binding.present(&mut listed.tools);
+            let capabilities = crate::profiles::capabilities::ProfileCapabilities::current();
+            listed.tools.retain(|tool| {
+                capabilities
+                    .as_ref()
+                    .is_some_and(|capabilities| capabilities.admits(&tool.name))
+            });
+        }
+        Ok(listed)
     })
     .await
+}
+
+/// The presentation and route boundary is checked before any module load or call.
+fn canonical_request(
+    config: &Config,
+    mut request: ExecuteToolRequest,
+) -> Result<ExecuteToolRequest, String> {
+    let Some(binding) = &config.profile_providers else {
+        return Ok(request);
+    };
+    if !crate::profiles::capabilities::ProfileCapabilities::current()
+        .is_some_and(|capabilities| capabilities.admits(&request.name))
+    {
+        return Err("search tool is outside the profile capability boundary".into());
+    }
+    let canonical = binding
+        .canonical_role_name(&request.name)
+        .ok_or_else(|| "search tool was not advertised by this profile".to_owned())?;
+    if !super::configured_tool_specs(config)
+        .iter()
+        .any(|tool| tool.name == request.name)
+    {
+        return Err("search tool is unavailable in this profile".into());
+    }
+    let role = tinysearch_bus::role_for_tool(canonical)
+        .ok_or_else(|| "search alias has no canonical role".to_owned())?;
+    let module = module_config(config);
+    if let Some(provider) = request
+        .arguments
+        .get("provider")
+        .and_then(serde_json::Value::as_str)
+    {
+        if !module
+            .presentation
+            .roles
+            .get(&role)
+            .is_some_and(|order| order.iter().any(|allowed| allowed == provider))
+        {
+            return Err("search provider is outside the operator role policy".into());
+        }
+    }
+    if request
+        .arguments
+        .get("depth")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|depth| depth != "standard")
+        || [
+            "api_key",
+            "credential",
+            "endpoint",
+            "base_url",
+            "route",
+            "provider_url",
+            "backend",
+        ]
+        .into_iter()
+        .any(|key| request.arguments.get(key).is_some())
+    {
+        return Err("search arguments cannot override operator routes or capabilities".into());
+    }
+    request.name = canonical.to_owned();
+    Ok(request)
 }
 
 pub async fn execute_tool(
@@ -215,6 +297,7 @@ pub async fn execute_tool(
     request: ExecuteToolRequest,
 ) -> Result<ExecuteToolResponse, String> {
     let current = current_config(config).await?;
+    let request = canonical_request(&current, request)?;
     let tool = request.name.clone();
     with_module_lock(|| async {
         let proxy = proxy(&current).await?;

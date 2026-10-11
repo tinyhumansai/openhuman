@@ -135,15 +135,6 @@ tinyagents-harness = { path = "../../vendor/tinyagents/crates/tinyagents-harness
     "multimodal",
     "builtin-tools",
 ] }
-# Per-process directory jail (Landlock / Seatbelt / AppContainer / noop). Owned by
-# tinybox; OpenHuman keeps only the policy of when to jail (`sandbox::ops`).
-tinybox-jail = { path = "../../vendor/tinybox/crates/tinybox-jail" }
-# One-shot `docker run --rm` execution for the Docker sandbox; OpenHuman keeps
-# only the policy mapping (`sandbox::docker`).
-tinybox-docker = { path = "../../vendor/tinybox/crates/tinybox-docker" }
-# Quote-aware shell command-string scanners (`tinybox_core::shell::scan`); the
-# classification policy built on them stays in `security::policy`.
-tinybox-core = { path = "../../vendor/tinybox/crates/tinybox-core" }
 tinybox-bus = { path = "../../vendor/tinybox/crates/tinybox-bus", optional = true }
 tinyagents-definition = { path = "../../vendor/tinyagents/crates/tinyagents-definition" }
 # Live (realtime voice) agent sessions: `tinyagents-live` runs a
@@ -201,7 +192,7 @@ tinytools-std = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinyto
 #   conversion and the brain filer, source readers (with the SSRF-guarded
 #   network readers), secret/PII scrubbing and the read-only v1 importer.
 # `memory::` is the only module that names the engine side.
-tinymemory-api = { path = "../../vendor/tinymemory/crates/tinymemory-api" }
+tinymemory-api = { path = "../../vendor/tinymemory/crates/tinymemory-api", features = ["local-safety"] }
 tinymemory-tools = { path = "../../vendor/tinymemory/crates/tinymemory-tools" }
 tinymemory-integrations = { path = "../../vendor/tinymemory/crates/tinymemory-integrations", default-features = false, features = ["cortex", "brain", "sources-network", "safety", "legacy-import"] }
 # tinyconnectors-bus — the OAuth connector wire contract
@@ -259,8 +250,8 @@ tinychannels-runtime = { version = "0.1", path = "../../vendor/tinychannels/crat
 # The provider stack that IMPLEMENTS that vocabulary — Telegram, Discord,
 # Slack, IMAP, WhatsApp, the relay transport loop. Optional: it owns the
 # `reqwest` / `rusqlite` / `rustls` / `tokio-tungstenite` cohort, which a
-# workflow-only build has no use for. Enabled by `channels`; voice-only podcast
-# email executes through the separately loaded TinyChannels module.
+# workflow-only build has no use for. Enabled by `channels`; the loaded
+# TinyChannels module handles provider execution.
 tinychannels = { version = "0.1", features = ["relay-websocket"], optional = true }
 # tinybus — the message bus. Owns what `crates/openhuman-core/src/core/event_bus/` used to: the typed
 # pub/sub surface (`EventBus`, `EventHandler`, `SubscriptionHandle`), the
@@ -394,7 +385,6 @@ walkdir = "2"
 hostname = "0.4.2"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 sysinfo = { version = "0.33", default-features = false, features = ["system"] }
-lettre = { version = "0.11.22", default-features = false, features = ["builder"], optional = true }
 # HTTP server framework for the domain-owned routes (`/v1`, dictation, the MCP
 # HTTP transport). Exclusive to the default-ON `http-server`
 # feature (#5048); the JSON-RPC server that mounts them lives in
@@ -538,16 +528,10 @@ tokio-tungstenite = { version = "0.29", default-features = false, features = ["c
 # reqwest carries both backends; Linux/macOS keep rustls only.
 reqwest = { version = "0.12", default-features = false, features = ["native-tls"] }
 reqwest13 = { package = "reqwest", version = "0.13", default-features = false, features = ["native-tls"], optional = true }
-# Win32 surface for host code (e.g. atomic file replace in turn_state). The
-# AppContainer jail backend lives in `tinybox-jail` with its own windows-sys.
+# Win32 surface for host file operations (atomic replacement and safe opens).
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
-    "Win32_Security",
-    "Win32_Security_Authorization",
-    "Win32_Security_Isolation",
     "Win32_Storage_FileSystem",
-    "Win32_System_Memory",
-    "Win32_System_Threading",
 ] }
 
 [target.'cfg(not(windows))'.dependencies]
@@ -557,6 +541,7 @@ windows-sys = { version = "0.61", features = [
 tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
 
 [dev-dependencies]
+tinybox-core = { path = "../../vendor/tinybox/crates/tinybox-core" }
 # The TinyMemory reference engine (an in-memory `MemoryEngine`) and the
 # behavioural suite every engine must pass. Memory unit tests bind it as the
 # engine instead of talking to CortexDB.
@@ -636,7 +621,7 @@ storage-file = []
 # keeping them on means `cargo check` and rust-analyzer still typecheck nearly
 # all of the tree. The gates turned OFF are the ones that carry the graph —
 # web3's ethers/secp256k1 cohort, the
-# `voice`+`inference` cpal/lettre/arboard/enigo/rdev stack and
+# `voice`+`inference` cpal/arboard/enigo/rdev stack and
 # `crash-reporting`'s sentry tree. The terminal-specific
 # ratatui/crossterm cohort lives in the separate `openhuman-tui` package.
 # Turning the core gates off takes a
@@ -733,13 +718,11 @@ tinymemes = ["dep:tinymemes"]
 # tinybus never unloads one. See `crates/openhuman-core/src/modules/` before adding an entry
 # to the registry.
 modules = ["tinybus/modules", "dep:tinybox-bus"]
-# Voice + audio_toolkit domains: STT/TTS providers, the standalone dictation
-# server, always-on listening, and podcast audio generation/email delivery.
-# Default-ON — the desktop app always ships with voice. Slim / headless builds
-# opt out via `--no-default-features --features "<explicit list without voice>"`,
-# which also drops the exclusive `lettre` (podcast email) dependency. `hound`
-# used to be on that list; WAV framing moved to the `tinyvoice` module, so the
-# crate left this graph entirely rather than merely being gated. Composes with the runtime `DomainSet::voice` flag (#4796): the
+# Voice domain: STT/TTS providers, the standalone dictation
+# server, and always-on listening.
+# The desktop product enables voice explicitly; contributor defaults leave it
+# off. WAV framing moved to the `tinyvoice` module, removing the former `hound`
+# dependency. Composes with the runtime `DomainSet::voice` flag (#4796): the
 # feature narrows the compile-time surface, `DomainSet` gates it at runtime.
 # Requires `inference` (the microphone-permission probe), so enabling `voice` turns
 # `inference` on transitively.
@@ -756,9 +739,6 @@ voice = [
     # The member names and payload types the module answers with. Contract
     # only — `serde` and nothing else.
     "dep:tinyvoice-bus",
-    "dep:lettre",
-    # Podcast SMTP delivery uses the loadable Channels module. The always-on
-    # bus dependency provides its upload vocabulary without linking providers.
     # `voice::live`: live voice agent sessions over tinyagents-live.
     "dep:tinyagents-live",
 ]
@@ -822,17 +802,15 @@ flows = ["modules", "dep:tinyflows", "dep:tinyflows-catalog", "dep:tinyflows-cop
 # Composes with the runtime `DomainSet::skills` flag (#4796): the feature
 # narrows the compile-time surface, `DomainSet` gates it at runtime.
 #
-# The dep list is INTENTIONALLY EMPTY — do not "fix" it. Unlike `voice`
-# (`hound`/`lettre`), these domains have no exclusive dependencies: every crate
+# The dep list is INTENTIONALLY EMPTY — do not "fix" it. Unlike `voice`,
+# these domains have no exclusive dependencies: every crate
 # they touch (serde, serde_json, tokio, anyhow, async-trait, …) is shared with
 # always-on domains. This gate's value is tool-surface + prompt-bloat +
 # startup cost, NOT binary size.
 #
-# NOTE: `openhuman::skills::types` and `::ops_types` stay compiled even when
-# this feature is OFF — `tools::traits` re-exports `ToolResult`/`ToolContent`
-# out of `skills::types` and ~236 files consume them, so those inert serde
-# types are a type carve-out, not part of the gated behaviour. See
-# `crates/openhuman-core/src/skills/stub.rs`.
+# Workflow metadata in `openhuman::skills::ops_types` remains compiled with
+# this feature OFF; generic tool-result types come directly from tinytools.
+# Neither is part of the gated behavior. See src/skills/stub.rs.
 skills = ["tinyskills/registry"]
 # MCP domains, all under the `mcp/` family: `mcp::server` (the `openhuman mcp`
 # stdio/HTTP server exposing our tool surface), `mcp::registry` (dynamic

@@ -6,11 +6,12 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::skills::ops::{
-    CreateWorkflowParams, InstallWorkflowFromUrlParams, Workflow, WorkflowCreateInputDef,
-    WorkflowScope,
-};
 use crate::skills::ops_install::{ScanBlockedOutcome, SkillInstallOutcome};
+use {
+    crate::skills::ops::CreateWorkflowParams, crate::skills::ops::InstallWorkflowFromUrlParams,
+    crate::skills::ops::WorkflowCreateInputDef, tinyskills::Skill as Workflow,
+    tinyskills::SkillScope as WorkflowScope,
+};
 
 // ── Params ────────────────────────────────────────────────────────────────────
 

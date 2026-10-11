@@ -20,10 +20,10 @@ use crate::agent::harness::tool_result_artifacts::{
 };
 use crate::agent::tinyagents::payload_summarizer::PayloadSummarizer;
 use crate::inference::tokenjuice::generate::GenerateTicket;
-use crate::inference::tokenjuice::AgentTokenjuiceCompression;
 use tinyagents_harness::artifacts::tool_results::{
     apply_per_result_persistence, ArtifactRead, ToolResultArtifactStore,
 };
+use tinyjuice_bus::types::AgentTokenjuiceCompression;
 
 /// TinyJuice's own estimate: `ceil(characters / 4)`, not bytes. Multibyte
 /// content has more bytes than characters, so a byte-based estimate here

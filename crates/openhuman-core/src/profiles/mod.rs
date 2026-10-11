@@ -24,7 +24,9 @@
 //! [`CoreContext`]: crate::core::runtime::CoreContext
 
 pub mod background;
+pub mod capabilities;
 pub mod credentials;
+pub mod cron;
 pub mod fence;
 pub mod gateway;
 pub mod host;
@@ -45,3 +47,6 @@ pub use lease::OpenError;
 pub use registry::ProfileRegistry;
 pub use schemas::{all_profiles_controller_schemas, all_profiles_registered_controllers};
 pub use types::{ProfileId, ProfileIdMode, ProfileSummary};
+
+#[doc(hidden)]
+pub mod provider_settings;

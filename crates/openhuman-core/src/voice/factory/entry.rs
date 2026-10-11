@@ -86,7 +86,7 @@ pub fn create_stt_provider(
 ///
 /// Callers deliberately pass an empty `voice` to mean "this provider picks its
 /// own default" (`handle_voice_test_provider`, `handle_voice_reply_synthesize`,
-/// `handle_voice_tts_dispatch`, `audio_toolkit::ops`) — each of those already
+/// `handle_voice_tts_dispatch`) — each of those already
 /// guards the Piper default at its own level, and that guard is only effective
 /// if this function honours the empty string.
 pub fn create_tts_provider(

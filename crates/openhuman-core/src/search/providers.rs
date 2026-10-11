@@ -76,11 +76,17 @@ pub fn direct_configured(config: &Config, provider: &str) -> bool {
 
 /// Whether the process holds a credential the managed backend accepts.
 pub fn backend_credential_available(config: &Config) -> bool {
+    if config.profile_providers.is_some() {
+        return false;
+    }
     crate::security::credentials::session_support::resolve_backend_credential(config).is_ok()
 }
 
 /// Resolve every known provider, in catalog order.
 pub fn resolve(config: &Config) -> Vec<ResolvedProvider> {
+    if let Some(binding) = &config.profile_providers {
+        return resolve_with(&binding.effective_search(config), false);
+    }
     resolve_with(config, backend_credential_available(config))
 }
 

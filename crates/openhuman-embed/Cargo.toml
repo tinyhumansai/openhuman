@@ -31,7 +31,11 @@ skills = ["openhuman-core/skills"]
 mcp = ["openhuman-core/mcp"]
 # Also carries `process::sentry`, the shared Sentry options + before_send chain.
 crash-reporting = ["dep:sentry", "openhuman-core/crash-reporting"]
-channels = ["openhuman-core/channels"]
+# The in-process SaaS profile facade (`ProfileRuntime`). Headless: it does not
+# pull in tinychannels or axum. Relaying a platform message into a profile
+# (`ProfileHandle::relay_inbound`) is a channel transport and needs `channels`.
+profiles = []
+channels = ["profiles", "openhuman-core/channels"]
 whatsapp-web = ["openhuman-core/whatsapp-web"]
 file-logging = ["openhuman-core/file-logging"]
 scheduler-gate = ["openhuman-core/scheduler-gate"]
@@ -67,7 +71,13 @@ tinymcp-bus = { path = "../../vendor/tinymcp/crates/tinymcp-bus" }
 # The session store port (`SessionStoreProvider`) a host implements to keep
 # conversations in its own database, and the in-memory provider; same path as
 # the core's so one copy resolves.
+tinyagents-harness = { path = "../../vendor/tinyagents/crates/tinyagents-harness", default-features = false }
 tinyagents-session = { path = "../../vendor/tinyagents/crates/tinyagents-session" }
+# Native persisted todo codec exposed by the existing session-store contract.
+tinyagents-graph = { path = "../../vendor/tinyagents/crates/tinyagents-graph", default-features = false }
+# Native cancellation contract, exposed unchanged by the existing stream API.
+tinybus = { path = "../../vendor/tinybus/crates/tinybus", default-features = false }
+tinyagents-harness = { path = "../../vendor/tinyagents/crates/tinyagents-harness", default-features = false }
 # The wire request/response types `complete` converts to; same path as the
 # core's so one copy resolves.
 tinyinference-llm = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-llm" }
@@ -120,11 +130,40 @@ required-features = ["channels"]
 name = "storage"
 required-features = ["storage-sqlite"]
 
-# SaaS profiles are exposed only when the channel facade is compiled.
+# SaaS profiles need `profiles`; these two also relay platform messages, which
+# needs `channels`.
 [[test]]
 name = "saas_profiles"
 required-features = ["channels"]
 
+# Host capability regression exercises the authenticated profile facade.
+[[test]]
+name = "profile_host_capabilities"
+required-features = ["channels"]
+
+# Due agent jobs of hosted profiles run once, as their own profile.
+[[test]]
+name = "profile_direct_providers"
+required-features = ["profiles"]
+
+[[test]]
+name = "profile_system_prompt"
+required-features = ["profiles"]
+
+[[test]]
+name = "profile_cron_sweep"
+required-features = ["profiles"]
+
+# Operator-admitted cron and time tools, the iteration cap, no backend credential.
+[[test]]
+name = "profile_operator_tools"
+required-features = ["channels"]
+
+# A refused tool call must not fail a turn in a thread that already ran `cron`.
+[[test]]
+name = "profile_refused_tool_generation"
+required-features = ["channels"]
+
 [[example]]
 name = "profiles"
-required-features = ["channels"]
+required-features = ["profiles"]

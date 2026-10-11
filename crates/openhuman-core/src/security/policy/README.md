@@ -45,7 +45,7 @@ impl in [`types.rs`](./types.rs).
 | [`path_checks.rs`](./path_checks.rs) | `is_workspace_internal_path`, `is_always_forbidden`, `check_cross_profile`, `is_within_trusted_root`, `is_resolved_path_allowed[_for]`, `check_resolved_against_forbidden` |
 | [`command_checks.rs`](./command_checks.rs) | `classify_command`, `gate_decision`, `check_gated_command`, `is_command_allowed`, `command_risk_level`, `parse_declared_class`, `is_command_executor`, `split_unquoted_segments` |
 | [`enforcement.rs`](./enforcement.rs) | `can_act`, `enforce_write_tier`, `enforce_tool_operation`, `record_action`/`is_rate_limited`, `from_config`, `with_privacy_mode`, `openhuman_scratch_dir`/`ensure_openhuman_scratch_dir`, `validate_path_within_root` |
-| `tinybox_core::shell::{scan,classify,executor,env_guard}` (vendored) | Shell-parsing helpers behind the command checks: `split_unquoted_segments`, `skip_env_assignments`, `normalized_command_name`, `is_command_executor`, `classify_segment`, `has_hidden_execution`, `has_dangerous_env_prefix`, `contains_unquoted_char`, and the `CommandClass` enum (re-exported from `types.rs`) |
+| TinyBox module `CommandAnalysis` (`tinybox-bus`) | Module-produced command segments, classifications, structural flags, and literal path words; the host applies autonomy, allowlist, approval, and protected-path policy to these facts |
 
 ## Public surface
 

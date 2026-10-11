@@ -51,8 +51,6 @@ pub mod browser_task;
 mod browser_task_report;
 #[cfg(feature = "channels")]
 pub(crate) mod channel_controller;
-#[cfg(feature = "voice")]
-pub mod channel_email;
 pub(crate) mod channel_health;
 pub mod client;
 #[cfg(feature = "modules")]

@@ -32,6 +32,7 @@ mod draft_store;
 pub mod memory_tools;
 pub mod node_contracts;
 pub mod ops;
+pub(crate) mod registration;
 mod schemas;
 /// Skills this domain ships inside the binary. Needs BOTH gates: the pages
 /// teach flows authoring, and `BundledSkill` is part of the skills subsystem.
@@ -42,14 +43,7 @@ mod store;
 pub mod tinyflows;
 pub mod tools;
 
-// The saved-flow model, the cancellation registries and the format importers
-// are `tinyflows-catalog`'s, not this host's — a graph's identity, revision
-// history, runs, drafts and suggestions are the same shapes for anyone keeping
-// a library of workflows. These aliases keep the existing
-// `flows::types::…` / `flows::run_registry::…` / `flows::n8n_import::…` call
-// sites resolving unchanged while the definitions live upstream.
-pub use tinyflows_catalog::import::n8n as n8n_import;
-pub use tinyflows_catalog::{build_registry, run_registry, types};
+// Portable catalog vocabulary is imported directly from `tinyflows-catalog`.
 
 pub use schemas::{
     all_controller_schemas as all_flows_controller_schemas,
@@ -64,14 +58,10 @@ pub use schemas::{
 // live run observer (`tinyflows::observability::FlowRunObserver`, issue G2)
 // lives in the sibling `tinyflows` domain and persists each finished step onto
 // the `flow_runs` row through this function as the run executes.
-pub use node_contracts::{
-    all_node_kind_contracts, node_kind_contract, render_node_kinds_line,
-    render_node_kinds_required, ConfigField, NodeKindContract, PortSpec, NODE_KINDS,
-};
 pub use store::{kv_get, kv_set, upsert_flow_run_step};
-pub use tinyflows_catalog::{
-    DraftOrigin, Flow, FlowConnection, FlowDraft, FlowImport, FlowRevision, FlowRun, FlowRunStep,
-    FlowRunTrigger, FlowSuggestion, FlowValidation, FlowValidationError, SuggestionStatus,
+pub use {
+    node_contracts::all_node_kind_contracts, node_contracts::node_kind_contract,
+    node_contracts::render_node_kinds_line, node_contracts::render_node_kinds_required,
 };
 // Flow memory scoping (`flow:<id>` tags over memory v2) lives in
 // `memory_tools`, the sibling that owns the agent tools; the digest

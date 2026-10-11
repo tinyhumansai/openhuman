@@ -14,9 +14,8 @@
 //! helpers shared by the tools above (the common spawn path, the awaiting-user
 //! envelope, and worker thread creation), not tools themselves.
 //!
-//! All tools are re-exported through `crate::tools` (`tools/mod.rs`:
-//! `pub use crate::agent::orchestration::tools::*`), which is how the agent
-//! tool-calling loop discovers them. Execution itself goes through
+//! `agent::registration` assembles the delegation tools for the catalogue.
+//! Execution itself goes through
 //! `agent::subagent_host::run_subagent`; this module only owns the tool-call
 //! surface (schema, argument parsing, response formatting).
 

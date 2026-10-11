@@ -60,6 +60,69 @@ impl ToolDispatch<(), OpenHumanRunContext> for UseSkillDispatch {
         self.tool.clone()
     }
 
+    fn bind_call(
+        &self,
+        arguments: &Value,
+    ) -> anyhow::Result<Option<Arc<dyn ToolDispatch<(), OpenHumanRunContext>>>> {
+        let requested = arguments
+            .get("skill")
+            .and_then(Value::as_str)
+            .zip(named_tool(arguments));
+        let Some((skill, name)) = requested else {
+            // Disclosure and malformed calls stay on the outer adapter. They
+            // cannot execute a packed target.
+            return Ok(None);
+        };
+
+        let Some(tools) = self.handle.resolve_registry_for(&CATALOG, skill, name) else {
+            let result = ToolResult::error(format!(
+                "{} No tool `{name}` in skill `{skill}`. Call `use_skill {{ \"skill\": \"{skill}\" }}` to see what it contains.\n\nSkills:\n{}",
+                CATALOG.not_found_marker(),
+                CATALOG.pack_index_markdown()
+            ));
+            return Ok(Some(Arc::new(BoundUseSkillDispatch {
+                outer: self.tool.clone(),
+                inner: None,
+                inner_arguments: arguments
+                    .get("args")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({})),
+                typed: None,
+                answer: Some(result),
+            })));
+        };
+
+        let inner_arguments = arguments
+            .get("args")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
+        let Some(inner_adapter) =
+            super::tools::CanonicalSharedToolAdapter::for_name(vec![tools], name)
+                .map(|adapter| Arc::new(adapter) as Arc<dyn Tool>)
+        else {
+            // Freeze the not-found result too: a target appearing after
+            // authorization must not turn a rejected call into an execution.
+            let marker = CATALOG.not_found_marker();
+            let result =
+                ToolResult::error(format!("{marker} No tool `{name}` in the requested skill."));
+            return Ok(Some(Arc::new(BoundUseSkillDispatch {
+                outer: self.tool.clone(),
+                inner: None,
+                inner_arguments,
+                typed: None,
+                answer: Some(result),
+            })));
+        };
+        let typed = typed_dispatch_for(name, inner_adapter.clone());
+        Ok(Some(Arc::new(BoundUseSkillDispatch {
+            outer: self.tool.clone(),
+            inner: Some(inner_adapter),
+            inner_arguments,
+            typed,
+            answer: None,
+        })))
+    }
+
     async fn execute(
         &self,
         _state: &(),
@@ -129,6 +192,173 @@ impl ToolDispatch<(), OpenHumanRunContext> for UseSkillDispatch {
         let tool_context = ToolExecutionContext::from_run_context(parent, call_id);
         inner_adapter
             .execute_with_context(inner_args, options, Some(&tool_context))
+            .await
+    }
+}
+
+struct BoundUseSkillDispatch {
+    outer: Arc<dyn Tool>,
+    inner: Option<Arc<dyn Tool>>,
+    inner_arguments: Value,
+    typed: Option<Arc<dyn ToolDispatch<(), OpenHumanRunContext>>>,
+    answer: Option<ToolResult>,
+}
+
+struct BoundUseSkillTool {
+    outer: Arc<dyn Tool>,
+    inner: Option<Arc<dyn Tool>>,
+    inner_arguments: Value,
+    answer: Option<ToolResult>,
+}
+
+#[async_trait]
+impl Tool for BoundUseSkillTool {
+    fn name(&self) -> &str {
+        self.outer.name()
+    }
+
+    fn description(&self) -> &str {
+        self.outer.description()
+    }
+
+    fn parameters_schema(&self) -> Value {
+        self.outer.parameters_schema()
+    }
+
+    fn policy(&self) -> tinytools::ToolPolicy {
+        self.inner
+            .as_ref()
+            .map_or_else(|| self.outer.policy(), |tool| tool.policy())
+    }
+
+    fn supports_markdown(&self) -> bool {
+        self.inner
+            .as_ref()
+            .is_some_and(|tool| tool.supports_markdown())
+    }
+
+    fn permission_level(&self) -> tinytools::PermissionLevel {
+        self.inner.as_ref().map_or_else(
+            || self.outer.permission_level(),
+            |tool| tool.permission_level(),
+        )
+    }
+
+    fn permission_level_with_args(&self, _arguments: &Value) -> tinytools::PermissionLevel {
+        self.inner.as_ref().map_or_else(
+            || self.outer.permission_level(),
+            |tool| tool.permission_level_with_args(&self.inner_arguments),
+        )
+    }
+
+    fn external_effect_with_args(&self, _arguments: &Value) -> bool {
+        self.inner
+            .as_ref()
+            .is_some_and(|tool| tool.external_effect_with_args(&self.inner_arguments))
+    }
+
+    fn timeout_policy(&self, _arguments: &Value) -> tinytools::ToolTimeout {
+        self.inner
+            .as_ref()
+            .map_or(tinytools::ToolTimeout::Inherit, |tool| {
+                tool.timeout_policy(&self.inner_arguments)
+            })
+    }
+
+    async fn prepare_authorization(&self, _arguments: &Value) -> anyhow::Result<Option<Value>> {
+        match &self.inner {
+            Some(tool) => tool.prepare_authorization(&self.inner_arguments).await,
+            None => Ok(None),
+        }
+    }
+
+    async fn execute(&self, _arguments: Value) -> anyhow::Result<ToolResult> {
+        if let Some(answer) = &self.answer {
+            return Ok(answer.clone());
+        }
+        match &self.inner {
+            Some(tool) => tool.execute(self.inner_arguments.clone()).await,
+            None => self.outer.execute(Value::Null).await,
+        }
+    }
+
+    async fn execute_with_context(
+        &self,
+        _arguments: Value,
+        options: ToolCallOptions,
+        context: Option<&dyn tinytools::ToolRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        if let Some(answer) = &self.answer {
+            return Ok(answer.clone());
+        }
+        match &self.inner {
+            Some(tool) => {
+                tool.execute_with_context(self.inner_arguments.clone(), options, context)
+                    .await
+            }
+            None => {
+                self.outer
+                    .execute_with_context(Value::Null, options, context)
+                    .await
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl ToolDispatch<(), OpenHumanRunContext> for BoundUseSkillDispatch {
+    fn tool(&self) -> Arc<dyn Tool> {
+        Arc::new(BoundUseSkillTool {
+            outer: self.outer.clone(),
+            inner: self.inner.clone(),
+            inner_arguments: self.inner_arguments.clone(),
+            answer: self.answer.clone(),
+        })
+    }
+
+    fn output_origin(&self) -> tinyagents_harness::host::ContentOrigin {
+        self.typed
+            .as_ref()
+            .map_or(tinyagents_harness::host::ContentOrigin::Tool, |dispatch| {
+                dispatch.output_origin()
+            })
+    }
+
+    fn admission_target(&self) -> Option<(&dyn Tool, &Value)> {
+        Some((self.inner.as_deref()?, &self.inner_arguments))
+    }
+
+    async fn execute(
+        &self,
+        state: &(),
+        call_id: tinyagents_harness::CallId,
+        _arguments: Value,
+        options: ToolCallOptions,
+        parent: &RunContext<OpenHumanRunContext>,
+    ) -> anyhow::Result<ToolResult> {
+        if let Some(answer) = &self.answer {
+            return Ok(answer.clone());
+        }
+        let Some(inner) = &self.inner else {
+            return self
+                .outer
+                .execute_with_context(Value::Null, options, None)
+                .await;
+        };
+        if let Some(dispatch) = &self.typed {
+            return dispatch
+                .execute(
+                    state,
+                    call_id,
+                    self.inner_arguments.clone(),
+                    options,
+                    parent,
+                )
+                .await;
+        }
+        let context = ToolExecutionContext::from_run_context(parent, call_id);
+        inner
+            .execute_with_context(self.inner_arguments.clone(), options, Some(&context))
             .await
     }
 }

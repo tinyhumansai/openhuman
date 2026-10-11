@@ -304,7 +304,7 @@ impl Tool for RunFlowTool {
             &flow_id,
             input,
             inputs,
-            crate::flows::types::FlowRunTrigger::Rpc,
+            tinyflows_catalog::types::FlowRunTrigger::Rpc,
         )
         .await
         {

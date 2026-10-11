@@ -45,9 +45,7 @@ pub use schemas::{
 pub use host_runtime::all_local_inference_controller_schemas;
 pub use host_runtime::all_local_inference_registered_controllers;
 pub use model_context::context_window_for_model;
-pub use tinyinference_local::status::{
-    LocalAiEmbeddingResult, LocalAiSpeechResult, LocalAiStatus, LocalAiTtsResult,
-};
+use tinyinference_local::status::LocalAiStatus;
 
 /// Wire label for the local vision mode: `"ondemand"` when a vision model is
 /// configured, `"disabled"` otherwise. Mirrors TinyInference's own label: the

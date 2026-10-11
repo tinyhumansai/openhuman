@@ -1,4 +1,18 @@
 use super::*;
+
+/// Extract the materialized allowlist, failing if projection widens to wildcard.
+trait NamedToolScope {
+    fn named_tools(&self) -> Vec<String>;
+}
+
+impl NamedToolScope for tinyagents_definition::ToolScope {
+    fn named_tools(&self) -> Vec<String> {
+        match self {
+            Self::Named(names) => names.clone(),
+            Self::Wildcard => panic!("host catalogue must materialize tool scope"),
+        }
+    }
+}
 use crate::agent::registry::types::{AgentRegistryEntry, AgentRegistrySource, AgentSubagentPolicy};
 
 fn builtins() -> OpenHumanDefinitionRegistry {
@@ -40,13 +54,12 @@ fn registry_of(defs: Vec<HostAgentDefinition>) -> OpenHumanDefinitionRegistry {
 }
 
 #[test]
-fn projection_supplies_the_validated_tier_as_the_model_routing_role() {
+fn projection_preserves_the_validated_tier_and_model_routing_role() {
     for tier in [AgentTier::Chat, AgentTier::Reasoning, AgentTier::Worker] {
         let def = synthetic("tiered", tier, &[]);
-        assert_eq!(
-            registry_of(vec![def.clone()]).project(&def).role.as_deref(),
-            Some(tier.as_str())
-        );
+        let projected = registry_of(vec![def.clone()]).project(&def);
+        assert_eq!(projected.role.as_deref(), Some(tier.as_str()));
+        assert_eq!(projected.agent_tier.as_str(), tier.as_str());
     }
 }
 
@@ -133,7 +146,7 @@ async fn a_worker_parent_authorizes_nothing() {
         .await
         .expect("resolve")
         .expect("leaf exists");
-    assert_eq!(def.subagents, vec!["a_worker".to_string()]);
+    assert_eq!(def.allowed_subagent_ids(), vec!["a_worker".to_string()]);
 }
 
 #[tokio::test]
@@ -181,9 +194,9 @@ async fn orchestrator_projects_its_identity_fields() {
         .expect("resolve")
         .expect("the orchestrator is always a built-in");
     assert_eq!(def.id, "orchestrator");
-    assert!(!def.name.is_empty());
+    assert!(!def.display_name().is_empty());
     assert!(
-        !def.description.is_empty(),
+        !def.when_to_use.is_empty(),
         "description is the delegating parent's capability summary"
     );
     assert!(
@@ -191,24 +204,29 @@ async fn orchestrator_projects_its_identity_fields() {
         "the orchestrator declares delegates"
     );
     assert!(
-        !def.tools.is_empty(),
+        !def.tools.named_tools().is_empty(),
         "the orchestrator has a named tool scope"
     );
 }
 
 #[test]
-fn model_spec_maps_inherit_to_no_preference() {
-    assert_eq!(model_for(&ModelSpec::Inherit), None);
-    assert_eq!(
-        model_for(&ModelSpec::Exact("neocortex-mk1".into())),
-        Some("neocortex-mk1".to_string())
-    );
-    // Hints go through `ModelSpec::resolve`, which is the one place the
-    // `hint:{hint}` alias spelling lives.
-    assert_eq!(
-        model_for(&ModelSpec::Hint("reasoning".into())),
-        Some("hint:reasoning".to_string())
-    );
+fn projected_model_preserves_inherit_exact_and_hint_routing() {
+    use tinyagents_definition::ModelSpec as HarnessModel;
+    for (model, expected) in [
+        (ModelSpec::Inherit, HarnessModel::Inherit),
+        (
+            ModelSpec::Exact("neocortex-mk1".into()),
+            HarnessModel::Exact("neocortex-mk1".into()),
+        ),
+        (
+            ModelSpec::Hint("reasoning".into()),
+            HarnessModel::Hint("reasoning".into()),
+        ),
+    ] {
+        let mut def = synthetic("routed", AgentTier::Worker, &[]);
+        def.model = model;
+        assert_eq!(registry_of(vec![def.clone()]).project(&def).model, expected);
+    }
 }
 
 #[test]
@@ -249,7 +267,8 @@ fn an_undenied_wildcard_scope_projects_registered_tools() {
         registry_of(vec![def.clone()])
             .with_registered_tools(Arc::new(vec!["file_read".to_string()]))
             .project(&def)
-            .tools,
+            .tools
+            .named_tools(),
         vec!["file_read".to_string()]
     );
 }
@@ -262,14 +281,14 @@ fn named_tool_search_grants_deferred_tools_to_hosted_run() {
         "desktop_list_apps".to_owned(),
         "desktop_goal".to_owned(),
     ]));
-    let tools = registry.project(&with_search).tools;
+    let tools = registry.project(&with_search).tools.named_tools();
     assert!(tools.iter().any(|name| name == "tool_search"));
     assert!(tools.iter().any(|name| name == "desktop_list_apps"));
     assert!(tools.iter().any(|name| name == "desktop_goal"));
 
     let mut without_search = synthetic("no-search", AgentTier::Chat, &[]);
     without_search.tools = ToolScope::Named(vec!["file_read".to_owned()]);
-    let tools = registry.project(&without_search).tools;
+    let tools = registry.project(&without_search).tools.named_tools();
     assert!(!tools.iter().any(|name| name.starts_with("desktop_")));
 }
 
@@ -285,9 +304,18 @@ fn named_discovery_scope_authorizes_only_registered_deferred_tools() {
             "blocked_secret".into(),
         ]))
         .project(&def);
-    assert!(projected.tools.contains(&"browser_open".to_string()));
-    assert!(projected.tools.contains(&"browser".to_string()));
-    assert!(!projected.tools.contains(&"blocked_secret".to_string()));
+    assert!(projected
+        .tools
+        .named_tools()
+        .contains(&"browser_open".to_string()));
+    assert!(projected
+        .tools
+        .named_tools()
+        .contains(&"browser".to_string()));
+    assert!(!projected
+        .tools
+        .named_tools()
+        .contains(&"blocked_secret".to_string()));
 
     def.tools = ToolScope::Named(vec!["file_read".into()]);
     let without_discovery = registry_of(vec![def.clone()])
@@ -295,6 +323,7 @@ fn named_discovery_scope_authorizes_only_registered_deferred_tools() {
         .project(&def);
     assert!(!without_discovery
         .tools
+        .named_tools()
         .contains(&"browser_open".to_string()));
 }
 
@@ -319,9 +348,13 @@ fn a_wildcard_denylist_is_materialized_against_the_registered_tools() {
         ]))
         .project(&def);
 
-    assert_eq!(projected.tools, vec!["file_read".to_string()]);
+    assert_eq!(projected.tools.named_tools(), vec!["file_read".to_string()]);
     assert!(
-        !projected.tools.iter().any(|t| t == "secret_read"),
+        !projected
+            .tools
+            .named_tools()
+            .iter()
+            .any(|t| t == "secret_read"),
         "a denied tool must not survive the wildcard projection"
     );
 }
@@ -337,7 +370,7 @@ fn a_wildcard_denylist_without_registered_tools_fails_closed() {
     let projected = registry_of(vec![def.clone()]).project(&def);
 
     assert_eq!(
-        projected.tools,
+        projected.tools.named_tools(),
         vec![NO_TOOLS_SENTINEL.to_string()],
         "an unexpressible denylist must not read back as 'all tools'"
     );
@@ -352,7 +385,10 @@ fn an_explicitly_tool_less_named_scope_projects_the_no_tools_sentinel() {
     def.extra_tools = Vec::new();
 
     assert_eq!(
-        registry_of(vec![def.clone()]).project(&def).tools,
+        registry_of(vec![def.clone()])
+            .project(&def)
+            .tools
+            .named_tools(),
         vec![NO_TOOLS_SENTINEL.to_string()]
     );
 }
@@ -366,7 +402,10 @@ fn a_named_scope_emptied_by_its_denylist_projects_the_no_tools_sentinel() {
     def.disallowed_tools = vec!["example_tool".to_string()];
 
     assert_eq!(
-        registry_of(vec![def.clone()]).project(&def).tools,
+        registry_of(vec![def.clone()])
+            .project(&def)
+            .tools
+            .named_tools(),
         vec![NO_TOOLS_SENTINEL.to_string()]
     );
 }
@@ -380,7 +419,7 @@ fn named_scope_drops_denied_tools_and_keeps_extras() {
 
     let registry = registry_of(vec![def.clone()]);
     assert_eq!(
-        registry.project(&def).tools,
+        registry.project(&def).tools.named_tools(),
         vec!["file_read".to_string(), "grep".to_string()]
     );
 }
@@ -444,9 +483,10 @@ async fn an_enabled_custom_config_agent_resolves_and_lists() {
         .await
         .expect("resolve")
         .expect("an enabled custom agent is in the catalogue");
-    assert_eq!(def.name, "Finance Analyst");
-    assert_eq!(def.model.as_deref(), Some("hint:reasoning"));
-    assert_eq!(def.tools, vec!["memory_recall".to_string()]);
+    assert_eq!(def.display_name(), "Finance Analyst");
+    assert_eq!(def.model.hint().as_deref(), Some("reasoning"));
+    assert_eq!(def.model.pin(), None);
+    assert_eq!(def.tools.named_tools(), vec!["memory_recall".to_string()]);
 
     let listed = registry.list().await.expect("list");
     assert_eq!(
@@ -476,7 +516,11 @@ async fn a_harness_definition_shadows_a_same_id_config_entry() {
         .await
         .expect("resolve")
         .expect("present");
-    assert_eq!(def.name, "finance display", "harness definition must win");
+    assert_eq!(
+        def.display_name(),
+        "finance display",
+        "harness definition must win"
+    );
     assert_eq!(registry.list().await.expect("list").len(), 1);
 }
 
@@ -559,7 +603,8 @@ async fn the_sessions_own_definition_outranks_a_same_id_registry_entry() {
     // `project` maps `name` from `display_name()`, which only the caller's copy
     // sets — had the registry entry won, this would be its own display name.
     assert_eq!(
-        resolved.name, "the caller's own",
+        resolved.display_name(),
+        "the caller's own",
         "the session's own definition must win over the same-id registry entry"
     );
     // And the tier travels with it: the registry entry is Chat-tier (what the
@@ -620,7 +665,8 @@ fn named_scope_admits_the_tinyjuice_tools_a_handle_names() {
         .with_config(handle_mode_config())
         .with_registered_tools(registered)
         .project(&def)
-        .tools;
+        .tools
+        .named_tools();
     for name in [
         "juice_retrieve",
         "juice_find",
@@ -647,7 +693,8 @@ fn named_scope_skips_tinyjuice_tools_that_are_off_or_unregistered() {
         .with_config(Arc::new(off))
         .with_registered_tools(Arc::new(vec!["file_read".into(), "juice_find".into()]))
         .project(&def)
-        .tools;
+        .tools
+        .named_tools();
     assert!(!tools.contains(&"juice_find".to_string()), "{tools:?}");
 
     // Active but not registered: an allowlist entry for a tool that does not
@@ -656,7 +703,8 @@ fn named_scope_skips_tinyjuice_tools_that_are_off_or_unregistered() {
         .with_config(handle_mode_config())
         .with_registered_tools(Arc::new(vec!["file_read".into()]))
         .project(&def)
-        .tools;
+        .tools
+        .named_tools();
     assert!(!tools.contains(&"juice_find".to_string()), "{tools:?}");
 }
 
@@ -668,6 +716,7 @@ fn zero_tool_scope_stays_zero_tool_with_tinyjuice_active() {
         .with_config(handle_mode_config())
         .with_registered_tools(Arc::new(vec!["juice_find".into()]))
         .project(&def)
-        .tools;
+        .tools
+        .named_tools();
     assert!(!tools.contains(&"juice_find".to_string()), "{tools:?}");
 }

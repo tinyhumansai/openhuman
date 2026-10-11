@@ -347,7 +347,7 @@ impl OpenHumanTurnPrelude {
         // Event-driven metadata refresh keeps the steady-state hot path free
         // of the old per-turn filesystem scan.
         let latest = crate::skills::load_workflow_metadata(&self.workspace_dir);
-        let id = |workflow: &crate::skills::Workflow| {
+        let id = |workflow: &tinyskills::Skill| {
             if workflow.dir_name.is_empty() {
                 workflow.name.clone()
             } else {

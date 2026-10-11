@@ -14,7 +14,7 @@
 //! `propose_workflow` description all read the *overlaid* view via
 //! [`all_node_kind_contracts`] / [`node_kind_contract`].
 
-pub use tinyflows::catalog::{ConfigField, NodeKindContract, PortSpec, NODE_KINDS};
+use tinyflows::catalog::NodeKindContract;
 
 /// Appends this host's vendor-specific caveats to a portable tinyflows
 /// contract. One arm per kind that has host-owned facts; the rest pass through
@@ -154,7 +154,7 @@ fn apply_host_overlay(contract: NodeKindContract) -> NodeKindContract {
 }
 
 /// Every node-kind contract with this host's overlay applied, in
-/// [`NODE_KINDS`] order.
+/// [`tinyflows::catalog::NODE_KINDS`] order.
 pub fn all_node_kind_contracts() -> Vec<NodeKindContract> {
     tinyflows::catalog::all_contracts()
         .into_iter()
@@ -163,7 +163,7 @@ pub fn all_node_kind_contracts() -> Vec<NodeKindContract> {
 }
 
 /// The overlaid contract for one node kind, or `None` when `kind` is not one
-/// of [`NODE_KINDS`].
+/// of [`tinyflows::catalog::NODE_KINDS`].
 pub fn node_kind_contract(kind: &str) -> Option<NodeKindContract> {
     tinyflows::catalog::contract_for(kind).map(apply_host_overlay)
 }

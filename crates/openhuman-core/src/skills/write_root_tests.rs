@@ -2,9 +2,9 @@ use super::*;
 use crate::core::runtime::{context::CoreContext, ContextOverlay, DomainSet};
 use crate::skills::ops_create::{create_workflow_inner, CreateWorkflowParams};
 use crate::skills::ops_discover::discover_workflows;
-use crate::skills::ops_types::WorkflowScope;
 use crate::tools::toolpacks::ToolGroups;
 use std::sync::Arc;
+use tinyskills::SkillScope as WorkflowScope;
 
 fn agent_on(workspace: &Path, agent: &str) -> Arc<CoreContext> {
     let mut config = crate::config::Config::default();
@@ -23,7 +23,7 @@ fn user_workflow(name: &str) -> CreateWorkflowParams {
     }
 }
 
-fn names(workflows: &[crate::skills::Workflow]) -> Vec<String> {
+fn names(workflows: &[tinyskills::Skill]) -> Vec<String> {
     workflows
         .iter()
         .map(|workflow| workflow.name.clone())

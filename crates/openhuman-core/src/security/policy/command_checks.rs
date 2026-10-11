@@ -1,13 +1,19 @@
-use crate::util::floor_char_boundary;
 use std::path::{Path, PathBuf};
 
+#[cfg(test)]
+use super::types::CommandRiskLevel;
 use super::types::{
-    AutonomyLevel, CommandClass, CommandRiskLevel, GateDecision, SecurityPolicy,
-    POLICY_BLOCKED_MARKER,
+    AutonomyLevel, CommandClass, GateDecision, SecurityPolicy, POLICY_BLOCKED_MARKER,
 };
+#[cfg(test)]
+use crate::util::floor_char_boundary;
+#[cfg(test)]
 use tinybox_core::shell::classify::{classify_segment, has_hidden_execution};
+#[cfg(test)]
 use tinybox_core::shell::env_guard::has_dangerous_env_prefix;
+#[cfg(test)]
 use tinybox_core::shell::executor::is_command_executor;
+#[cfg(test)]
 use tinybox_core::shell::scan::{
     command_basename, contains_unquoted_char, contains_unquoted_single_ampersand,
     has_leading_env_assignment, normalized_command_name, skip_env_assignments,
@@ -15,7 +21,98 @@ use tinybox_core::shell::scan::{
 };
 
 impl SecurityPolicy {
+    /// Apply the supervised allowlist to parser facts returned by TinyBox.
+    /// The module owns shell structure; this host owns the permission policy.
+    #[cfg(feature = "modules")]
+    pub fn is_command_allowed_analysis(
+        &self,
+        analysis: &crate::modules::tinybox::contract::CommandAnalysis,
+    ) -> bool {
+        if !self.enabled {
+            return true;
+        }
+        if self.autonomy == AutonomyLevel::ReadOnly {
+            return false;
+        }
+        // Full access deliberately bypasses the supervised command allowlist.
+        if self.autonomy == AutonomyLevel::Full {
+            return true;
+        }
+        if analysis.hidden_execution
+            || analysis.expansion
+            || analysis.background
+            || analysis.redirection
+            || analysis.tee
+        {
+            return false;
+        }
+
+        let mut saw_command = false;
+        for segment in &analysis.segments {
+            if segment.command.trim().is_empty() {
+                continue;
+            }
+            saw_command = true;
+            if segment.leading_env_assignment || segment.dangerous_env_prefix || segment.executor {
+                return false;
+            }
+            let base = segment.normalized_name.as_str();
+            if base.is_empty() || !self.allowed_commands.iter().any(|allowed| allowed == base) {
+                return false;
+            }
+            if !self.is_analysis_args_safe(base, &segment.arguments) {
+                return false;
+            }
+        }
+        saw_command
+    }
+
+    /// Apply OpenHuman's shell policy to generic facts returned by TinyBox.
+    /// The module supplies parsing facts, while this host owns path checks,
+    /// autonomy tiers, and approval decisions.
+    #[cfg(feature = "modules")]
+    pub fn check_gated_command_analysis(
+        &self,
+        analysis: &crate::modules::tinybox::contract::CommandAnalysis,
+    ) -> Result<CommandClass, String> {
+        self.check_protected_path_words(&analysis.literal_words)?;
+
+        let mut class = analysis
+            .segments
+            .iter()
+            .map(|segment| match segment.class {
+                crate::modules::tinybox::contract::CommandClass::Read => CommandClass::Read,
+                crate::modules::tinybox::contract::CommandClass::Write => CommandClass::Write,
+                crate::modules::tinybox::contract::CommandClass::Network => CommandClass::Network,
+                crate::modules::tinybox::contract::CommandClass::Install => CommandClass::Install,
+                crate::modules::tinybox::contract::CommandClass::Destructive => {
+                    CommandClass::Destructive
+                }
+            })
+            .max()
+            .unwrap_or(CommandClass::Read);
+        if analysis.redirection || analysis.tee {
+            class = class.max(CommandClass::Write);
+        }
+
+        if !self.enabled {
+            return Ok(class);
+        }
+        if self.gate_decision(class) == GateDecision::Block {
+            return Err(format!(
+                "{POLICY_BLOCKED_MARKER} Security policy: read-only mode — only read commands are permitted."
+            ));
+        }
+        if self.autonomy != AutonomyLevel::Full && analysis.hidden_execution {
+            return Err(format!(
+                "{POLICY_BLOCKED_MARKER} Command blocked: hidden command execution is not allowed in this mode."
+            ));
+        }
+        Ok(class)
+    }
+
     /// Classify command risk. Any high-risk segment marks the whole command high.
+    #[cfg(test)]
     pub fn command_risk_level(&self, command: &str) -> CommandRiskLevel {
         let mut saw_medium = false;
 
@@ -127,6 +224,7 @@ impl SecurityPolicy {
     /// This is the deterministic floor the harness gate keys on; an LLM-declared
     /// category may only *raise* it (`gate = max(rust_floor, llm_declared)`),
     /// never lower it.
+    #[cfg(test)]
     pub fn classify_command(&self, command: &str) -> CommandClass {
         // A quoted heredoc body is document text, not shell. Without this the
         // splitter chops the body into "commands" and a prose line containing
@@ -142,7 +240,16 @@ impl SecurityPolicy {
             let base = normalized_command_name(base_raw);
             let args: Vec<String> = words.map(|w| w.to_ascii_lowercase()).collect();
             let joined = cmd_part.to_ascii_lowercase();
-            class = class.max(classify_segment(&base, &args, &joined));
+            let segment_class = match classify_segment(&base, &args, &joined) {
+                tinybox_core::shell::classify::CommandClass::Read => CommandClass::Read,
+                tinybox_core::shell::classify::CommandClass::Write => CommandClass::Write,
+                tinybox_core::shell::classify::CommandClass::Network => CommandClass::Network,
+                tinybox_core::shell::classify::CommandClass::Install => CommandClass::Install,
+                tinybox_core::shell::classify::CommandClass::Destructive => {
+                    CommandClass::Destructive
+                }
+            };
+            class = class.max(segment_class);
         }
         // A redirect or `tee` writes a file regardless of the base command.
         if contains_unquoted_char(command, '>')
@@ -200,6 +307,7 @@ impl SecurityPolicy {
     ///   literal command. Full is trusted and skips the structural guard.
     ///
     /// Returns the classified [`CommandClass`] on success.
+    #[cfg(test)]
     pub fn check_gated_command(&self, command: &str) -> Result<CommandClass, String> {
         let class = self.classify_command(command);
         self.check_protected_path_literals(command)?;
@@ -228,13 +336,36 @@ impl SecurityPolicy {
     /// a command, including when the autonomy policy is disabled. This is a
     /// guard for direct path arguments and source literals; arbitrary shell or
     /// interpreter code still needs a filesystem sandbox to enforce the floor.
+    #[cfg(test)]
     pub fn check_protected_path_literals(&self, input: &str) -> Result<(), String> {
-        for word in strip_quoted_heredoc_bodies(input).split(|c: char| {
-            c.is_whitespace() || matches!(c, '\'' | '"' | '(' | ')' | '[' | ']' | ',' | ';' | '=')
-        }) {
+        let words = strip_quoted_heredoc_bodies(input)
+            .split(|c: char| {
+                c.is_whitespace()
+                    || matches!(c, '\'' | '"' | '(' | ')' | '[' | ']' | ',' | ';' | '=')
+            })
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        self.check_protected_path_words(&words)
+    }
+
+    /// Refuse protected paths and unsafe path literals returned by the
+    /// execution module's command analysis. The host still owns path policy;
+    /// the module only supplies token boundaries.
+    pub fn check_protected_path_words(&self, words: &[String]) -> Result<(), String> {
+        for word in words {
             let word = word.trim_matches(|c: char| matches!(c, ':' | '<' | '>' | '&' | '|'));
             if word.is_empty() || word.contains("://") {
                 continue;
+            }
+            let candidate_path = PathBuf::from(word);
+            if word.contains('\0')
+                || candidate_path
+                    .components()
+                    .any(|component| matches!(component, std::path::Component::ParentDir))
+            {
+                return Err(format!(
+                    "{POLICY_BLOCKED_MARKER} Command references an unsafe path"
+                ));
             }
             let word = ["${HOME}", "$HOME", "%USERPROFILE%"]
                 .iter()
@@ -277,6 +408,7 @@ impl SecurityPolicy {
     }
 
     /// Validate full command execution policy (allowlist + risk gate).
+    #[cfg(test)]
     pub fn validate_command_execution(
         &self,
         command: &str,
@@ -361,6 +493,7 @@ impl SecurityPolicy {
     /// - Blocks single `&` background chaining (`&&` remains supported)
     /// - Blocks output redirections (`>`, `>>`) that could write outside workspace
     /// - Blocks dangerous arguments (e.g. `find -exec`, `git config`)
+    #[cfg(test)]
     pub fn is_command_allowed(&self, command: &str) -> bool {
         if !self.enabled {
             return true;
@@ -457,7 +590,7 @@ impl SecurityPolicy {
 
             // Validate arguments for the command
             let args: Vec<String> = words.map(|w| w.to_ascii_lowercase()).collect();
-            if !self.is_args_safe(base_cmd, &args) {
+            if is_command_executor(base_cmd) || !self.is_args_safe(base_cmd, &args) {
                 return false;
             }
         }
@@ -473,10 +606,11 @@ impl SecurityPolicy {
 
     /// Check for dangerous arguments that allow sub-command execution.
     fn is_args_safe(&self, base: &str, args: &[String]) -> bool {
+        self.is_analysis_args_safe(base, args)
+    }
+
+    fn is_analysis_args_safe(&self, base: &str, args: &[String]) -> bool {
         let base = base.to_ascii_lowercase();
-        if is_command_executor(base.as_str()) {
-            return false;
-        }
 
         match base.as_str() {
             "find" => {

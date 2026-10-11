@@ -7,10 +7,8 @@
 //! (or the iteration budget is exhausted).
 
 use std::collections::HashSet;
-use std::sync::Arc;
 use std::time::Instant;
 
-use crate::agent::harness::agent_graph::{AgentTurnRequest, AgentTurnUsage};
 use crate::agent::harness::artifact_offload::{
     effective_offload_threshold, extract_artifact_paths, new_artifact_offload,
     note_artifact_handoff, offload_oversized_result, DEFAULT_OFFLOAD_THRESHOLD_BYTES,
@@ -21,10 +19,6 @@ use crate::agent::harness::definition::{
     PromptSource, SandboxMode as AgentSandboxMode,
 };
 use crate::agent::harness::fork_context::ParentExecutionContext;
-use crate::agent::harness::{
-    spawn_depth_context::current_spawn_depth, with_current_sandbox_mode, with_spawn_depth,
-    MAX_SPAWN_DEPTH,
-};
 use crate::agent::prompts::{
     render_subagent_system_prompt_with_format, PromptContext, SubagentRenderOptions,
 };
@@ -35,7 +29,9 @@ use crate::agent::subagent_host::tool_prep::{
 use crate::agent::subagent_host::types::{
     SubagentMode, SubagentRunError, SubagentRunOptions, SubagentRunOutcome,
 };
+use crate::agent::tinyagents::budget::MAX_SPAWN_DEPTH;
 use crate::inference::provider::AGENT_TURN_MAX_OUTPUT_TOKENS;
+use tinyagents_harness::context::{current_run_depth, with_run_depth, RunConfig, RunDepth};
 use tinytools::{SandboxMode as TinyagentsSandboxMode, ToolSpec, WorkspaceDescriptor};
 use tinytools_std::file_state::with_file_state_agent_id;
 
@@ -118,7 +114,7 @@ use result_cap::apply_max_result_chars;
 pub(crate) async fn run_subagent_direct(
     definition: &AgentDefinition,
     task_prompt: &str,
-    options: SubagentRunOptions,
+    mut options: SubagentRunOptions,
 ) -> Result<SubagentRunOutcome, SubagentRunError> {
     // Unconditionally heap-allocate the entire run_subagent body so
     // every caller doesn't have to carry this future's state inline.
@@ -226,32 +222,17 @@ pub(crate) async fn run_subagent_direct(
             .clone()
             .ok_or(SubagentRunError::NoParentContext)?;
         let started = Instant::now();
-        // Typed callers carry their depth in the run context. Direct callers
-        // are scoped by `with_spawn_depth`; honor both authorities and count
-        // this child spawn exactly once.
-        let attempted_depth = options
-            .run_context
-            .spawn_depth
-            .max(current_spawn_depth().saturating_add(1));
-
-        // Synchronous pre-dispatch projection of the single depth authority
-        // (`MAX_SPAWN_DEPTH`, also fed to the crate's `RunPolicy.limits.max_depth`).
-        // This surfaces `SpawnDepthExceeded` before a provider round-trip and
-        // across the MCP process hop; the crate's `TinyAgentsError::SubAgentDepth`
-        // maps onto this same error shape for over-deep in-process runs.
-        if attempted_depth > crate::agent::tinyagents::budget::depth(&options.run_context) {
-            tracing::warn!(
-                agent_id = %definition.id,
-                task_id = %task_id,
-                attempted_depth,
-                max_depth = MAX_SPAWN_DEPTH,
-                "[subagent_host] spawn depth exceeded"
-            );
-            return Err(SubagentRunError::SpawnDepthExceeded {
-                attempted_depth,
-                max_depth: crate::agent::tinyagents::budget::depth(&options.run_context),
-            });
-        }
+        // The host carries an already-derived child depth; native and MCP
+        // callers expose their parent depth through TinyAgents' context.
+        let parent_depth = options.run_context.spawn_depth.saturating_sub(1)
+            .max(current_run_depth().map_or(0, |facts| facts.depth));
+        let max_depth = crate::agent::tinyagents::budget::depth(&options.run_context);
+        let attempted_depth = RunConfig::checked_child_depth(parent_depth, max_depth)
+            .map_err(|_| SubagentRunError::SpawnDepthExceeded {
+                attempted_depth: parent_depth.saturating_add(1),
+                max_depth,
+            })?;
+        options.run_context.spawn_depth = attempted_depth;
 
         // Runtime spawn-hierarchy (tier) gate — defense-in-depth alongside the
         // depth gate above. The loader validates *declared* `subagents` pairs
@@ -311,8 +292,8 @@ pub(crate) async fn run_subagent_direct(
             "[subagent_host] dispatching"
         );
 
-        // Install the sub-agent's declared `sandbox_mode` as the active
-        // task-local for every tool invocation inside this run.
+        // The child carrier projects the definition's sandbox mode to every
+        // tool through HostOperationContext.
         //
         // When the worker opted into git-worktree isolation, its isolated
         // checkout is carried on the `WorkspaceDescriptor` prepared below and
@@ -337,9 +318,9 @@ pub(crate) async fn run_subagent_direct(
                 "[subagent_host] worktree-isolated worker: descriptor will route acting-tool CWD"
             );
         }
-        let run_result = Box::pin(with_spawn_depth(attempted_depth, async {
+        let run_result = Box::pin(with_run_depth(RunDepth { depth: attempted_depth, max_depth }, async {
             crate::memory::scope::within_agent(&definition.id, with_file_state_agent_id(task_id.clone(), async {
-                with_current_sandbox_mode(definition.sandbox_mode, async {
+                async {
                     Box::pin(run_typed_mode(
                         definition,
                         task_prompt,
@@ -349,7 +330,7 @@ pub(crate) async fn run_subagent_direct(
                         &loaded_config,
                     ))
                     .await
-                })
+                }
                 .await
             }))
             .await
@@ -881,12 +862,6 @@ async fn run_typed_mode(
         model_vision,
         "[subagent_host] resolved sub-agent model vision capability"
     );
-    // Per-agent turn graph (issue #4249): `Default` runs the shared sub-agent
-    // graph; `Custom` hands the assembled turn to this agent's own graph runner
-    // (declared in its `graph.rs::graph()`). Every built-in agent selects
-    // `Default` today — the branch is the extension point.
-    use super::graph::AggregatedUsage;
-    use crate::agent::harness::agent_graph::AgentGraph;
     // Resolve the child transcript stem once — `{parent_chain}__{child_session_key}`
     // — so the sub-agent's raw transcript lands in `session_raw` under a filename
     // that chains the parent session (parity with the removed observer stem).
@@ -938,105 +913,44 @@ async fn run_typed_mode(
     }
 
     let (output, iterations, agg_usage, early_exit_tool, hit_cap, breaker_halt) =
-        match &definition.graph {
-            AgentGraph::Default => {
-                super::graph::run_subagent_via_graph(
-                    subagent_source.clone(),
-                    &model,
-                    temperature,
-                    &mut history,
-                    parent.all_tools.clone(),
-                    Vec::new(),
-                    filtered_specs.clone(),
-                    allowed_names,
-                    subagent_iter_cap_with_autonomous_lift(definition.effective_max_iterations()),
-                    options.run_queue.clone(),
-                    parent.on_progress.clone(),
-                    &definition.id,
-                    task_id,
-                    definition.iteration_policy == IterationPolicy::Extended,
-                    options.thread_id.clone(),
-                    options
-                        .run_context
-                        .for_subagent(definition, config.as_ref().ok().map(AsRef::as_ref)),
-                    options.worker_thread_id.clone(),
-                    parent.workspace_dir.clone(),
-                    workspace_descriptor.clone(),
-                    max_output_tokens,
-                    model_vision,
-                    &transcript_stem,
-                    // Sub-agent turns record their provider label as the literal
-                    // "subagent" (parity with the legacy observer's TurnObserver
-                    // provenance), distinguishing delegated spend from the parent's
-                    // own channel in per-thread usage reads.
-                    "subagent",
-                    // Agent-level TokenJuice profile → sub-agent context middleware
-                    // (#4466), so sub-agent tool outputs compact like the chat path.
-                    definition.effective_tokenjuice_compression(),
-                    // The spawn-wide config snapshot supplies the `[context]`
-                    // knobs the graph used to load for itself.
-                    config.as_ref().ok().map(|c| c.as_ref()),
-                )
-                .await?
-            }
-            AgentGraph::Custom(run) => {
-                let req = AgentTurnRequest {
-                    turn_model_source: subagent_source.clone(),
-                    model: model.clone(),
-                    temperature,
-                    history: std::mem::take(&mut history),
-                    parent_tools: parent.all_tools.clone(),
-                    dynamic_tools: Vec::new(),
-                    specs: filtered_specs.clone(),
-                    allowed_names,
-                    max_iterations: subagent_iter_cap_with_autonomous_lift(
-                        definition.effective_max_iterations(),
-                    ),
-                    run_queue: options.run_queue.clone(),
-                    on_progress: parent.on_progress.clone(),
-                    agent_id: definition.id.clone(),
-                    task_id: task_id.to_string(),
-                    extended_policy: definition.iteration_policy == IterationPolicy::Extended,
-                    thread_id: options.thread_id.clone(),
-                    run_context: options.run_context.clone(),
-                    worker_thread_id: options.worker_thread_id.clone(),
-                    workspace_dir: parent.workspace_dir.clone(),
-                    workspace_descriptor: workspace_descriptor.clone(),
-                    max_output_tokens,
-                    model_vision,
-                    transcript_stem: transcript_stem.clone(),
-                    provider_label: "subagent".to_string(),
-                    tokenjuice_compression: definition.effective_tokenjuice_compression(),
-                    config: config.as_ref().ok().map(Arc::clone),
-                };
-                let res = run(req).await?;
-                history = res.history;
-                let AgentTurnUsage {
-                    input_tokens,
-                    output_tokens,
-                    cached_input_tokens,
-                    charged_amount_usd,
-                } = res.usage;
-                (
-                    res.output,
-                    res.iterations,
-                    AggregatedUsage {
-                        input_tokens,
-                        output_tokens,
-                        cached_input_tokens,
-                        // A custom turn graph reports its own spend; it is
-                        // taken as that graph's charge, never re-estimated.
-                        cost: crate::agent::cost::CostTally {
-                            known_usd: charged_amount_usd,
-                            source: crate::agent::cost::CostSource::Charged,
-                        },
-                    },
-                    res.early_exit_tool,
-                    res.hit_cap,
-                    res.breaker_halt,
-                )
-            }
-        };
+        super::graph::run_subagent_via_graph(
+            subagent_source.clone(),
+            &model,
+            temperature,
+            &mut history,
+            parent.all_tools.clone(),
+            Vec::new(),
+            filtered_specs.clone(),
+            allowed_names,
+            subagent_iter_cap_with_autonomous_lift(definition.effective_max_iterations()),
+            options.run_queue.clone(),
+            parent.on_progress.clone(),
+            &definition.id,
+            task_id,
+            definition.iteration_policy == IterationPolicy::Extended,
+            options.thread_id.clone(),
+            options
+                .run_context
+                .for_subagent(definition, config.as_ref().ok().map(AsRef::as_ref)),
+            options.worker_thread_id.clone(),
+            parent.workspace_dir.clone(),
+            workspace_descriptor.clone(),
+            max_output_tokens,
+            model_vision,
+            &transcript_stem,
+            // Sub-agent turns record their provider label as the literal
+            // "subagent" (parity with the legacy observer's TurnObserver
+            // provenance), distinguishing delegated spend from the parent's
+            // own channel in per-thread usage reads.
+            "subagent",
+            // Agent-level TokenJuice profile → sub-agent context middleware
+            // (#4466), so sub-agent tool outputs compact like the chat path.
+            definition.effective_tokenjuice_compression(),
+            // The spawn-wide config snapshot supplies the `[context]`
+            // knobs the graph used to load for itself.
+            config.as_ref().ok().map(|c| c.as_ref()),
+        )
+        .await?;
 
     // Determine status: if the turn engine exited early because of
     // ask_user_clarification, checkpoint the history and return

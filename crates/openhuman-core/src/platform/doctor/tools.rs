@@ -113,6 +113,16 @@ impl Tool for DoctorModelsTool {
     }
 }
 
+/// Build this domain's tools in their persisted catalogue order.
+pub(crate) fn registered_tools(
+    config: std::sync::Arc<crate::config::Config>,
+) -> Vec<Box<dyn tinytools::Tool>> {
+    vec![
+        Box::new(DoctorHealthTool::new(config.clone())),
+        Box::new(DoctorModelsTool::new(config.clone())),
+    ]
+}
+
 #[cfg(test)]
 #[path = "tools_tests.rs"]
 mod tests;

@@ -3,9 +3,10 @@
 use std::collections::HashMap;
 
 use super::super::client::{direct_list_connections, resolve_composio_route, ComposioRoute};
-use super::super::module_client::{self as connectors, methods};
+use super::super::module_client::{self as connectors};
 use crate::config::Config;
 use crate::core::Outcome;
+use tinyconnectors_bus::names::methods;
 
 use super::super::connected_integrations::{
     fetch_connected_integrations_status, invalidate_connected_integrations_cache,

@@ -16,11 +16,11 @@ use crate::agent::prompts::{
     render_datetime, render_identity, render_tools, render_workspace, ConnectedIntegration,
     PromptContext, ToolCallFormat,
 };
-use crate::skills::ops_types::Workflow;
 use crate::tools::orchestrator_tools::sanitise_slug;
 use crate::tools::toolpacks;
 use anyhow::Result;
 use std::fmt::Write;
+use tinyskills::Skill as Workflow;
 
 const ARCHETYPE: &str = include_str!("prompt.md");
 
@@ -420,7 +420,7 @@ fn render_installed_skills(
             // chars / instruction fences) and cap so a single installed
             // skill can't bloat the prompt or smuggle routing instructions;
             // full details stay one `describe_workflow` call away.
-            crate::util::sanitize::sanitize_for_llm(&skill.description, SKILL_DESCRIPTION_CHARS)
+            tinytools_std::sanitize::sanitize_for_llm(&skill.description, SKILL_DESCRIPTION_CHARS)
                 .replace(['\n', '\t'], " ")
                 .trim()
                 .to_string()
@@ -499,7 +499,7 @@ fn format_connected_mcp_block(
         let capability = if capability_raw.is_empty() {
             String::new()
         } else {
-            crate::util::sanitize::sanitize_for_llm(capability_raw, 120)
+            tinytools_std::sanitize::sanitize_for_llm(capability_raw, 120)
                 .replace(['\n', '\t'], " ")
                 .trim()
                 .to_string()

@@ -32,7 +32,7 @@ use tinyflows::observability::{ExecutionStep, Run, RunObserver, StepStatus};
 use crate::config::Config;
 use crate::core::bus::BUS;
 use crate::core::events::DomainEvent;
-use crate::flows::{upsert_flow_run_step, FlowRunStep};
+use {crate::flows::upsert_flow_run_step, tinyflows_catalog::FlowRunStep};
 
 /// Maps a live [`StepStatus`] to the stable `"success"`/`"error"` string
 /// persisted on [`FlowRunStep::status`] and published on

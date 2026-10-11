@@ -8,13 +8,12 @@
 use async_trait::async_trait;
 use log::debug;
 
-use super::super::cloud_transcribe::{
-    transcribe_cloud, CloudTranscribeOptions, CloudTranscribeResult,
-};
+use super::super::cloud_transcribe::transcribe_cloud;
 use super::helpers::base64_decode;
 use super::traits::{SttProvider, SttResult};
 use crate::config::Config;
 use crate::core::Outcome;
+use tinyinference_voice::cloud::{CloudTranscribeOptions, CloudTranscribeResult};
 use tinyinference_voice::external_stt::{ExternalSttClient, SttApiStyle};
 
 const LOG_PREFIX: &str = "[voice-factory]";

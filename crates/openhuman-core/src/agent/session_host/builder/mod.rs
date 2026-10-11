@@ -16,6 +16,7 @@ mod host_only;
 mod host_tools;
 mod iteration_cap;
 mod permanent_tool;
+mod profile_factory;
 mod setters;
 
 pub use host_only::HostOnlyToolPolicy;

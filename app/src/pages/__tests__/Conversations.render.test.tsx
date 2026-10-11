@@ -769,7 +769,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     });
 
     expect(store?.getState().thread.selectedThreadId).toBe('t-2');
-    expect(screen.getByTestId('thread-row-t-2')).toHaveClass('bg-surface/70');
+    expect(
+      screen.getByTestId('thread-row-t-2').closest('[data-slot="aui_thread-list-item"]')
+    ).toHaveAttribute('data-active');
   });
 
   // Sidebar "New thread" button was removed in the composer flattening refactor.

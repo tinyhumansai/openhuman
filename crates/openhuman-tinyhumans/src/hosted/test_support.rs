@@ -18,6 +18,32 @@ pub fn config(tmp: &TempDir, api_url: &str) -> Config {
 
 /// Store `token` as the app-session credential for `config`.
 pub fn store_session(config: &Config, token: &str) {
+    // The core is a dependency here, so its cfg(test) plaintext keyring is
+    // unavailable. Boot the encrypted store with an isolated fixture key just
+    // as a headless host does, before the first credential operation.
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        let workspace = TempDir::new().expect("fixture keyring workspace");
+        let variables = [
+            "OPENHUMAN_KEYRING_MASTER_KEY",
+            "OPENHUMAN_KEYRING_MASTER_KEY_FILE",
+            "OPENHUMAN_KEYRING_BACKEND",
+            "OPENHUMAN_WORKSPACE",
+        ];
+        let previous = variables.map(|name| (name, std::env::var_os(name)));
+        std::env::remove_var("OPENHUMAN_KEYRING_MASTER_KEY_FILE");
+        std::env::set_var("OPENHUMAN_KEYRING_MASTER_KEY", "11".repeat(32));
+        std::env::set_var("OPENHUMAN_KEYRING_BACKEND", "encrypted_file");
+        std::env::set_var("OPENHUMAN_WORKSPACE", workspace.path());
+        let initialized = openhuman_embed::process::init_master_key();
+        for (name, value) in previous {
+            match value {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+        }
+        initialized.expect("initialize fixture master key");
+    });
     AuthService::from_config(config)
         .store_provider_token(
             APP_SESSION_PROVIDER,

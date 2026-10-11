@@ -7,11 +7,11 @@
 //! [`BackendProgressiveSender`].
 
 use super::delivery::BackendProgressiveSender;
-use super::thread_id::{derive_inbound_client_id, derive_inbound_thread_id};
 use crate::core::events::DomainEvent;
 use async_trait::async_trait;
 use std::sync::Arc;
 use tinybus::EventHandler;
+use tinychannels::channel::{derive_inbound_client_id, derive_inbound_thread_id};
 use tinychannels::delivery::progressive::{
     ProgressiveReply, EDIT_FLUSH_INTERVAL, FILLER_INTERVAL, TYPING_REFRESH_INTERVAL,
 };

@@ -2,7 +2,8 @@ use super::shell_platform::{
     command_param_description, python_utf8_env, shell_child_env, shell_description,
 };
 use crate::agent::host_runtime::RuntimeAdapter;
-use crate::security::{AuditLogger, CommandExecutionLog, GateDecision, SecurityPolicy};
+use crate::config::Config;
+use crate::security::{AuditLogger, CommandExecutionLog, SecurityPolicy};
 use async_trait::async_trait;
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -36,11 +37,53 @@ fn command_failure(code: Option<i32>, stdout: &str, stderr: &str) -> ToolResult 
     failure
 }
 
+#[cfg(feature = "modules")]
+fn docker_module_result(
+    output: crate::modules::tinybox::contract::DockerRunOutput,
+    explicit_timeout: Option<Duration>,
+) -> ToolResult {
+    let mut stdout = output.stdout;
+    let mut stderr = output.stderr;
+    if stdout.len() > MAX_OUTPUT_BYTES {
+        stdout.truncate(crate::util::floor_char_boundary(&stdout, MAX_OUTPUT_BYTES));
+        stdout.push_str("\n... [output truncated at 1MB]");
+    }
+    if stderr.len() > MAX_OUTPUT_BYTES {
+        stderr.truncate(crate::util::floor_char_boundary(&stderr, MAX_OUTPUT_BYTES));
+        stderr.push_str("\n... [stderr truncated at 1MB]");
+    }
+
+    if output.timed_out {
+        let secs = explicit_timeout
+            .map(|duration| duration.as_secs())
+            .unwrap_or(0);
+        let mut message = tool_timeout_message(secs);
+        if !stdout.is_empty() {
+            message.push_str("\n[stdout]\n");
+            message.push_str(&stdout);
+        }
+        if !stderr.is_empty() {
+            message.push_str("\n[stderr]\n");
+            message.push_str(&stderr);
+        }
+        ToolResult::error(message)
+    } else if output.exit_code == 0 {
+        if stderr.is_empty() {
+            ToolResult::success(stdout)
+        } else {
+            ToolResult::success(format!("{stdout}\n[stderr]\n{stderr}"))
+        }
+    } else {
+        command_failure(Some(output.exit_code), &stdout, &stderr)
+    }
+}
+
 /// Shell command execution tool with sandboxing
 pub struct ShellTool {
     security: Arc<SecurityPolicy>,
     runtime: Arc<dyn RuntimeAdapter>,
     audit: Arc<AuditLogger>,
+    analysis_config: Option<Arc<Config>>,
 }
 
 impl ShellTool {
@@ -53,6 +96,23 @@ impl ShellTool {
             security,
             runtime,
             audit,
+            analysis_config: None,
+        }
+    }
+
+    /// Builds a shell tool whose command facts come from the configured
+    /// TinyBox module before host authorization and execution.
+    pub fn with_config(
+        security: Arc<SecurityPolicy>,
+        runtime: Arc<dyn RuntimeAdapter>,
+        audit: Arc<AuditLogger>,
+        config: Arc<Config>,
+    ) -> Self {
+        Self {
+            security,
+            runtime,
+            audit,
+            analysis_config: Some(config),
         }
     }
 
@@ -190,17 +250,38 @@ impl Tool for ShellTool {
     /// and the structural guard are enforced in `run_with_security`.
     fn external_effect_with_args(&self, args: &serde_json::Value) -> bool {
         let command = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
-        let mut class = self.security.classify_command(command);
-        // Escalate-only LLM hint: max() so a self-declared category can raise
-        // the requirement (e.g. Write -> Destructive) but never lower it.
-        if let Some(declared) = args
-            .get("category")
-            .and_then(|v| v.as_str())
-            .and_then(SecurityPolicy::parse_declared_class)
+        // This synchronous declaration cannot consult TinyBox. Be
+        // conservative here; the host authorization gate uses the exact
+        // per-call TinyBox analysis and applies the configured tier.
+        !command.is_empty()
+    }
+
+    async fn prepare_authorization(
+        &self,
+        args: &serde_json::Value,
+    ) -> anyhow::Result<Option<serde_json::Value>> {
+        #[cfg(feature = "modules")]
         {
-            class = class.max(declared);
+            let config = self
+                .analysis_config
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("command analysis is unavailable"))?;
+            let command = args
+                .get("command")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("command analysis is unavailable"))?;
+            let analysis = crate::modules::tinybox::analyze_command(config, command.to_owned())
+                .await
+                .map_err(|_| anyhow::anyhow!("command analysis is unavailable"))?;
+            let analysis = serde_json::to_value(analysis)
+                .map_err(|_| anyhow::anyhow!("command analysis is unavailable"))?;
+            return Ok(Some(json!({ "analysis": analysis })));
         }
-        self.security.gate_decision(class) == GateDecision::Prompt
+        #[cfg(not(feature = "modules"))]
+        {
+            let _ = args;
+            Err(anyhow::anyhow!("command analysis is unavailable"))
+        }
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
@@ -277,12 +358,43 @@ impl ShellTool {
         requested_timeout: Option<u64>,
         context: Option<&dyn ToolRunContext>,
     ) -> (bool, ToolResult) {
-        // Read-only `Block` + the Option-2 structural guard. Approval for
-        // Write / Network / Destructive already happened at the harness
-        // `ApprovalGate` (see `external_effect_with_args`) before `execute()`
-        // ran; this enforces what must still hold afterwards.
-        if let Err(reason) = self.security.check_gated_command(command) {
-            return (false, ToolResult::error(reason));
+        // Revalidate facts immediately before execution. The authorization
+        // hook supplies the same module-owned parser to the harness gate; this
+        // second call keeps direct/workflow execution on the same contract and
+        // fails closed if the module disappeared after approval.
+        #[cfg(feature = "modules")]
+        if let Some(config) = self.analysis_config.as_deref() {
+            let analysis =
+                match crate::modules::tinybox::analyze_command(config, command.to_owned()).await {
+                    Ok(analysis) => analysis,
+                    Err(_) => {
+                        return (false, ToolResult::error("Command analysis is unavailable."))
+                    }
+                };
+            if let Err(reason) = self.security.check_gated_command_analysis(&analysis) {
+                return (false, ToolResult::error(reason));
+            }
+        } else {
+            #[cfg(test)]
+            if let Err(reason) = self.security.check_gated_command(command) {
+                // Unit tests exercise the standalone policy helper without
+                // booting TinyBus. Production constructors always carry the
+                // module config and never use this compatibility path.
+                return (false, ToolResult::error(reason));
+            }
+            #[cfg(not(test))]
+            return (false, ToolResult::error("Command analysis is unavailable."));
+        }
+        #[cfg(not(feature = "modules"))]
+        {
+            let _ = &self.analysis_config;
+            let _ = command;
+            #[cfg(test)]
+            if let Err(reason) = self.security.check_gated_command(command) {
+                return (false, ToolResult::error(reason));
+            }
+            #[cfg(not(test))]
+            return (false, ToolResult::error("Command analysis is unavailable."));
         }
 
         let _cwd = self.effective_action_dir_for_context(context);
@@ -328,7 +440,11 @@ impl ShellTool {
 
         // A sandboxed agent or an explicit operator backend uses the sandbox
         // execution path. Security checks above still apply.
-        let sandbox_required = match crate::sandbox::command_requires_sandbox().await {
+        let sandbox_required = match crate::sandbox::command_requires_sandbox(
+            crate::agent::tinyagents::host::run_context::sandbox_mode_for_tool(context),
+        )
+        .await
+        {
             Ok(required) => required,
             Err(err) => {
                 return (
@@ -347,6 +463,87 @@ impl ShellTool {
         // Clear the environment to prevent leaking API keys and other secrets
         // (CWE-200), then re-add only safe, functional variables.
         let action_dir = self.effective_action_dir_for_context(context);
+        #[cfg(feature = "modules")]
+        if let Some((mut request, mount_workspace)) =
+            self.runtime.build_docker_request(command, &action_dir)
+        {
+            let Some(config) = self.analysis_config.as_deref() else {
+                return (
+                    false,
+                    ToolResult::error("Docker module execution is unavailable."),
+                );
+            };
+
+            let explicit_timeout = self.explicit_timeout(requested_timeout);
+            if let Some(timeout) = explicit_timeout {
+                let timeout_ms = timeout
+                    .as_nanos()
+                    .saturating_add(999_999)
+                    .checked_div(1_000_000)
+                    .unwrap_or(0)
+                    .max(1);
+                let Ok(timeout_ms) = u64::try_from(timeout_ms) else {
+                    return (
+                        false,
+                        ToolResult::error("Docker timeout exceeds the supported limit."),
+                    );
+                };
+                if timeout_ms > crate::modules::tinybox::contract::MAX_DOCKER_RUN_TIMEOUT_MS {
+                    return (
+                        false,
+                        ToolResult::error("Docker timeout exceeds the supported limit."),
+                    );
+                }
+                request.timeout_ms = timeout_ms;
+            }
+
+            let mut env = std::collections::BTreeMap::new();
+            for (name, value) in shell_child_env(crate::tools::timeout::CommandEnvironment::var_os)
+            {
+                let Ok(value) = value.into_string() else {
+                    return (
+                        false,
+                        ToolResult::error("Docker environment contains a non-UTF-8 value."),
+                    );
+                };
+                env.insert(name.to_owned(), value);
+            }
+            for (name, value) in tinytools_std::filesystem::shell_git_env() {
+                let (Ok(name), Ok(value)) = (name.into_string(), value.into_string()) else {
+                    return (
+                        false,
+                        ToolResult::error("Docker environment contains a non-UTF-8 value."),
+                    );
+                };
+                env.insert(name, value);
+            }
+
+            let scratch_dir = crate::security::openhuman_scratch_dir();
+            if scratch_dir.is_dir() {
+                let Some(scratch_dir) = scratch_dir.to_str() else {
+                    return (
+                        false,
+                        ToolResult::error("Docker scratch directory is not valid UTF-8."),
+                    );
+                };
+                for name in ["TMPDIR", "TMP", "TEMP"] {
+                    env.insert(name.to_owned(), scratch_dir.to_owned());
+                }
+            }
+            request.env = env;
+
+            let result = if mount_workspace {
+                crate::modules::tinybox::run_docker(config, request).await
+            } else {
+                crate::modules::tinybox::run_docker_without_workspace(config, request).await
+            };
+            let result = match result {
+                Ok(output) => docker_module_result(output, explicit_timeout),
+                Err(_) => ToolResult::error("Docker module execution failed."),
+            };
+            return (true, result);
+        }
+
         let mut cmd = match self.runtime.build_shell_command(command, &action_dir) {
             Ok(cmd) => cmd,
             Err(e) => {

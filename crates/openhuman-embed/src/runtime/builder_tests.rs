@@ -197,3 +197,16 @@ fn discovered_config_refuses_every_knob_that_edits_the_boot_config() {
         );
     }
 }
+
+#[test]
+fn deferred_services_are_left_for_the_host_to_start() {
+    let cron = ServiceSet {
+        cron: true,
+        ..ServiceSet::none()
+    };
+    assert!(starts_services_on_build(cron, false));
+    assert!(!starts_services_on_build(cron, true));
+    assert!(!starts_services_on_build(ServiceSet::none(), false));
+    assert!(!RuntimeBuilder::new().defer_services);
+    assert!(RuntimeBuilder::new().defer_services().defer_services);
+}

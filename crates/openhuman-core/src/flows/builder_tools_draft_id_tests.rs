@@ -21,7 +21,7 @@ async fn cancel_flow_run_cancels_when_flow_id_matches_the_owner() {
         &flow.id,
         json!({}),
         serde_json::Map::new(),
-        crate::flows::FlowRunTrigger::Rpc,
+        tinyflows_catalog::FlowRunTrigger::Rpc,
     )
     .await
     .unwrap();
@@ -154,7 +154,7 @@ async fn validate_workflow_by_draft_id_checks_the_draft_graph() {
         None,
         "Draft".to_string(),
         valid_graph(),
-        crate::flows::DraftOrigin::Chat,
+        tinyflows_catalog::DraftOrigin::Chat,
     )
     .unwrap()
     .value;
@@ -178,7 +178,7 @@ async fn save_workflow_by_draft_id_persists_the_draft_graph_onto_the_flow() {
         Some(flow_id.clone()),
         "Draft".to_string(),
         valid_graph(),
-        crate::flows::DraftOrigin::Chat,
+        tinyflows_catalog::DraftOrigin::Chat,
     )
     .unwrap()
     .value;

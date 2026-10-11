@@ -48,7 +48,7 @@ pub const EPHEMERAL_ROUTE_SLUG: &str = "ephemeral-route";
 ///
 /// Never serialized — see the module docs. `JsonSchema` is derived only because
 /// [`Config`](crate::config::Config) derives it for the whole struct.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct EphemeralRoute {
     /// OpenAI-compatible base URL, as a `cloud_providers` endpoint would be
     /// spelled (`/chat/completions` is appended to it).
@@ -63,6 +63,19 @@ pub struct EphemeralRoute {
     /// Custom headers scoped to this endpoint, never copied to unrelated providers.
     #[serde(default)]
     pub headers: Vec<(String, String)>,
+}
+
+impl std::fmt::Debug for EphemeralRoute {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EphemeralRoute")
+            .field(
+                "endpoint",
+                &crate::inference::provider::factory::redact_endpoint(&self.endpoint),
+            )
+            .field("api_key", &"[redacted]")
+            .field("header_count", &self.headers.len())
+            .finish()
+    }
 }
 
 impl EphemeralRoute {

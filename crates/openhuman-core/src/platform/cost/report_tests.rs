@@ -228,7 +228,7 @@ fn cache_report_prices_the_uncached_premium_for_known_models() {
         true,
     )];
     let report = build_cache_report(&records, from, to, &ReportFilter::default());
-    let price = crate::platform::cost::catalog::lookup("anthropic/claude-sonnet-4-5");
+    let price = tinyagents_registry::pricing::lookup("anthropic/claude-sonnet-4-5");
     match price {
         Some(p) => assert!(
             (report.uncached_premium_usd - (p.input_per_mtok_usd - p.cached_input_per_mtok_usd))

@@ -6,13 +6,13 @@
 use crate::config::Config;
 use crate::core::events::DomainEvent;
 use crate::flows::store;
-use crate::flows::Flow;
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use tinybus::EventHandler;
 use tinyflows::model::TriggerKind;
+use tinyflows_catalog::Flow;
 
 /// Reads `trigger_kind` from a flow's trigger node config, deserializing into
 /// `tinyflows::model::TriggerKind`. Returns `None` when the flow doesn't have
@@ -146,7 +146,7 @@ impl FlowTriggerSubscriber {
             flow_id.to_string(),
             Value::Null,
             inputs,
-            crate::flows::FlowRunTrigger::Schedule,
+            tinyflows_catalog::FlowRunTrigger::Schedule,
         );
     }
 
@@ -178,7 +178,7 @@ impl FlowTriggerSubscriber {
                     flow.id.clone(),
                     payload.clone(),
                     inputs,
-                    crate::flows::FlowRunTrigger::AppEvent,
+                    tinyflows_catalog::FlowRunTrigger::AppEvent,
                 );
             }
         }
@@ -198,7 +198,7 @@ impl FlowTriggerSubscriber {
         flow_id: String,
         input: Value,
         inputs: serde_json::Map<String, Value>,
-        trigger: crate::flows::FlowRunTrigger,
+        trigger: tinyflows_catalog::FlowRunTrigger,
     ) {
         let Some(guard) = self.try_acquire_dispatch(&flow_id) else {
             tracing::debug!(target: "flows", %flow_id, "[flows] trigger: flow already running — skipping this tick");

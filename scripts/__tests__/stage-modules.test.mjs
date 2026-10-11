@@ -45,10 +45,9 @@ for (const hostKey of HOST_KEYS) {
   test(`every compiled module has one pinned ${hostKey} asset`, () => {
     const source = readRegistrySource();
     const assets = bundledAssets(source, hostKey);
-    const linux = hostKey.startsWith("ubuntu-");
-    // tinycomputer publishes no Linux build; every other module is bundled.
-    assert.equal(assets.length, parseAllList(source).length - (linux ? 1 : 0));
-    assert.equal(assets.some((a) => a.id === "tinycomputer"), !linux);
+    // Every registry module, including TinyComputer v0.11, publishes these targets.
+    assert.equal(assets.length, parseAllList(source).length);
+    assert.ok(assets.some((a) => a.id === "tinycomputer"));
     assert.equal(new Set(assets.map((asset) => asset.id)).size, assets.length);
     for (const asset of assets) {
       assert.equal(asset.hostKey, hostKey);

@@ -23,7 +23,7 @@ use tinyflows_catalog::{
 };
 
 use tinyflows_drivers::catalog::FlowCatalogDocuments;
-pub use tinyflows_sqlite::flows::{FlowUpdateError, MAX_FLOW_RUNS_PER_FLOW};
+use tinyflows_sqlite::flows::FlowUpdateError;
 
 /// The document catalog for this call when the host configured a storage
 /// backend ([`crate::storage`]), in the acting agent's scope.

@@ -15,9 +15,11 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
+#[cfg(feature = "channels")]
+use super::RelayMessage;
 use super::{
     ConversationMessageRecord, ConversationThreadSummary, Inner, ProfileError, ProfileId,
-    RelayMessage, WebChannelEvent,
+    WebChannelEvent,
 };
 use crate::call::call_in;
 use crate::error::CoreError;
@@ -27,6 +29,7 @@ const THREADS_MESSAGE_APPEND: &str = "openhuman.threads_message_append";
 const THREADS_LIST: &str = "openhuman.threads_list";
 const THREADS_MESSAGES_LIST: &str = "openhuman.threads_messages_list";
 const CHANNEL_WEB_CHAT: &str = "openhuman.channel_web_chat";
+#[cfg(feature = "channels")]
 const CHANNEL_RELAY_INBOUND: &str = "openhuman.channel_relay_inbound";
 
 /// An open profile. Every call runs under the profile's own context, as a
@@ -63,6 +66,7 @@ pub struct ChatReply {
 
 /// What `channel_relay_inbound` answered: the message was accepted (its turn
 /// runs in the background) or was a duplicate of one already recorded.
+#[cfg(feature = "channels")]
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct RelayAccepted {
     /// Whether a turn was started for it.
@@ -265,6 +269,7 @@ impl ProfileHandle {
     /// background; the reply arrives on [`events`](Self::events) as a
     /// `channel_outbound` event for the host to deliver. A message id already
     /// recorded is acknowledged as a duplicate and runs nothing.
+    #[cfg(feature = "channels")]
     pub async fn relay_inbound(
         &self,
         message: RelayMessage,

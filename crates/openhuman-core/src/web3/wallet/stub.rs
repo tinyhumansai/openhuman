@@ -187,11 +187,6 @@ pub fn solana_cluster() -> SolanaCluster {
 // Agent-tool facade (mirrors `pub mod tools`, re-exported via tools/mod.rs)
 // ---------------------------------------------------------------------------
 
-/// Empty tools module. `tools/mod.rs` glob-re-exports `wallet::tools::*`; the
-/// concrete wallet tool constructors it names are `#[cfg(feature = "web3")]`
-/// at their registration sites, so nothing is referenced here when off.
-pub mod tools {}
-
 // ---------------------------------------------------------------------------
 // Controller registration (mirrors `schemas::{all_wallet_registered_controllers,
 // all_wallet_controller_schemas}`)

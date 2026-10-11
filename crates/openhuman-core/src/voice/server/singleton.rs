@@ -6,7 +6,7 @@ use std::sync::Arc;
 use log::{info, warn};
 
 use crate::config::Config;
-use crate::voice::hotkey::ActivationMode;
+use tinyvoice_bus::hotkey::ActivationMode;
 
 use super::runtime::VoiceServer;
 use super::types::{ServerState, VoiceServerConfig};

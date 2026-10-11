@@ -177,7 +177,7 @@ fn settings_view_reports_status_roles_and_never_keys() {
     assert_eq!(provider(&view, "brave")["status"], "disabled");
     // Deep research rides on the Gemini key and is reported on the gemini row.
     assert_eq!(view["effective_roles"]["answer"], json!(["gemini", "exa"]));
-    assert_eq!(view["effective_roles"]["search"], json!(["exa"]));
+    assert_eq!(view["effective_roles"]["search"], json!(["exa", "gemini"]));
     assert!(!view.to_string().contains("secret-gemini"));
     assert!(view["providers"]
         .as_array()

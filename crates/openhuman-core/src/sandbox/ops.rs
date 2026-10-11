@@ -10,7 +10,6 @@ use super::types::{
 use crate::agent::harness::definition::SandboxMode;
 use crate::agent::platform_shell;
 use crate::config::{RuntimeConfig, SandboxBackend, SandboxConfig};
-use crate::sandbox::cwd_jail::{self, Jail, NoopBackend};
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -19,7 +18,7 @@ use std::time::Duration;
 /// Safe environment variables forwarded into sandboxed execution.
 ///
 /// This list is the *entire* environment a sandboxed child gets: both
-/// [`execute_unsandboxed`] and [`execute_local_jail`] call `env_clear()` and
+/// [`execute_unsandboxed`] and the TinyBox native jail adapter call `env_clear()` and
 /// re-forward only what is named here. Windows process-bootstrap variables are
 /// added only in the host spawn paths below; keeping them out of this policy
 /// prevents Windows paths from being passed into Linux Docker containers.
@@ -55,7 +54,7 @@ pub fn sandbox_off_value(value: Option<&str>) -> bool {
 /// Whether a command tool must use the sandbox execution path. An explicit
 /// backend in the active config is an operator requirement even when the
 /// agent definition uses the usual `SandboxMode::None` default.
-pub async fn command_requires_sandbox() -> Result<bool, String> {
+pub async fn command_requires_sandbox(sandbox_mode: Option<SandboxMode>) -> Result<bool, String> {
     if crate::core::runtime::is_saas() {
         // Every SaaS command must enter the per-user container path, including
         // language tools whose agent definition does not request a sandbox.
@@ -64,10 +63,7 @@ pub async fn command_requires_sandbox() -> Result<bool, String> {
     if sandbox_disabled_by_host() {
         return Ok(false);
     }
-    if matches!(
-        crate::agent::harness::current_sandbox_mode(),
-        Some(SandboxMode::Sandboxed)
-    ) {
+    if matches!(sandbox_mode, Some(SandboxMode::Sandboxed)) {
         return Ok(true);
     }
     let config = crate::config::ops::load_config_with_timeout().await?;
@@ -104,7 +100,8 @@ pub(crate) async fn resolve_command_policy(
         false,
     );
     if config.sandbox.enabled != Some(false) && !sandbox_disabled_by_host() {
-        apply_requested_backend(&mut policy, &config.sandbox, &config.runtime)
+        apply_requested_backend(&mut policy, &config.sandbox, &config.runtime, &config)
+            .await
             .map_err(|error| error.to_string())?;
     }
     Ok(policy)
@@ -119,7 +116,7 @@ fn sandbox_disabled_by_host() -> bool {
 ///
 /// Non-main sessions (channel, cron, remote) default to `Docker` when
 /// the mode is `Sandboxed` and Docker is configured. Local interactive
-/// sessions default to `Local` (OS-level jail via `cwd_jail`).
+/// sessions default to `Local` (the TinyBox module's native process jail).
 ///
 /// `state_dir` is the core's internal `workspace_dir`; host-side scratch such
 /// as output capture goes there instead of into `action_dir`.
@@ -211,65 +208,74 @@ pub fn resolve_sandbox_policy(
 /// depends on whether the machine has an OS jail, so on a host with Seatbelt or
 /// Landlock the noop path is never reached and a regression to "always Ready"
 /// passes unnoticed. That is exactly how the original defect survived.
-pub(crate) fn local_status_for_backend(backend_name: &str) -> SandboxStatus {
-    if backend_name == cwd_jail::NOOP_BACKEND_NAME
-        || backend_name == cwd_jail::detect::UNSUPPORTED_BACKEND_NAME
-    {
-        // The noop backend enforces nothing — it spawns the command as-is. The
-        // `unsupported` backend is what `pick_backend` answers when no OS jail
-        // is usable (no Landlock in the kernel, Windows, ...); it refuses to
-        // spawn, and `execute_local_jail` then falls back to the noop backend,
-        // so commands still run unconfined. Both are a documented passthrough
-        // rather than a failure, so `Inactive` ("backend not initialized") is
-        // the honest report, not `Error`.
-        SandboxStatus::Inactive
-    } else {
+#[cfg(any(feature = "modules", test))]
+pub(crate) fn local_status_for_jail(
+    available: bool,
+    suitable_for_untrusted_code: bool,
+) -> SandboxStatus {
+    if available && suitable_for_untrusted_code {
         SandboxStatus::Ready
+    } else {
+        SandboxStatus::Inactive
     }
 }
 
 pub async fn create_sandbox_backend(policy: &SandboxPolicy) -> SandboxBackendHandle {
+    if policy.backend != SandboxBackendKind::Docker {
+        return create_sandbox_backend_with_config(policy, &crate::config::Config::default())
+            .await
+            .unwrap_or(SandboxBackendHandle {
+                kind: policy.backend,
+                status: SandboxStatus::Error,
+                backend_id: None,
+            });
+    }
+    let config = match crate::config::ops::load_config_with_timeout().await {
+        Ok(config) => config,
+        Err(_) if policy.backend == SandboxBackendKind::Docker => {
+            return docker_error_handle();
+        }
+        Err(_) => crate::config::Config::default(),
+    };
+    create_sandbox_backend_with_config(policy, &config)
+        .await
+        .unwrap_or_else(|_| docker_error_handle())
+}
+
+/// Resolve backend status with the caller's loaded configuration.
+pub async fn create_sandbox_backend_with_config(
+    policy: &SandboxPolicy,
+    config: &crate::config::Config,
+) -> Result<SandboxBackendHandle, String> {
     match policy.backend {
-        SandboxBackendKind::None => SandboxBackendHandle {
+        SandboxBackendKind::None => Ok(SandboxBackendHandle {
             kind: SandboxBackendKind::None,
             status: SandboxStatus::Ready,
             backend_id: None,
-        },
+        }),
         SandboxBackendKind::Local => {
-            let os_backend = cwd_jail::default_backend();
-            let backend_name = os_backend.name();
-            // Derive the status from WHICH backend was chosen, not from
-            // `is_available()`.
-            //
-            // `default_backend()` is `cwd_jail::detect::pick_backend`, which
-            // already performs the availability check and substitutes
-            // `NoopBackend` when no OS jail is usable. `NoopBackend::is_available()`
-            // is unconditionally `true` — pinned as a contract by the #3235
-            // regression test — so asking it here always answered `true` and the
-            // `else` arm was unreachable. The handle therefore reported `Ready`
-            // on a host with no confinement at all, which is the one direction a
-            // sandbox status must never be wrong in: a caller that trusts it
-            // believes commands are jailed when they run unconfined.
-            //
-            // The noop backend is a documented passthrough, not a failure, so
-            // `Inactive` ("backend not initialized") is the honest report rather
-            // than `Error`. `backend_id` still carries the name for a caller that
-            // wants the specific backend.
-            let status = local_status_for_backend(backend_name);
+            let (backend_name, status) = super::native_jail::status(config).await?;
             if status == SandboxStatus::Inactive {
                 tracing::warn!(
                     backend = backend_name,
-                    "[sandbox:local] no OS jail available; commands run UNCONFINED and \
-                     the handle reports inactive"
+                    "[sandbox:local] TinyBox native jail is unavailable or below the required isolation floor"
                 );
             }
-            SandboxBackendHandle {
+            Ok(SandboxBackendHandle {
                 kind: SandboxBackendKind::Local,
                 status,
-                backend_id: Some(backend_name.to_string()),
-            }
+                backend_id: Some(backend_name),
+            })
         }
-        SandboxBackendKind::Docker => docker::docker_backend_handle().await,
+        SandboxBackendKind::Docker => docker::docker_backend_handle(config).await,
+    }
+}
+
+fn docker_error_handle() -> SandboxBackendHandle {
+    SandboxBackendHandle {
+        kind: SandboxBackendKind::Docker,
+        status: SandboxStatus::Error,
+        backend_id: None,
     }
 }
 
@@ -302,7 +308,13 @@ pub async fn execute_in_sandbox(
         if config.sandbox.enabled == Some(false) {
             false
         } else {
-            apply_requested_backend(&mut effective_policy, &config.sandbox, &config.runtime)?
+            apply_requested_backend(
+                &mut effective_policy,
+                &config.sandbox,
+                &config.runtime,
+                &config,
+            )
+            .await?
         }
     };
     let policy = &effective_policy;
@@ -323,7 +335,16 @@ pub async fn execute_in_sandbox(
         }
         SandboxBackendKind::Local => {
             crate::config::ensure_usable_cwd(working_dir)?;
-            execute_local_jail(
+            let config = match module_config {
+                Some(config) => config,
+                None => crate::config::ops::load_config_with_timeout()
+                    .await
+                    .map_err(|error| {
+                        anyhow::anyhow!("Cannot read module configuration: {error}")
+                    })?,
+            };
+            super::native_jail::execute(
+                &config,
                 policy,
                 command,
                 working_dir,
@@ -356,10 +377,11 @@ pub async fn execute_in_sandbox(
 
 /// Apply an operator-selected backend. Auto retains the caller's existing
 /// policy. None opts out only when no agent-level sandbox is required.
-pub(crate) fn apply_requested_backend(
+pub(crate) async fn apply_requested_backend(
     policy: &mut SandboxPolicy,
     sandbox: &SandboxConfig,
     runtime: &RuntimeConfig,
+    config: &crate::config::Config,
 ) -> anyhow::Result<bool> {
     match &sandbox.backend {
         SandboxBackend::Auto => Ok(false),
@@ -382,10 +404,7 @@ pub(crate) fn apply_requested_backend(
             Ok(true)
         }
         SandboxBackend::Landlock => {
-            let backend = cwd_jail::default_backend();
-            if backend.name() != "landlock" || !backend.is_available() {
-                anyhow::bail!("Landlock sandbox was explicitly requested but is unavailable");
-            }
+            super::native_jail::require_backend(config, "landlock").await?;
             if policy.backend != SandboxBackendKind::Local {
                 let grants = host_local_jail_grants(runtime);
                 policy.read_only_mounts = grants.read_only;
@@ -396,10 +415,14 @@ pub(crate) fn apply_requested_backend(
             Ok(true)
         }
         SandboxBackend::Firejail => {
-            anyhow::bail!("Firejail sandbox was explicitly requested but this build has no Firejail execution backend")
+            anyhow::bail!(
+                "Firejail sandbox was explicitly requested but this build has no Firejail execution backend"
+            )
         }
         SandboxBackend::Bubblewrap => {
-            anyhow::bail!("Bubblewrap sandbox was explicitly requested but this build has no Bubblewrap execution backend")
+            anyhow::bail!(
+                "Bubblewrap sandbox was explicitly requested but this build has no Bubblewrap execution backend"
+            )
         }
     }
 }
@@ -448,48 +471,35 @@ async fn execute_unsandboxed(
     }
 }
 
-/// Where the local jail captures command output:
-/// `<state_dir>/artifacts/sandbox-capture`. One directory per call lives under
-/// it and is removed once the output has been read.
-pub fn sandbox_capture_root(state_dir: &Path) -> PathBuf {
-    state_dir.join("artifacts").join("sandbox-capture")
-}
-
-/// Where the local jail's per-call writable scratch lives (`TMPDIR` points
-/// here): `<state_dir>/artifacts/sandbox-scratch`.
+/// Where module-owned native jailed executions create a per-call writable scratch area.
+#[cfg(feature = "modules")]
 pub fn sandbox_scratch_root(state_dir: &Path) -> PathBuf {
     state_dir.join("artifacts").join("sandbox-scratch")
 }
 
-/// A fresh per-call directory, `<root>/<uuid>`, removed with its contents on
-/// drop so every exit path (spawn failure, wait error, timeout) cleans up.
-struct CallDir {
-    path: PathBuf,
+/// A fresh per-call scratch directory, removed after the module acknowledges execution cleanup.
+#[cfg(feature = "modules")]
+pub(super) struct CallDir {
+    pub(super) path: PathBuf,
     kind: &'static str,
 }
 
+#[cfg(feature = "modules")]
 impl CallDir {
-    fn create(root: PathBuf, kind: &'static str) -> anyhow::Result<Self> {
+    pub(super) fn create(root: PathBuf, kind: &'static str) -> anyhow::Result<Self> {
         let path = root.join(uuid::Uuid::new_v4().to_string());
-        std::fs::create_dir_all(&path).map_err(|e| {
+        std::fs::create_dir_all(&path).map_err(|error| {
             anyhow::anyhow!(
-                "Failed to create sandbox {kind} dir {}: {e}",
+                "Failed to create sandbox {kind} dir {}: {error}",
                 path.display()
             )
         })?;
         tracing::debug!(dir = %path.display(), kind, "[sandbox:local] created per-call dir");
         Ok(Self { path, kind })
     }
-
-    fn stdout(&self) -> PathBuf {
-        self.path.join("stdout")
-    }
-
-    fn stderr(&self) -> PathBuf {
-        self.path.join("stderr")
-    }
 }
 
+#[cfg(feature = "modules")]
 impl Drop for CallDir {
     fn drop(&mut self) {
         match std::fs::remove_dir_all(&self.path) {
@@ -498,143 +508,13 @@ impl Drop for CallDir {
                 kind = self.kind,
                 "[sandbox:local] removed per-call dir"
             ),
-            Err(e) => tracing::warn!(
+            Err(error) => tracing::warn!(
                 dir = %self.path.display(),
                 kind = self.kind,
-                error = %e,
+                error = %error,
                 "[sandbox:local] failed to remove per-call dir"
             ),
         }
-    }
-}
-
-/// Execute via the OS-level `cwd_jail` backend (Landlock/Seatbelt/AppContainer).
-///
-/// Output capture: some OS backends (macOS Seatbelt) rebuild the command
-/// internally and don't forward piped stdio settings. We capture output
-/// by wrapping the command to redirect stdout/stderr into a fresh per-call
-/// directory under the core's state dir (never the user's project, #6961),
-/// grant the jail write access to that directory for this spawn only, and
-/// read the files back after exit.
-async fn execute_local_jail(
-    policy: &SandboxPolicy,
-    command: &str,
-    working_dir: &Path,
-    extra_env: &HashMap<OsString, OsString>,
-    timeout: Duration,
-    explicitly_requested: bool,
-) -> anyhow::Result<SandboxExecResult> {
-    let mut jail = Jail::new(&policy.workspace_root, "sandbox.agent");
-    if !policy.allow_network {
-        jail = jail.deny_net();
-    }
-    for ro in &policy.read_only_mounts {
-        jail = jail.add_read_only(ro);
-    }
-    for rw in &policy.read_write_mounts {
-        jail = jail.add_read_write(rw);
-    }
-
-    let capture = CallDir::create(sandbox_capture_root(&policy.state_dir), "capture")?;
-    jail = jail.add_read_write(&capture.path);
-    // `/tmp` is not granted, so `mktemp`, compilers and package managers get a
-    // private writable TMPDIR instead; it is removed when the call ends.
-    let scratch = CallDir::create(sandbox_scratch_root(&policy.state_dir), "scratch")?;
-    jail = jail.add_read_write(&scratch.path);
-    let stdout_file = capture.stdout();
-    let stderr_file = capture.stderr();
-    let caller_sets_tmpdir = extra_env.contains_key(std::ffi::OsStr::new("TMPDIR"));
-    let caller_sets_temp = extra_env.contains_key(std::ffi::OsStr::new("TEMP"));
-    let caller_sets_tmp = extra_env.contains_key(std::ffi::OsStr::new("TMP"));
-    // Platform-aware output-capture wrap: `{ … ; } > … 2> …` on sh/bash,
-    // trailing `> … 2> …` on cmd.exe (no brace grouping). Shell binary is
-    // picked by `platform_shell` so this path is Windows-safe (#4705).
-    let wrapped = platform_shell::wrap_with_output_redirection(command, &stdout_file, &stderr_file);
-    let mut cmd = platform_shell::build_std_command(&wrapped);
-    cmd.current_dir(working_dir);
-    cmd.env_clear();
-    for var in SANDBOX_ENV_PASSTHROUGH {
-        if let Ok(val) = std::env::var(var) {
-            if val.is_empty() {
-                anyhow::bail!("sandbox passthrough environment variable {var} is empty");
-            }
-            cmd.env(var, val);
-        }
-    }
-    platform_shell::forward_windows_bootstrap_env_std(&mut cmd)?;
-    for (k, v) in extra_env {
-        cmd.env(k, v);
-    }
-    // Keep every Windows spelling of the temporary directory inside this
-    // per-call grant. `TEMP`/`TMP` are the variables used by Windows tools;
-    // `TMPDIR` covers Unix-oriented tools running on the same host.
-    if !caller_sets_tmpdir {
-        cmd.env("TMPDIR", &scratch.path);
-    }
-    if !caller_sets_temp {
-        cmd.env("TEMP", &scratch.path);
-    }
-    if !caller_sets_tmp {
-        cmd.env("TMP", &scratch.path);
-    }
-
-    let os_backend = cwd_jail::default_backend();
-    if explicitly_requested && (os_backend.name() != "landlock" || !os_backend.is_available()) {
-        anyhow::bail!("Landlock sandbox was explicitly requested but is unavailable");
-    }
-    let spawn_result = if os_backend.is_available() {
-        cwd_jail::spawn_with(os_backend.as_ref(), &jail, cmd)
-    } else {
-        tracing::debug!("[sandbox:local] OS backend unavailable, using noop");
-        cwd_jail::spawn_with(&NoopBackend, &jail, cmd)
-    };
-
-    match spawn_result {
-        Ok(child) => {
-            let wait_result = tokio::task::spawn_blocking(move || {
-                let start = std::time::Instant::now();
-                let mut child = child;
-                loop {
-                    match child.try_wait() {
-                        Ok(Some(status)) => {
-                            return Ok((status.code().unwrap_or(-1), false));
-                        }
-                        Ok(None) => {
-                            if start.elapsed() > timeout {
-                                // The jailed command is a shell with a
-                                // pipeline behind it: signal its whole group,
-                                // then the child itself, and reap it so the
-                                // timeout report is true of every process.
-                                crate::tools::timeout::kill_process_group(child.id());
-                                let _ = child.kill();
-                                let _ = child.wait();
-                                return Ok((-1, true));
-                            }
-                            std::thread::sleep(Duration::from_millis(50));
-                        }
-                        Err(e) => return Err(e),
-                    }
-                }
-            })
-            .await??;
-
-            let stdout = std::fs::read_to_string(&stdout_file).unwrap_or_default();
-            let stderr_content = std::fs::read_to_string(&stderr_file).unwrap_or_default();
-            drop(capture);
-            drop(scratch);
-
-            Ok(SandboxExecResult {
-                exit_code: wait_result.0,
-                stdout,
-                stderr: if wait_result.1 {
-                    format!("Command timed out after {}s", timeout.as_secs())
-                } else {
-                    stderr_content
-                },
-                timed_out: wait_result.1,
-            })
-        }
-        Err(e) => anyhow::bail!("Failed to spawn jailed process: {e}"),
     }
 }
 

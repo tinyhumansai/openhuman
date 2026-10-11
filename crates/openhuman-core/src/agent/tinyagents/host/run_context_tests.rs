@@ -385,7 +385,11 @@ fn attach_parent_keeps_the_snapshot_sink_when_the_run_has_none() {
 
 #[test]
 fn child_inherits_shared_model_budget_and_narrowed_depth_limit() {
-    use crate::agent::tinyagents::budget::{Budget, CallBudget, ModelBudget, Spend, SpendLimits};
+    use {
+        crate::agent::tinyagents::budget::ModelBudget, tinyinference_llm::model::budget::Budget,
+        tinyinference_llm::model::budget::CallBudget, tinyinference_llm::model::budget::Spend,
+        tinyinference_llm::model::budget::SpendLimits,
+    };
     let ledger = Budget::new(SpendLimits {
         tokens: Some(100),
         cost_micros: None,

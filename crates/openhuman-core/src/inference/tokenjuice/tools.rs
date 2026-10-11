@@ -11,8 +11,8 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use crate::inference::tokenjuice::types::{RangeUnit, RetrieveRange};
 use tinytools::{PermissionLevel, Tool, ToolResult};
+use {tinyjuice_bus::wire::RangeUnit, tinyjuice_bus::wire::RetrieveRange};
 
 pub struct TokenjuiceRetrieveTool;
 

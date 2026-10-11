@@ -460,7 +460,7 @@ impl Tool for FlowMemoryRememberTool {
         if key.is_empty() {
             return Ok(ToolResult::error("key cannot be empty".to_string()));
         }
-        if crate::security::scrub::has_likely_secret(content) {
+        if tinymemory_integrations::safety::has_likely_secret(content) {
             tracing::warn!(
                 target: "flows",
                 key_chars = key.chars().count(),

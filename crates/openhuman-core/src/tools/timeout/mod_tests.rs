@@ -218,6 +218,16 @@ async fn a_timed_out_command_takes_its_whole_process_group_with_it() {
             gone = true;
             break;
         }
+        // A container's PID 1 may leave a killed orphan unreaped. It cannot
+        // execute side effects; use the same kernel-state rule as cleanup.
+        #[cfg(target_os = "linux")]
+        if let Ok(stat) = std::fs::read_to_string(format!("/proc/{grandchild}/stat")) {
+            let group = unsafe { libc::getpgid(grandchild) };
+            if group > 0 && !super::group_exit::is_active_member(&stat, group as u32) {
+                gone = true;
+                break;
+            }
+        }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     let _ = std::fs::remove_dir_all(&dir);

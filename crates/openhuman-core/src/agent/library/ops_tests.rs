@@ -25,7 +25,7 @@ fn definition() -> AgentDefinition {
         timeout_secs: None,
         sandbox_mode: SandboxMode::ReadOnly,
         background: false,
-        tokenjuice_compression: crate::inference::tokenjuice::AgentTokenjuiceCompression::Auto,
+        tokenjuice_compression: tinyjuice_bus::types::AgentTokenjuiceCompression::Auto,
         subagents: vec![
             SubagentEntry::AgentId("critic".to_string()),
             SubagentEntry::Skills(SkillsWildcard {
@@ -36,7 +36,6 @@ fn definition() -> AgentDefinition {
         agent_tier: AgentTier::Worker,
         searches_connected_mcp: false,
         source: DefinitionSource::Builtin,
-        graph: Default::default(),
     }
 }
 

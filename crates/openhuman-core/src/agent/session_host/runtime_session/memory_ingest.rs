@@ -7,7 +7,10 @@
 //! commit, [`OpenHumanTurnPrelude::memory_post_turn`] logs the reply with its
 //! tool calls. Both run under the session's own config, so a host binding set
 //! on a derived context (`[memory] agent_id` / `root`) is honoured, and both
-//! resolve the identity the turn runs as (`memory::scope`).
+//! resolve the identity the turn runs as (`memory::scope`). Deferred profile
+//! commits retain a weak reference to the lease-owned root context, so ending
+//! a temporary turn scope does not lose the engine binding or pin an idle
+//! profile. A retired root cannot fall back to a configured external engine.
 //!
 //! The committed turn is also published as
 //! `DomainEvent::ConversationTurnCommitted` for observers.
@@ -27,10 +30,21 @@ use crate::memory::lifecycle::hooks::{
 use crate::memory::scope::ResolvedIdentity;
 
 /// The memory side of the turn in flight, held from pre-turn to commit.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(super) struct PendingMemoryTurn {
     identity: ResolvedIdentity,
     user_index: u32,
+    // The canonical runtime can commit on a different task. Restore the
+    // authenticated profile captured at preparation, never infer it from config.
+    profile_context: ProfileMemoryContext,
+}
+
+// Missing profile authority must not be confused with an ordinary desktop turn.
+#[derive(Clone)]
+enum ProfileMemoryContext {
+    NonProfile,
+    BoundWeak(std::sync::Weak<crate::core::runtime::CoreContext>),
+    Denied,
 }
 
 /// Where the prompt's verbatim thread starts, as a user turn index, and
@@ -97,6 +111,10 @@ impl OpenHumanTurnPrelude {
         if self.omit_memory_context {
             identity.recall = false;
         }
+        let profile_context = capture_profile_context(crate::profiles::host::host().as_deref());
+        if matches!(profile_context, ProfileMemoryContext::Denied) {
+            return None;
+        }
         let user_index = hooks::user_turn_index(committed_turns);
         let (in_prompt_from, compacted) = in_prompt_window(history, committed_turns, current);
         self.mutable
@@ -105,6 +123,7 @@ impl OpenHumanTurnPrelude {
             .pending_memory_turn = Some(PendingMemoryTurn {
             identity: identity.clone(),
             user_index,
+            profile_context,
         });
         let pack = crate::memory::lifecycle::prefetch::pre_turn(
             config.clone(),
@@ -175,7 +194,8 @@ impl OpenHumanTurnPrelude {
             return;
         };
         let prelude = self.clone();
-        crate::core::runtime::spawn_scoped(async move {
+        let profile_context = pending.profile_context.clone();
+        let work = async move {
             let Some(config) = prelude.memory_config().await else {
                 return;
             };
@@ -191,7 +211,49 @@ impl OpenHumanTurnPrelude {
                 },
             )
             .await;
-        });
+        };
+        crate::core::runtime::spawn_scoped(deferred_memory_work(profile_context, work));
+    }
+}
+
+// Resolve the profile owner at preparation; a canonical commit may run after
+// the immutable turn-origin scope has ended.
+fn capture_profile_context(host: Option<&crate::profiles::ProfileHost>) -> ProfileMemoryContext {
+    let Some(context) = crate::core::runtime::CoreContext::scoped() else {
+        return if crate::core::runtime::is_saas() {
+            ProfileMemoryContext::Denied
+        } else {
+            ProfileMemoryContext::NonProfile
+        };
+    };
+    let Some(profile_id) = context.profile() else {
+        return ProfileMemoryContext::NonProfile;
+    };
+    let Some(profile) = crate::profiles::ProfileId::parse(profile_id)
+        .ok()
+        .and_then(|id| host.and_then(|host| host.get(&id)))
+    else {
+        return ProfileMemoryContext::Denied;
+    };
+    // The host owns this root for the lease's lifetime. A derived turn-origin
+    // context ends with the turn, even if its deferred commit is still queued.
+    // Keeping only a weak root cannot create an agent/context reference cycle.
+    ProfileMemoryContext::BoundWeak(Arc::downgrade(profile.context()))
+}
+
+async fn deferred_memory_work(
+    profile_context: ProfileMemoryContext,
+    work: impl std::future::Future<Output = ()>,
+) {
+    match profile_context {
+        ProfileMemoryContext::BoundWeak(context) => {
+            // A retired profile cannot fall back to a configured external engine.
+            if let Some(context) = context.upgrade() {
+                crate::core::runtime::CoreContext::scope(context, work).await;
+            }
+        }
+        ProfileMemoryContext::NonProfile => work.await,
+        ProfileMemoryContext::Denied => {}
     }
 }
 

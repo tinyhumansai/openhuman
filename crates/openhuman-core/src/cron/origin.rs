@@ -8,8 +8,11 @@
 //! external-effect tools stay gated exactly like its creator's were.
 
 use crate::agent::turn_origin::{self, AgentTurnOrigin};
-use crate::cron::{delivery_mode, CronJob, JobOrigin};
 use serde_json::Value;
+use {
+    tinyflows_schedule::types::delivery_mode, tinyflows_schedule::types::CronJob,
+    tinyflows_schedule::types::JobOrigin,
+};
 
 /// Map a live turn origin onto the origin a job created in it records.
 ///

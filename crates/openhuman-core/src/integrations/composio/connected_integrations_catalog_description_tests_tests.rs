@@ -21,7 +21,7 @@ fn falls_back_to_hardcoded_table_when_catalog_omits_toolkit() {
     let got = resolve_toolkit_description(&catalog, "gmail");
     assert_eq!(
         got,
-        crate::integrations::composio::providers::toolkit_description("gmail")
+        crate::integrations::composio::contract::toolkit_description("gmail")
     );
     assert!(!got.is_empty());
 }
@@ -34,6 +34,6 @@ fn falls_back_when_a_different_toolkit_is_catalogued() {
     catalog.insert("notion".to_string(), "Notion from catalog".to_string());
     assert_eq!(
         resolve_toolkit_description(&catalog, "gmail"),
-        crate::integrations::composio::providers::toolkit_description("gmail")
+        crate::integrations::composio::contract::toolkit_description("gmail")
     );
 }

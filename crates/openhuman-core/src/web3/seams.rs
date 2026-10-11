@@ -37,7 +37,7 @@ use crate::security::approval::APPROVAL_CHAT_CONTEXT;
 use super::client::CryptoClient;
 use super::wallet::endpoints::HostEndpoints;
 use super::wallet::transport::OpenHumanTransport;
-use super::wallet::{self, WalletChain};
+use {super::wallet, tinywallet_web3::crypto::wallet::WalletChain};
 
 const LOG_PREFIX: &str = "[web3:seams]";
 

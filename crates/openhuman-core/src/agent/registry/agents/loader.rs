@@ -9,8 +9,6 @@
 //!   -> anyhow::Result<String>` that returns the sub-agent's system
 //!   prompt body. Dynamic: may branch on available tools, user profile,
 //!   connected integrations, model hint, etc.
-//! * `graph.rs`    — optional, only for agents with a bespoke
-//!   [`AgentGraph`] runner. Agents without one use [`AgentGraph::Default`].
 //!
 //! Adding a new built-in agent = creating a new subfolder with the required
 //! metadata/prompt files, declaring the module, and appending one entry to
@@ -22,7 +20,6 @@
 //! 1. [`load_builtins`] walks [`BUILTINS`].
 //! 2. For each entry, parses `agent.toml` into an [`AgentDefinition`].
 //! 3. Replaces the (unset) `system_prompt` with `PromptSource::Dynamic(prompt_fn)`
-//!    and installs the optional `graph_fn` result as the turn graph.
 //! 4. Stamps `source = DefinitionSource::Builtin` and checks the folder id
 //!    matches the TOML `id`.
 //! 5. Returns the full `Vec<AgentDefinition>`, in the order listed in [`BUILTINS`].
@@ -32,7 +29,6 @@
 //! into the global registry, where they replace built-ins on `id`
 //! collision.
 
-use crate::agent::harness::agent_graph::AgentGraph;
 use crate::agent::harness::definition::{
     validate_tier_transition, AgentDefinition, AgentTier, DefinitionSource, PromptBuilder,
     PromptSource, SubagentEntry,
@@ -52,10 +48,6 @@ pub struct BuiltinAgent {
     /// with a populated [`crate::agent::harness::definition::PromptContext`]
     /// so the returned body can branch on runtime state.
     pub prompt_fn: PromptBuilder,
-    /// Optional turn-graph selector. `None` means [`AgentGraph::Default`].
-    /// Bespoke agents expose a `graph.rs::graph()` returning
-    /// [`AgentGraph::Custom`] and set this field to `Some(...)`.
-    pub graph_fn: Option<fn() -> AgentGraph>,
 }
 
 /// Every built-in agent, in stable display order.
@@ -66,7 +58,6 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         id: "orchestrator",
         toml: include_str!("orchestrator/agent.toml"),
         prompt_fn: super::orchestrator::prompt::build,
-        graph_fn: None,
     },
     // `planner` and `critic` are not delegable from chat (the orchestrator does
     // not list them): they exist for the `parallel_research_cross_check`
@@ -78,67 +69,56 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         id: "planner",
         toml: include_str!("planner/agent.toml"),
         prompt_fn: super::planner::prompt::build,
-        graph_fn: None,
     },
     BuiltinAgent {
         id: "critic",
         toml: include_str!("critic/agent.toml"),
         prompt_fn: super::critic::prompt::build,
-        graph_fn: None,
     },
     BuiltinAgent {
         id: "task_manager_agent",
         toml: include_str!("task_manager_agent/agent.toml"),
         prompt_fn: super::task_manager_agent::prompt::build,
-        graph_fn: None,
     },
     BuiltinAgent {
         id: "presentation_agent",
         toml: include_str!("presentation_agent/agent.toml"),
         prompt_fn: super::presentation_agent::prompt::build,
-        graph_fn: None,
     },
     BuiltinAgent {
         id: "vision_agent",
         toml: include_str!("vision_agent/agent.toml"),
         prompt_fn: super::vision_agent::prompt::build,
-        graph_fn: None,
     },
     BuiltinAgent {
         id: "image_agent",
         toml: include_str!("image_agent/agent.toml"),
         prompt_fn: super::image_agent::prompt::build,
-        graph_fn: None,
     },
     BuiltinAgent {
         id: "video_agent",
         toml: include_str!("video_agent/agent.toml"),
         prompt_fn: super::video_agent::prompt::build,
-        graph_fn: None,
     },
     BuiltinAgent {
         id: "trigger_triage",
         toml: include_str!("trigger_triage/agent.toml"),
         prompt_fn: super::trigger_triage::prompt::build,
-        graph_fn: None,
     },
     BuiltinAgent {
         id: "trigger_reactor",
         toml: include_str!("trigger_reactor/agent.toml"),
         prompt_fn: super::trigger_reactor::prompt::build,
-        graph_fn: None,
     },
     BuiltinAgent {
         id: "morning_briefing",
         toml: include_str!("morning_briefing/agent.toml"),
         prompt_fn: super::morning_briefing::prompt::build,
-        graph_fn: None,
     },
     BuiltinAgent {
         id: "summarizer",
         toml: include_str!("summarizer/agent.toml"),
         prompt_fn: super::summarizer::prompt::build,
-        graph_fn: None,
     },
     // Skill agents — `#[cfg]` rather than stub: `include_str!` embeds the
     // agent TOML from disk regardless of module gating, so the entry itself
@@ -148,7 +128,6 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         id: "skill_setup",
         toml: include_str!("../../../skills/catalog/agent/skill_setup/agent.toml"),
         prompt_fn: crate::skills::catalog::agent::skill_setup::prompt::build,
-        graph_fn: None,
     },
     // Workflow-authoring specialist (Phase 5a): builds tinyflows automation
     // graphs from natural language and returns a validated PROPOSAL — it never
@@ -160,7 +139,6 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         id: "workflow_builder",
         toml: include_str!("../../../flows/agents/workflow_builder/agent.toml"),
         prompt_fn: crate::flows::agents::workflow_builder::prompt::build,
-        graph_fn: None,
     },
     // Workflow-discovery specialist (the "Flow Scout"): reads the user's
     // memory/threads/people/connections/flows read-only and ends by calling
@@ -174,7 +152,6 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         id: "flow_discovery",
         toml: include_str!("../../../flows/agents/flow_discovery/agent.toml"),
         prompt_fn: crate::flows::agents::flow_discovery::prompt::build,
-        graph_fn: None,
     },
 ];
 
@@ -294,11 +271,6 @@ fn parse_builtin(b: &BuiltinAgent) -> Result<AgentDefinition> {
     // Install the function-driven prompt builder and stamp the source.
     def.system_prompt = PromptSource::Dynamic(b.prompt_fn);
     def.source = DefinitionSource::Builtin;
-
-    // Install the agent's turn-graph selection (issue #4249) — the runtime
-    // analogue of the prompt builder above. Default agents leave `graph_fn`
-    // unset and use `AgentGraph::Default` from `AgentDefinition`.
-    def.graph = b.graph_fn.map(|graph| graph()).unwrap_or_default();
 
     // Sanity check: file layout id must match declared TOML id. This
     // catches copy-paste mistakes where someone forgets to update the

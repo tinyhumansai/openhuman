@@ -118,21 +118,6 @@
     },
     {
       "scope": "hosts",
-      "package": "tinybox-core",
-      "reason": "Sandbox execution, shell analysis and pre-core gateways need a bus contract."
-    },
-    {
-      "scope": "hosts",
-      "package": "tinybox-jail",
-      "reason": "Sandbox execution, shell analysis and pre-core gateways need a bus contract."
-    },
-    {
-      "scope": "hosts",
-      "package": "tinybox-docker",
-      "reason": "Sandbox execution, shell analysis and pre-core gateways need a bus contract."
-    },
-    {
-      "scope": "hosts",
       "package": "tinywallet-crypto",
       "reason": "Validation, transaction construction, web3 and x402 need module operations."
     },

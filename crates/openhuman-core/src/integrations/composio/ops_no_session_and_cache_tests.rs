@@ -245,8 +245,8 @@ async fn composio_list_connections_via_mock_counts_active() {
 #[cfg(feature = "modules")]
 #[tokio::test]
 async fn composio_list_connections_drops_the_module_route_once_signed_out() {
-    use crate::integrations::composio::module_client::methods;
     use crate::modules::connectors::{last_route_is_none, proxy_without_reconcile};
+    use tinyconnectors_bus::names::methods;
 
     let _serialised = module_guard().await;
     let app = Router::new().route(

@@ -413,11 +413,11 @@ async fn list_node_kinds_tool_returns_every_kind() {
     assert!(!result.is_error, "{}", result.output());
     let parsed: Value = serde_json::from_str(&result.output()).unwrap();
     let kinds = parsed["node_kinds"].as_array().unwrap();
-    assert_eq!(kinds.len(), crate::flows::NODE_KINDS.len());
+    assert_eq!(kinds.len(), tinyflows::catalog::NODE_KINDS.len());
     // The tool must advertise the whole catalog, not a subset that happens to
     // include the kinds someone remembered to name here — a kind the engine
     // knows but this tool omits is a kind the builder agent cannot reach.
-    for kind in crate::flows::NODE_KINDS {
+    for kind in tinyflows::catalog::NODE_KINDS {
         assert!(
             kinds.iter().any(|k| k["kind"] == kind),
             "list_node_kinds omits `{kind}`"
@@ -450,9 +450,10 @@ async fn get_node_kind_contract_tool_returns_contract_and_rejects_unknown() {
     let bad = tool.execute(json!({ "kind": "nope" })).await.unwrap();
     assert!(bad.is_error);
     assert!(bad.output().contains("list_node_kinds"));
-    assert!(bad
-        .output()
-        .contains(&format!("{} valid kinds", crate::flows::NODE_KINDS.len())));
+    assert!(bad.output().contains(&format!(
+        "{} valid kinds",
+        tinyflows::catalog::NODE_KINDS.len()
+    )));
 
     let missing = tool.execute(json!({})).await.unwrap();
     assert!(missing.is_error);

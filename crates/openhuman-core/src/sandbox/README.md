@@ -6,6 +6,9 @@ spawn processes (`shell`) and the
 flows code-runner capability call into it when the agent runs in sandboxed
 mode. The core process itself always runs on the host; only the spawned
 command is confined.
+Cron shell jobs use TinyBox's supervised passthrough process lifecycle after
+host authorization; they retain host execution semantics rather than entering
+the Local jail.
 
 [`mod.rs`](./mod.rs) names three separate questions. Where a tool runs is this folder.
 Which tools are allowed is the security and tool policy
@@ -34,10 +37,9 @@ backend, execute.
                       |
        +--------------+------------------+
        v              v                  v
-     None           Local              Docker
-  host shell     tinybox-jail        tinybox_docker::OneShot
-  (env cleared)  rooted at           docker run --rm, action_dir
-                 action_dir          mounted at /workspace
+  None           Local                 Docker
+  host shell     TinyBox StartJailedExec TinyBox RunDocker
+  (env cleared)  with explicit jail     action_dir mounted at /workspace
 ```
 
 ### Resolving a policy
@@ -73,25 +75,16 @@ empty is an error. The command runs under `tools::timeout::output_or_kill`.
 
 ### The Local backend
 
-`execute_local_jail` builds a `cwd_jail::Jail` rooted at
-`policy.workspace_root`. It applies `deny_net()` when `allow_network` is false
-and adds the read-only and read-write grants from the policy. Each call then
-gets two fresh per-call directories under the core's state dir, never the
-user's project:
-
-- `sandbox_capture_root(state_dir)/<uuid>/`
-  (`<workspace_dir>/artifacts/sandbox-capture/<uuid>/{stdout,stderr}`). The
-  command is wrapped to redirect its output into these files, because some
-  backends (macOS Seatbelt) rebuild the command and drop piped stdio.
-- `sandbox_scratch_root(state_dir)/<uuid>/`, exported as `TMPDIR`, `TEMP` and
-  `TMP` unless the caller set them. `/tmp` is not granted, so this is where
-  `mktemp`, compilers and package managers write.
-
-Both are granted read-write for that spawn only and are removed on drop
-(`CallDir`), so every exit path cleans up and concurrent calls never share a
-file. The spawn goes through `cwd_jail::default_backend()`. When no OS jail is
-available it falls back to `NoopBackend`, and the command runs unconfined. On
-timeout the whole process group is killed and reaped.
+`native_jail.rs` asks the pinned TinyBox module for `JailStatus`, creates a
+module-owned `passthrough` resource rooted at `policy.workspace_root`, and
+starts the shell through `StartJailedExec`. The request carries only the
+resolved read-only/read-write grants, network policy, and a required enforced
+isolation floor. TinyBox owns the jail provider, child process, pipe capture,
+and kill/reap acknowledgement; OpenHuman reads bounded output batches and
+closes the resource after terminal cleanup. A per-call scratch directory under
+the core state dir is granted read-write and used for `TMPDIR`, `TEMP`, and
+`TMP` unless the caller supplied one. No host-local jail or unconfined fallback
+runs if the module, artifact, or requested enforcement is unavailable.
 
 A real jail (Landlock, Seatbelt) denies everything it is not told about, so
 `grants::resolve_local_jail_grants` computes what everyday commands need,
@@ -115,35 +108,38 @@ environment.
 
 ### The Docker backend
 
-`docker::docker_exec` maps the policy onto `tinybox_docker::OneShot` and runs
-it with `DockerCli::run_one_shot`. The container is `docker run --rm` with the
-host action dir mounted read-write at `/workspace`, network `none` by default,
-`--cap-drop ALL` plus any extra drops, `--security-opt no-new-privileges`, a
-read-only rootfs with `/tmp` and `/var/tmp` tmpfs mounts, memory and CPU
-limits (512 MB and 1 CPU by default), and only the passthrough env plus the
-request's env. Containers carry the label `openhuman.sandbox=true` so
-`cleanup_orphaned_containers` can kill leftovers. `validate_docker_policy`
-rejects host networking and a mount or workspace root of `/`, `/etc`,
-`/proc`, `/sys` or the Docker socket.
+`docker::docker_exec` maps the policy to TinyBox's confidential `RunDocker`
+member. TinyBox runs `docker run --rm` with the host action dir mounted
+read-write at `/workspace`, network `none` by default, `--cap-drop ALL` plus
+any extra drops, `--security-opt no-new-privileges`, a read-only rootfs with
+`/tmp` and `/var/tmp` tmpfs mounts, memory and CPU limits (512 MB and 1 CPU by
+default), and only the passthrough env plus the request's env. Containers
+carry the label `openhuman.sandbox=true`; TinyBox owns the bounded daemon status
+probe and label-scoped orphan cleanup. `validate_docker_policy` rejects host
+networking and a mount or workspace root of `/`, `/etc`, `/proc`, `/sys` or the
+Docker socket.
 
 ### Backend status
 
 `create_sandbox_backend` returns a `SandboxBackendHandle`. None is always
-`Ready`. Docker is `Ready` when the daemon answers and `Error` otherwise.
-Local derives its status from which jail backend was picked
-(`local_status_for_backend`): the `noop` and `unsupported` backends report
-`Inactive`, since neither confines anything, and anything else reports
-`Ready`. A host with no OS jail must never report `Ready`.
+`Ready`. Docker is `Ready` when the TinyBox status operation reports the daemon
+available and `Error` otherwise. A module or transport failure is surfaced by
+the status RPC rather than probed with a host-local Docker CLI.
+Local reports `Ready` only when the module says its native jail is available
+and suitable for untrusted code. Missing modules and transport errors are
+reported as errors; unavailable or insufficient isolation is `Inactive`, and
+execution refuses to run without the required provider.
 
 ## Layout
 
 | Path | What it does |
 | --- | --- |
-| [`mod.rs`](./mod.rs) | Re-exports, and `pub use tinybox_jail as cwd_jail` so host call sites have a stable path. |
+| [`mod.rs`](./mod.rs) | Sandbox module declarations and public host API. |
 | [`types.rs`](./types.rs) | `SandboxBackendKind`, `SandboxPolicy`, `DockerOverrides`, exec request and result, handle and status, `ElevatedOp`, `ELEVATED_TOOLS`. |
-| [`ops.rs`](./ops.rs) | Policy resolution, backend creation, routed execution (None and Local paths), the env allowlist, the host off switch, elevated ops. |
+| [`ops.rs`](./ops.rs) | Policy resolution, backend creation, routed execution (None and Local paths), scratch ownership, the env allowlist, the host off switch, elevated ops. |
+| [`native_jail.rs`](./native_jail.rs) | TinyBox native-jail and cron passthrough request mapping, process/output lifecycle, and fail-closed status checks. |
 | [`grants.rs`](./grants.rs) | The Local jail's filesystem grant set and its credential floor. |
-| [`docker.rs`](./docker.rs) | Policy-to-`OneShot` mapping, availability probe, orphan cleanup, Docker policy validation. |
+| [`docker.rs`](./docker.rs) | Policy-to-`RunDocker` mapping, module status/cleanup calls, Docker policy validation. |
 | [`schemas.rs`](./schemas.rs) | The `sandbox.*` controllers. |
 
 ## Key types and entry points
@@ -184,10 +180,9 @@ The settings surface (`get_sandbox_settings`, `[security.sandbox]` and
 
 ## Boundaries
 
-- The OS jail (Landlock, Seatbelt, AppContainer, noop) is `tinybox-jail` in
-  `vendor/tinybox/crates/tinybox-jail`. The one-shot container command line
-  is `tinybox-docker`. Both belong to the `tinybox` repo; this folder keeps
-  only the policy of when and how to confine.
+- The native jail and Docker providers, process ownership, and cleanup belong
+  to TinyBox and run through its loadable module. This folder owns the product
+  policy, approved grants, environment allowlist, and fail-closed module calls.
 - Permission to run a command at all, the approval gate and the path checks
   are `security/`. The autonomy policy is off by default there, so for a
   default install the sandbox and the `is_always_forbidden` floor are what
@@ -195,31 +190,32 @@ The settings surface (`get_sandbox_settings`, `[security.sandbox]` and
 - Shell construction for each platform is `agent::platform_shell`.
 - The agent's `SandboxMode` is declared in its definition
   (`agent::harness::definition`) and read per call through
-  `agent::harness::current_sandbox_mode()`.
+  the explicit agent sandbox mode supplied by the tool execution context.
 
 ## Gotchas
 
 - A resolved `SandboxBackendKind` is not a security boundary on its own. The
-  `security` path checks still apply when the backend falls back to None,
-  whether by mode, by `OPENHUMAN_SANDBOX=off`, or because Local has no usable
-  OS jail and spawns through `NoopBackend`. Check the handle's status, not the
-  kind.
+  `security` path checks still apply when the backend is None by mode or
+  `OPENHUMAN_SANDBOX=off`. Local never degrades to host execution when TinyBox
+  cannot provide the requested jail; check the handle status and surface the
+  refusal.
 - `ShellTool::run_sandboxed` (`tools/impl/system/shell.rs`) passes
   `RuntimeConfig::default()` rather than the loaded config, while the flows
   code runner passes the loaded `runtime` block. So `[runtime] kind = "docker"` and
   `[runtime.local_jail]` do not reach the shell tool's sandbox today.
 - Every current caller passes `is_remote_session = false`, so in practice
   Docker is chosen only by `[runtime] kind = "docker"`.
-- The Local backend's output and scratch directories live under
-  `workspace_dir`, which `security` treats as internal state. They exist only
-  for one call.
+- The Local backend's scratch directory lives under `workspace_dir`, which
+  `security` treats as internal state. It exists only for one call; output is
+  captured and bounded by TinyBox.
 
 ## Tests
 
 Sibling suites: [`types_tests.rs`](./types_tests.rs), [`ops_tests.rs`](./ops_tests.rs), [`grants_tests.rs`](./grants_tests.rs),
 [`schemas_tests.rs`](./schemas_tests.rs), [`docker_tests.rs`](./docker_tests.rs) and [`docker_exec_tests.rs`](./docker_exec_tests.rs).
-`ops_tests.rs` pins `local_status_for_backend` so a host with no OS jail
-reports `Inactive` rather than `Ready` (#3235). Run with
+`native_jail_tests.rs` pins the status floor, grant/environment mapping,
+module-unavailable refusal, and an ignored pinned-artifact Linux execution
+fixture. Run with
 `cargo test -p openhuman sandbox::` or `pnpm debug rust sandbox`.
 
 ## Further reading

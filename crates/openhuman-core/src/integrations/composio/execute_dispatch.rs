@@ -9,8 +9,9 @@
 use crate::config::Config;
 use crate::security::egress::{emit_external_transfer, enforce_egress, EgressDescriptor};
 
-use super::module_client::{self, methods};
+use super::module_client::{self};
 use super::types::{ComposioExecuteRequest, ComposioExecuteResponse};
+use tinyconnectors_bus::names::methods;
 
 /// Run `tool` against the ambient (or `connection_id`-pinned) account.
 ///

@@ -177,6 +177,18 @@ impl Tool for WorkspaceInitTool {
     }
 }
 
+/// Build this domain's tools in their persisted catalogue order.
+pub(crate) fn registered_tools(
+    config: std::sync::Arc<crate::config::Config>,
+) -> Vec<Box<dyn tinytools::Tool>> {
+    vec![
+        Box::new(WorkspaceReadPersonaTool::new(config.clone())),
+        Box::new(WorkspaceUpdatePersonaTool::new(config.clone())),
+        Box::new(WorkspaceResetPersonaTool::new(config.clone())),
+        Box::new(WorkspaceInitTool),
+    ]
+}
+
 #[cfg(test)]
 #[path = "tools_tests.rs"]
 mod tests;

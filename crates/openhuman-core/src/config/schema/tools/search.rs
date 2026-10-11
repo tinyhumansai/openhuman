@@ -175,11 +175,23 @@ fn default_search_timeout_secs() -> u64 {
 
 /// Credentials for a BYO search provider. Considered configured iff the
 /// trimmed value is non-empty.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct SearchEngineCredentials {
+    /// Optional direct provider base URL. Operator profile settings validate it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
     #[serde(default)]
     pub api_key: Option<String>,
+}
+
+impl std::fmt::Debug for SearchEngineCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SearchEngineCredentials")
+            .field("has_key", &self.has_key())
+            .field("has_base_url", &self.base_url.is_some())
+            .finish()
+    }
 }
 
 impl SearchEngineCredentials {
@@ -299,7 +311,7 @@ impl SearchProviderSettings {
 }
 
 /// Search configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct SearchConfig {
     /// Settings format; see [`SEARCH_SCHEMA_VERSION`]. Absent in legacy files.

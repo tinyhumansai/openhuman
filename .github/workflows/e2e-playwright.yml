@@ -65,27 +65,12 @@ jobs:
 
       - name: Install native test modules
         run: |
-          # tinybus validates every directory ancestor. GitHub mounts the
-          # checkout as the host runner uid while this container runs as root,
-          # so keep native fixtures in a root-owned, ephemeral tree.
+          # Keep fixtures in a trusted tree and resolve their verified releases
+          # from the same registry the product uses.
           module_root="/opt/openhuman-test-modules/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          juice_dir="$module_root/tinyjuice"
-          connectors_dir="$module_root/tinyconnectors"
-          juice_archive="$juice_dir/tinyjuice-module-0.5.2-ubuntu-22.04-x86_64.tar.gz"
-          rm -rf "$juice_dir" "$connectors_dir"
-          mkdir -p "$juice_dir" "$connectors_dir"
-          curl --fail --location --silent --show-error --retry 4 --retry-delay 2 \
-            "https://github.com/tinyhumansai/tinyjuice/releases/download/v0.5.2/$(basename "$juice_archive")" \
-            --output "$juice_archive"
-          echo "1a9bc9479ce51c87d82a6f145408cfcbe7d06de4613b0ca7cec1fd04bbc2b5b5  $juice_archive" \
-            | sha256sum --check
-          tar --no-same-owner -xzf "$juice_archive" -C "$juice_dir"
-          bash scripts/ci-cancel-aware.sh cargo build --release \
-            --manifest-path vendor/tinyconnectors/crates/tinyconnectors/Cargo.toml
-          cp vendor/tinyconnectors/target/release/libtinyconnectors.so \
-            "$connectors_dir/libtinyconnectors.so"
-          echo "TINYJUICE_TEST_MODULE=$juice_dir/libtinyjuice_module.so" >> "$GITHUB_ENV"
-          echo "TINYCONNECTORS_TEST_MODULE=$connectors_dir/libtinyconnectors.so" >> "$GITHUB_ENV"
+          bash scripts/ci/self-hosted/install-test-modules.sh \
+            "$module_root" "$module_root/modules.env"
+          cat "$module_root/modules.env" >> "$GITHUB_ENV"
 
       - name: Build Playwright web E2E bundle + standalone core
         run: bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app test:e2e:web:build

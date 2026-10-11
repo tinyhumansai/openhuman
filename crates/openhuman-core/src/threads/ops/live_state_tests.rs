@@ -7,8 +7,8 @@
 //! env var at a fresh tempdir for the duration of the test.
 
 use super::*;
-use crate::agent::todos::ops::{TodoItem, TodoStatus};
 use crate::config::TEST_ENV_LOCK;
+use tinyagents_graph::todos::{TodoItem, TodoStatus};
 
 #[test]
 fn thread_live_state_request_parses_thread_id() {

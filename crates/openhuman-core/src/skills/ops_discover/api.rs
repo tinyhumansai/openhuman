@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, RwLock};
 
-use crate::skills::ops_types::{Workflow, TRUST_MARKER};
+use {crate::skills::ops_types::TRUST_MARKER, tinyskills::Skill as Workflow};
 
 use super::scan::{discover_filtered, ALL_ROOT_KINDS, WORKFLOW_ROOT_KINDS};
 

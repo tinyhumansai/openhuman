@@ -182,7 +182,7 @@ pub fn render_ambient_environment(ctx: &PromptContext<'_>) -> Result<String> {
 /// manufacture a full context when they only need the static text.
 fn empty_prompt_context_for_static_sections() -> PromptContext<'static> {
     static EMPTY_TOOLS: &[PromptTool<'static>] = &[];
-    static EMPTY_WORKFLOWS: &[crate::skills::Workflow] = &[];
+    static EMPTY_WORKFLOWS: &[tinyskills::Skill] = &[];
     static EMPTY_INTEGRATIONS: &[ConnectedIntegration] = &[];
     // SAFETY: the &HashSet reference must outlive the returned context;
     // a leaked OnceLock-style allocation gives us a permanent 'static

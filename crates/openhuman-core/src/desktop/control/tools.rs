@@ -424,6 +424,24 @@ impl Tool for DesktopTool {
     }
 }
 
+/// Build this domain's tools in their persisted catalogue order.
+pub(crate) fn registered_tools(
+    config: std::sync::Arc<crate::config::Config>,
+) -> Vec<Box<dyn tinytools::Tool>> {
+    vec![
+        Box::new(DesktopTool::new(config.clone(), DesktopToolKind::Apps)),
+        Box::new(DesktopTool::new(config.clone(), DesktopToolKind::Windows)),
+        Box::new(DesktopTool::new(config.clone(), DesktopToolKind::Launch)),
+        Box::new(DesktopTool::new(config.clone(), DesktopToolKind::Snapshot)),
+        Box::new(DesktopTool::new(config.clone(), DesktopToolKind::Find)),
+        Box::new(DesktopTool::new(config.clone(), DesktopToolKind::Goal)),
+        Box::new(DesktopTool::new(
+            config.clone(),
+            DesktopToolKind::ContinueGoal,
+        )),
+    ]
+}
+
 #[cfg(test)]
 #[path = "tools_tests.rs"]
 mod tests;

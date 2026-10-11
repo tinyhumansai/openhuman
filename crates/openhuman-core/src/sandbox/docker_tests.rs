@@ -61,10 +61,33 @@ fn validate_docker_policy_multiple_issues() {
     assert!(issues.len() >= 3);
 }
 
-#[tokio::test]
-async fn docker_backend_handle_reports_status() {
-    let handle = docker_backend_handle().await;
-    assert_eq!(handle.kind, SandboxBackendKind::Docker);
-    // Status depends on whether Docker is installed in the test env.
-    assert!(handle.status == SandboxStatus::Ready || handle.status == SandboxStatus::Error);
+#[cfg(feature = "modules")]
+#[test]
+fn daemon_status_and_orphan_cleanup_use_bounded_tinybox_requests() {
+    use crate::modules::tinybox::contract::DEFAULT_DOCKER_CONTROL_TIMEOUT_MS;
+
+    assert_eq!(
+        status_request(),
+        crate::modules::tinybox::contract::DockerStatusRequest {
+            timeout_ms: DEFAULT_DOCKER_CONTROL_TIMEOUT_MS,
+        }
+    );
+    assert_eq!(
+        cleanup_request(),
+        crate::modules::tinybox::contract::CleanupDockerRequest {
+            label: "openhuman.sandbox=true".to_owned(),
+            timeout_ms: DEFAULT_DOCKER_CONTROL_TIMEOUT_MS,
+        }
+    );
+}
+
+#[test]
+fn docker_backend_handle_maps_module_status_truthfully() {
+    let available = docker_handle_for_status(true);
+    assert_eq!(available.kind, SandboxBackendKind::Docker);
+    assert_eq!(available.status, SandboxStatus::Ready);
+
+    let unavailable = docker_handle_for_status(false);
+    assert_eq!(unavailable.kind, SandboxBackendKind::Docker);
+    assert_eq!(unavailable.status, SandboxStatus::Error);
 }

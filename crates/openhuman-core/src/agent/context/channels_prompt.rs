@@ -107,7 +107,7 @@ pub fn build_system_prompt(
     workspace_dir: &Path,
     model_name: &str,
     tools: &[(&str, &str)],
-    skills: &[crate::skills::Workflow],
+    skills: &[tinyskills::Skill],
     bootstrap_max_chars: Option<usize>,
     channel_name: Option<&str>,
 ) -> String {
@@ -130,7 +130,7 @@ pub fn build_system_prompt_with_identity(
     workspace_dir: &Path,
     model_name: &str,
     tools: &[(&str, &str)],
-    skills: &[crate::skills::Workflow],
+    skills: &[tinyskills::Skill],
     bootstrap_max_chars: Option<usize>,
     channel_name: Option<&str>,
     identity: PromptIdentityOverride<'_>,

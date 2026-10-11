@@ -28,7 +28,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use tokio::sync::mpsc::Sender;
 
-use crate::agent::harness::{with_current_sandbox_mode, SandboxMode};
+use crate::agent::harness::SandboxMode;
 use crate::agent::progress::AgentProgress;
 use crate::agent::tinyagents::{
     run_root_turn_via_hosted_agent, TinyagentsTurnOutcome, TurnContextMiddleware,
@@ -119,7 +119,7 @@ pub(crate) async fn run_chat_turn_graph(graph: ChatTurnGraph) -> Result<Tinyagen
     // `TurnModelSource` (issue #4249, Phase 3 / Motion A); the telemetry id rides
     // on the bundle.
     let provider_id = graph.turn_models.provider_id().to_string();
-    with_current_sandbox_mode(graph.sandbox_mode, async {
+    async {
         let mut run_context = graph.run_context;
         run_context.progress = graph.on_progress.clone().or(run_context.progress);
         run_context.workspace = graph.workspace_descriptor.clone().or(run_context.workspace);
@@ -189,6 +189,6 @@ pub(crate) async fn run_chat_turn_graph(graph: ChatTurnGraph) -> Result<Tinyagen
             defer_turn_completed_to_caller,
         )
         .await
-    })
+    }
     .await
 }

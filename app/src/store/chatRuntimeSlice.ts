@@ -3337,10 +3337,12 @@ export const fetchAndHydrateTurnState = createAsyncThunk(
  */
 export const fetchAndHydrateCompletedTurnState = createAsyncThunk(
   'chatRuntime/fetchAndHydrateCompletedTurnState',
-  async (threadId: string, { dispatch }) => {
+  async (threadId: string, { dispatch, signal }) => {
     for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (signal.aborted) return null;
       try {
         const snapshot = await threadApi.getTurnState(threadId);
+        if (signal.aborted) return null;
         if (snapshot?.lifecycle === 'completed') {
           dispatch(hydrateRuntimeFromSnapshot({ snapshot }));
           return snapshot;
@@ -3349,7 +3351,16 @@ export const fetchAndHydrateCompletedTurnState = createAsyncThunk(
         turnStateLog('completed snapshot fetch failed thread=%s err=%O', threadId, error);
         return null;
       }
-      await new Promise(resolve => window.setTimeout(resolve, 50));
+      await new Promise<void>(resolve => {
+        const finish = () => {
+          clearTimeout(timer);
+          signal.removeEventListener('abort', finish);
+          resolve();
+        };
+        const timer = setTimeout(finish, 50);
+        signal.addEventListener('abort', finish, { once: true });
+        if (signal.aborted) finish();
+      });
     }
     turnStateLog('completed snapshot did not arrive thread=%s', threadId);
     return null;

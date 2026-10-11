@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 
 use crate::config::Config;
 use crate::core::Outcome;
-use crate::integrations::composio::providers::{NormalizedTask, TaskContainer};
+use crate::integrations::composio::contract::{NormalizedTask, TaskContainer};
 
 use super::types::{
     FetchReason, FilterSpec, ProviderSlug, SourceTarget, TaskSource, TaskSourcePatch,

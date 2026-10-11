@@ -335,7 +335,3 @@ pub async fn await_run_outcome(
         tokio::time::sleep(POLL_INTERVAL.min(remaining)).await;
     }
 }
-
-#[cfg(test)]
-#[path = "run_machinery_tests.rs"]
-mod tests;

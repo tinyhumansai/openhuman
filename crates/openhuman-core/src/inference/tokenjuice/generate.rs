@@ -21,7 +21,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{LazyLock, Mutex};
 
-pub use tinyjuice_bus::wire::GenerateRequest;
+use tinyjuice_bus::wire::GenerateRequest;
 
 /// One model call, bound to the turn that will pay for it.
 pub type PreparedGenerate = Box<

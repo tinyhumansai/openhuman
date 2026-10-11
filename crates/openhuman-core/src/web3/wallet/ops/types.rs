@@ -4,15 +4,8 @@ use serde::{Deserialize, Serialize};
 
 // The wallet's vocabulary lives in `tinywallet-web3`, which the engine and the
 // tools share; the host keeps only the persisted shape and the setup params.
-pub use tinywallet_web3::crypto::wallet::{
-    WalletAccount, WalletChain, WalletSetupSource, WalletStatus,
-};
-/// Error message returned when the wallet has not been set up yet. Downstream
-/// boundaries match against it to classify the condition as an expected user
-/// state, so it stays out of Sentry; it is defined once in `tinywallet-web3`
-/// so the producer and any classifier cannot drift apart.
-pub use tinywallet_web3::quote::WALLET_NOT_CONFIGURED_MESSAGE;
-
+use tinywallet_web3::crypto::wallet::{WalletAccount, WalletSetupSource};
+/// Input for creating or replacing the operator wallet.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct WalletSetupParams {

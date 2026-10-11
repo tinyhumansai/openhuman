@@ -76,14 +76,6 @@ pub(crate) fn tool_group(name: &str) -> crate::core::all::DomainGroup {
         "flow_memory_recall",
         "flow_memory_remember",
     ];
-    // Voice family agent tools (audio_toolkit) — no `voice_`/`tts_`/`stt_`
-    // prefix, so they must be listed explicitly or they fall through to
-    // Platform and stay callable when Voice is gated off (#4808 review).
-    const VOICE: &[&str] = &[
-        "audio_generate_podcast",
-        "audio_email_podcast",
-        "audio_generate_and_email_podcast",
-    ];
     // Threads: thread_* / todo_* handled by prefix below; these are the extras.
     // Monitor + proactive-notify tools (Automation family).
     const MONITORS: &[&str] = &[
@@ -114,13 +106,8 @@ pub(crate) fn tool_group(name: &str) -> crate::core::all::DomainGroup {
     if name.starts_with("media_") {
         return DomainGroup::Media;
     }
-    // Voice family: explicit audio_* podcast tools plus the defensive
-    // voice_/tts_/stt_ prefixes for any future tool.
-    if VOICE.contains(&name)
-        || name.starts_with("voice_")
-        || name.starts_with("tts_")
-        || name.starts_with("stt_")
-    {
+    // Voice family prefixes.
+    if name.starts_with("voice_") || name.starts_with("tts_") || name.starts_with("stt_") {
         return DomainGroup::Voice;
     }
     // Memory family (harness-kept): the single `memory` tool.

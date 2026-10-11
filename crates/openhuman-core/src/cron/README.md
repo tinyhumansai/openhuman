@@ -70,13 +70,18 @@ with exponential backoff starting at `reliability.provider_backoff_ms` (at
 least 200 ms).
 
 `shell` jobs run through `run_job_command_with_timeout`
-([`scheduler/shell_job.rs`](./scheduler/shell_job.rs)). Before spawning anything it checks the security
-policy in order: `can_act`, `is_rate_limited`, `is_command_allowed`, a scan of
-the arguments for forbidden paths, and `record_action` against the action
-budget. Any refusal returns a string starting `blocked by security policy:`,
-which the retry loop treats as final. The command has a hard 120 second timeout
-(`SHELL_JOB_TIMEOUT_SECS`). With the autonomy policy disabled (the default),
-most of these checks are inert; see the project `CLAUDE.md`.
+([`scheduler/shell_job.rs`](./scheduler/shell_job.rs)). Before spawning anything,
+it checks `can_act`, `is_rate_limited`, the host security policy against command
+facts returned by TinyBox `AnalyzeCommand`, and `record_action` against the
+action budget. Missing module analysis fails closed; no local parser replaces
+it. Any refusal returns a string starting `blocked by security policy:`, which
+the retry loop treats as final. Execution uses TinyBox `StartExec` on a
+module-owned passthrough resource, preserving the action directory and the
+shell's default pipeline exit status. The command has a hard 120 second timeout
+(`SHELL_JOB_TIMEOUT_SECS`); timeout cancellation and output cleanup are
+acknowledged by TinyBox before the resource is closed. With the autonomy policy
+disabled (the default), most policy checks are inert; see the project
+`CLAUDE.md`.
 
 `agent` jobs run a full agent turn ([`scheduler/agent_run.rs`](./scheduler/agent_run.rs)):
 
@@ -404,6 +409,19 @@ Tests sit beside their modules as `<module>_tests.rs` (for example
 cargo test -p openhuman cron::
 pnpm debug rust cron
 ```
+
+## Agent-only limits (`limits.rs`)
+
+`[cron] agent_jobs_only = true` is an operator-owned mode for hosted
+profiles (`SaasConfig::cron` forces it, with `min_interval_secs` = 300 and
+`max_active_jobs` = 20, onto every profile; a profile's own config cannot
+loosen it). It refuses shell and flow jobs, restricts delivery to `origin` and
+`none`, requires a job to be created from a conversation (the origin is read
+from the live turn, never from tool arguments), keeps recurring jobs
+`min_interval_secs` apart and caps enabled jobs at `max_active_jobs`, counted
+in the store. Checks run in `store.rs` when a job is added or updated, and
+again where it runs (scheduler dispatch, Run Now, the run tool), so rows stored
+earlier are refused too.
 
 ## Further reading
 

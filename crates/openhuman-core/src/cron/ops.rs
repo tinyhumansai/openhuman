@@ -1,14 +1,16 @@
 use crate::config::Config;
 use crate::core::Outcome;
-use crate::cron::{
-    self, add_shell_job, get_job, update_job, CronJob, CronJobPatch, CronRun, Schedule,
-};
 use crate::security::SecurityPolicy;
 use anyhow::Result;
 use once_cell::sync::Lazy;
 use serde_json::json;
 use std::collections::HashSet;
 use std::sync::Mutex;
+use {
+    crate::cron, crate::cron::add_shell_job, crate::cron::get_job, crate::cron::update_job,
+    tinyflows_schedule::types::CronJob, tinyflows_schedule::types::CronJobPatch,
+    tinyflows_schedule::types::CronRun, tinyflows_schedule::types::Schedule,
+};
 
 /// Guard against duplicate concurrent "Run Now" executions per job.
 /// Entries are inserted before spawning and removed when the task completes.
@@ -84,6 +86,7 @@ pub fn resume_job(config: &Config, id: &str) -> Result<CronJob> {
 /// `expression` and `tz` are merged with the existing [`Schedule::Cron`] fields; the
 /// existing `active_hours` is always preserved as-is.  To set or clear `active_hours`
 /// directly, use the RPC path (`cron.update` with a full [`CronJobPatch`]).
+#[cfg(test)]
 pub fn update_cron_job(
     config: &Config,
     id: &str,
@@ -99,7 +102,7 @@ pub fn update_cron_job(
     // Merge expression/tz with the existing schedule so that
     // tz alone updates the timezone and expression alone preserves the timezone.
     let schedule = if expression.is_some() || tz.is_some() {
-        let existing = get_job(config, id)?;
+        let existing = cron::get_job(config, id)?;
         let (existing_expr, existing_tz, existing_active) = match existing.schedule {
             Schedule::Cron {
                 expr,
@@ -187,9 +190,8 @@ pub async fn cron_update(
             &config.workspace_dir,
             &config.action_dir,
         );
-        if !security.is_command_allowed(command) {
-            return Err(format!("Command blocked by security policy: {command}"));
-        }
+        crate::cron::scheduler::shell_job::authorize_shell_command(config, &security, command)
+            .await?;
     }
 
     let updated = cron::update_job(config, job_id.trim(), patch).map_err(|e| e.to_string())?;
@@ -225,6 +227,14 @@ pub async fn cron_run(config: &Config, job_id: &str) -> Result<Outcome<serde_jso
     if !config.cron.enabled {
         return Err("cron is disabled by config (cron.enabled=false)".to_string());
     }
+
+    // Fail closed before queueing anything: an unreadable policy refuses the run.
+    cron::policy::get_policy(config, job_id).map_err(|e| e.to_string())?;
+    cron::limits::check_run(
+        config,
+        &cron::get_job(config, job_id).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
 
     // Guard against duplicate concurrent executions for the same job.
     {
@@ -286,6 +296,8 @@ pub async fn cron_run(config: &Config, job_id: &str) -> Result<Outcome<serde_jso
 /// (scheduled or another Run Now) is already active.
 pub async fn run_job_now(config: &Config, job_id: &str) -> Result<(bool, String), String> {
     let job = cron::get_job(config, job_id.trim()).map_err(|e| e.to_string())?;
+    cron::policy::get_policy(config, &job.id).map_err(|e| e.to_string())?;
+    cron::limits::check_run(config, &job).map_err(|e| e.to_string())?;
     let Some(_guard) = try_acquire_run(&job.id) else {
         tracing::debug!(job_id = %job.id, "[cron_run] job already running; refused");
         return Err(format!("cron job '{}' is already running", job.id));

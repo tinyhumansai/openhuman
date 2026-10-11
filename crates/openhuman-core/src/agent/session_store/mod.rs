@@ -17,7 +17,7 @@
 use std::sync::{Arc, LazyLock, PoisonError, RwLock};
 
 pub use agent_transcripts::{agent_transcript_root, AgentTranscriptFiles};
-pub use tinyagents_session::port::{AgentStores, SessionStoreProvider};
+use tinyagents_session::port::{AgentStores, SessionStoreProvider};
 
 mod agent_transcripts;
 

@@ -266,8 +266,13 @@ async fn regenerate_errors_when_args_missing() {
 
 #[cfg(feature = "documents")]
 #[tokio::test]
-#[ignore = "needs a built tinydocs module and its own process; presentation module E2E covers generation"]
 async fn regenerate_reruns_producer_and_reuses_id() {
+    if crate::util::module_test_process::run(
+        module_path!(),
+        "regenerate_reruns_producer_and_reuses_id",
+    ) {
+        return;
+    }
     use crate::agent::artifacts::store::{create_artifact, get_artifact, save_artifact_args};
     use crate::agent::artifacts::types::{ArtifactKind, ArtifactStatus};
     let tmp = TempDir::new().unwrap();

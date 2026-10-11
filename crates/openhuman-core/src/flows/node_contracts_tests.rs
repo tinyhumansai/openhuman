@@ -1,4 +1,5 @@
 use super::*;
+use tinyflows::catalog::NODE_KINDS;
 
 #[test]
 fn overlay_preserves_every_kind() {

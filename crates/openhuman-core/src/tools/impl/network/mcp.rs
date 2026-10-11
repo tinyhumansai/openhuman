@@ -7,8 +7,6 @@
 
 use std::sync::Arc;
 
-pub use tinymcp::tools::{McpListServersTool, McpListToolsTool};
-
 use crate::mcp::config_servers::McpServerRegistry;
 use crate::security::{SecurityPolicy, ToolOperation};
 

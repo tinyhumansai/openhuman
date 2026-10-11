@@ -472,20 +472,17 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
             " openhuman::config:: openhuman::platform::socket::event_handlers:: tools::schemas:: tools::ops::tests::",
         },
         {
-          // One core build for both feature-gated suites: `mcp` and
-          // `e2e-test-support` gate disjoint code (mcp::server::resources
-          // does not touch test_support, and vice versa), so each suite sees
-          // the same code it would under its feature alone. Separately they
-          // were two full core test builds. The introspect filter is scoped
-          // on purpose; see ci-lite.yml for the hole. The `cargo check` of
-          // the e2e-test-support set runs on pushes to main (CI Lite): this
-          // build already compiles that set, under cfg(test).
+          // Share one build for these disjoint test surfaces. Enable the
+          // module host while keeping web3 disabled, so its wallet callback
+          // gate is exercised rather than silently selecting zero tests.
+          // MCP resources do not touch test_support; introspection stays
+          // scoped to avoid tests that require the complete product.
           name: "gate-contract-tests-features",
           when: gateSmoke,
           run:
             "cargo test --manifest-path Cargo.toml -p openhuman --no-default-features" +
-            " --features mcp,e2e-test-support --lib --" +
-            " mcp::server::resources:: test_support::introspect::",
+            " --features modules,mcp,e2e-test-support --lib --" +
+            " modules::host:: modules::registry:: mcp::server::resources:: test_support::introspect::",
         },
         {
           name: "kernel-floor",

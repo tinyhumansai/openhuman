@@ -54,6 +54,12 @@ pub struct CustomEmbeddingsConfig {
 /// `Clone` is implemented by hand in `config_clone.rs` so it is emitted once.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Config {
+    /// Immutable operator provider binding, absent from the user wire format.
+    #[serde(skip)]
+    #[schemars(skip)]
+    #[doc(hidden)]
+    pub profile_providers:
+        Option<std::sync::Arc<crate::profiles::provider_settings::ProfileProviderSettings>>,
     #[serde(skip)]
     pub workspace_dir: PathBuf,
     /// Agent action sandbox root — the default cwd for shell/file/git tools.

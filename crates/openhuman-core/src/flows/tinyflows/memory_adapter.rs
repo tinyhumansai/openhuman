@@ -38,7 +38,6 @@ use serde_json::{json, Value};
 use tinyflows::caps::MemoryProvider;
 use tinyflows::error::{EngineError, Result};
 
-use crate::agent::harness::memory_context_safety::wrap_untrusted_for_agent;
 use crate::agent::turn_origin::{self, AgentTurnOrigin, TrustedAutomationSource};
 use crate::config::Config;
 use crate::flows::{
@@ -51,6 +50,7 @@ use crate::security::approval::{
     redact_args, summarize_action, ApprovalGate, ExecutionOutcome, GateOutcome,
 };
 use crate::security::{CommandClass, SecurityPolicy};
+use tinymemory_api::wrap_untrusted_for_agent;
 use tinymemory_api::{Hit, LearningKind, MemoryMeta, MetaFilter, SourceKind};
 
 use super::caps::{enforce_node_tier_gate, gate_call_for_tier};
@@ -355,7 +355,7 @@ impl MemoryProvider for OpenHumanMemory {
         // up front rather than spend that approval round-trip on a write
         // that was always going to be rejected (review fix — see #5227).
         let content = value_to_content(&value);
-        if crate::security::scrub::has_likely_secret(&content) {
+        if tinymemory_integrations::safety::has_likely_secret(&content) {
             tracing::warn!(
                 target: "flows",
                 key_chars = key.chars().count(),

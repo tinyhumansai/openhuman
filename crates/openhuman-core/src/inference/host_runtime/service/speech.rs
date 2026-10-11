@@ -9,7 +9,7 @@ use crate::voice::{create_stt_provider, effective_stt_provider};
 use tinyinference_local::models as model_ids;
 use tinyinference_local::status::{LocalAiSpeechResult, LocalAiTtsResult};
 
-use super::LocalAiService;
+use tinyinference_local::service::LocalAiService;
 
 const LOG_PREFIX: &str = "[speech]";
 

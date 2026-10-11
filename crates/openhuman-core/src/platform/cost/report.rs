@@ -364,8 +364,13 @@ pub fn build_cache_report(
         }
         // Through the tier-aware estimator: what this call's input cost against
         // what it would have cost had every input token been cached.
-        let actual = super::catalog::estimate_cost_usd(&usage.model, usage.input_tokens, 0, cached);
-        let all_cached = super::catalog::estimate_cost_usd(
+        let actual = tinyagents_registry::pricing::estimate_cost_usd(
+            &usage.model,
+            usage.input_tokens,
+            0,
+            cached,
+        );
+        let all_cached = tinyagents_registry::pricing::estimate_cost_usd(
             &usage.model,
             usage.input_tokens,
             0,

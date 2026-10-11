@@ -10,8 +10,9 @@ allowlist of tool-like operations is also exposed over JSON-RPC for the
 desktop shell.
 
 Domain-owned tools (memory, cron, flows, wallet, Composio, skills, voice,
-agent sub-dispatch) live in their own domains. [`mod.rs`](./mod.rs) re-exports them, so a
-single `crate::tools::*` import reaches the full set.
+agent sub-dispatch) live in their own domains. Each domain supplies an explicit
+tool factory; [`ops.rs`](./ops.rs) combines those factories in registry order.
+Callers import individual tools from their owning domain.
 
 ## How it works
 
@@ -120,7 +121,7 @@ step.
 
 | Path | What it does |
 | --- | --- |
-| [`mod.rs`](./mod.rs) | Export hub: submodules, re-exports of built-in and domain tools, the `tinytools` vocabulary, and the `all_tools_*` controller pair. |
+| [`mod.rs`](./mod.rs) | Cross-cutting tool modules, their built-in exports, and the `all_tools_*` controller pair. Domain factories are called explicitly from `ops.rs`; tool contracts come directly from `tinytools`. |
 | [`ops.rs`](./ops.rs) | Registry assembly (`default_tools*`, `all_tools*`), all config and feature gating, and `tool_group`. |
 | [`orchestrator_tools.rs`](./orchestrator_tools.rs) | Per-subagent `delegate_*` tools and deferred Composio action expansion. |
 | [`user_filter.rs`](./user_filter.rs) | `filter_tools_by_user_preference` and the UI toggle to tool-name map. |
@@ -150,8 +151,9 @@ Where the built-in tools come from:
 ## Key types and entry points
 
 - `Tool`, `ToolSpec`, `ToolResult`, `ToolExposure`, `PermissionLevel`,
-  `ToolScope`, `ToolCategory`: re-exported from `tinytools` in `mod.rs` so an
-  embedder implementing a tool reaches the vendored copy.
+  `ToolScope`, `ToolCategory`: imported from the vendored `tinytools`
+  contract. Embedders get `Tool`, `ToolResult`, `ToolExposure` and
+  `PermissionLevel` from the curated `openhuman_embed` facade.
 - `ops::all_tools_with_runtime`: the full registry. Its last parameter,
   `approval_workspace_root`, scopes `file_write`'s approval prompts.
 - `orchestrator_tools::collect_orchestrator_tools` and
@@ -197,8 +199,10 @@ else is agent-only.
 - Search provider resolution and the TinySearch bridge are `crate::search`
   (see [`../search/README.md`](../search/README.md)); the module itself is
   `tinysearch`.
-- New domain tools go in the owning domain's `tools.rs` and are re-exported
-  through `mod.rs`. Only cross-cutting families belong under [`impl/`](./impl/).
+- New domain tools go in the owning domain's `tools.rs`. Its registration
+  function builds that family, and `ops.rs` composes the families before
+  applying capability filters. Preserve catalogue order when moving
+  registrations. Only cross-cutting families belong under [`impl/`](./impl/).
 - This folder has no persistence and no event-bus subscriber. Approval
   routing reads `Tool::external_effect_with_args`; the gate itself is
   `security/approval/`.

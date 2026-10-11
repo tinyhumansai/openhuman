@@ -49,6 +49,9 @@ fn full_product_features_enabled() -> bool {
     .lines()
     .map(|line| line.split('#').next().unwrap_or("").trim())
     .filter(|line| !line.is_empty())
+    // This gate belongs only to the RPC host. It cannot change the core tool
+    // catalog and is deliberately not a core feature (see CHAIN_LOCAL_GATES).
+    .filter(|line| *line != "os-keyring")
     .collect();
     let checked: std::collections::BTreeSet<_> = flags.iter().map(|(name, _)| *name).collect();
     assert_eq!(

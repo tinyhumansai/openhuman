@@ -20,9 +20,9 @@
 
 use std::sync::Arc;
 
-use openhuman_core::agent::session_store::SessionStoreProvider;
 use openhuman_core::backend::BackendTransport;
 use openhuman_core::core::server_launcher::HostBoot;
+use tinyagents_session::port::SessionStoreProvider;
 
 use super::seams::{HostSeams, StorageSource};
 use super::{RuntimeBuilder, RuntimeError};

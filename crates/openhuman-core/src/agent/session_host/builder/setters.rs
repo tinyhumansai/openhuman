@@ -39,7 +39,7 @@ impl SessionHostBuilder {
             session_history_locator: None,
             omit_memory_context: None,
             payload_summarizer: None,
-            tokenjuice_compression: crate::inference::tokenjuice::AgentTokenjuiceCompression::Full,
+            tokenjuice_compression: tinyjuice_bus::types::AgentTokenjuiceCompression::Full,
             tool_policy: None,
         }
     }
@@ -224,7 +224,7 @@ impl SessionHostBuilder {
     }
 
     /// Sets the skills available to the agent.
-    pub fn workflows(mut self, skills: Vec<crate::skills::Workflow>) -> Self {
+    pub fn workflows(mut self, skills: Vec<tinyskills::Skill>) -> Self {
         self.workflows = Some(skills);
         self
     }
@@ -387,7 +387,7 @@ impl SessionHostBuilder {
     /// Set the per-agent TokenJuice tool-output compression profile.
     pub fn tokenjuice_compression(
         mut self,
-        profile: crate::inference::tokenjuice::AgentTokenjuiceCompression,
+        profile: tinyjuice_bus::types::AgentTokenjuiceCompression,
     ) -> Self {
         self.tokenjuice_compression = profile;
         self

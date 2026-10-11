@@ -137,13 +137,13 @@ impl Tool for ListFlowConnectionsTool {
     }
 }
 
-/// Render one [`crate::flows::types::FlowConnection`] as the
+/// Render one [`tinyflows_catalog::types::FlowConnection`] as the
 /// picker JSON shape the agent reads — ids/display/kind/toolkit/scheme plus
 /// `platform_user_id` (the connected account's own member id, e.g. Slack
 /// `U123ABC`, or `null` when no identity has synced yet). Never secret
 /// material. A free function (rather than inline in `execute`) so the
 /// mapping is unit-testable without a live Composio backend.
-pub(super) fn flow_connection_to_json(c: &crate::flows::types::FlowConnection) -> Value {
+pub(super) fn flow_connection_to_json(c: &tinyflows_catalog::types::FlowConnection) -> Value {
     json!({
         "connection_ref": c.connection_ref,
         "kind": c.kind,

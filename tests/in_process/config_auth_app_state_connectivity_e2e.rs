@@ -1,7 +1,10 @@
 //! Focused JSON-RPC E2E coverage for config, auth/credentials, app_state,
 //! and connectivity controller surfaces.
 
-use crate::env_guard::{env_lock, env_lock_async, EnvVarGuard};
+use crate::env_guard::{
+    env_lock_with_file_keyring as env_lock, env_lock_with_file_keyring_async as env_lock_async,
+    EnvVarGuard,
+};
 use crate::rpc_auth::ensure_rpc_auth;
 use crate::rpc_harness::{ok, payload, rpc, schema};
 use std::net::SocketAddr;

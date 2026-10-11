@@ -19,7 +19,7 @@ impl MlHost {
     /// or already used, and the module falls back to its own compressors.
     async fn generate(
         &self,
-        request: crate::inference::tokenjuice::types::GenerateRequest,
+        request: tinyjuice_bus::wire::GenerateRequest,
     ) -> tinybus::Result<Option<String>> {
         crate::inference::tokenjuice::generate::serve(request)
             .await

@@ -68,19 +68,6 @@ async fn threshold_persists_outside_the_project_and_reads_back() {
         .contains("Bearer credential-marker-redact-me-123456"));
 }
 
-/// The legacy store still reads the layout older builds wrote, so its sweep
-/// finds what they left in a project.
-#[test]
-fn legacy_store_is_rooted_in_the_action_dir() {
-    let tmp = tempfile::tempdir().unwrap();
-    let legacy = legacy_action_dir_store(tmp.path().to_path_buf(), "s");
-    assert!(!legacy.is_detached());
-    assert_eq!(
-        legacy.path_for_read_tool("shell", Some("c")),
-        "artifacts/tool-results/s/shell/c.txt"
-    );
-}
-
 /// The vocabulary passed to the crate is OpenHuman's: `file_read` reads,
 /// `use_skill` is the only wrapper followed.
 #[test]

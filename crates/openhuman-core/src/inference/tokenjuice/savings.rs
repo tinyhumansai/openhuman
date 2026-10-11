@@ -22,7 +22,7 @@ use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
-use crate::inference::tokenjuice::types::{CompressorKind, ContentKind};
+use {tinyjuice_bus::types::CompressorKind, tinyjuice_bus::types::ContentKind};
 
 /// Per-key (model / compressor) rolled-up savings.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -153,7 +153,7 @@ pub fn record(
 /// not price: the saving is then counted in tokens only, not guessed in USD.
 fn cost_saved_usd(model: &str, tokens_saved: u64) -> f64 {
     crate::agent::cost::lookup_pricing(model).map_or(0.0, |pricing| {
-        (tokens_saved as f64) / 1_000_000.0 * pricing.input_per_mtok_usd
+        (tokens_saved as f64) * pricing.input_per_token.unwrap_or(0.0)
     })
 }
 

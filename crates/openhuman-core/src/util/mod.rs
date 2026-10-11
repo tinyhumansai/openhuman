@@ -6,7 +6,7 @@
 //!
 //! - [`text`]     — UTF-8-safe truncation, char-boundary rounding, provenance tags
 //! - [`retry`]    — retry-with-backoff + transient-filesystem-error classification
-//! - [`sanitize`] — LLM-facing text sanitization (control-char stripping,
+//! - `tinytools_std::sanitize` — LLM-facing text sanitization (control-char stripping,
 //!   instruction-fence removal, UTF-8-safe byte caps)
 //! - [`tls`]      — platform-conditional `reqwest::ClientBuilder` factory
 //! - [`types`]    — shared utility types
@@ -26,7 +26,6 @@ pub mod params;
 /// not taken from the memory engine.
 pub mod redact;
 pub mod retry;
-pub mod sanitize;
 pub mod text;
 pub mod tls;
 pub mod types;
@@ -40,3 +39,6 @@ pub use text::{
     truncate_with_suffix, utf8_safe_prefix_at_byte_boundary,
 };
 pub use types::MaybeSet;
+
+#[cfg(test)]
+pub(crate) mod module_test_process;

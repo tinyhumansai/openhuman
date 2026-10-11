@@ -1,5 +1,5 @@
 use super::*;
-use crate::integrations::ToolScope;
+use tinytools::ToolScope;
 
 fn test_client() -> Arc<IntegrationClient> {
     Arc::new(IntegrationClient::new("http://test".into(), "tok".into()))

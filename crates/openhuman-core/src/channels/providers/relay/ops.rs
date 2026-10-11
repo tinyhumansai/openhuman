@@ -161,7 +161,7 @@ pub(crate) async fn run_relay_turn(
         request_id = %request_id,
         "[channels::relay] dispatching relayed turn"
     );
-    process_channel_message(ctx, message).await;
+    super::with_thread(thread_id.clone(), process_channel_message(ctx, message)).await;
 
     let replies = channel.sent();
     record(&workspace_dir, &params, &thread_id, &replies).await;

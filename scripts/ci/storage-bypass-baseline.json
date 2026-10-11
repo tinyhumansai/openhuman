@@ -470,20 +470,6 @@
   },
   {
     "rule": "json-write",
-    "path": "crates/openhuman-core/src/voice/audio_toolkit/ops.rs",
-    "line": 62,
-    "text": "tokio::fs::write(&resolved, &bytes)",
-    "occurrence": 1
-  },
-  {
-    "rule": "json-write",
-    "path": "crates/openhuman-core/src/voice/audio_toolkit/ops.rs",
-    "line": 408,
-    "text": "tokio::fs::write(&resolved_path, email.formatted())",
-    "occurrence": 1
-  },
-  {
-    "rule": "json-write",
     "path": "crates/openhuman-core/src/voice/ops.rs",
     "line": 176,
     "text": "tokio::fs::write(&file_path, audio_bytes)",

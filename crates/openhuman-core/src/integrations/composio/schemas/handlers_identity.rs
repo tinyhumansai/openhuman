@@ -6,7 +6,7 @@ use serde_json::{Map, Value};
 
 use crate::config::rpc as config_rpc;
 use crate::core::all::ControllerFuture;
-use crate::integrations::composio::{ops, providers};
+use crate::integrations::composio::{contract, ops};
 
 use super::util::{read_required, read_required_non_empty, to_json};
 
@@ -62,7 +62,7 @@ pub(super) fn handle_get_user_scopes(params: Map<String, Value>) -> ControllerFu
                     %error,
                     "[composio:scopes] config load failed, using default pref (read+write)"
                 );
-                providers::UserScopePref::default()
+                contract::UserScopePref::default()
             }
         };
         tracing::debug!(
@@ -93,7 +93,7 @@ pub(super) fn handle_set_user_scopes(params: Map<String, Value>) -> ControllerFu
         let read: bool = read_required(&params, "read")?;
         let write: bool = read_required(&params, "write")?;
         let admin: bool = read_required(&params, "admin")?;
-        let pref = providers::UserScopePref { read, write, admin };
+        let pref = contract::UserScopePref { read, write, admin };
         tracing::debug!(
             method = "composio.set_user_scopes",
             toolkit = %toolkit,

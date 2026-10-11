@@ -31,12 +31,11 @@ fn summarize_tool(tool: &dyn Tool) -> RuntimeToolSummary {
     }
 }
 
-fn classify_shell_tool_call(security: &SecurityPolicy, args: &serde_json::Value) -> CommandClass {
-    let command = args
-        .get("command")
-        .and_then(|value| value.as_str())
-        .unwrap_or("");
-    let mut class = security.classify_command(command);
+fn classify_shell_tool_call(args: &serde_json::Value) -> CommandClass {
+    // This synchronous summary API cannot ask TinyBox to analyze the command.
+    // Report the conservative class here; the invocation path performs exact
+    // module analysis before approval and execution.
+    let mut class = CommandClass::Write;
     if let Some(declared) = args
         .get("category")
         .and_then(|value| value.as_str())
@@ -47,13 +46,9 @@ fn classify_shell_tool_call(security: &SecurityPolicy, args: &serde_json::Value)
     class
 }
 
-fn command_class_for_tool(
-    security: &SecurityPolicy,
-    tool: &dyn Tool,
-    args: &serde_json::Value,
-) -> CommandClass {
+fn command_class_for_tool(tool: &dyn Tool, args: &serde_json::Value) -> CommandClass {
     if tool.name() == "shell" {
-        return classify_shell_tool_call(security, args);
+        return classify_shell_tool_call(args);
     }
 
     let permission = tool.permission_level_with_args(args);
@@ -130,8 +125,6 @@ pub fn classify_tool_call(
     args: &serde_json::Value,
 ) -> Result<CommandClass, String> {
     debug!(tool_name, "[native_ops] classify_tool_call: start");
-    let security =
-        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
     let tools = build_runtime_tools(config)?;
     let tool = tools
         .into_iter()
@@ -140,7 +133,7 @@ pub fn classify_tool_call(
             debug!(tool_name, "[native_ops] classify_tool_call: tool not found");
             format!("unknown tool `{tool_name}`")
         })?;
-    let class = command_class_for_tool(&security, tool.as_ref(), args);
+    let class = command_class_for_tool(tool.as_ref(), args);
     debug!(
         tool_name,
         ?class,

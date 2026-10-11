@@ -1,16 +1,10 @@
 //! Channel definitions, connection management, and RPC controllers.
 
 mod backend;
-mod definitions;
 mod ops;
 mod schemas;
 
 pub use backend::OpenHumanChannelBackend;
-
-pub use definitions::{
-    all_channel_definitions, find_channel_definition, AuthModeSpec, ChannelAuthMode,
-    ChannelCapability, ChannelDefinition, FieldRequirement,
-};
 
 pub use schemas::all_controller_schemas as all_channels_controller_schemas;
 

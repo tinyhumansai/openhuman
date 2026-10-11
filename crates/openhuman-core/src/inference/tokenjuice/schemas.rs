@@ -11,7 +11,7 @@ use serde_json::{Map, Value};
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
-use super::types::{ContentHint, ContentKind};
+use {tinyjuice_bus::types::ContentHint, tinyjuice_bus::types::ContentKind};
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![

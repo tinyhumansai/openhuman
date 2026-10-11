@@ -5,7 +5,7 @@ use crate::config::rpc as config_rpc;
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::Outcome;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
-use crate::cron::CronJobPatch;
+use tinyflows_schedule::types::CronJobPatch;
 
 fn job_id_input(comment: &'static str) -> FieldSchema {
     FieldSchema {
@@ -285,7 +285,7 @@ fn handle_add(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
 
-        let schedule: crate::cron::Schedule = read_required(&params, "schedule")?;
+        let schedule: tinyflows_schedule::types::Schedule = read_required(&params, "schedule")?;
         let name = params
             .get("name")
             .and_then(|v| v.as_str())
@@ -303,9 +303,9 @@ fn handle_add(params: Map<String, Value>) -> ControllerFuture {
             .and_then(|v| v.as_str())
             .unwrap_or("isolated");
         let session_target = match session_target_str {
-            "main" => crate::cron::SessionTarget::Main,
-            "isolated" => crate::cron::SessionTarget::Isolated,
-            "current" => crate::cron::SessionTarget::Current,
+            "main" => tinyflows_schedule::types::SessionTarget::Main,
+            "isolated" => tinyflows_schedule::types::SessionTarget::Isolated,
+            "current" => tinyflows_schedule::types::SessionTarget::Current,
             other => return Err(format!("invalid 'session_target': {other}")),
         };
         let model = params
@@ -316,18 +316,19 @@ fn handle_add(params: Map<String, Value>) -> ControllerFuture {
             .get("agent_id")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        let delivery: Option<crate::cron::DeliveryConfig> = match params.get("delivery") {
-            None | Some(Value::Null) => None,
-            Some(v) => Some(
-                serde_json::from_value(v.clone())
-                    .map_err(|e| format!("invalid 'delivery': {e}"))?,
-            ),
-        };
+        let delivery: Option<tinyflows_schedule::types::DeliveryConfig> =
+            match params.get("delivery") {
+                None | Some(Value::Null) => None,
+                Some(v) => Some(
+                    serde_json::from_value(v.clone())
+                        .map_err(|e| format!("invalid 'delivery': {e}"))?,
+                ),
+            };
         let delete_after_run = params
             .get("delete_after_run")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        let origin: Option<crate::cron::JobOrigin> = match params.get("origin") {
+        let origin: Option<tinyflows_schedule::types::JobOrigin> = match params.get("origin") {
             None | Some(Value::Null) => None,
             Some(v) => Some(
                 serde_json::from_value(v.clone()).map_err(|e| format!("invalid 'origin': {e}"))?,
@@ -351,6 +352,15 @@ fn handle_add(params: Map<String, Value>) -> ControllerFuture {
         let job = match job_type {
             "shell" => {
                 let cmd = command.ok_or("'command' is required for shell jobs")?;
+                let security = crate::security::SecurityPolicy::from_config(
+                    &config.autonomy,
+                    &config.workspace_dir,
+                    &config.action_dir,
+                );
+                crate::cron::scheduler::shell_job::authorize_shell_command(
+                    &config, &security, &cmd,
+                )
+                .await?;
                 crate::cron::store::add_shell_job(&config, name, schedule, &cmd)
                     .map_err(|e| e.to_string())?
             }
@@ -361,7 +371,7 @@ fn handle_add(params: Map<String, Value>) -> ControllerFuture {
                 let delivery = delivery.or_else(|| {
                     origin
                         .is_none()
-                        .then(crate::cron::DeliveryConfig::default)
+                        .then(tinyflows_schedule::types::DeliveryConfig::default)
                         .or_else(|| {
                             Some(crate::cron::job_builder::default_delivery(origin.as_ref()))
                         })
@@ -372,7 +382,7 @@ fn handle_add(params: Map<String, Value>) -> ControllerFuture {
                     &delivery_cfg,
                     origin.as_ref(),
                 )?;
-                let mut spec = crate::cron::AgentJobSpec::new(schedule, p);
+                let mut spec = tinyflows_sqlite::schedule::AgentJobSpec::new(schedule, p);
                 spec.name = name;
                 spec.session_target = session_target;
                 spec.model = model;

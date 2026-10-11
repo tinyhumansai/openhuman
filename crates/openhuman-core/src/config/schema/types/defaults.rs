@@ -25,6 +25,7 @@ impl Default for Config {
         });
 
         Self {
+            profile_providers: None,
             workspace_dir: openhuman_dir.join("workspace"),
             action_dir: crate::config::default_action_dir(),
             action_dir_override: None,

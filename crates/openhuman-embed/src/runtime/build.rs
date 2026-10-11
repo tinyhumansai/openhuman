@@ -3,12 +3,12 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use openhuman_core::agent::session_store::SessionStoreProvider;
 use openhuman_core::config::Config;
 use openhuman_core::core::runtime::CoreBuilder;
 use openhuman_core::core::types::HostKind;
+use tinyagents_session::port::SessionStoreProvider;
 
-use super::builder::{requests_background_services, ConfigSource};
+use super::builder::{starts_services_on_build, ConfigSource};
 use super::presets::{default_domains, default_services};
 use super::{ApiKey, Runtime, RuntimeBuilder, RuntimeError, RUNTIME_LIVE};
 use crate::harness::workspace::ResolvedWorkspace;
@@ -336,7 +336,7 @@ impl RuntimeBuilder {
             storage_info,
             storage_backend,
         );
-        if requests_background_services(services) {
+        if starts_services_on_build(services, self.defer_services) {
             log::debug!("[embed][runtime] starting background services {services:?}");
             runtime.start_services().await;
         }

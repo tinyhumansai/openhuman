@@ -200,36 +200,30 @@ fn all_controller_schemas_matches_registered_count() {
     assert_eq!(schemas.len(), controllers.len());
 }
 
-/// With the `voice` feature on (the default), the voice + audio_toolkit
+/// With the `voice` feature on (the default), the voice
 /// controllers are compiled in and registered — the desktop build is
 /// byte-identical.
 #[test]
 #[cfg(feature = "voice")]
-fn voice_and_audio_controllers_registered_when_feature_on() {
+fn voice_controllers_registered_when_feature_on() {
     let schemas = all_controller_schemas();
     assert!(
         schemas.iter().any(|s| s.namespace == "voice"),
         "voice controllers must be registered when the `voice` feature is on"
     );
-    assert!(
-        schemas.iter().any(|s| s.namespace == "audio_toolkit"),
-        "audio_toolkit controllers must be registered when the `voice` feature is on"
-    );
 }
 
-/// With the `voice` feature off, both domains are compiled out: their
-/// controllers never enter the registry, so voice/audio RPC methods are
+/// With the `voice` feature off, the voice domain are compiled out: their
+/// controllers never enter the registry, so voice RPC methods are
 /// unknown-method and absent from `/schema`. This is the compile-time
 /// stub-facade correctness gate (see `crate::voice::stub`).
 #[test]
 #[cfg(not(feature = "voice"))]
-fn voice_and_audio_controllers_absent_when_feature_off() {
+fn voice_controllers_absent_when_feature_off() {
     let schemas = all_controller_schemas();
     assert!(
-        !schemas
-            .iter()
-            .any(|s| s.namespace == "voice" || s.namespace == "audio_toolkit"),
-        "voice/audio_toolkit controllers must be compiled out when the `voice` feature is off"
+        !schemas.iter().any(|s| s.namespace == "voice"),
+        "voice controllers must be compiled out when the `voice` feature is off"
     );
 }
 
@@ -269,10 +263,9 @@ fn skill_controllers_registered_when_feature_on() {
 /// unknown-method and absent from `/schema`. This is the compile-time
 /// stub-facade correctness gate (see `crate::skills::stub`).
 ///
-/// Note this does NOT cover `skills::types` / `skills::ops_types`: those stay
-/// compiled in both directions (the type carve-out — `tools::traits` re-exports
-/// `ToolResult`/`ToolContent` out of them), but they expose no controllers, so
-/// the namespaces are absent either way.
+/// Workflow metadata in `skills::ops_types` stays compiled in both directions.
+/// Generic tool-result types come from `tinytools`. Neither exposes controllers,
+/// so these namespaces are absent either way.
 #[test]
 #[cfg(not(feature = "skills"))]
 fn skill_controllers_absent_when_feature_off() {

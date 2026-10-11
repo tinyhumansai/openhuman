@@ -175,7 +175,6 @@ fn parses_only_a_start_frame_first() {
 
 mod socket {
     use super::super::*;
-    use futures::{SinkExt as _, StreamExt as _};
     use tokio_tungstenite::tungstenite::Message as WsMessage;
 
     /// Serves `handle_live_voice_ws` on a loopback port with `config`.

@@ -28,6 +28,18 @@ pub trait RuntimeAdapter: Send + Sync {
         command: &str,
         workspace_dir: &Path,
     ) -> anyhow::Result<tokio::process::Command>;
+
+    /// Build a module-owned Docker request when this runtime does not execute
+    /// through a host child process. The shell tool supplies its filtered
+    /// environment and deadline before dispatching the request.
+    #[cfg(feature = "modules")]
+    fn build_docker_request(
+        &self,
+        _command: &str,
+        _workspace_dir: &Path,
+    ) -> Option<(crate::modules::tinybox::contract::DockerRunRequest, bool)> {
+        None
+    }
 }
 
 #[derive(Default)]
@@ -172,37 +184,45 @@ impl RuntimeAdapter for DockerRuntime {
 
     fn build_shell_command(
         &self,
+        _command: &str,
+        _workspace_dir: &Path,
+    ) -> anyhow::Result<tokio::process::Command> {
+        anyhow::bail!("Docker commands are executed through the TinyBox module")
+    }
+
+    #[cfg(feature = "modules")]
+    fn build_docker_request(
+        &self,
         command: &str,
         workspace_dir: &Path,
-    ) -> anyhow::Result<tokio::process::Command> {
-        let workspace = workspace_dir
-            .canonicalize()
-            .unwrap_or_else(|_| workspace_dir.to_path_buf());
-        let mut cmd = tokio::process::Command::new("docker");
-        cmd.arg("run").arg("--rm");
-        cmd.arg("--network").arg(&self.config.network);
-
-        if let Some(memory_limit_mb) = self.config.memory_limit_mb {
-            cmd.arg("-m").arg(format!("{memory_limit_mb}m"));
-        }
-        if let Some(cpu_limit) = self.config.cpu_limit {
-            cmd.arg("--cpus").arg(cpu_limit.to_string());
-        }
-        if self.config.read_only_rootfs {
-            cmd.arg("--read-only");
-        }
-        if self.config.mount_workspace {
-            let mount = format!("{}:/workspace", workspace.display());
-            cmd.arg("-v").arg(mount);
-            cmd.arg("-w").arg("/workspace");
-        }
-
-        cmd.arg(&self.config.image);
-        // No `pipefail` wrapper here (unlike NativeRuntime): the in-container
-        // shell is image-dependent (busybox/dash/bash) so we can't assume
-        // `set -o pipefail` is supported. Container commands keep POSIX `sh`.
-        cmd.arg("sh").arg("-lc").arg(command);
-        Ok(cmd)
+    ) -> Option<(crate::modules::tinybox::contract::DockerRunRequest, bool)> {
+        let workspace = if self.config.mount_workspace {
+            workspace_dir
+                .canonicalize()
+                .unwrap_or_else(|_| workspace_dir.to_path_buf())
+                .to_string_lossy()
+                .into_owned()
+        } else {
+            String::new()
+        };
+        Some((
+            crate::modules::tinybox::contract::DockerRunRequest {
+                workspace,
+                image: Some(self.config.image.clone()),
+                command: command.to_owned(),
+                login_shell: true,
+                network: Some(self.config.network.clone()),
+                memory_limit_mb: self.config.memory_limit_mb,
+                cpus: self.config.cpu_limit,
+                read_only_rootfs: Some(self.config.read_only_rootfs),
+                read_only_mounts: Vec::new(),
+                extra_cap_drops: Vec::new(),
+                env: Default::default(),
+                label: Some("openhuman.runtime=true".to_owned()),
+                timeout_ms: crate::modules::tinybox::contract::MAX_DOCKER_RUN_TIMEOUT_MS,
+            },
+            self.config.mount_workspace,
+        ))
     }
 }
 

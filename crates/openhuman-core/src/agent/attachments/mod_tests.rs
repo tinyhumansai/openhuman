@@ -376,7 +376,7 @@ async fn explicit_workspace_wins_over_config_action_dir() {
 fn enriched_plain_turn_reloads_with_identical_text_blocks() {
     use tinyinference_llm::message::Message;
     let enriched = enrich_input(Message::user("caption"), "caption", "context\ncaption");
-    let row = crate::agent::message_convert::message_to_native_chat_message(&enriched).unwrap();
+    let row = tinyagents_runtime::transcript::message_to_native_transcript(&enriched).unwrap();
     let replayed = crate::agent::message_convert::chat_message_to_message(&row);
     assert_eq!(replayed, enriched);
 }

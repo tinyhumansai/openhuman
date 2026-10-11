@@ -205,6 +205,32 @@ fn host_engine() -> Option<BoundEngine> {
 /// Resolves the configured engine.
 #[must_use]
 pub fn resolve(config: &Config) -> Binding {
+    if let Some(capabilities) = crate::profiles::capabilities::ProfileCapabilities::current() {
+        if let Some(engine) = &capabilities.memory_engine {
+            if let Err(reason) = crate::profiles::host::ensure_hosted() {
+                return off(None, None, &reason);
+            }
+            let profile = crate::core::runtime::current_tenant()
+                .ok()
+                .and_then(|tenant| tenant.profile);
+            let valid = profile.as_ref().is_some_and(|id| {
+                config.memory.agent_id.as_ref() == Some(id)
+                    && config.memory.root.as_deref() == Some(format!("user:{id}").as_str())
+            });
+            if !valid {
+                return off(
+                    None,
+                    None,
+                    "profile memory binding requires its forced namespace",
+                );
+            }
+            return Binding::On(BoundEngine {
+                id: engine.descriptor().id.to_string(),
+                endpoint: HOST_ENGINE_ENDPOINT.to_string(),
+                engine: super::guard::ScrubbingEngine::wrap(Arc::clone(engine)),
+            });
+        }
+    }
     #[cfg(test)]
     {
         let installed = TEST_ENGINES

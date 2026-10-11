@@ -243,15 +243,15 @@ impl SpanCollector {
         if let Some(pricing) = pricing {
             attrs.insert(
                 "gen_ai.pricing.input_per_mtok_usd".to_string(),
-                json_f64(pricing.input_per_mtok_usd),
+                json_f64(pricing.input_per_token.unwrap_or(0.0) * 1_000_000.0),
             );
             attrs.insert(
                 "gen_ai.pricing.cached_input_per_mtok_usd".to_string(),
-                json_f64(pricing.cached_input_per_mtok_usd),
+                json_f64(pricing.cache_read_input_per_token.unwrap_or(0.0) * 1_000_000.0),
             );
             attrs.insert(
                 "gen_ai.pricing.output_per_mtok_usd".to_string(),
-                json_f64(pricing.output_per_mtok_usd),
+                json_f64(pricing.output_per_token.unwrap_or(0.0) * 1_000_000.0),
             );
         }
 

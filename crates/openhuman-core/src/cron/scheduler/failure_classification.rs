@@ -2,7 +2,7 @@
 //! the permanent-halt predicates that stop the retry loop early.
 
 use crate::agent::error::AgentError;
-use crate::cron::JobType;
+use tinyflows_schedule::types::JobType;
 
 pub(super) const AGENT_JOB_USER_FAILURE_MESSAGE: &str = "Something went wrong. Please try again.";
 // Actionable, static failure copy for the three permanent cron halt states

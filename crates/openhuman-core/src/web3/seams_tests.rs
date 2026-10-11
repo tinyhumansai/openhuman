@@ -2,8 +2,7 @@ use super::*;
 use crate::security::approval::ApprovalChatContext;
 use crate::web3::wallet::test_support::{setup_wallet_in, UnreachableRpcGuard, TEST_LOCK};
 use crate::web3::wallet::{
-    execute_prepared, prepare_transfer, prepared_quotes_for_test, ExecutePreparedParams,
-    PrepareTransferParams,
+    execute_prepared, prepare_transfer, ExecutePreparedParams, PrepareTransferParams,
 };
 use tempfile::TempDir;
 
@@ -181,6 +180,7 @@ async fn a_prepared_quote_is_bound_to_the_chat_thread_that_prepared_it() {
     let _guard = TEST_LOCK.lock().await;
     let temp = TempDir::new().unwrap();
     let _workspace_guard = setup_wallet_in(&temp).await.unwrap();
+    let _endpoints = UnreachableRpcGuard::set();
 
     let prepared = APPROVAL_CHAT_CONTEXT
         .scope(
@@ -201,7 +201,11 @@ async fn a_prepared_quote_is_bound_to_the_chat_thread_that_prepared_it() {
         quote_id: quote_id.clone(),
         confirmed,
     };
-    let not_found = format!("quote '{quote_id}' not found");
+    // The native-wallet module wraps the owner gate's message in its
+    // declared TinyBus error, just as it does for an absent quote.
+    let not_found = format!(
+        "ai.tinyhumans.tinywallet.Error.NativeWalletOperationFailed: quote '{quote_id}' not found"
+    );
 
     // Another thread gets the same answer as for a quote that never existed.
     let from_b = APPROVAL_CHAT_CONTEXT
@@ -212,10 +216,6 @@ async fn a_prepared_quote_is_bound_to_the_chat_thread_that_prepared_it() {
     // So does a caller with no chat context at all.
     let from_background = execute_prepared(execute(true)).await.unwrap_err();
     assert_eq!(from_background, not_found);
-    // Neither attempt consumed it.
-    assert!(prepared_quotes_for_test()
-        .iter()
-        .any(|q| q.quote_id == quote_id));
     // And confirmation is still required before anything is attempted.
     let unconfirmed = APPROVAL_CHAT_CONTEXT
         .scope(chat_ctx("A"), execute_prepared(execute(false)))
@@ -225,4 +225,15 @@ async fn a_prepared_quote_is_bound_to_the_chat_thread_that_prepared_it() {
         unconfirmed.contains("confirmed: true"),
         "got: {unconfirmed}"
     );
+    // The module owns the quote store. A confirmed attempt by its owner must
+    // still reach the provider after both rejected callers, and a failed
+    // provider call must leave the quote available for another attempt.
+    for _ in 0..2 {
+        let unavailable = APPROVAL_CHAT_CONTEXT
+            .scope(chat_ctx("A"), execute_prepared(execute(true)))
+            .await
+            .unwrap_err();
+        assert!(unavailable.contains("127.0.0.1"), "got: {unavailable}");
+        assert!(!unavailable.contains("not found"), "got: {unavailable}");
+    }
 }

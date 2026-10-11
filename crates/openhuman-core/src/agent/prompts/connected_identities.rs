@@ -19,7 +19,7 @@
 /// empty section rather than panicking or blocking a prompt on a memory read.
 pub fn render_connected_identities() -> String {
     let identities = fetch_identities_blocking();
-    crate::integrations::composio::providers::render_connected_identities_section(&identities)
+    crate::integrations::composio::contract::render_connected_identities_section(&identities)
 }
 
 fn fetch_identities_blocking() -> Vec<crate::integrations::composio::contract::ConnectedIdentity> {

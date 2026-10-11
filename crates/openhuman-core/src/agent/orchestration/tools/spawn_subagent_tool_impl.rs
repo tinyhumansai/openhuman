@@ -373,8 +373,8 @@ impl SpawnSubagentTool {
                         Ok(ToolResult::success(envelope))
                     }
                     SubagentRunStatus::Completed => {
-                        crate::agent::harness::artifact_offload::note_artifact_handoff(
-                            crate::agent::harness::artifact_offload::HANDOFF_STAGE_CONSUMED,
+                        tinyagents_harness::artifacts::note_artifact_handoff(
+                            tinyagents_harness::artifacts::HANDOFF_STAGE_CONSUMED,
                             &outcome.agent_id,
                             &outcome.task_id,
                             &outcome.artifact_paths,

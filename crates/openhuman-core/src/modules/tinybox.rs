@@ -49,6 +49,9 @@ const READ_OUTPUT: &str = contract::METHODS[24];
 const RELEASE_OUTPUT: &str = contract::METHODS[25];
 const START_JAILED_EXEC: &str = contract::METHODS[26];
 const RUN_DOCKER: &str = contract::METHODS[27];
+const DOCKER_STATUS: &str = contract::METHODS[28];
+const CLEANUP_DOCKER: &str = contract::METHODS[29];
+const RUN_DOCKER_WITHOUT_WORKSPACE: &str = contract::METHODS[30];
 const DOCKER_CALL_GRACE: Duration = Duration::from_secs(5);
 
 #[cfg(test)]
@@ -176,11 +179,90 @@ pub async fn run_docker(
     call_run_docker_with_client(&client, request).await
 }
 
+/// Run one bounded Docker-isolated command without mounting a workspace.
+///
+/// This is used by the configured Docker runtime, whose existing behavior
+/// intentionally does not expose host workspace files to the container.
+pub async fn run_docker_without_workspace(
+    config: &Config,
+    request: contract::DockerRunRequest,
+) -> Result<contract::DockerRunOutput, String> {
+    let timeout = Duration::from_millis(request.timeout_ms).saturating_add(DOCKER_CALL_GRACE);
+    let client = ModuleClient::new(config.clone()).with_timeout(timeout);
+    call_run_docker_without_workspace_with_client(&client, request).await
+}
+
+/// Probe the Docker daemon owned by the TinyBox module host.
+pub async fn docker_status(
+    config: &Config,
+    request: contract::DockerStatusRequest,
+) -> Result<contract::DockerStatus, String> {
+    call_docker_status_with_client(&module_client(config), request).await
+}
+
+/// Stop TinyBox-owned containers matching the supplied label.
+pub async fn cleanup_docker(
+    config: &Config,
+    request: contract::CleanupDockerRequest,
+) -> Result<contract::CleanupDockerOutput, String> {
+    call_cleanup_docker_with_client(&module_client(config), request).await
+}
+
+fn docker_control_deadline(timeout_ms: u64, grace: Duration) -> Duration {
+    Duration::from_millis(timeout_ms.min(contract::MAX_DOCKER_CONTROL_TIMEOUT_MS))
+        .saturating_add(grace)
+}
+
+fn docker_control_client(client: &ModuleClient, timeout_ms: u64, grace: Duration) -> ModuleClient {
+    client
+        .clone()
+        .with_timeout(docker_control_deadline(timeout_ms, grace))
+}
+
+async fn call_docker_status_with_client(
+    client: &ModuleClient,
+    request: contract::DockerStatusRequest,
+) -> Result<contract::DockerStatus, String> {
+    call_docker_status_with_grace(client, request, DOCKER_CALL_GRACE).await
+}
+
+async fn call_docker_status_with_grace(
+    client: &ModuleClient,
+    request: contract::DockerStatusRequest,
+    grace: Duration,
+) -> Result<contract::DockerStatus, String> {
+    let client = docker_control_client(client, request.timeout_ms, grace);
+    call_with_client(&client, DOCKER_STATUS, (request,), false).await
+}
+
+async fn call_cleanup_docker_with_client(
+    client: &ModuleClient,
+    request: contract::CleanupDockerRequest,
+) -> Result<contract::CleanupDockerOutput, String> {
+    call_cleanup_docker_with_grace(client, request, DOCKER_CALL_GRACE).await
+}
+
+async fn call_cleanup_docker_with_grace(
+    client: &ModuleClient,
+    request: contract::CleanupDockerRequest,
+    grace: Duration,
+) -> Result<contract::CleanupDockerOutput, String> {
+    let client = docker_control_client(client, request.timeout_ms, grace);
+    call_with_client(&client, CLEANUP_DOCKER, (request,), false).await
+}
+
 async fn call_run_docker_with_client(
     client: &ModuleClient,
     request: contract::DockerRunRequest,
 ) -> Result<contract::DockerRunOutput, String> {
     call_with_client(client, RUN_DOCKER, (request,), true).await
+}
+
+async fn call_run_docker_without_workspace_with_client(
+    client: &ModuleClient,
+    request: contract::DockerRunRequest,
+) -> Result<contract::DockerRunOutput, String> {
+    call_with_client(client, RUN_DOCKER_WITHOUT_WORKSPACE, (request,), true).await
 }
 
 /// Read a bounded output batch from a live or completed process.

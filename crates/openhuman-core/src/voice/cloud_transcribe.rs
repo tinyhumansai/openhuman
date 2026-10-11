@@ -4,7 +4,7 @@ use crate::backend::BackendClient;
 use crate::config::Config;
 use crate::core::Outcome;
 
-pub use tinyinference_voice::cloud::{CloudTranscribeOptions, CloudTranscribeResult};
+use tinyinference_voice::cloud::{CloudTranscribeOptions, CloudTranscribeResult};
 
 /// Transcribe renderer-supplied base64 audio through the hosted backend.
 pub async fn transcribe_cloud(

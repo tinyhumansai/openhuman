@@ -69,6 +69,153 @@ fn parse_declared_class_maps_known_and_rejects_unknown() {
     );
 }
 
+#[cfg(feature = "modules")]
+#[test]
+fn tinybox_command_facts_drive_policy_and_keep_the_path_floor_when_disabled() {
+    use crate::modules::tinybox::contract::{
+        CommandAnalysis, CommandClass as ModuleClass, CommandSegment,
+    };
+
+    let write_segment = CommandSegment {
+        source: "ls -la".into(),
+        command: "ls -la".into(),
+        basename: "ls".into(),
+        normalized_name: "ls".into(),
+        arguments: vec!["-la".into()],
+        class: ModuleClass::Write,
+        leading_env_assignment: false,
+        dangerous_env_prefix: false,
+        executor: false,
+    };
+    let analysis = CommandAnalysis {
+        segments: vec![write_segment],
+        hidden_execution: false,
+        redirection: false,
+        expansion: false,
+        tee: false,
+        background: false,
+        literal_words: vec!["ls".into(), "-la".into()],
+    };
+    let supervised = SecurityPolicy {
+        enabled: true,
+        autonomy: AutonomyLevel::Supervised,
+        ..SecurityPolicy::default()
+    };
+    assert!(supervised.is_command_allowed_analysis(&analysis));
+    assert!(!supervised.is_command_allowed_analysis(&CommandAnalysis {
+        redirection: true,
+        ..analysis.clone()
+    }));
+    assert!(!supervised.is_command_allowed_analysis(&CommandAnalysis {
+        segments: vec![CommandSegment {
+            leading_env_assignment: true,
+            ..analysis.segments[0].clone()
+        }],
+        ..analysis.clone()
+    }));
+    assert!(!supervised.is_command_allowed_analysis(&CommandAnalysis {
+        segments: vec![CommandSegment {
+            normalized_name: "python3".into(),
+            executor: true,
+            ..analysis.segments[0].clone()
+        }],
+        ..analysis.clone()
+    }));
+
+    let readonly = SecurityPolicy {
+        enabled: true,
+        autonomy: AutonomyLevel::ReadOnly,
+        ..SecurityPolicy::default()
+    };
+    assert!(readonly.check_gated_command_analysis(&analysis).is_err());
+
+    let disabled = SecurityPolicy {
+        enabled: false,
+        ..SecurityPolicy::default()
+    };
+    let protected = CommandAnalysis {
+        literal_words: vec!["cat".into(), "~/.ssh/id_rsa".into()],
+        ..analysis
+    };
+    assert!(disabled.check_gated_command_analysis(&protected).is_err());
+
+    let traversal = CommandAnalysis {
+        literal_words: vec!["cat".into(), "workspace/../.ssh/id_rsa".into()],
+        ..protected.clone()
+    };
+    assert!(disabled.check_gated_command_analysis(&traversal).is_err());
+
+    let nul_path = CommandAnalysis {
+        literal_words: vec!["cat".into(), "safe\0/credential".into()],
+        ..protected
+    };
+    assert!(disabled.check_gated_command_analysis(&nul_path).is_err());
+}
+
+#[cfg(feature = "modules")]
+#[test]
+fn tinybox_fact_allowlist_treats_heredoc_as_data_and_unknown_commands_as_writes() {
+    use crate::modules::tinybox::contract::{
+        CommandAnalysis, CommandClass as ModuleClass, CommandSegment,
+    };
+
+    let policy = SecurityPolicy {
+        enabled: true,
+        autonomy: AutonomyLevel::Supervised,
+        ..SecurityPolicy::default()
+    };
+    // This is the `AnalyzeCommand` reply shape for a quoted heredoc: body text
+    // does not appear among live segments or literal words, while the command
+    // that writes the document remains classified as a write.
+    let heredoc = CommandAnalysis {
+        segments: vec![CommandSegment {
+            source: "cat > notes.txt << 'EOF'".into(),
+            command: "cat > notes.txt".into(),
+            basename: "cat".into(),
+            normalized_name: "cat".into(),
+            arguments: vec!["notes.txt".into()],
+            class: ModuleClass::Write,
+            leading_env_assignment: false,
+            dangerous_env_prefix: false,
+            executor: false,
+        }],
+        hidden_execution: false,
+        redirection: true,
+        expansion: false,
+        tee: false,
+        background: false,
+        literal_words: vec!["cat".into(), "notes.txt".into()],
+    };
+    assert!(!policy.is_command_allowed_analysis(&heredoc));
+
+    // The module's conservative unknown-command default is Write. OpenHuman's
+    // supervised allowlist still rejects a name it does not explicitly allow.
+    let unknown_write = CommandAnalysis {
+        segments: vec![CommandSegment {
+            source: "unrecognized-tool --flag".into(),
+            command: "unrecognized-tool --flag".into(),
+            basename: "unrecognized-tool".into(),
+            normalized_name: "unrecognized-tool".into(),
+            arguments: vec!["--flag".into()],
+            class: ModuleClass::Write,
+            leading_env_assignment: false,
+            dangerous_env_prefix: false,
+            executor: false,
+        }],
+        hidden_execution: false,
+        redirection: false,
+        expansion: false,
+        tee: false,
+        background: false,
+        literal_words: vec!["unrecognized-tool".into(), "--flag".into()],
+    };
+    assert!(!policy.is_command_allowed_analysis(&unknown_write));
+    assert_eq!(
+        policy.check_gated_command_analysis(&unknown_write),
+        Ok(CommandClass::Write)
+    );
+}
+
 #[test]
 fn command_risk_medium_for_command_executors() {
     // Interpreters / code executors are medium-risk now (not high): a coding

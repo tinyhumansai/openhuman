@@ -206,7 +206,7 @@ pub(crate) fn short_error_line(content: &str) -> String {
         None => first.to_owned(),
     };
     let line = crate::security::scrub::sanitize_text(&line).value;
-    let line = crate::security::pii::redact_identifiers(&line);
+    let line = tinymemory_api::safety::redact_identifiers(&line);
     let line = line.split_whitespace().collect::<Vec<_>>().join(" ");
     if line.chars().count() <= ERROR_LINE_CHARS {
         return line;

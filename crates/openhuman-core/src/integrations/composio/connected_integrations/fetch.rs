@@ -189,6 +189,6 @@ pub(crate) fn resolve_toolkit_description(
     slug: &str,
 ) -> String {
     catalog_descriptions.get(slug).cloned().unwrap_or_else(|| {
-        crate::integrations::composio::providers::toolkit_description(slug).to_string()
+        crate::integrations::composio::contract::toolkit_description(slug).to_string()
     })
 }

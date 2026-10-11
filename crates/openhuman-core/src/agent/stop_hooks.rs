@@ -17,49 +17,18 @@
 //! The per-turn tool budget ([`with_tool_call_limit`]) also lives here, on a
 //! task-local.
 
-use crate::agent::cost::TurnCost;
+pub use crate::agent::cost::TurnCost;
 use async_trait::async_trait;
 use std::sync::Arc;
 
-/// A policy hook fired between iterations of the tool-call loop.
-#[async_trait]
-pub trait StopHook: Send + Sync {
-    /// Stable name for tracing / error messages (e.g. `"budget"`).
-    fn name(&self) -> &str;
-
-    /// Inspect the current turn state and decide whether to continue.
-    async fn check(&self, ctx: &TurnState<'_>) -> StopDecision;
-}
-
-/// Outcome of a single hook check.
-#[derive(Debug, Clone)]
-pub enum StopDecision {
-    /// Keep the loop running.
-    Continue,
-    /// Stop the loop. `reason` is propagated to the caller.
-    Stop { reason: String },
-}
-
-/// Snapshot of the turn at the moment a hook fires. References are
-/// borrowed from the loop's locals so hooks pay no allocation cost on
-/// the hot path; clone fields out if you need to keep them.
-pub struct TurnState<'a> {
-    /// 1-based iteration index that's about to start.
-    pub iteration: u32,
-    /// Configured iteration cap for this turn.
-    pub max_iterations: u32,
-    /// Cumulative cost / token tally so far.
-    pub cost: &'a TurnCost,
-    /// Model name passed to this turn's provider calls.
-    pub model: &'a str,
-}
+use tinyagents_harness::middleware::{StopDecision, StopHook, TurnState};
 
 tokio::task_local! {
-    static CURRENT_STOP_HOOKS: Vec<Arc<dyn StopHook>>;
+    static CURRENT_STOP_HOOKS: Vec<Arc<dyn StopHook<TurnCost>>>;
 }
 
 /// Clone the stop hooks active in the current task, if any.
-pub fn current_stop_hooks() -> Vec<Arc<dyn StopHook>> {
+pub fn current_stop_hooks() -> Vec<Arc<dyn StopHook<TurnCost>>> {
     CURRENT_STOP_HOOKS
         .try_with(Clone::clone)
         .unwrap_or_default()
@@ -67,7 +36,7 @@ pub fn current_stop_hooks() -> Vec<Arc<dyn StopHook>> {
 
 /// Scope a future with per-turn stop hooks.
 pub async fn with_stop_hooks<F: std::future::Future>(
-    hooks: Vec<Arc<dyn StopHook>>,
+    hooks: Vec<Arc<dyn StopHook<TurnCost>>>,
     future: F,
 ) -> F::Output {
     CURRENT_STOP_HOOKS.scope(hooks, future).await
@@ -88,12 +57,12 @@ impl BudgetStopHook {
 }
 
 #[async_trait]
-impl StopHook for BudgetStopHook {
+impl StopHook<TurnCost> for BudgetStopHook {
     fn name(&self) -> &str {
         "budget"
     }
 
-    async fn check(&self, ctx: &TurnState<'_>) -> StopDecision {
+    async fn check(&self, ctx: &TurnState<'_, TurnCost>) -> StopDecision {
         if !self.max_usd.is_finite() || self.max_usd <= 0.0 {
             return StopDecision::Stop {
                 reason: format!("invalid budget cap configured: max_usd={}", self.max_usd),

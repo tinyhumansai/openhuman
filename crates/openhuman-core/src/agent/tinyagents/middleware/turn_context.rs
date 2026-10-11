@@ -18,8 +18,8 @@ use tinytools::{ToolPolicy as TaToolPolicy, ToolResult as TaToolResult};
 
 use crate::agent::tinyagents::payload_summarizer::PayloadSummarizer;
 use crate::agent::tinyagents::turn_outcome::ToolCallOutcome;
-use crate::inference::tokenjuice::AgentTokenjuiceCompression;
 use tinyagents_harness::artifacts::tool_results::ToolResultArtifactStore;
+use tinyjuice_bus::types::AgentTokenjuiceCompression;
 
 use super::tool_output::ToolOutputMiddleware;
 

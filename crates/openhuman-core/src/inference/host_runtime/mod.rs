@@ -36,4 +36,3 @@ pub use schemas::{
     all_controller_schemas as all_local_inference_controller_schemas,
     all_registered_controllers as all_local_inference_registered_controllers,
 };
-pub use service::LocalAiService;

@@ -143,7 +143,7 @@ impl SessionDriver<OpenHumanRunContext> for OpenHumanSessionDriver {
         let mut messages: Vec<TranscriptMessage> = request
             .history
             .iter()
-            .filter_map(crate::agent::message_convert::message_to_native_chat_message)
+            .filter_map(tinyagents_runtime::transcript::message_to_native_transcript)
             .collect();
         if crate::agent::multimodal::has_image_placeholders(&messages) {
             messages = crate::agent::multimodal::rehydrate_image_placeholders(&messages);
@@ -174,7 +174,12 @@ impl SessionDriver<OpenHumanRunContext> for OpenHumanSessionDriver {
             .iter()
             .map(|spec| spec.name.clone())
             .collect();
-        ensure_snapshot_tools_are_executable(&visible_tool_names, &tools, &synthesized_tools)?;
+        ensure_snapshot_tools_are_executable(
+            &visible_tool_names,
+            &tools,
+            &synthesized_tools,
+            &request.run_context.data.recorded_tool_names,
+        )?;
         // The harness must speak the dialect this session's prompt was
         // composed for: a text dialect strips schemas off the wire and needs
         // the positional registry to recover P-Format / code-style calls.
@@ -502,14 +507,15 @@ fn driver_failure(error: impl std::fmt::Display) -> DriverFailure {
     }
 }
 
-/// Refuse a provider declaration that has no executable request-scoped source.
-/// Sources may contain additional durable tools because the runtime snapshot is
-/// the final provider-visible allowlist, but every declared name must resolve
-/// here before the graph begins.
+/// Refuse fresh declarations without a request-scoped executable source.
+/// Historical declarations may outlive their executors. The harness handles
+/// calls to those missing tools as recoverable errors; history never supplies
+/// an executor or bypasses the current tool policy.
 fn ensure_snapshot_tools_are_executable(
     visible_tool_names: &HashSet<String>,
     tools: &Arc<Vec<Box<dyn tinytools::Tool>>>,
     synthesized_tools: &Arc<Vec<Box<dyn tinytools::Tool>>>,
+    recorded_tool_names: &HashSet<String>,
 ) -> Result<(), DriverFailure> {
     let executable_tool_names = tools
         .iter()
@@ -518,6 +524,7 @@ fn ensure_snapshot_tools_are_executable(
         .collect::<HashSet<_>>();
     let missing = visible_tool_names
         .difference(&executable_tool_names)
+        .filter(|name| !recorded_tool_names.contains(*name))
         .cloned()
         .collect::<Vec<_>>();
     if missing.is_empty() {

@@ -2,8 +2,7 @@
 
 Small, self-contained helpers that several domains share: UTF-8-safe text
 truncation, retry with backoff for flaky filesystem operations, log
-redaction, URL normalization, JSON-RPC param decoding, LLM-facing text
-sanitization and the platform TLS choice for `reqwest`. `pub mod util;` in
+redaction, URL normalization, JSON-RPC param decoding and the platform TLS choice for `reqwest`. `pub mod util;` in
 `lib.rs` is unconditional, so everything here is compiled in every build.
 
 ## How it works
@@ -11,7 +10,8 @@ sanitization and the platform TLS choice for `reqwest`. `pub mod util;` in
 There is no flow here, only a rule about direction. Domains depend on `util`;
 `util` depends on no domain. No file in this folder has a `use crate::` line.
 A helper that needs a `Config`, a `Tool`, a workspace or security policy
-belongs in the domain that owns those things.
+belongs in the domain that owns those things. Domains import LLM-facing text
+sanitization directly from `tinytools_std::sanitize`.
 
 ```text
   agent  memory  tools  inference  config  integrations  mcp  ...
@@ -23,7 +23,7 @@ belongs in the domain that owns those things.
                               |
                               v
         external crates: serde_json, sha2, url, reqwest, tokio,
-                         tracing, anyhow, tinymcp_bus (sanitize)
+                         tracing, anyhow
 ```
 
 `util` is kernel surface, so it also sits under the dependency-floor ratchet
@@ -41,7 +41,6 @@ copy.
 | [`redact.rs`](./redact.rs) | `redact` hashes a string to 8 hex chars for log lines. `redact_url_for_log` replaces URL userinfo with `redacted`. |
 | [`url.rs`](./url.rs) | `normalize_api_base_url`, `normalize_backend_api_base_url`, `join_url`, `host_is_local`. |
 | [`params.rs`](./params.rs) | `read_required` and `read_optional`, the shared param decoders for controller handlers. |
-| [`sanitize.rs`](./sanitize.rs) | A re-export of `tinymcp_bus::sanitize`: `sanitize_for_llm`, `strip_control_chars`, `strip_instruction_fences`, `truncate_utf8_safe`, `MAX_DESCRIPTION_BYTES`, `MAX_TITLE_BYTES`. |
 | [`types.rs`](./types.rs) | `MaybeSet<T>` (`Set`, `Unset`, `Null`). |
 | [`tls/`](tls/README.md) | `tls_client_builder()`, the platform-conditional TLS backend for `reqwest` clients. |
 
@@ -121,7 +120,7 @@ null" (`Null`) in partial-update payloads. The caller today is
 [`mod.rs`](./mod.rs) re-exports `read_optional`, `read_required`, `redact_url_for_log`,
 the `retry` functions, the `text` functions and `MaybeSet` at the module root,
 so `crate::util::truncate_with_ellipsis` works without naming the submodule.
-`redact::redact`, `sanitize::*`, `url::*` and `tls::tls_client_builder` are
+`redact::redact`, `url::*` and `tls::tls_client_builder` are
 reached through their submodule path. From outside the crate the library name
 is `openhuman_core`, which is the path the `truncate_with_ellipsis` doctest
 uses.

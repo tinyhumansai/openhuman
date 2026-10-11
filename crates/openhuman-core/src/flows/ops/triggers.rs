@@ -163,7 +163,7 @@ pub(super) fn bind_schedule_trigger(config: &Config, flow: &Flow) {
         tracing::warn!(target: "flows", flow_id = %flow.id, "[flows] schedule trigger config is missing `schedule` — cannot bind cron job");
         return;
     };
-    let schedule: crate::cron::Schedule = match serde_json::from_value(schedule_raw) {
+    let schedule: tinyflows_schedule::types::Schedule = match serde_json::from_value(schedule_raw) {
         Ok(s) => s,
         Err(e) => {
             tracing::warn!(target: "flows", flow_id = %flow.id, error = %e, "[flows] invalid schedule trigger config — cannot bind cron job");
@@ -173,7 +173,7 @@ pub(super) fn bind_schedule_trigger(config: &Config, flow: &Flow) {
 
     match crate::cron::find_flow_schedule_job(config, &flow.id) {
         Ok(Some(existing)) => {
-            let patch = crate::cron::CronJobPatch {
+            let patch = tinyflows_schedule::types::CronJobPatch {
                 enabled: Some(true),
                 schedule: Some(schedule),
                 ..Default::default()

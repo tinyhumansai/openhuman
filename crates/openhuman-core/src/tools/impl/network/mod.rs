@@ -24,7 +24,7 @@ pub use gitbooks::{GitbooksGetPageTool, GitbooksSearchTool};
 pub use gmail_unsubscribe::GmailUnsubscribeTool;
 pub use host::{http_request_tool, web_fetch_tool};
 #[cfg(feature = "mcp")]
-pub use mcp::{mcp_call_tool, McpListServersTool, McpListToolsTool};
+pub use mcp::mcp_call_tool;
 #[cfg(feature = "mcp")]
 pub use mcp_server_tools::{configured_server_tools, ConfiguredMcpServerTool};
 

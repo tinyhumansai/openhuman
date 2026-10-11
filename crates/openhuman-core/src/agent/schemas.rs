@@ -484,11 +484,7 @@ fn handle_graph_topologies(_params: Map<String, Value>) -> ControllerFuture {
             .map_err(|e| format!("loading built-in agent graph resolutions: {e}"))?
             .into_iter()
             .map(|def| {
-                let graph = if def.graph.is_default() {
-                    "default"
-                } else {
-                    "custom"
-                };
+                let graph = "default";
                 serde_json::json!({
                     "id": def.id,
                     "graph": graph,

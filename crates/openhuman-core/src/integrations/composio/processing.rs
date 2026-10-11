@@ -3,7 +3,7 @@
 use crate::config::Config;
 use tinyconnectors_bus::{FilterResponseRequest, PrepareArgumentsRequest, PreparedArguments};
 
-use super::module_client::methods;
+use tinyconnectors_bus::names::methods;
 
 /// Apply the connector's validation, calendar defaults and task window rules.
 pub(crate) async fn prepare(

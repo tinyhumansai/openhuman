@@ -15,8 +15,8 @@ use tinychannels_bus::{
     ChannelControllerRequest,
 };
 
-use super::super::definitions::ChannelAuthMode;
 use super::connect::shared::credential_provider;
+use tinychannels_bus::controllers::ChannelAuthMode;
 
 // ---------------------------------------------------------------------------
 // Discord guild/channel discovery

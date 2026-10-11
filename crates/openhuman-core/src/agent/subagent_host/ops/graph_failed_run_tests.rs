@@ -170,6 +170,16 @@ fn failed_run_history_keeps_the_original_seed_not_the_provider_bound_one() {
         1,
         "only the accepted round follows the seed: {recovered:?}"
     );
+    let declaration = &recovered[1];
+    assert_eq!(
+        declaration.tool_calls.len(),
+        1,
+        "accepted native rounds retain their declaration"
+    );
+    assert_eq!(
+        declaration.tool_calls[0].id,
+        recovered[2].tool_call_id.as_deref().unwrap_or_default()
+    );
     assert!(
         unanswered.is_some_and(|steps| steps.contains("round-1")),
         "the unanswered round is kept as text"

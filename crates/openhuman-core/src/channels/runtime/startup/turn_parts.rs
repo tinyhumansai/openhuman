@@ -14,11 +14,11 @@ use crate::channels::system_prompt::{ChannelPromptInputs, ChannelSystemPrompt};
 use crate::config::Config;
 use crate::inference::provider;
 use crate::security::SecurityPolicy;
-use crate::skills::Workflow;
 use crate::tools;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use tinyskills::Skill as Workflow;
 use tinytools::Tool;
 
 /// The process-independent pieces of a channel turn.
@@ -141,30 +141,48 @@ pub(crate) fn build_channel_turn_parts(
         config.workspace_dir.clone(),
     )?;
     let workspace = config.workspace_dir.clone();
-    let tools_registry = Arc::new(tools::ops::all_tools_with_runtime(
-        Arc::new(config.clone()),
-        security,
-        runtime,
-        audit,
-        // `all_tools_with_runtime` no longer takes a memory handle — the two
-        // tools that needed one resolve the guarded driver per call.
-        &config.browser,
-        &config.http_request,
-        &config.action_dir,
-        &config.agents,
-        config,
-        None,
-    ));
+    let capabilities = crate::profiles::capabilities::ProfileCapabilities::current();
+    let tools_registry = Arc::new(if capabilities.is_some() {
+        // The profile host route builds the selected belt once with the exact
+        // durable thread. No second, unnamed factory invocation is needed here.
+        Vec::new()
+    } else {
+        tools::ops::all_tools_with_runtime(
+            Arc::new(config.clone()),
+            security,
+            runtime,
+            audit,
+            // `all_tools_with_runtime` no longer takes a memory handle — the two
+            // tools that needed one resolve the guarded driver per call.
+            &config.browser,
+            &config.http_request,
+            &config.action_dir,
+            &config.agents,
+            config,
+            None,
+        )
+    });
 
-    let skills = crate::skills::load_workflow_metadata(&workspace);
+    let skills = if capabilities.is_some() {
+        Vec::new()
+    } else {
+        crate::skills::load_workflow_metadata(&workspace)
+    };
 
-    let tool_descs: Vec<(String, String)> = default_tool_descs(config)
-        .into_iter()
-        .filter(|(name, _)| {
-            descs == PromptToolDescs::Fixed || tools_registry.iter().any(|t| t.name() == *name)
-        })
-        .map(|(name, desc)| (name.to_string(), desc.to_string()))
-        .collect();
+    let tool_descs: Vec<(String, String)> = if capabilities.is_some() {
+        tools_registry
+            .iter()
+            .map(|tool| (tool.name().to_owned(), tool.description().to_owned()))
+            .collect()
+    } else {
+        default_tool_descs(config)
+            .into_iter()
+            .filter(|(name, _)| {
+                descs == PromptToolDescs::Fixed || tools_registry.iter().any(|t| t.name() == *name)
+            })
+            .map(|(name, desc)| (name.to_string(), desc.to_string()))
+            .collect()
+    };
 
     let bootstrap_max_chars = if config.agent.compact_context {
         Some(6000)

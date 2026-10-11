@@ -7,15 +7,14 @@ pub mod repl_tools;
 pub mod savings;
 pub mod schemas;
 pub mod tools;
-pub mod types;
 
 use tinyjuice_bus::names::methods;
+use tinyjuice_bus::types::{AgentTokenjuiceCompression, CompressorKind, ContentKind};
 
 pub use repl_tools::{is_repl_tool, repl_tools, repl_tools_for, REPL_TOOL_NAMES};
 pub use tools::TokenjuiceRetrieveTool;
-pub use types::{AgentTokenjuiceCompression, CompressorKind, ContentKind};
 
-use types::InstallRequest;
+use tinyjuice_bus::wire::InstallRequest;
 
 pub const RETRIEVE_TOOL_NAME: &str = "juice_retrieve";
 pub const LEGACY_TINYJUICE_RETRIEVE_TOOL_NAME: &str = "tinyjuice_retrieve";
@@ -87,7 +86,7 @@ pub fn repl_save_dir(workspace_dir: &std::path::Path) -> std::path::PathBuf {
 pub(crate) fn install_request(config: &crate::config::Config) -> InstallRequest {
     let tj = &config.tokenjuice;
     InstallRequest {
-        options: types::CompressOptions {
+        options: tinyjuice_bus::types::CompressOptions {
             router_enabled: tj.router_enabled,
             ccr_enabled: tj.ccr_enabled,
             search_enabled: tj.search_enabled,
@@ -102,13 +101,13 @@ pub(crate) fn install_request(config: &crate::config::Config) -> InstallRequest 
             // Never at ingest: a large result gets deterministic compression
             // and a recovery handle, and the model writes a summary only when
             // the agent asks for one with `juice_summarize` (#6955).
-            llm_summary_mode: types::LlmSummaryMode::OnDemand,
+            llm_summary_mode: tinyjuice_bus::types::LlmSummaryMode::OnDemand,
             llm_summary_threshold_tokens: config.context.summarizer_payload_threshold_tokens,
             llm_summary_max_input_tokens: config.context.summarizer_max_payload_tokens,
             repl_handle: repl_handle_active(config),
             repl_save_dir: (repl_handle_active(config) && tj.repl_save_enabled)
                 .then(|| repl_save_dir(&config.workspace_dir)),
-            ..types::CompressOptions::default()
+            ..tinyjuice_bus::types::CompressOptions::default()
         },
         max_cache_entries: tj.max_cache_entries,
         max_cache_bytes: tj.max_cache_bytes,
@@ -149,19 +148,7 @@ pub async fn install_from_config(config: &crate::config::Config) -> Result<(), S
 
 /// Construct explicit access over the shared process-wide loader.
 fn client(config: &crate::config::Config) -> crate::modules::client::ModuleClient {
-    #[allow(unused_mut)] // Fixture overrides are compiled only into tests.
-    let mut config = config.clone();
-    #[cfg(test)]
-    if let Some(path) = std::env::var_os("TINYJUICE_TEST_MODULE") {
-        config
-            .modules
-            .overrides
-            .push(crate::config::schema::ModuleOverride {
-                id: "tinyjuice".into(),
-                path: path.to_string_lossy().into_owned(),
-            });
-    }
-    crate::modules::client::ModuleClient::new(config)
+    crate::modules::client::ModuleClient::new(config.clone())
 }
 
 /// Everything the module considers about one tool result.
@@ -256,7 +243,7 @@ pub async fn compact_tool_output(call: ToolOutputCompaction<'_>) -> CompactedToo
     }
     #[cfg(test)]
     if let Ok(stub) = module_stub::STUB.try_with(std::sync::Arc::clone) {
-        let response = stub(types::CompactRequest {
+        let response = stub(tinyjuice_bus::wire::CompactRequest {
             content,
             tool_name: tool_name.to_string(),
             enabled,
@@ -291,7 +278,7 @@ pub async fn compact_tool_output(call: ToolOutputCompaction<'_>) -> CompactedToo
         log::debug!("[tokenjuice] module configuration failed, passing through: {error}");
         return CompactedToolOutput::passthrough(content, wants_summary);
     }
-    let request = types::CompactRequest {
+    let request = tinyjuice_bus::wire::CompactRequest {
         content: content.clone(),
         tool_name: tool_name.to_string(),
         enabled,
@@ -303,7 +290,11 @@ pub async fn compact_tool_output(call: ToolOutputCompaction<'_>) -> CompactedToo
     };
     let response = match client(&config)
         .with_timeout(COMPACT_WITH_TIMEOUT)
-        .call::<types::CompactResponse>("tinyjuice", methods::COMPACT_WITH, (request,))
+        .call::<tinyjuice_bus::wire::CompactResponse>(
+            "tinyjuice",
+            methods::COMPACT_WITH,
+            (request,),
+        )
         .await
     {
         Ok(response) => response,
@@ -316,7 +307,7 @@ pub async fn compact_tool_output(call: ToolOutputCompaction<'_>) -> CompactedToo
     compacted_from(response)
 }
 
-fn compacted_from(response: types::CompactResponse) -> CompactedToolOutput {
+fn compacted_from(response: tinyjuice_bus::wire::CompactResponse) -> CompactedToolOutput {
     let summarized_from_bytes = (response.compressor == CompressorKind::LlmSummary.as_str())
         .then_some(response.original_bytes);
     CompactedToolOutput {
@@ -326,7 +317,7 @@ fn compacted_from(response: types::CompactResponse) -> CompactedToolOutput {
     }
 }
 
-fn record_savings(response: &types::CompactResponse) {
+fn record_savings(response: &tinyjuice_bus::wire::CompactResponse) {
     use std::str::FromStr as _;
     let kind = ContentKind::from_str(&response.content_kind).unwrap_or(ContentKind::PlainText);
     let compressor = CompressorKind::from_str(&response.compressor).unwrap_or(CompressorKind::None);
@@ -338,7 +329,10 @@ fn record_savings(response: &types::CompactResponse) {
     );
 }
 
-pub async fn detect(content: String, hint: types::ContentHint) -> Result<String, String> {
+pub async fn detect(
+    content: String,
+    hint: tinyjuice_bus::types::ContentHint,
+) -> Result<String, String> {
     let config = crate::config::Config::load_or_init()
         .await
         .map_err(|error| error.to_string())?;
@@ -350,13 +344,13 @@ pub async fn detect(content: String, hint: types::ContentHint) -> Result<String,
 
 pub async fn compress(
     content: String,
-    hint: types::ContentHint,
-) -> Result<types::CompressedOutput, String> {
+    hint: tinyjuice_bus::types::ContentHint,
+) -> Result<tinyjuice_bus::types::CompressedOutput, String> {
     let config = crate::config::Config::load_or_init()
         .await
         .map_err(|error| error.to_string())?;
     install_from_config(&config).await?;
-    let response: types::CompressedOutput = client(&config)
+    let response: tinyjuice_bus::types::CompressedOutput = client(&config)
         .call("tinyjuice", methods::COMPRESS, (content, hint))
         .await
         .map_err(|error| error.to_string())?;
@@ -371,7 +365,7 @@ pub async fn compress(
 
 pub async fn retrieve(
     token: String,
-    range: Option<types::RetrieveRange>,
+    range: Option<tinyjuice_bus::wire::RetrieveRange>,
 ) -> Result<Option<String>, String> {
     let config = crate::config::Config::load_or_init()
         .await
@@ -383,7 +377,7 @@ pub async fn retrieve(
         .map_err(|error| error.to_string())
 }
 
-pub async fn cache_stats() -> Result<types::CacheStats, String> {
+pub async fn cache_stats() -> Result<tinyjuice_bus::wire::CacheStats, String> {
     let config = crate::config::Config::load_or_init()
         .await
         .map_err(|error| error.to_string())?;
@@ -414,9 +408,7 @@ mod repl_module_tests;
 pub async fn query(
     request: tinyjuice_bus::wire::QueryRequest,
 ) -> Result<tinyjuice_bus::wire::QueryResponse, String> {
-    let config = crate::config::Config::load_or_init()
-        .await
-        .map_err(|e| e.to_string())?;
+    let config = crate::config::ops::load_config_with_timeout().await?;
     query_for_config(&config, request).await
 }
 
@@ -433,12 +425,14 @@ pub(crate) async fn query_for_config(
 
 /// Extract HTML through the compiled module independently of compression settings.
 pub async fn extract_html(html: String) -> Result<String, String> {
-    let config = crate::config::Config::load_or_init()
-        .await
-        .map_err(|e| e.to_string())?;
+    let config = crate::config::ops::load_config_with_timeout().await?;
     let response: tinyjuice_bus::wire::HtmlResponse = client(&config)
         .call("tinyjuice", methods::EXTRACT_HTML, (html,))
         .await
         .map_err(|e| e.to_string())?;
     response.map_err(|_| "juice: HTML input exceeds module limit".into())
 }
+
+#[cfg(test)]
+#[path = "mod_contract_tests.rs"]
+mod contract_tests;

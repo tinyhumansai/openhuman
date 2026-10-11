@@ -17,7 +17,6 @@ OpenHuman-owned files:
 | Path | Role |
 | --- | --- |
 | [`mod.rs`](./mod.rs) | TinyBus calls (through `tinyjuice_bus::names::methods` constants), config installation, pass-through fallback, and savings wiring. |
-| [`types.rs`](./types.rs) | Re-export of the `tinyjuice-bus` contract (`tinyjuice_bus::types::{AgentTokenjuiceCompression, CompressOptions, CompressedOutput, CompressorKind, ContentHint, ContentKind}` and `tinyjuice_bus::wire::{CacheStats, CompactResponse, InstallRequest, RangeUnit, RetrieveRange}`) under the paths ~40 call sites in this crate already use. |
 | [`schemas.rs`](./schemas.rs) | JSON-RPC controller schemas and handlers. |
 | [`config_patch.rs`](./config_patch.rs) | Partial update shape for the `[tokenjuice]` config block. |
 | [`generate.rs`](./generate.rs) | Turn-bound, single-use summary callbacks. The host registers the model call, sends its opaque ticket through the existing contract, and withdraws the callback when the ticket drops. |
@@ -86,3 +85,5 @@ behavior. There is no linked implementation fallback.
 
 - [Parent module README](../README.md)
 - [tinyjuice](../../../../../vendor/tinyjuice/README.md)
+
+Contract types are imported directly from `tinyjuice_bus::types` and `tinyjuice_bus::wire`; the adapter keeps serialization compatibility tests in `mod_contract_tests.rs`.

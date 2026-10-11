@@ -63,3 +63,142 @@ fn committed_tool_calls_pair_each_call_with_its_result() {
     assert_eq!(calls[0].result.as_deref(), Some("src/main.rs"));
     assert_eq!(calls[1].result, None);
 }
+
+#[tokio::test]
+async fn deferred_memory_commit_survives_the_turn_scope_without_pinning_the_profile() {
+    use crate::core::runtime::{CoreContext, DomainSet, SaasConfig};
+    use crate::profiles::{ProfileHost, ProfileId};
+    use tinymemory_api::{
+        LearningKind, ListRequest, MemoryEngine, MemoryMeta, MetaFilter, StoreItem,
+    };
+
+    let root = tempfile::tempdir().unwrap();
+    let engine = Arc::new(tinymemory_api::conformance::ReferenceEngine::new());
+    let capabilities = Arc::new(crate::profiles::capabilities::ProfileCapabilities::new(
+        None,
+        None,
+        None,
+        Default::default(),
+        Vec::new(),
+        Some(engine.clone()),
+    ));
+    let host = ProfileHost::new(
+        SaasConfig::new(root.path()),
+        CoreContext::for_test(DomainSet::full(), None),
+    )
+    .with_capabilities(Some(capabilities));
+    let id = ProfileId::parse("deferred-memory").unwrap();
+    host.provision(&id).await.unwrap();
+    let profile = host.open(&id).await.unwrap();
+    let captured = CoreContext::scope_with_turn_origin(profile.context().clone(), None, async {
+        capture_profile_context(Some(&host))
+    })
+    .await;
+    // The entire temporary turn context is gone before this callback is polled.
+    let config = profile.config.clone();
+    let work = async {
+        assert_eq!(
+            crate::core::runtime::current_tenant()
+                .unwrap()
+                .profile
+                .as_deref(),
+            Some(id.as_str())
+        );
+        let binding = crate::memory::engine::resolve(&config).engine().unwrap();
+        binding
+            .engine
+            .store(StoreItem::learning(
+                "delayed committed reply",
+                LearningKind::Fact,
+                0.9,
+                MemoryMeta {
+                    namespace: config.memory.root.as_ref().unwrap().parse().unwrap(),
+                    ..Default::default()
+                },
+            ))
+            .await
+            .unwrap();
+    };
+    deferred_memory_work(captured.clone(), work).await;
+    assert_eq!(
+        engine
+            .list(ListRequest::new(MetaFilter::default(), 10))
+            .await
+            .unwrap()
+            .items
+            .len(),
+        1,
+        "a still-hosted profile must persist its deferred commit after its turn ends"
+    );
+    drop(profile);
+    assert!(
+        host.release(&id).await.unwrap(),
+        "the pending weak capture cannot pin an idle profile"
+    );
+    assert!(
+        matches!(&captured, ProfileMemoryContext::BoundWeak(context) if context.upgrade().is_none()),
+        "the retired owner is not retained"
+    );
+    deferred_memory_work(captured, async {
+        panic!("retired callbacks must fail closed")
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn missing_profile_owner_refuses_deferred_memory_instead_of_running_unscoped() {
+    use crate::core::runtime::{ContextOverlay, CoreContext, DomainSet, SaasConfig};
+    use crate::profiles::ProfileHost;
+    use crate::tools::toolpacks::ToolGroups;
+    let root = tempfile::tempdir().unwrap();
+    let operator = CoreContext::for_test(DomainSet::full(), None);
+    let host = ProfileHost::new(SaasConfig::new(root.path()), operator.clone());
+    let missing = operator.derive_with(
+        ContextOverlay::new(
+            crate::config::Config::default(),
+            DomainSet::full(),
+            ToolGroups::none(),
+        )
+        .profile("missing-owner"),
+    );
+    let captured =
+        CoreContext::scope(missing, async { capture_profile_context(Some(&host)) }).await;
+    deferred_memory_work(captured, async {
+        panic!("a failed profile owner capture must not run under the configured external engine")
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn failed_profile_capture_is_denied_but_ordinary_desktop_work_still_runs() {
+    use crate::core::runtime::{ContextOverlay, CoreContext, DomainSet};
+    use crate::tools::toolpacks::ToolGroups;
+    let operator = CoreContext::for_test(DomainSet::full(), None);
+    for id in ["missing-host", "invalid/owner"] {
+        let profile = operator.derive_with(
+            ContextOverlay::new(
+                crate::config::Config::default(),
+                DomainSet::full(),
+                ToolGroups::none(),
+            )
+            .profile(id),
+        );
+        let captured = CoreContext::scope(profile, async { capture_profile_context(None) }).await;
+        assert!(matches!(captured, ProfileMemoryContext::Denied));
+        deferred_memory_work(captured, async {
+            panic!("a profile without its host cannot resolve an external engine")
+        })
+        .await;
+    }
+    let captured = CoreContext::scope(operator, async { capture_profile_context(None) }).await;
+    assert!(matches!(captured, ProfileMemoryContext::NonProfile));
+    let mut ran = false;
+    deferred_memory_work(captured, async {
+        ran = true;
+    })
+    .await;
+    assert!(
+        ran,
+        "ordinary desktop work retains its existing deferred behavior"
+    );
+}

@@ -13,7 +13,7 @@
 use crate::config::Config;
 use crate::core::Outcome;
 
-use super::super::module_client::{self as connectors, methods};
+use super::super::module_client::{self as connectors};
 use super::super::types::{
     ComposioActiveTriggersResponse, ComposioAvailableTriggersResponse,
     ComposioCreateTriggerRequest, ComposioCreateTriggerResponse, ComposioDisableTriggerRequest,
@@ -22,6 +22,7 @@ use super::super::types::{
     ComposioListGithubReposRequest, ComposioListTriggersRequest, ComposioTriggerHistoryResult,
 };
 use super::error_utils::{report_composio_op_error, OpResult};
+use tinyconnectors_bus::names::methods;
 
 pub async fn composio_list_github_repos(
     config: &Config,

@@ -24,8 +24,8 @@ fn a_forgotten_owner_is_resolved_again() {
     assert!(!OWNERS.lock().unwrap().contains_key("owner-test-flow"));
 }
 
-fn local_flow(id: &str) -> crate::flows::Flow {
-    crate::flows::Flow {
+fn local_flow(id: &str) -> tinyflows_catalog::Flow {
+    tinyflows_catalog::Flow {
         id: id.to_string(),
         name: id.to_string(),
         enabled: true,

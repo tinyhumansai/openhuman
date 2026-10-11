@@ -1,8 +1,7 @@
 //! Channel contracts and OpenHuman runtime orchestration.
 //!
 //! Provider orchestration is gated by `channels`. Serialized configuration,
-//! messages, and schemas come from `tinychannels-bus`. Podcast email delivery
-//! calls the loaded module even in a voice-only build.
+//! messages, and schemas come from `tinychannels-bus`.
 //!
 //! The local REPL is host orchestration. The legacy provider trait remains an
 //! explicit implementation exception during the runtime migration to TinyBus.
@@ -109,15 +108,14 @@ pub use yuanbao::YuanbaoChannel;
 pub use runtime::test_support;
 
 #[cfg(feature = "channels")]
-pub use commands::doctor_channels;
-#[cfg(feature = "channels")]
-pub use controllers::{ChannelAuthMode, ChannelDefinition};
 // Channel system-prompt assembly lives in
 // `crate::agent::context::channels_prompt` alongside the rest of
 // the prompt-building code. Re-exported here for callers that used the
 // old `channels::build_system_prompt` path.
 #[cfg(feature = "channels")]
 pub use crate::agent::context::channels_prompt::build_system_prompt;
+#[cfg(feature = "channels")]
+pub use commands::doctor_channels;
 #[cfg(feature = "channels")]
 pub use runtime::start_channels;
 #[cfg(feature = "channels")]

@@ -5,11 +5,11 @@ use crate::config::Config;
 use crate::core::Outcome;
 use crate::inference::host_runtime as local_runtime;
 use crate::inference::provider as providers;
-use crate::inference::LocalAiStatus;
 use serde_json::{json, Value};
 use tinyinference_llm::message::Message;
 use tinyinference_llm::model::ModelRequest;
 use tinyinference_llm::sentiment::{parse_sentiment_response, SentimentResult};
+use tinyinference_local::status::LocalAiStatus;
 use tracing::{debug, error, warn};
 
 const LOG_PREFIX: &str = "[inference::ops]";

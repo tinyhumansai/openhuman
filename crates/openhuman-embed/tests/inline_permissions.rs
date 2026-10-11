@@ -28,9 +28,9 @@ impl Tool for Probe {
     fn parameters_schema(&self) -> Value {
         json!({"type":"object","properties":{}})
     }
-    async fn execute(&self, _: Value) -> anyhow::Result<openhuman_core::tools::ToolResult> {
+    async fn execute(&self, _: Value) -> anyhow::Result<tinytools::ToolResult> {
         self.0.fetch_add(1, Ordering::SeqCst);
-        Ok(openhuman_core::tools::ToolResult::success("ran"))
+        Ok(tinytools::ToolResult::success("ran"))
     }
 }
 #[test]

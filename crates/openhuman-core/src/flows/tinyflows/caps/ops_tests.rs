@@ -1,7 +1,7 @@
 use super::*;
 use crate::agent::prompts::types::IntegrationConnection;
 use crate::integrations::composio::{ComposioExecuteResponse, ConnectedIntegration};
-use crate::skills::types::{ToolContent, ToolResult};
+use tinytools::{ToolContent, ToolResult};
 
 fn integration(
     toolkit: &str,

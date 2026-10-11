@@ -71,10 +71,16 @@ pub enum CommandRiskLevel {
     High,
 }
 
-/// Coarse permission bucket the harness approval gate keys on. Defined with the
-/// classifier in `tinybox_core::shell::classify`; re-exported here so host
-/// callers keep their path.
-pub use tinybox_core::shell::classify::CommandClass;
+/// Coarse permission bucket the harness approval gate keys on. TinyBox
+/// supplies parser facts; OpenHuman owns this authorization category.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum CommandClass {
+    Read,
+    Write,
+    Network,
+    Install,
+    Destructive,
+}
 
 /// What the harness should do with an acting tool call of a given
 /// [`CommandClass`] under the session's [`AutonomyLevel`]. Computed by

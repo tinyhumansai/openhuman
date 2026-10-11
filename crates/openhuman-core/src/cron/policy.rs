@@ -79,30 +79,49 @@ async fn declare(
     docs.ensure_collection(&CollectionSpec::new(POLICIES)).await
 }
 
-fn from_doc(doc: &Value) -> JobPolicy {
-    JobPolicy {
-        retries: doc
-            .get("retries")
-            .and_then(Value::as_u64)
-            .map(|n| u32::try_from(n).unwrap_or(u32::MAX)),
-        single_flight: doc
-            .get("single_flight")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-    }
+/// Decode a stored policy row. A row this code did not write (wrong type,
+/// out-of-range retries, missing `single_flight`) is an error, never a default.
+fn from_doc(doc: &Value) -> Result<JobPolicy> {
+    let retries = match doc.get("retries") {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(
+            value
+                .as_u64()
+                .and_then(|n| u32::try_from(n).ok())
+                .context("retries is not a u32")?,
+        ),
+    };
+    let single_flight = doc
+        .get("single_flight")
+        .and_then(Value::as_bool)
+        .context("single_flight is not a bool")?;
+    Ok(JobPolicy {
+        retries,
+        single_flight,
+    })
 }
 
-/// The policy stored for `job_id`; the default when none is.
+/// The policy stored for `job_id`; the default when there is no row.
+///
+/// Fails closed: a policy backend that errors, or a row that does not decode,
+/// is an error, so callers refuse to run the job. The error names the job only;
+/// backend error text (which can carry credentials or payloads) is dropped.
 pub fn get_policy(config: &Config, job_id: &str) -> Result<JobPolicy> {
+    read_policy(config, job_id).map_err(|_| {
+        tracing::warn!(job_id, "[cron:policy] policy unreadable; refusing to run");
+        anyhow::anyhow!("cron policy for job {job_id} is unavailable; refusing to run it")
+    })
+}
+
+fn read_policy(config: &Config, job_id: &str) -> Result<JobPolicy> {
     if let Some(docs) = documents()? {
         let id = job_id.to_string();
         return block_on_anyhow(async move {
             declare(&docs).await?;
-            Ok(docs
-                .get(POLICIES, &id)
-                .await?
-                .map(|stored| from_doc(&stored.doc))
-                .unwrap_or_default())
+            match docs.get(POLICIES, &id).await? {
+                Some(stored) => from_doc(&stored.doc),
+                None => Ok(JobPolicy::default()),
+            }
         });
     }
     let conn = open(config)?;
@@ -195,15 +214,6 @@ pub fn effective_retries(config: &Config, policy: &JobPolicy) -> u32 {
     policy
         .retries
         .unwrap_or(config.reliability.scheduler_retries)
-}
-
-/// The stored policy for `job_id`, or the default when it cannot be read: a
-/// policy-store hiccup must not stop a job from running.
-pub(crate) fn policy_or_default(config: &Config, job_id: &str) -> JobPolicy {
-    get_policy(config, job_id).unwrap_or_else(|error| {
-        tracing::warn!(job_id, %error, "[cron:policy] policy unreadable; using the default");
-        JobPolicy::default()
-    })
 }
 
 #[cfg(test)]

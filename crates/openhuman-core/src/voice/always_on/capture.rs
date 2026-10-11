@@ -25,7 +25,7 @@ pub(super) async fn spawn_capture_thread(
     let lease = CaptureLease::reserve(config, Kind::Stream).await?;
     let stream = lease.start_stream().await?;
     let mut stopped = STOP.subscribe();
-    let task = tokio::spawn(async move {
+    let task = crate::core::runtime::spawn_scoped(async move {
         loop {
             if tx.is_closed() {
                 break;

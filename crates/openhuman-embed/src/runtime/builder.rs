@@ -14,12 +14,12 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use openhuman_core::agent::session_store::SessionStoreProvider;
 use openhuman_core::backend::BackendTransport;
 use openhuman_core::config::Config;
 use openhuman_core::core::runtime::{DomainSet, ServiceSet, TokenSource};
 use openhuman_core::core::types::HostKind;
 use openhuman_core::tools::toolpacks::ToolGroups;
+use tinyagents_session::port::SessionStoreProvider;
 
 use super::seams::HostSeams;
 use super::ApiKey;
@@ -33,6 +33,13 @@ pub(crate) use super::build::apply_provider;
 /// Whether `services` asks for any background work.
 pub(crate) fn requests_background_services(services: ServiceSet) -> bool {
     services != ServiceSet::none()
+}
+
+/// Whether [`RuntimeBuilder::build`] starts `services` itself: only when they
+/// ask for background work and the host did not
+/// [defer](RuntimeBuilder::defer_services) them.
+pub(crate) fn starts_services_on_build(services: ServiceSet, deferred: bool) -> bool {
+    !deferred && requests_background_services(services)
 }
 
 #[cfg(test)]
@@ -78,6 +85,7 @@ pub struct RuntimeBuilder {
     pub(super) provider: Provider,
     pub(super) access: Access,
     pub(super) services: Option<ServiceSet>,
+    pub(super) defer_services: bool,
     pub(super) domains: Option<DomainSet>,
     pub(super) tool_groups: Option<ToolGroups>,
     pub(super) host_kind: HostKind,
@@ -122,6 +130,7 @@ impl RuntimeBuilder {
             provider: Provider::inherit(),
             access: Access::default(),
             services: None,
+            defer_services: false,
             domains: None,
             tool_groups: None,
             host_kind: HostKind::Library,
@@ -357,6 +366,22 @@ impl RuntimeBuilder {
     /// bound does not start them twice.
     pub fn services(mut self, services: ServiceSet) -> Self {
         self.services = Some(services);
+        self
+    }
+
+    /// Build without starting the background services the [`ServiceSet`]
+    /// selects; the host starts them with
+    /// [`Runtime::start_services`](crate::Runtime::start_services) once it is
+    /// ready.
+    ///
+    /// For a host that registers
+    /// [`Runtime::on_system_job`](crate::Runtime::on_system_job) handlers:
+    /// a job stored by an earlier process can be due the moment the
+    /// scheduler starts, and a system job with no handler yet is announced
+    /// and recorded `ok` without running. Build deferred, register every
+    /// handler, upsert the jobs, then start.
+    pub fn defer_services(mut self) -> Self {
+        self.defer_services = true;
         self
     }
 

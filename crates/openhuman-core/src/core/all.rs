@@ -321,13 +321,6 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         DomainGroup::Desktop,
         crate::desktop::app_state::all_app_state_registered_controllers(),
     );
-    // Audio generation + podcast-style email delivery (gated with voice).
-    #[cfg(feature = "voice")]
-    push(
-        &mut controllers,
-        DomainGroup::Voice,
-        crate::voice::audio_toolkit::all_audio_toolkit_registered_controllers(),
-    );
     // Composio integration controllers
     push(
         &mut controllers,

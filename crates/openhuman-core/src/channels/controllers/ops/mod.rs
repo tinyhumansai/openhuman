@@ -3,11 +3,8 @@
 mod connect;
 mod discord;
 mod messaging;
-mod types;
 
 // Re-export types needed by tests.
-#[cfg(test)]
-pub(crate) use crate::channels::controllers::ChannelAuthMode;
 #[cfg(test)]
 pub(crate) use crate::config::Config;
 #[cfg(test)]

@@ -96,7 +96,11 @@ fn role_tools_follow_provider_selection() {
         .into_iter()
         .map(|spec| spec.name)
         .collect();
-    assert_eq!(names, vec!["web_answer_tool".to_string()]);
+    // Gemini serves Search (grounded) as well as Answer.
+    assert_eq!(
+        names,
+        vec!["web_search_tool".to_string(), "web_answer_tool".to_string()]
+    );
 }
 
 #[test]

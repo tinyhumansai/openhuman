@@ -258,7 +258,7 @@ pub struct OpenHumanSessionHost {
     /// resolve their default cwd to its root. `None` preserves the shared
     /// `action_dir` cwd behaviour.
     pub(super) workspace_descriptor: Option<tinytools::WorkspaceDescriptor>,
-    pub(super) workflows: Vec<crate::skills::Workflow>,
+    pub(super) workflows: Vec<tinyskills::Skill>,
     /// Last per-turn context block (active goal, running sub-agents) built for
     /// the current turn. Stored so it can be forwarded to subagents via
     /// `ParentExecutionContext`.
@@ -429,7 +429,7 @@ pub struct OpenHumanSessionHost {
         Option<Arc<dyn crate::agent::tinyagents::payload_summarizer::PayloadSummarizer>>,
     /// Per-agent TokenJuice profile for tool results entering this session's
     /// model context.
-    pub(super) tokenjuice_compression: crate::inference::tokenjuice::AgentTokenjuiceCompression,
+    pub(super) tokenjuice_compression: tinyjuice_bus::types::AgentTokenjuiceCompression,
     /// Pre-execution policy hook for tool calls in this session. The
     /// default policy allows all calls so existing agents keep their
     /// behaviour unless a caller opts into stricter policy.
@@ -568,7 +568,7 @@ pub struct SessionHostBuilder {
     /// Optional turn workspace descriptor forwarded to [`OpenHumanSessionHost`] at build time.
     /// Defaults to `None` (shared `action_dir` cwd).
     pub(super) workspace_descriptor: Option<tinytools::WorkspaceDescriptor>,
-    pub(super) workflows: Option<Vec<crate::skills::Workflow>>,
+    pub(super) workflows: Option<Vec<tinyskills::Skill>>,
     /// OpenHumanSessionHost workflows to surface in the prompt. Populated from `load_workflows`
     /// at session start; defaults to empty when not explicitly set.
     pub(super) post_turn_hooks: Vec<Arc<dyn PostTurnHook>>,
@@ -615,7 +615,7 @@ pub struct SessionHostBuilder {
     pub(super) payload_summarizer:
         Option<Arc<dyn crate::agent::tinyagents::payload_summarizer::PayloadSummarizer>>,
     /// Per-agent TokenJuice tool-output compression profile.
-    pub(super) tokenjuice_compression: crate::inference::tokenjuice::AgentTokenjuiceCompression,
+    pub(super) tokenjuice_compression: tinyjuice_bus::types::AgentTokenjuiceCompression,
     /// Optional pre-execution tool policy. Defaults to allow-all.
     pub(super) tool_policy: Option<Arc<dyn ToolPolicy>>,
 }

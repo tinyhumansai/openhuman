@@ -7,12 +7,12 @@ use tinyconnectors_bus::{
 };
 use tokio::sync::Mutex;
 
-use super::module_client::methods;
 use super::types::{
     ComposioTriggerEvent, ComposioTriggerHistoryEntry, ComposioTriggerHistoryResult,
 };
 use crate::config::Config;
 use crate::modules::client::ModuleClient;
+use tinyconnectors_bus::names::methods;
 
 static GLOBAL_TRIGGER_HISTORY: OnceLock<Arc<TriggerHistory>> = OnceLock::new();
 
@@ -84,7 +84,7 @@ impl TriggerHistory {
         let client = self.client(&config);
         // Keep ownership installation running if the caller is cancelled while
         // OpenArchive completes. A later close can still release the handle.
-        tokio::spawn(async move {
+        crate::core::runtime::spawn_scoped(async move {
             let mut guard = lease.lock_owned().await;
             Self::ensure_lease(&config, &mut guard, client).await?;
             Ok(guard)
@@ -154,9 +154,11 @@ impl TriggerHistory {
     /// Release the module resource while retaining all persisted documents.
     pub async fn close(&self) -> Result<(), String> {
         let lease = Arc::clone(&self.lease);
-        tokio::spawn(async move { Self::release(&mut *lease.lock_owned().await).await })
-            .await
-            .map_err(|_| "trigger archive release task failed".to_owned())?
+        crate::core::runtime::spawn_scoped(async move {
+            Self::release(&mut *lease.lock_owned().await).await
+        })
+        .await
+        .map_err(|_| "trigger archive release task failed".to_owned())?
     }
 }
 

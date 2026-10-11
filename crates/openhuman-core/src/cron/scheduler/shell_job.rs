@@ -2,13 +2,67 @@
 //! forbidden-path argument scan and a hard timeout.
 
 use crate::config::Config;
-use crate::cron::CronJob;
 use crate::security::SecurityPolicy;
+#[cfg(test)]
 use std::process::Stdio;
-use tokio::time::{self, Duration};
+use tinyflows_schedule::types::CronJob;
+#[cfg(test)]
+use tokio::time;
+use tokio::time::Duration;
 
 pub(super) const SHELL_JOB_TIMEOUT_SECS: u64 = 120;
 
+/// Check a scheduled shell command using the parser facts from the pinned
+/// TinyBox module. The host owns the allowlist and protected-path decisions;
+/// a missing module is a refusal, never a request to parse locally.
+pub(crate) async fn authorize_shell_command(
+    config: &Config,
+    security: &SecurityPolicy,
+    command: &str,
+) -> Result<(), String> {
+    #[cfg(feature = "modules")]
+    {
+        let analysis = match crate::modules::tinybox::analyze_command(config, command.to_owned())
+            .await
+        {
+            Ok(analysis) => analysis,
+            Err(_) => {
+                #[cfg(test)]
+                {
+                    if !config.modules.enabled {
+                        return Err("Command analysis is unavailable.".to_owned());
+                    }
+                    // Scheduler unit tests exercise process and retry behavior
+                    // without loading a native artifact. Production has no
+                    // parser fallback and fails closed below.
+                    security
+                        .check_gated_command(command)
+                        .map_err(|_| "blocked by security policy: command rejected".to_owned())?;
+                    if !security.is_command_allowed(command) {
+                        return Err("blocked by security policy: command not allowed".to_owned());
+                    }
+                    return Ok(());
+                }
+                #[cfg(not(test))]
+                return Err("Command analysis is unavailable.".to_owned());
+            }
+        };
+        security
+            .check_gated_command_analysis(&analysis)
+            .map_err(|_| "blocked by security policy: command rejected".to_owned())?;
+        if !security.is_command_allowed_analysis(&analysis) {
+            return Err("blocked by security policy: command not allowed".to_owned());
+        }
+        Ok(())
+    }
+    #[cfg(not(feature = "modules"))]
+    {
+        let _ = (config, security, command);
+        Err("Command analysis is unavailable.".to_owned())
+    }
+}
+
+#[cfg(test)]
 pub(super) fn is_env_assignment(word: &str) -> bool {
     word.contains('=')
         && word
@@ -17,10 +71,12 @@ pub(super) fn is_env_assignment(word: &str) -> bool {
             .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
 }
 
+#[cfg(test)]
 pub(super) fn strip_wrapping_quotes(token: &str) -> &str {
     token.trim_matches(|c| c == '"' || c == '\'')
 }
 
+#[cfg(test)]
 pub(super) fn forbidden_path_argument(security: &SecurityPolicy, command: &str) -> Option<String> {
     let mut normalized = command.to_string();
     for sep in ["&&", "||"] {
@@ -101,21 +157,8 @@ pub(super) async fn run_job_command_with_timeout(
         );
     }
 
-    if !security.is_command_allowed(&job.command) {
-        return (
-            false,
-            format!(
-                "blocked by security policy: command not allowed: {}",
-                job.command
-            ),
-        );
-    }
-
-    if let Some(path) = forbidden_path_argument(security, &job.command) {
-        return (
-            false,
-            format!("blocked by security policy: forbidden path argument: {path}"),
-        );
+    if let Err(reason) = authorize_shell_command(config, security, &job.command).await {
+        return (false, reason);
     }
 
     if !security.record_action() {
@@ -125,47 +168,69 @@ pub(super) async fn run_job_command_with_timeout(
         );
     }
 
-    // Through `platform_shell`, like every other shell spawn in this crate.
-    // `Command::new("sh")` fails at `CreateProcessW` on Windows, which is the
-    // whole reason that module exists — this call site was the one that still
-    // named the program itself.
-    //
-    // The `preserving_pipe_status` variant, not the ordinary one: a job's exit
-    // status is recorded per run and spends a retry budget, so `set -o pipefail`
-    // would flip an existing job ending in a tolerated pipe stage (`false |
-    // true`, a `… | grep -q` that finds nothing) from success to failure. That
-    // is a change to somebody's schedule, not a lint. The `-lc` flag and the
-    // per-platform shell are shared with every other caller.
-    let child = match crate::agent::platform_shell::build_tokio_command_preserving_pipe_status(
-        &job.command,
-    )
-    .current_dir(&config.action_dir)
-    .stdin(Stdio::null())
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped())
-    .kill_on_drop(true)
-    .spawn()
+    #[cfg(test)]
     {
-        Ok(child) => child,
-        Err(e) => return (false, format!("spawn error: {e}")),
-    };
+        // Scheduler unit fixtures do not load a native TinyBox artifact. The
+        // production branch below always uses the module-owned process path;
+        // the released-artifact fixture covers that bus lifecycle directly.
+        let child = match crate::agent::platform_shell::build_tokio_command_preserving_pipe_status(
+            &job.command,
+        )
+        .current_dir(&config.action_dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        {
+            Ok(child) => child,
+            Err(_) => return (false, "Command execution is unavailable.".to_owned()),
+        };
+        return match time::timeout(timeout, child.wait_with_output()).await {
+            Ok(Ok(output)) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let combined = format!(
+                    "status={}\nstdout:\n{}\nstderr:\n{}",
+                    output.status,
+                    stdout.trim(),
+                    stderr.trim()
+                );
+                (output.status.success(), combined)
+            }
+            Ok(Err(_)) => (false, "Command execution failed.".to_owned()),
+            Err(_) => (
+                false,
+                format!("job timed out after {}s", timeout.as_secs_f64()),
+            ),
+        };
+    }
 
-    match time::timeout(timeout, child.wait_with_output()).await {
-        Ok(Ok(output)) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let combined = format!(
-                "status={}\nstdout:\n{}\nstderr:\n{}",
-                output.status,
-                stdout.trim(),
-                stderr.trim()
+    #[cfg(not(test))]
+    {
+        let output = match crate::sandbox::native_jail::execute_passthrough(
+            config,
+            &job.command,
+            &config.action_dir,
+            timeout,
+        )
+        .await
+        {
+            Ok(output) => output,
+            Err(_) => return (false, "Command execution is unavailable.".to_owned()),
+        };
+        if output.timed_out {
+            return (
+                false,
+                format!("job timed out after {}s", timeout.as_secs_f64()),
             );
-            (output.status.success(), combined)
         }
-        Ok(Err(e)) => (false, format!("spawn error: {e}")),
-        Err(_) => (
-            false,
-            format!("job timed out after {}s", timeout.as_secs_f64()),
-        ),
+        let combined = format!(
+            "status=exit status: {}\nstdout:\n{}\nstderr:\n{}",
+            output.exit_code,
+            output.stdout.trim(),
+            output.stderr.trim()
+        );
+        (output.success(), combined)
     }
 }

@@ -418,7 +418,7 @@ fn build_flow_connections_never_carries_secret_fields() {
 
 #[test]
 fn build_flow_connections_attaches_platform_user_id_from_a_seeded_identity() {
-    use crate::integrations::composio::providers::ConnectedIdentity;
+    use crate::integrations::composio::contract::ConnectedIdentity;
 
     let composio = vec![composio_conn("ca_slack1", "slack", "ACTIVE", None)];
     let identities = vec![ConnectedIdentity {
@@ -435,7 +435,7 @@ fn build_flow_connections_attaches_platform_user_id_from_a_seeded_identity() {
 
 #[test]
 fn build_flow_connections_platform_user_id_is_none_without_a_matching_identity() {
-    use crate::integrations::composio::providers::ConnectedIdentity;
+    use crate::integrations::composio::contract::ConnectedIdentity;
 
     // No identities at all.
     let composio = vec![composio_conn("ca_slack1", "slack", "ACTIVE", None)];
@@ -508,7 +508,7 @@ async fn list_suggestions_filters_by_status() {
     seed_suggestion(&config, "s1");
     seed_suggestion(&config, "s2");
 
-    let active = flows_list_suggestions(&config, Some(crate::flows::SuggestionStatus::New))
+    let active = flows_list_suggestions(&config, Some(tinyflows_catalog::SuggestionStatus::New))
         .await
         .unwrap();
     assert_eq!(active.value.len(), 2);
@@ -531,7 +531,7 @@ async fn dismiss_and_mark_built_move_suggestions_out_of_active() {
     assert_eq!(b.value["built"], json!(true));
 
     // Neither is in the active (New) set anymore.
-    let active = flows_list_suggestions(&config, Some(crate::flows::SuggestionStatus::New))
+    let active = flows_list_suggestions(&config, Some(tinyflows_catalog::SuggestionStatus::New))
         .await
         .unwrap();
     assert!(active.value.is_empty());

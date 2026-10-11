@@ -1,7 +1,7 @@
 //! Wire and config types for the voice server: run state, status snapshot,
 //! and the tunables that shape a recording → transcription pass.
 
-use crate::voice::hotkey::ActivationMode;
+use tinyvoice_bus::hotkey::ActivationMode;
 
 /// Running state of the voice server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

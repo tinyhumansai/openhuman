@@ -12,8 +12,10 @@ use tinyagents_orchestration::workflow::{
 };
 
 use crate::agent::harness::definition::{AgentDefinitionRegistry, SandboxMode, ToolScope};
-use crate::agent::orchestration::{
-    AgentOrchestrationSession, OrchestrationTaskStatus, SpawnAgentRequest, WaitAgentOptions,
+use {
+    crate::agent::orchestration::AgentOrchestrationSession,
+    crate::agent::orchestration::SpawnAgentRequest, crate::agent::orchestration::WaitAgentOptions,
+    tinyagents_tasks::OrchestrationTaskStatus,
 };
 
 /// Product policy deliberately remains in OpenHuman. The portable engine sees

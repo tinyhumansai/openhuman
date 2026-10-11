@@ -5,7 +5,7 @@
 use tinyagents_harness::retry::RetryPolicy;
 use tinyagents_harness::runtime::{InvalidArgsPolicy, RunPolicy, UnknownToolPolicy};
 
-use crate::agent::harness::MAX_SPAWN_DEPTH;
+use crate::agent::tinyagents::budget::MAX_SPAWN_DEPTH;
 
 /// The builder-configured [`ToolPolicy`](crate::agent::tool_policy::ToolPolicy)
 /// plus the session context a policy check needs, handed to the shared turn seam

@@ -42,7 +42,7 @@ pub(crate) use wire_types::WorkflowSummary;
 
 // `Workflow` is used by the unit tests (skill_summary_round_trip_minimum_fields).
 #[cfg(test)]
-pub(crate) use crate::skills::ops::Workflow;
+pub(crate) use tinyskills::Skill as Workflow;
 
 // `resolve_workspace_dir` is used by the `run_workflow` agent tool.
 pub(crate) use helpers::resolve_workspace_dir;

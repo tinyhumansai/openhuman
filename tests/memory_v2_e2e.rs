@@ -1108,8 +1108,8 @@ async fn policy_get_and_set_round_trip() {
     assert_eq!(defaults["log_conversations"], json!(true));
     assert_eq!(defaults["recall"]["enabled"], json!(true));
     assert_eq!(defaults["recall"]["budget_tokens"], json!(1200));
-    // No team section by default: a pack carries the agent's own history.
-    assert_eq!(defaults["recall"]["team_limit"], json!(0));
+    // Team recall defaults to three entries; setting zero below disables it.
+    assert_eq!(defaults["recall"]["team_limit"], json!(3));
     assert_eq!(defaults["root"], json!("root"));
     assert_eq!(defaults["host_bound"], json!(false));
 
@@ -1712,7 +1712,7 @@ async fn wait_for_request(f: &Fixture, what: &str, found: impl Fn(&str, &str) ->
 }
 
 #[tokio::test]
-async fn a_chat_turn_carries_its_pack_and_is_logged() {
+async fn a_later_chat_turn_carries_cached_memory_and_is_logged() {
     // Chat sessions resolve their hosted authority from the agent definition
     // registry, which the full runtime initialises at startup.
     openhuman_core::agent::harness::definition::AgentDefinitionRegistry::init_global_builtins()
@@ -1733,17 +1733,71 @@ async fn a_chat_turn_carries_its_pack_and_is_logged() {
         .await;
     assert_eq!(accepted["accepted"], json!(true), "{accepted}");
 
-    // Pre-turn: the model request carries the pack, recalled for the turn.
-    wait_for_request(
-        &f,
-        "an inference request carrying the memory pack",
-        |url, body| {
+    // A cold turn starts without waiting for memory. Its background lookup
+    // supplies a completed pack to a later turn on this same conversation.
+    let idle = f
+        .ok_until(
+            "openhuman.channel_web_queue_status",
+            json!({ "thread_id": "launch-thread" }),
+            |status| status["active"] == json!(false),
+        )
+        .await;
+    assert_eq!(
+        idle["active"],
+        json!(false),
+        "the cold turn finished: {idle}"
+    );
+    let first = f.mock.request_bodies().await;
+    let inference = first
+        .iter()
+        .find(|(url, _)| url.contains("chat/completions"))
+        .expect("the cold turn reached inference");
+    assert!(
+        !inference.1.contains("launch events in Lisbon"),
+        "a cold turn has no cached pack"
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let before = f.mock.request_bodies().await.len();
+        let accepted = f
+            .ok(
+                "openhuman.channel_web_chat",
+                json!({
+                    "client_id": "memory-v2-e2e",
+                    "thread_id": "launch-thread",
+                    "message": "Where should the launch event be held?",
+                    "model_override": "e2e-mock-model",
+                }),
+            )
+            .await;
+        assert_eq!(accepted["accepted"], json!(true), "{accepted}");
+        let idle = f
+            .ok_until(
+                "openhuman.channel_web_queue_status",
+                json!({ "thread_id": "launch-thread" }),
+                |status| status["active"] == json!(false),
+            )
+            .await;
+        assert_eq!(
+            idle["active"],
+            json!(false),
+            "the later turn finished: {idle}"
+        );
+        let requests = f.mock.request_bodies().await;
+        if requests.iter().skip(before).any(|(url, body)| {
             url.contains("chat/completions")
                 && body.contains("memory-context")
                 && body.contains("launch events in Lisbon")
-        },
-    )
-    .await;
+                && body.contains("completed background lookup for an earlier turn")
+        }) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "later turns never received the completed background memory pack"
+        );
+    }
     // Pre-turn logs the user's message, post-turn the reply, each as one turn
     // of the thread under the answering agent's node.
     wait_for_request(&f, "the user turn logged", |url, body| {

@@ -20,9 +20,9 @@ use tinytools::{ToolPolicy as TaToolPolicy, ToolResult as TaToolResult};
 
 use crate::agent::context::CLEARED_PLACEHOLDER;
 use crate::agent::tinyagents::payload_summarizer::PayloadSummarizer;
-use crate::inference::tokenjuice::AgentTokenjuiceCompression;
 use tinyagents_harness::context::{RunConfig, RunContext};
 use tinyinference_llm::model::ModelRequest;
+use tinyjuice_bus::types::AgentTokenjuiceCompression;
 use tinytools::Tool;
 
 fn ctx() -> RunContext<crate::agent::tinyagents::host::OpenHumanRunContext> {
@@ -94,7 +94,7 @@ fn summarizer_mw(ps: Arc<dyn PayloadSummarizer>) -> ToolOutputMiddleware {
         payload_summarizer: Some(ps),
         artifact_store: None,
         tokenjuice_compaction_enabled: false,
-        tokenjuice_compression: crate::inference::tokenjuice::AgentTokenjuiceCompression::Full,
+        tokenjuice_compression: tinyjuice_bus::types::AgentTokenjuiceCompression::Full,
         runtime_config: Some(summarizing_config()),
         tool_policies: HashMap::new(),
         artifact_reads: Default::default(),
@@ -109,10 +109,7 @@ fn summarizer_mw(ps: Arc<dyn PayloadSummarizer>) -> ToolOutputMiddleware {
 /// Run `fut` against a stubbed TinyJuice module, returning what it was sent.
 async fn with_module<F: std::future::Future>(
     fut: F,
-) -> (
-    F::Output,
-    Vec<crate::inference::tokenjuice::types::CompactRequest>,
-) {
+) -> (F::Output, Vec<tinyjuice_bus::wire::CompactRequest>) {
     use crate::inference::tokenjuice::module_stub;
     let recorded = Arc::new(std::sync::Mutex::new(Vec::new()));
     let output = module_stub::with_stub(module_stub::summarizing(recorded.clone()), fut).await;

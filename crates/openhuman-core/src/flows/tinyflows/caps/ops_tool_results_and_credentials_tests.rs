@@ -156,7 +156,7 @@ fn connection_ref_resolves_to_the_chosen_account() {
 /// but simply doesn't contain it.
 #[tokio::test]
 async fn unknown_toolkit_still_rejects() {
-    use crate::integrations::composio::providers::catalog_for_toolkit;
+    use crate::integrations::composio::contract::catalog_for_toolkit;
     let config = Config::default();
     // Precondition: `flowstestkit` is genuinely uncatalogued, so the decision
     // flows through the connected-set path (not the static curated path).
@@ -184,7 +184,7 @@ async fn unknown_toolkit_still_rejects() {
 /// The exact same slug rejects above without a connection.
 #[tokio::test]
 async fn connected_uncatalogued_toolkit_now_passes() {
-    use crate::integrations::composio::providers::catalog_for_toolkit;
+    use crate::integrations::composio::contract::catalog_for_toolkit;
     assert!(catalog_for_toolkit("flowstestkit").is_none());
 
     let config = Config::default();
@@ -233,7 +233,7 @@ async fn connected_uncatalogued_toolkit_now_passes() {
 /// which passes.
 #[tokio::test]
 async fn expired_live_catalog_entry_is_treated_as_a_cache_miss() {
-    use crate::integrations::composio::providers::catalog_for_toolkit;
+    use crate::integrations::composio::contract::catalog_for_toolkit;
     assert!(catalog_for_toolkit("flowsexpiredkit").is_none());
 
     let config = Config::default();
@@ -270,7 +270,7 @@ async fn expired_live_catalog_entry_is_treated_as_a_cache_miss() {
 /// sufficient, the slug itself must be real.
 #[tokio::test]
 async fn connected_uncatalogued_toolkit_rejects_a_hallucinated_slug() {
-    use crate::integrations::composio::providers::catalog_for_toolkit;
+    use crate::integrations::composio::contract::catalog_for_toolkit;
     assert!(catalog_for_toolkit("flowstestkit").is_none());
 
     let config = Config::default();

@@ -39,6 +39,9 @@ memory/layout_migration/map_tests.rs
 mcp/server/resources.rs
 mcp/server/mod.rs
 mcp/server/tools/mod.rs
+modules/host.rs
+modules/host_tests.rs
+modules/registry_tests.rs
 platform/socket/event_handlers.rs
 profiles/surface_tests.rs
 security/credentials/ops/credential.rs

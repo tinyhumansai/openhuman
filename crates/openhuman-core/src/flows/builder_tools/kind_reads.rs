@@ -214,9 +214,9 @@ impl Tool for GetNodeKindContractTool {
                     "type": "string",
                     "description": format!(
                         "One of the {} node kinds, e.g. 'tool_call' (from list_node_kinds).",
-                        crate::flows::NODE_KINDS.len()
+                        tinyflows::catalog::NODE_KINDS.len()
                     ),
-                    "enum": crate::flows::NODE_KINDS,
+                    "enum": tinyflows::catalog::NODE_KINDS,
                 }
             },
             "required": ["kind"],
@@ -245,7 +245,7 @@ impl Tool for GetNodeKindContractTool {
             None => Ok(ToolResult::error(format!(
                 "'{kind}' is not a tinyflows node kind — call list_node_kinds for the {} valid \
                  kinds.",
-                crate::flows::node_contracts::NODE_KINDS.len()
+                tinyflows::catalog::NODE_KINDS.len()
             ))),
         }
     }

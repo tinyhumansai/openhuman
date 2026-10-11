@@ -24,12 +24,12 @@ use crate::agent::context::channels_prompt::{
     build_system_prompt_with_identity, render_project_context, ProjectContextPlacement,
     PromptIdentityOverride,
 };
-use crate::skills::Workflow;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::UNIX_EPOCH;
+use tinyskills::Skill as Workflow;
 
 /// Workspace-root files `build_system_prompt` inlines.
 const ROOT_IDENTITY_FILES: [&str; 2] = ["SOUL.md", "IDENTITY.md"];

@@ -332,14 +332,6 @@ fn every_pack_declares_the_tools_it_is_named_for() {
             ],
         ),
         (
-            "audio",
-            &[
-                "audio_generate_podcast",
-                "audio_email_podcast",
-                "audio_generate_and_email_podcast",
-            ],
-        ),
-        (
             "system",
             &[
                 "config_snapshot",

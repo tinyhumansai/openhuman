@@ -29,6 +29,12 @@ mod storage_drivers;
 
 use storage_drivers::Case;
 
+#[path = "support/cron_policy_failure.rs"]
+mod cron_policy_failure;
+use cron_policy_failure::{
+    malformed_policy_rows_refuse_execution, policy_reads_refuse_execution_without_consuming_a_slot,
+};
+
 fn agent_context(config: &Config, agent: &str) -> Arc<CoreContext> {
     let context = CoreContext::current().unwrap().derive_with(
         ContextOverlay::new(config.clone(), DomainSet::none(), Default::default())
@@ -272,5 +278,7 @@ async fn no_acting_agent_falls_back_to_the_local_scope(case: Case) {
 
 driver_cases!(
     async two_agents_keep_cron_and_flows_apart,
-    no_acting_agent_falls_back_to_the_local_scope
+    no_acting_agent_falls_back_to_the_local_scope,
+    policy_reads_refuse_execution_without_consuming_a_slot,
+    malformed_policy_rows_refuse_execution
 );

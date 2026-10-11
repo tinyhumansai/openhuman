@@ -6,9 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::agent::harness::tool_result_artifacts::{
-    legacy_action_dir_store, new_tool_result_store,
-};
+use crate::agent::harness::tool_result_artifacts::new_tool_result_store;
 use tinyagents_harness::artifacts::tool_results::ToolResultArtifactStore;
 
 /// How long another session's tool-result artifacts survive before a later
@@ -67,37 +65,11 @@ fn artifact_root(workspace_dir: &Path) -> PathBuf {
 /// their message.
 pub(super) fn build_artifact_store(
     workspace_dir: &Path,
-    workspace_descriptor: Option<&tinytools::WorkspaceDescriptor>,
-    action_dir: &Path,
     session_key: &str,
 ) -> ToolResultArtifactStore {
     let store = new_tool_result_store(artifact_root(workspace_dir), session_key);
     prune(&store, "workspace");
-    // Older builds wrote into the project itself. Keep sweeping those
-    // directories with the same age rule they always had, so the files they
-    // left behind still go away; nothing is written there any more.
-    for legacy_root in legacy_roots(workspace_descriptor, action_dir) {
-        prune(
-            &legacy_action_dir_store(legacy_root, session_key),
-            "legacy action-dir",
-        );
-    }
     store
-}
-
-/// Every root a pre-detached build could have written artifacts under: the
-/// descriptor's root when a turn carried one, and the action directory.
-fn legacy_roots(
-    workspace_descriptor: Option<&tinytools::WorkspaceDescriptor>,
-    action_dir: &Path,
-) -> Vec<PathBuf> {
-    let mut roots = vec![action_dir.to_path_buf()];
-    if let Some(descriptor) = workspace_descriptor {
-        if descriptor.root != action_dir {
-            roots.push(descriptor.root.clone());
-        }
-    }
-    roots
 }
 
 fn prune(store: &ToolResultArtifactStore, which: &str) {

@@ -150,6 +150,67 @@ describe('ThreadList', () => {
     expect(onRequestDelete).toHaveBeenCalledWith(expect.objectContaining({ id: 't1' }));
   });
 
+  it('cancels a rename on Escape without committing the subsequent blur', async () => {
+    const onRenameThread = vi.fn(async () => {});
+    renderList({ onRenameThread });
+    await userEvent.click(
+      within(screen.getByTestId('thread-row-t1').parentElement!).getByRole('button', {
+        name: 'assistantUi.threadList.moreOptions',
+      })
+    );
+    await userEvent.click(
+      await screen.findByRole('menuitem', { name: 'assistantUi.threadList.rename' })
+    );
+    const input = screen.getByTestId('thread-title-input-t1');
+    await userEvent.clear(input);
+    await userEvent.type(input, 'Must not be committed');
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('thread-title-input-t1')).toBeNull());
+    expect(onRenameThread).not.toHaveBeenCalled();
+    expect(screen.getByTestId('thread-row-t1')).toHaveTextContent('Fix Gmail OAuth');
+    expect(screen.getByTestId('thread-row-t1')).toHaveFocus();
+  });
+
+  it('cancels a rename while the closed menu is still animating out', async () => {
+    // JSDOM has no CSS animations. Keep the real Radix menu mounted during
+    // its closing animation, as it is in the browser when Escape is pressed.
+    const getComputedStyle = window.getComputedStyle.bind(window);
+    const styleSpy = vi.spyOn(window, 'getComputedStyle').mockImplementation(element => {
+      const style = getComputedStyle(element);
+      if (element.getAttribute('data-slot') === 'aui_thread-list-item-more-content') {
+        Object.defineProperty(style, 'animationName', {
+          get: () => (element.getAttribute('data-state') === 'closed' ? 'menu-out' : 'menu-in'),
+        });
+      }
+      return style;
+    });
+    const onRenameThread = vi.fn(async () => {});
+    const view = renderList({ onRenameThread });
+    try {
+      await userEvent.click(
+        within(screen.getByTestId('thread-row-t1').parentElement!).getByRole('button', {
+          name: 'assistantUi.threadList.moreOptions',
+        })
+      );
+      const menu = await screen.findByRole('menu');
+      await userEvent.click(
+        within(menu).getByRole('menuitem', { name: 'assistantUi.threadList.rename' })
+      );
+      const input = screen.getByTestId('thread-title-input-t1');
+      await userEvent.clear(input);
+      await userEvent.type(input, 'Must not be committed during menu close');
+      expect(menu).toBeInTheDocument();
+      expect(menu).toHaveAttribute('data-state', 'closed');
+      await userEvent.keyboard('{Escape}');
+      await waitFor(() => expect(screen.queryByTestId('thread-title-input-t1')).toBeNull());
+      expect(onRenameThread).not.toHaveBeenCalled();
+      expect(screen.getByTestId('thread-row-t1')).toHaveTextContent('Fix Gmail OAuth');
+    } finally {
+      view.unmount();
+      styleSpy.mockRestore();
+    }
+  });
+
   it('puts the working folder name in the row tooltip', () => {
     renderList();
     expect(screen.getByTestId('thread-row-t4')).toHaveAttribute(

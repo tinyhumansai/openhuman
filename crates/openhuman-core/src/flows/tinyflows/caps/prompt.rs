@@ -67,7 +67,7 @@ pub(crate) fn model_response_to_completion_value(
         "usage": usage_to_json(
             &crate::agent::tinyagents::model::usage_info_from_response(response)
         ),
-        "reasoning_content": crate::agent::tinyagents::reasoning_from_content(
+        "reasoning_content": tinyagents_runtime::transcript::reasoning_from_content(
             &response.message.content
         ),
     })

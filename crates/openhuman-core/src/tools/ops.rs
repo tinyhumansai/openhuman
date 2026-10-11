@@ -1,16 +1,18 @@
 use super::*;
 use crate::agent::host_runtime::{NativeRuntime, RuntimeAdapter};
+use crate::agent::tools::DelegateTool;
 use crate::config::{Config, DelegateAgentConfig};
 use crate::security::{AuditLogger, SecurityPolicy};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tinyagents_harness::tools::{self as harness_tools, CurrentTimeTool, ResolveTimeTool};
+use tinyagents_harness::tools::{CurrentTimeTool, ResolveTimeTool};
+#[cfg(feature = "mcp")]
+use tinymcp::tools::{McpListServersTool, McpListToolsTool};
 use tinytools::Tool;
 use tinytools_std::detect_tools::DetectToolsTool;
 use tinytools_std::filesystem::{
     ApplyPatchTool, CsvExportTool, EditFileTool, FileReadTool, FileWriteTool, GitOperationsTool,
     GlobTool, GrepTool, ImageInfoTool, ListFilesTool, ReadDiffTool, RunLinterTool, RunTestsTool,
-    WorkspaceStateTool,
 };
 use tinytools_std::network::{CurlTool, PushoverTool};
 
@@ -30,8 +32,14 @@ pub fn default_tools_with_runtime(
     runtime: Arc<dyn RuntimeAdapter>,
 ) -> Vec<Box<dyn Tool>> {
     let audit = AuditLogger::disabled();
+    let config = Arc::new(Config::default());
     vec![
-        Box::new(ShellTool::new(security.clone(), runtime, audit)),
+        Box::new(ShellTool::with_config(
+            security.clone(),
+            runtime,
+            audit,
+            config,
+        )),
         Box::new(FileReadTool::new(security.clone())),
         Box::new(FileWriteTool::new(security)),
     ]
@@ -78,10 +86,11 @@ pub fn all_tools_with_runtime(
     root_config: &crate::config::Config,
     approval_workspace_root: Option<&std::path::Path>,
 ) -> Vec<Box<dyn Tool>> {
-    let shell: Box<dyn Tool> = Box::new(ShellTool::new(
+    let shell: Box<dyn Tool> = Box::new(ShellTool::with_config(
         security.clone(),
         Arc::clone(&runtime),
         Arc::clone(&audit),
+        Arc::clone(&config),
     ));
 
     let file_write: Box<dyn Tool> = match approval_workspace_root {
@@ -105,58 +114,12 @@ pub fn all_tools_with_runtime(
         Box::new(EditFileTool::new(security.clone())),
         Box::new(ApplyPatchTool::new(security.clone())),
         Box::new(CsvExportTool::new(security.clone())),
-        // Sub-agent dispatch — lets the parent agent delegate focused
-        // sub-tasks (research, code execution, API specialists, …) by
-        // calling `spawn_subagent { agent_id, prompt, … }`. The runner
-        // builds a narrow Agent from an `AgentDefinition` lookup and
-        // returns a single text result. See
-        // `agent::subagent_host` for the dispatch path.
-        Box::new(SpawnSubagentTool::new()),
-        Box::new(SpawnAsyncSubagentTool::new()),
-        // Interactive clarification early-exit. Sub-agents pause on this tool
-        // (checkpoint → `AwaitingUser`, see `subagent_host`) and
-        // the orchestrator resumes them via `continue_subagent` (#4291).
-        // Several agent scopes (orchestrator, crypto, markets, scheduler,
-        // desktop control) name it, so it must exist in the base
-        // registry or none of them can actually ask the user anything.
-        Box::new(harness_tools::AskClarificationTool::new()),
-        // Read-only project overview (git status, recent commits, top-level
-        // tree) rooted at the agent action dir. Named by the orchestrator and
-        // planner scopes.
-        Box::new(WorkspaceStateTool::new(action_dir.to_path_buf())),
-        // Steer/list/close reusable async sub-agents and collect results by
-        // durable `subagent_session_id` (preferred) or transient `task_id`.
-        Box::new(ListSubagentsTool::new()),
-        Box::new(SteerSubagentTool::new()),
-        Box::new(harness_tools::WaitTool::new()),
-        Box::new(harness_tools::WaitLoopTool::new()),
-        Box::new(WaitSubagentTool::new()),
-        Box::new(CloseSubagentTool::new()),
-        Box::new(ContinueSubagentTool::new()),
-        Box::new(SpawnParallelAgentsTool::new()),
-        // Multi-stage durable delegation (issue #4249, Phase 3): runs the chosen
-        // sub-agent through the tinyagents plan→execute→review→finalize graph,
-        // checkpointed to the session DB. Heavier than spawn_subagent; for
-        // sub-tasks that benefit from a self-review/revision loop.
-        Box::new(DelegateGraphTool::new()),
-        // The session todo list (Claude/Codex style): one whole-list write per
-        // call, scoped to the conversation thread. `plan_exit` is the marker
-        // that hands a plan-mode pass off to a build-mode pass.
-        Box::new(TodoTool::new(root_config.workspace_dir.clone())),
-        // Interactive plan-review gate: parks the live turn on a thread-scoped
-        // plan the user must approve before execution (Codex/Claude plan mode).
-        Box::new(crate::agent::plan_review::RequestPlanReviewTool::new()),
-        Box::new(PlanExitTool::new()),
-        // Workflow composition: `run_workflow` runs another workflow as a
-        // subagent and (by default) waits on its result like a function call;
-        // `await_workflow` re-attaches to a run that outlived its inline wait.
-        // Both wrap `skill_runtime::spawn_workflow_run_background` +
-        // `await_run_outcome` — the same spawn path `openhuman.skills_run`
-        // JSON-RPC uses, so RPC and tool callers stay in sync.
-        #[cfg(feature = "skills")]
-        Box::new(RunWorkflowTool::new()),
-        #[cfg(feature = "skills")]
-        Box::new(AwaitWorkflowTool::new()),
+    ];
+    tools.extend(crate::agent::registration::dialogue_tools(
+        action_dir,
+        root_config,
+    ));
+    tools.append(&mut vec![
         Box::new(CurrentTimeTool::new()),
         // Reversibility for native tool-output compaction (Stage 1a): when a
         // large result is compacted with a `retrieve_tool_output("<hash>")`
@@ -175,157 +138,13 @@ pub fn all_tools_with_runtime(
         Box::new(ResolveTimeTool::new()),
         Box::new(DetectToolsTool::new()),
         Box::new(InstallToolTool::new(security.clone())),
-        // The compact, advertised scheduler surface. Keep the six legacy
-        // tools registered below as hidden aliases so saved transcripts and
-        // skills remain replayable.
-        Box::new(CronTool::new(config.clone(), security.clone())),
-        Box::new(CronAddTool::new(config.clone(), security.clone())),
-        Box::new(CronListTool::new(config.clone())),
-        Box::new(CronRemoveTool::new(config.clone())),
-        Box::new(CronUpdateTool::new(config.clone(), security.clone())),
-        Box::new(CronRunTool::new(config.clone())),
-        Box::new(CronRunsTool::new(config.clone())),
-        // Agent-first Workflow authoring (issue B4): validates a candidate
-        // graph and returns a proposal summary — never creates/enables a
-        // flow itself. Only the chat UI's WorkflowProposalCard "Save &
-        // enable" action calls `flows_create`.
-        #[cfg(feature = "flows")]
-        Box::new(ProposeWorkflowTool::new(config.clone())),
-        // workflow-builder agent tool belt (Phase 5b). A deliberately narrow,
-        // propose-or-read surface: revise a draft (validate-only), read saved
-        // flows/runs/connections, ground tool_call slugs in the real catalog,
-        // and dry-run a draft against MOCK capabilities. None of these persist
-        // or enable a flow (only the user's own `flows_create` click does); the
-        // read tools are `PermissionLevel::None`, and `dry_run_workflow` is
-        // autonomy-tier gated + wired to deterministic mock capabilities.
-        #[cfg(feature = "flows")]
-        Box::new(ReviseWorkflowTool::new(config.clone())),
-        // Structured incremental edits (F1): apply a small ops[] list to a base
-        // graph (saved flow or inline) instead of re-emitting the whole graph,
-        // then validate + gate + return a proposal (same contract as revise).
-        // Proposal-only — never persists.
-        #[cfg(feature = "flows")]
-        Box::new(EditWorkflowTool::new(config.clone())),
-        // Standalone validate (F3): run the SAME structural + hard-gate stack
-        // the propose/save tools use, without emitting a proposal — a pure
-        // check so the agent can self-verify a draft mid-build. Read-only.
-        #[cfg(feature = "flows")]
-        Box::new(ValidateWorkflowTool::new(config.clone())),
-        // Read a saved flow's revision history (F6) — prior graph snapshots the
-        // agent can inspect / pick a rollback target from. Read-only.
-        #[cfg(feature = "flows")]
-        Box::new(GetFlowHistoryTool::new(config.clone())),
-        // Phase 4 self-debug loop (F4): find a failing run, resume a parked
-        // run (approval-gated), or cancel a runaway one.
-        #[cfg(feature = "flows")]
-        Box::new(ListFlowRunsTool::new(config.clone())),
-        #[cfg(feature = "flows")]
-        Box::new(ResumeFlowRunTool::new(config.clone())),
-        #[cfg(feature = "flows")]
-        Box::new(CancelFlowRunTool::new(config.clone())),
-        // Gated create (F4/F12): create a NEW flow — born disabled, approval
-        // gated — and duplicate an existing one (disabled copy) for
-        // clone-then-edit. Behind the Phase 3 safety rails.
-        #[cfg(feature = "flows")]
-        Box::new(CreateWorkflowTool::new(config.clone())),
-        #[cfg(feature = "flows")]
-        Box::new(DuplicateFlowTool::new(config.clone())),
-        #[cfg(feature = "flows")]
-        Box::new(ListFlowsTool::new(config.clone())),
-        #[cfg(feature = "flows")]
-        Box::new(GetFlowTool::new(config.clone())),
-        #[cfg(feature = "flows")]
-        Box::new(GetFlowRunTool::new(config.clone())),
-        #[cfg(feature = "flows")]
-        Box::new(ListFlowConnectionsTool::new(config.clone())),
-        #[cfg(feature = "flows")]
-        Box::new(SearchToolCatalogTool::new(config.clone())),
-        // Full live contract (schemas, real required_args/output_fields,
-        // primary_array_path) for one action slug found via
-        // search_tool_catalog — the grounding step before WIRING a node's
-        // args/downstream bindings (systemic tool-contract fix, Part 1).
-        #[cfg(feature = "flows")]
-        Box::new(GetToolContractTool::new(config.clone())),
-        // B12: ONE bounded, READ-ONLY, REAL Composio call to derive the real
-        // primary_array_path/output_fields when the live listing publishes no
-        // output schema at all (verified for every GitHub action) — overrides
-        // get_tool_contract's schema-derived hint for that slug from then on.
-        // Read-scope actions only (hard-refused otherwise), connected
-        // toolkits only — see builder_tools.rs's module doc for the carve-out
-        // this makes in the workflow-builder agent's "no composio_execute"
-        // invariant.
-        #[cfg(feature = "flows")]
-        Box::new(GetToolOutputSampleTool::new(config.clone())),
-        // Ground an `agent` node's `agent_ref` in real registered agent-kind ids
-        // (code_executor / critic / …) — the agent analogue of
-        // search_tool_catalog. Read-only.
-        #[cfg(feature = "flows")]
-        Box::new(ListAgentDefinitionsTool::new()),
-        // Steer toolkit choice toward what's already connected + surface which
-        // toolkits a flow still needs (Phase 5, item 19). Read-only.
-        #[cfg(feature = "flows")]
-        Box::new(ListConnectableToolkitsTool::new(config.clone())),
-        // Queryable DSL schema (F2): enumerate the 13 node kinds and fetch one
-        // kind's full config-field/port/example/gotcha contract — the DSL
-        // analogue of search_tool_catalog + get_tool_contract, so an agent need
-        // not rely on prompt prose or memory for node config shapes. Read-only.
-        #[cfg(feature = "flows")]
-        Box::new(ListNodeKindsTool::new()),
-        #[cfg(feature = "flows")]
-        Box::new(GetNodeKindContractTool::new()),
-        #[cfg(feature = "flows")]
-        Box::new(DryRunWorkflowTool::new(config.clone())),
-        // Real end-to-end test run of a SAVED flow (Write / external-effect). The
-        // workflow-builder prompt requires it to ask the user for confirmation
-        // first, and the flow's own approval gate still pauses outbound nodes.
-        #[cfg(feature = "flows")]
-        Box::new(RunFlowTool::new(config.clone())),
-        // Persist a built graph onto an EXISTING saved flow (Write). Used only
-        // when the USER explicitly asks the agent to save; the seeded build
-        // turn from the Flows prompt bar is propose-only (see #4596) — Accept
-        // + the canvas's own Save persist the graph. The tool itself can
-        // never create a flow or change enabled/require_approval.
-        #[cfg(feature = "flows")]
-        Box::new(SaveWorkflowTool::new(config.clone())),
-        // Flow Scout discovery: the `flow_discovery` agent's terminal emit
-        // sink. Read-only reasoning over the user's data ends by calling
-        // `suggest_workflows`, which persists workflow ideas for the Flows page
-        // "Suggested for you" section. `PermissionLevel::None`, no external
-        // effect — writes only to the agent's own suggestions store.
-        #[cfg(feature = "flows")]
-        Box::new(SuggestWorkflowsTool::new(config.clone())),
-        // Per-flow sandboxed memory (issue #5173): lets a running flow
-        // (e.g. a scheduled newsletter-digest) remember what it already did
-        // — dedupe across runs — without ever touching the user's own
-        // memory. Namespace is derived internally from `flow_id`.
-        // `flow_memory_remember` (write) only resolves that `flow_id` from
-        // the run's own trusted `TrustedAutomation { Workflow }` turn origin
-        // (T-M2 fix) — a chat/orchestrator turn with no trusted run origin
-        // is refused outright, never routed to a model-supplied `flow_id`.
-        // `flow_memory_recall`'s `scope: "flows"` is a deliberate read-only
-        // cross-flow exception — it can see every flow's namespace by
-        // design, but can never be used to write outside a flow's own.
-        #[cfg(feature = "flows")]
-        Box::new(FlowMemoryRecallTool::new()),
-        #[cfg(feature = "flows")]
-        Box::new(FlowMemoryRememberTool::new(security.clone())),
-        // Wallet tools — expose wallet operations to the agent tool-call pipeline
-        // so the crypto sub-agent can prepare transfers, check status, etc.
-        // Gated with the `web3` feature (the wallet domain is compiled out when
-        // web3 is disabled; the concrete tool types live in `tinywallet-web3`,
-        // re-exported under `wallet::tools`, and run over the process-wide engine).
-        #[cfg(feature = "web3")]
-        Box::new(WalletStatusTool::new(crate::web3::seams::engine())),
-        #[cfg(feature = "web3")]
-        Box::new(WalletChainStatusTool::new(crate::web3::seams::engine())),
-        #[cfg(feature = "web3")]
-        Box::new(WalletPrepareTransferTool::new(crate::web3::seams::engine())),
-        #[cfg(feature = "web3")]
-        Box::new(WalletTxStatusTool::new(crate::web3::seams::engine())),
-        #[cfg(feature = "web3")]
-        Box::new(WalletTxReceiptTool::new(crate::web3::seams::engine())),
-        #[cfg(feature = "web3")]
-        Box::new(WalletLookupTxTool::new(crate::web3::seams::engine())),
+    ]);
+    tools.extend(crate::cron::tools::tools(config.clone(), security));
+    #[cfg(feature = "flows")]
+    tools.extend(crate::flows::registration::tools(config.clone(), security));
+    #[cfg(feature = "web3")]
+    tools.extend(crate::web3::wallet::registration::tools());
+    tools.append(&mut vec![
         Box::new(ScheduleTool::new(security.clone(), root_config.clone())),
         Box::new(ProxyConfigTool::new(config.clone(), security.clone())),
         Box::new(UpdateCheckTool::new()),
@@ -345,137 +164,63 @@ pub fn all_tools_with_runtime(
             security.clone(),
             action_dir.to_path_buf(),
         )),
-        // Audio-toolkit podcast tools — gated with the `voice` feature (they
-        // live in the `audio_toolkit` domain, which is compiled out when voice
-        // is disabled).
-        #[cfg(feature = "voice")]
-        Box::new(AudioGeneratePodcastTool::new(
-            config.clone(),
-            security.clone(),
-        )),
-        #[cfg(feature = "voice")]
-        Box::new(AudioEmailPodcastTool::new(config.clone(), security.clone())),
-        #[cfg(feature = "voice")]
-        Box::new(AudioGenerateAndEmailPodcastTool::new(
-            config.clone(),
-            security.clone(),
-        )),
-        Box::new(GmailUnsubscribeTool),
-        // Skills metadata tools. `skill_run` is already exposed by RunSkillTool
-        // above, so it is not duplicated. Reads ship default-ON; the
-        // create/install/uninstall mutators ship default-OFF via
-        // `tools::user_filter` (install also fetches remote content).
-        #[cfg(feature = "skills")]
-        Box::new(WorkflowListTool::new(config.clone())),
-        #[cfg(feature = "skills")]
-        Box::new(WorkflowDescribeTool::new(config.clone())),
-        #[cfg(feature = "skills")]
-        Box::new(SkillSearchTool::new(config.clone())),
-        // Skill registry tools — browse/search/install from remote registries.
-        // Browse and search are read-only (default-ON); install is a write
-        // operation (fetches remote content and writes to disk).
-        #[cfg(feature = "skills")]
-        Box::new(SkillRegistryBrowseTool),
-        #[cfg(feature = "skills")]
-        Box::new(SkillRegistrySearchTool),
-        #[cfg(feature = "skills")]
-        Box::new(SkillRegistryInstallTool::new(config.clone())),
-        #[cfg(feature = "skills")]
-        Box::new(SkillRegistrySourcesTool),
-        #[cfg(feature = "skills")]
-        Box::new(SkillRegistryUninstallTool),
-        // Skill runtime probes — resolve the reusable Node/Python runtimes
-        // that skill execution relies on before a script-backed skill runs.
-        #[cfg(feature = "skills")]
-        Box::new(SkillRuntimeResolveRuntimesTool::new(config.clone())),
-        #[cfg(feature = "skills")]
-        Box::new(WorkflowReadResourceTool::new(config.clone())),
-        #[cfg(feature = "skills")]
-        Box::new(WorkflowRecentRunsTool::new(config.clone())),
-        #[cfg(feature = "skills")]
-        Box::new(WorkflowReadRunLogTool::new(config.clone())),
-        #[cfg(feature = "skills")]
-        Box::new(WorkflowCreateTool::new(config.clone())),
-        #[cfg(feature = "skills")]
-        Box::new(WorkflowInstallFromUrlTool::new(config.clone())),
-        #[cfg(feature = "skills")]
-        Box::new(WorkflowUninstallTool),
+    ]);
+    tools.push(Box::new(GmailUnsubscribeTool));
+    #[cfg(feature = "skills")]
+    tools.extend(crate::skills::registration::tools(config.clone()));
+    tools.append(&mut vec![
         // Task & productivity tools (issue: agent-tool expansion).
         // Read/observe + bounded-write tools are registered here; the
         // destructive/overextending siblings (artifact_delete,
         // task_source_add/update/remove) are registered too but ship
         // default-OFF via `tools::user_filter` (their toggle IDs default off
         // in onboarding). The per-call permission ladder still gates them.
-        Box::new(ArtifactListTool::new(config.clone())),
-        Box::new(ArtifactGetTool::new(config.clone())),
-        Box::new(ArtifactDeleteTool::new(config.clone())),
-        Box::new(TaskSourceListTool::new(config.clone())),
-        Box::new(TaskSourceGetTool::new(config.clone())),
-        Box::new(TaskSourceFetchTool::new(config.clone())),
-        Box::new(TaskSourceListTasksTool::new(config.clone())),
-        Box::new(TaskSourcePreviewFilterTool::new(config.clone())),
-        Box::new(TaskSourceStatusTool::new(config.clone())),
-        Box::new(TaskSourceAddTool::new(config.clone())),
-        Box::new(TaskSourceUpdateTool::new(config.clone())),
-        Box::new(TaskSourceRemoveTool::new(config.clone())),
-        // System & self-management: observability (default-ON) + service
-        // lifecycle. doctor/health/cost/dashboard/security reads are default-ON.
-        // service_status / daemon_host_prefs_get default-ON; the lifecycle
-        // mutators ship default-OFF via `tools::user_filter` (service_lifecycle).
-        Box::new(DoctorHealthTool::new(config.clone())),
-        Box::new(DoctorModelsTool::new(config.clone())),
-        Box::new(HealthSnapshotTool),
-        Box::new(HealthSystemInfoTool),
-        Box::new(CostDashboardTool::new(config.clone())),
-        Box::new(CostDailyHistoryTool::new(config.clone())),
-        Box::new(CostSummaryTool::new(config.clone())),
-        Box::new(DashboardModelHealthTool::new(config.clone())),
-        #[cfg(feature = "modules")]
-        Box::new(DesktopTool::new(config.clone(), DesktopToolKind::Apps)),
-        #[cfg(feature = "modules")]
-        Box::new(DesktopTool::new(config.clone(), DesktopToolKind::Windows)),
-        #[cfg(feature = "modules")]
-        Box::new(DesktopTool::new(config.clone(), DesktopToolKind::Launch)),
-        #[cfg(feature = "modules")]
-        Box::new(DesktopTool::new(config.clone(), DesktopToolKind::Snapshot)),
-        #[cfg(feature = "modules")]
-        Box::new(DesktopTool::new(config.clone(), DesktopToolKind::Find)),
-        #[cfg(feature = "modules")]
-        Box::new(DesktopTool::new(config.clone(), DesktopToolKind::Goal)),
-        #[cfg(feature = "modules")]
-        Box::new(DesktopTool::new(
-            config.clone(),
-            DesktopToolKind::ContinueGoal,
-        )),
-        Box::new(SecurityPolicyInfoTool::new(config.clone())),
-        Box::new(ServiceStatusTool::new(config.clone())),
-        Box::new(DaemonHostPrefsGetTool::new(config.clone())),
-        Box::new(ServiceStartTool::new(config.clone())),
-        Box::new(ServiceStopTool::new(config.clone())),
-        Box::new(ServiceRestartTool),
-        Box::new(ServiceShutdownTool),
-        Box::new(ServiceInstallTool::new(config.clone())),
-        Box::new(ServiceUninstallTool::new(config.clone())),
-        Box::new(DaemonHostPrefsSetTool::new(config.clone())),
-        // Config: read-only surface (default-ON). The config_update_* mutators
-        // are deferred (their apply fns take non-Deserialize patch structs);
-        // see config/tools.rs.
-        Box::new(ConfigSnapshotTool::new(config.clone())),
-        Box::new(ConfigClientConfigTool),
-        Box::new(ConfigAutonomyTool),
-        Box::new(ConfigSearchTool),
-        Box::new(ConfigRuntimeFlagsTool),
-        Box::new(ConfigResolveApiUrlTool),
-        Box::new(ConfigDataPathsTool),
+    ]);
+    tools.extend(crate::agent::artifacts::tools::registered_tools(
+        config.clone(),
+    ));
+    tools.extend(crate::integrations::task_sources::tools::registered_tools(
+        config.clone(),
+    ));
+
+    // System & self-management: observability (default-ON) + service
+    // lifecycle. doctor/health/cost/dashboard/security reads are default-ON.
+    // service_status / daemon_host_prefs_get default-ON; the lifecycle
+    // mutators ship default-OFF via `tools::user_filter` (service_lifecycle).
+    tools.extend(crate::platform::doctor::tools::registered_tools(
+        config.clone(),
+    ));
+    tools.extend(crate::platform::health::tools::registered_tools());
+    tools.extend(crate::platform::cost::tools::registered_tools(
+        config.clone(),
+    ));
+    tools.extend(crate::desktop::dashboard::tools::registered_tools(
+        config.clone(),
+    ));
+    #[cfg(feature = "modules")]
+    tools.extend(crate::desktop::control::tools::registered_tools(
+        config.clone(),
+    ));
+    tools.extend(crate::security::tools::registered_tools(config.clone()));
+    tools.extend(crate::platform::service::tools::registered_tools(
+        config.clone(),
+    ));
+
+    // Config: read-only surface (default-ON). The config_update_* mutators
+    // are deferred (their apply fns take non-Deserialize patch structs);
+    // see config/tools.rs.
+    tools.extend(crate::config::tools::registered_tools(config.clone()));
+    tools.append(&mut vec![
         // Account & money. The billing / team / referral agent-tool families were
         // removed: money movement and team administration are dashboard
         // surfaces, not things an agent should reach for mid-turn, and their
         // controllers remain registered for the UI. `credentials` exposes only
         // non-secret reads.
-        Box::new(CredentialListTool::new(config.clone())),
-        Box::new(SessionStateTool::new(config.clone())),
-        Box::new(OAuthConnectUrlTool::new(config.clone())),
-        Box::new(OAuthListTool::new(config.clone())),
+    ]);
+    tools.extend(crate::security::credentials::tools::registered_tools(
+        config.clone(),
+    ));
+    tools.append(&mut vec![
         // MCP registry and workspace persona. Observe/connect/call tools
         // default-ON; MCP uninstall (mcp_manage), and persona/workspace writers
         // (workspace_manage) ship default-OFF via `tools::user_filter`. There
@@ -484,29 +229,14 @@ pub fn all_tools_with_runtime(
         // MCP registry (dynamic, user-installed servers) — compiled out with
         // the `mcp` feature. Per-element attrs inside the `vec![]` mirror the
         // voice idiom used earlier in this same literal.
-        #[cfg(feature = "mcp")]
-        Box::new(McpRegistrySearchTool::new(config.clone())),
-        #[cfg(feature = "mcp")]
-        Box::new(McpRegistryGetTool::new(config.clone())),
-        #[cfg(feature = "mcp")]
-        Box::new(McpRegistryInstalledListTool::new(config.clone())),
-        #[cfg(feature = "mcp")]
-        Box::new(McpRegistryStatusTool::new(config.clone())),
-        #[cfg(feature = "mcp")]
-        Box::new(McpRegistryListToolsTool::new(config.clone())),
-        #[cfg(feature = "mcp")]
-        Box::new(McpRegistryConnectTool::new(config.clone())),
-        #[cfg(feature = "mcp")]
-        Box::new(McpRegistryDisconnectTool::new(config.clone())),
-        #[cfg(feature = "mcp")]
-        Box::new(McpRegistryToolCallTool::new(config.clone())),
-        #[cfg(feature = "mcp")]
-        Box::new(McpRegistryUninstallTool::new(config.clone())),
-        Box::new(WorkspaceReadPersonaTool::new(config.clone())),
-        Box::new(WorkspaceUpdatePersonaTool::new(config.clone())),
-        Box::new(WorkspaceResetPersonaTool::new(config.clone())),
-        Box::new(WorkspaceInitTool),
-    ];
+    ]);
+    #[cfg(feature = "mcp")]
+    tools.extend(crate::mcp::registry::tools::registered_tools(
+        config.clone(),
+    ));
+    tools.extend(crate::config::workspace::tools::registered_tools(
+        config.clone(),
+    ));
 
     // The single `memory` tool (recall | fetch | learn | forget), registered
     // only while memory is on: with no usable engine (signed out, no CortexDB
@@ -761,12 +491,12 @@ pub fn all_tools_with_runtime(
     if let Some(client) = crate::integrations::build_client(root_config) {
         tracing::debug!("[integrations] client built successfully");
         if root_config.integrations.google_places.is_active() {
-            tools.push(Box::new(crate::tools::GooglePlacesSearchTool::new(
-                Arc::clone(&client),
-            )));
-            tools.push(Box::new(crate::tools::GooglePlacesDetailsTool::new(
-                Arc::clone(&client),
-            )));
+            tools.push(Box::new(
+                crate::integrations::tools::GooglePlacesSearchTool::new(Arc::clone(&client)),
+            ));
+            tools.push(Box::new(
+                crate::integrations::tools::GooglePlacesDetailsTool::new(Arc::clone(&client)),
+            ));
             tracing::debug!("[integrations] registered google_places tools");
         } else {
             tracing::debug!("[integrations] google_places disabled — skipping");
@@ -776,21 +506,21 @@ pub fn all_tools_with_runtime(
         // suppresses them too. `integrations.parallel` is parsed for old
         // config files and no longer does anything.
         if root_config.integrations.stock_prices.is_active() {
-            tools.push(Box::new(crate::tools::StockQuoteTool::new(Arc::clone(
-                &client,
-            ))));
-            tools.push(Box::new(crate::tools::StockExchangeRateTool::new(
+            tools.push(Box::new(crate::integrations::tools::StockQuoteTool::new(
                 Arc::clone(&client),
             )));
-            tools.push(Box::new(crate::tools::StockOptionsTool::new(Arc::clone(
-                &client,
-            ))));
-            tools.push(Box::new(crate::tools::StockCryptoSeriesTool::new(
+            tools.push(Box::new(
+                crate::integrations::tools::StockExchangeRateTool::new(Arc::clone(&client)),
+            ));
+            tools.push(Box::new(crate::integrations::tools::StockOptionsTool::new(
                 Arc::clone(&client),
             )));
-            tools.push(Box::new(crate::tools::StockCommodityTool::new(Arc::clone(
-                &client,
-            ))));
+            tools.push(Box::new(
+                crate::integrations::tools::StockCryptoSeriesTool::new(Arc::clone(&client)),
+            ));
+            tools.push(Box::new(
+                crate::integrations::tools::StockCommodityTool::new(Arc::clone(&client)),
+            ));
             tracing::debug!("[integrations] registered stock_prices tools");
         } else {
             tracing::debug!("[integrations] stock_prices disabled — skipping");

@@ -1,7 +1,7 @@
 use super::*;
-use crate::flows::Flow;
 use serde_json::json;
 use tinyflows::model::{Node, NodeKind, WorkflowGraph};
+use tinyflows_catalog::Flow;
 
 /// Binds a fresh in-memory reference engine to `config`'s workspace and
 /// returns it, so the digest tests write and read back through one store.

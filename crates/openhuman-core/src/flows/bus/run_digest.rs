@@ -6,13 +6,13 @@
 use crate::config::Config;
 use crate::core::events::DomainEvent;
 use crate::flows::store;
-use crate::flows::{flow_meta, flow_tag, FlowRun};
 use crate::memory::types::{ForgetParams, ItemsListParams, MAX_LIMIT};
 use crate::memory::{MemoryError, MemoryResult};
 use async_trait::async_trait;
 use std::sync::Arc;
 use tinybus::EventHandler;
 use tinymemory_api::{ItemKind, MetaFilter, StoreItem};
+use {crate::flows::flow_meta, crate::flows::flow_tag, tinyflows_catalog::FlowRun};
 
 /// Bounds a post-run memory digest to a compact, LLM-cheap size — a single
 /// run's summary must never dominate a later `flow_memory_recall`.

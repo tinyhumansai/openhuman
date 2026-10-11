@@ -18,62 +18,35 @@
 
 use crate::inference::provider::BilledUsage;
 
-/// Per-million-token rates for a single model.
-///
-/// All prices are USD per million tokens. `cached_input_per_mtok_usd`
-/// applies to the `cached_input_tokens` portion of the usage block (KV
-/// prefix cache hits on supporting backends); the remaining
-/// `input_tokens - cached_input_tokens` are charged at
-/// `input_per_mtok_usd`.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct ModelPricing {
-    /// Model id, e.g. `"claude-sonnet-4-6"`.
-    pub(crate) model: &'static str,
-    /// Standard prompt rate, USD per million input tokens.
-    pub(crate) input_per_mtok_usd: f64,
-    /// Cached-prefix prompt rate, USD per million cached input tokens.
-    pub(crate) cached_input_per_mtok_usd: f64,
-    /// Completion rate, USD per million output tokens.
-    pub(crate) output_per_mtok_usd: f64,
-}
-
-/// Published list rates for `model`, or `None` when the vendor catalog does
-/// not know it.
 /// Whether a model names an explicitly free OpenRouter variant.
 pub(crate) fn is_free_model(model: &str) -> bool {
     model.trim().to_ascii_lowercase().ends_with(":free")
 }
 
-pub(crate) fn lookup_pricing(model: &str) -> Option<ModelPricing> {
+/// Supply product catalog rates as data to the harness accounting API.
+pub(crate) fn lookup_pricing(model: &str) -> Option<tinyagents_harness::cost::ModelPricing> {
     if is_free_model(model) {
-        return Some(ModelPricing {
-            model: "<free>",
-            input_per_mtok_usd: 0.0,
-            cached_input_per_mtok_usd: 0.0,
-            output_per_mtok_usd: 0.0,
+        return Some(tinyagents_harness::cost::ModelPricing {
+            input_per_token: Some(0.0),
+            cache_read_input_per_token: Some(0.0),
+            output_per_token: Some(0.0),
+            ..Default::default()
         });
     }
-    let price = crate::platform::cost::catalog::lookup(model.trim())?;
-    Some(ModelPricing {
-        model: price.model_id,
-        input_per_mtok_usd: price.input_per_mtok_usd,
-        cached_input_per_mtok_usd: price.cached_input_per_mtok_usd,
-        output_per_mtok_usd: price.output_per_mtok_usd,
-    })
+    let price = tinyagents_registry::pricing::lookup(model.trim())?;
+    Some(tinyagents_registry::pricing::flat_catalog_entry(price, "openhuman-cost-catalog").pricing)
 }
 
-/// List-price estimate of one call, or `None` when the model is not
-/// catalogued. Used only when the provider reported no charge.
+/// Estimate a call from product list prices when no provider charge was reported.
 pub fn estimate_call_cost_usd(model: &str, usage: &BilledUsage) -> Option<f64> {
     let pricing = lookup_pricing(model)?;
-    let cached = usage.cached_input_tokens().min(usage.input_tokens);
-    let standard_input = usage.input_tokens.saturating_sub(cached);
-    let m = 1_000_000.0_f64;
-    Some(
-        (standard_input as f64) / m * pricing.input_per_mtok_usd
-            + (cached as f64) / m * pricing.cached_input_per_mtok_usd
-            + (usage.output_tokens as f64) / m * pricing.output_per_mtok_usd,
-    )
+    let usage = tinyinference_llm::usage::Usage {
+        input_tokens: usage.input_tokens,
+        output_tokens: usage.output_tokens,
+        cache_read_tokens: usage.cached_input_tokens().min(usage.input_tokens),
+        ..Default::default()
+    };
+    Some(tinyagents_harness::cost::estimate_cost(&pricing, &usage).total_cost)
 }
 
 /// Where a cost figure came from. Ordered from most to least certain, so the

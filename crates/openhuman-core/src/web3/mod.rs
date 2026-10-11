@@ -33,10 +33,6 @@ pub mod dapp;
 pub mod seams;
 #[cfg(feature = "web3")]
 pub mod swap;
-/// The swap/bridge/dapp request and quote types, re-exported from
-/// `tinywallet-web3` under their historical path.
-#[cfg(feature = "web3")]
-pub use tinywallet_web3::crypto::service as types;
 
 // Ungated family members: `wallet` and `x402` are facades in their own right —
 // each keeps its own `stub.rs` and gates its real submodules on the same

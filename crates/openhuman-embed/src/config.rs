@@ -108,3 +108,10 @@ pub fn read_active_user_id(root: &Path) -> Option<String> {
 #[cfg(test)]
 #[path = "config_tests.rs"]
 mod tests;
+
+/// Operator search policy and direct-route credential vocabulary.
+pub use openhuman_core::config::{
+    SearchConfig, SearchEngineCredentials, SearchPresentation, SearchProviderSettings, SearchRoute,
+};
+/// The three native search capabilities whose names an operator can present.
+pub use openhuman_core::profiles::provider_settings::SearchRole;

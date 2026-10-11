@@ -210,17 +210,6 @@ pub const PACKS: &[ToolPack] = &[
         guide: "",
     },
     ToolPack {
-        id: "audio",
-        summary: "Generate a spoken podcast from text and optionally email the audio.",
-        tools: &[
-            "audio_generate_podcast",
-            "audio_email_podcast",
-            "audio_generate_and_email_podcast",
-        ],
-        owners: &[],
-        guide: "",
-    },
-    ToolPack {
         id: "system",
         summary: "OpenHuman settings: config, health, diagnostics, costs, service, proxy, credentials, app updates.",
         tools: &[

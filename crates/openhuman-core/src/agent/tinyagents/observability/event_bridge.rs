@@ -394,7 +394,7 @@ impl OpenhumanEventBridge {
             .map(|u| u.context_window())
             .filter(|w| *w > 0)
             .unwrap_or_else(|| {
-                crate::platform::cost::catalog::lookup(&self.model)
+                tinyagents_registry::pricing::lookup(&self.model)
                     .map(|p| u64::from(p.context_window))
                     .unwrap_or(0)
             });
@@ -497,7 +497,7 @@ impl OpenhumanEventBridge {
     /// Estimate one call's USD cost. Uses the tier-aware
     /// [`agent::cost`](crate::agent::cost) table (managed handles
     /// like `hint:chat`/`hint:burst` + the vendor catalog + heuristics) — the
-    /// previous `cost::catalog::estimate_cost_usd` only knew concrete vendor
+    /// previous `tinyagents_registry::pricing::estimate_cost_usd` only knew concrete vendor
     /// ids, so every managed-tier call priced as $0 in traces and the footer.
     /// `None` for a model the catalog does not price.
     pub(super) fn estimate_call_cost(model: &str, usage: &Usage) -> Option<f64> {

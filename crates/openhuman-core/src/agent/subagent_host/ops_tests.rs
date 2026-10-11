@@ -26,13 +26,12 @@ fn make_def_named_tools(names: &[&str]) -> AgentDefinition {
         timeout_secs: None,
         sandbox_mode: crate::agent::harness::definition::SandboxMode::None,
         background: false,
-        tokenjuice_compression: crate::inference::tokenjuice::AgentTokenjuiceCompression::Auto,
+        tokenjuice_compression: tinyjuice_bus::types::AgentTokenjuiceCompression::Auto,
         subagents: vec![],
         delegate_name: None,
         agent_tier: crate::agent::harness::definition::AgentTier::Worker,
         searches_connected_mcp: false,
         source: crate::agent::harness::definition::DefinitionSource::Builtin,
-        graph: Default::default(),
     }
 }
 

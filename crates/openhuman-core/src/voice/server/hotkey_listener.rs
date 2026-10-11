@@ -8,7 +8,7 @@ use std::time::Duration;
 use log::warn;
 use tokio_util::sync::CancellationToken;
 
-use crate::voice::hotkey;
+use tinyvoice_bus::hotkey;
 
 use super::LOG_PREFIX;
 
@@ -121,7 +121,7 @@ async fn start_module_hotkey_listener(
     let (events_tx, events_rx) = tokio::sync::mpsc::channel(65);
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
     let worker_handle = handle.clone();
-    let task = tokio::spawn(async move {
+    let task = crate::core::runtime::spawn_scoped(async move {
         let generation = loop {
             if worker_cancel.is_cancelled() || events_tx.is_closed() {
                 break None;
@@ -344,7 +344,7 @@ async fn start_globe_with_client(
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
     let cancel = server_cancel.child_token();
     let task_cancel = cancel.clone();
-    let task = tokio::spawn(async move {
+    let task = crate::core::runtime::spawn_scoped(async move {
         let _admission = admission;
         let started = match client.globe_start().await {
             Ok(started) => started,

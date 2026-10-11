@@ -1,5 +1,68 @@
 use super::*;
 
+#[tokio::test]
+async fn configured_shell_fails_closed_when_tinybox_analysis_is_disabled() {
+    let mut config = crate::config::Config::default();
+    config.modules.enabled = false;
+    let tool = ShellTool::with_config(
+        test_security(AutonomyLevel::Full),
+        test_runtime(),
+        test_audit(),
+        Arc::new(config),
+    );
+
+    let error = tool
+        .prepare_authorization(&json!({"command": "cat ~/.ssh/id_rsa"}))
+        .await
+        .expect_err("hosted shell authorization requires TinyBox analysis");
+    assert_eq!(error.to_string(), "command analysis is unavailable");
+}
+
+#[cfg(feature = "modules")]
+#[test]
+fn docker_module_results_preserve_success_failure_and_timeout_semantics() {
+    use crate::modules::tinybox::contract::DockerRunOutput;
+
+    let success = docker_module_result(
+        DockerRunOutput {
+            exit_code: 0,
+            stdout: "hello".to_owned(),
+            stderr: String::new(),
+            timed_out: false,
+        },
+        None,
+    );
+    assert!(!success.is_error);
+    assert_eq!(success.output(), "hello");
+
+    let failure = docker_module_result(
+        DockerRunOutput {
+            exit_code: 7,
+            stdout: "partial".to_owned(),
+            stderr: "failed".to_owned(),
+            timed_out: false,
+        },
+        None,
+    );
+    assert!(failure.is_error);
+    assert!(failure.output().contains("7"));
+    assert!(failure.output().contains("partial"));
+    assert!(failure.output().contains("failed"));
+
+    let timeout = docker_module_result(
+        DockerRunOutput {
+            exit_code: -1,
+            stdout: "before timeout".to_owned(),
+            stderr: String::new(),
+            timed_out: true,
+        },
+        Some(std::time::Duration::from_secs(3)),
+    );
+    assert!(timeout.is_error);
+    assert!(timeout.output().contains("timed out after 3s"));
+    assert!(timeout.output().contains("before timeout"));
+}
+
 #[cfg(not(windows))]
 #[tokio::test]
 async fn shell_emits_audit_line_on_success() {

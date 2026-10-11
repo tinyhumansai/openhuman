@@ -13,7 +13,7 @@
 //! logic lives in the sibling modules, persistence is SQLite in
 //! `store.rs`, and the RPC surface is wired through `schemas.rs`.
 //!
-//! [`fetch_tasks`]: crate::integrations::composio::providers::ComposioProvider::fetch_tasks
+//! [`fetch_tasks`]: crate::integrations::composio::contract::ComposioProvider::fetch_tasks
 
 pub mod bus;
 pub mod enrich;
@@ -28,7 +28,7 @@ mod store_documents;
 pub mod tools;
 pub mod types;
 
-pub use crate::integrations::composio::providers::{
+pub use crate::integrations::composio::contract::{
     NormalizedTask, TaskContainer, TaskFetchFilter, TaskKind,
 };
 pub use periodic::start_periodic_poll;

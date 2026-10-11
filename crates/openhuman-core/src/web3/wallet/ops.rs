@@ -9,10 +9,12 @@ mod types;
 
 use types::StoredWalletState;
 pub(crate) use types::WalletSecretMaterial;
-pub use types::{
-    RevealRecoveryPhraseResult, WalletAccount, WalletChain, WalletSetupParams, WalletSetupSource,
-    WalletStatus, WALLET_NOT_CONFIGURED_MESSAGE,
+use {
+    tinywallet_web3::crypto::wallet::WalletAccount, tinywallet_web3::crypto::wallet::WalletChain,
+    tinywallet_web3::crypto::wallet::WalletStatus,
+    tinywallet_web3::quote::WALLET_NOT_CONFIGURED_MESSAGE,
 };
+pub use {types::RevealRecoveryPhraseResult, types::WalletSetupParams};
 
 use log::debug;
 

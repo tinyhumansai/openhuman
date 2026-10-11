@@ -22,6 +22,9 @@ Routing assertions come from the mocks: each agent gets its own provider
 mock, so a turn that leaked to another agent's endpoint shows up as a request
 recorded on the wrong server.
 
+`session_codecs.rs` uses no runtime: it verifies that the public session-store
+record types preserve populated persisted JSON, including metadata and lineage.
+
 ## Layout
 
 | File | What it proves |

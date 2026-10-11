@@ -29,7 +29,7 @@ use std::sync::OnceLock;
 
 use crate::config::Config;
 use crate::integrations::composio::catalog::{fetch_live_toolkit_catalog, ToolContract};
-use crate::integrations::composio::providers::toolkit_from_slug;
+use crate::integrations::composio::contract::toolkit_from_slug;
 
 /// Record of which action contracts have already been surfaced to the model,
 /// so the gate blocks a given action at most once per gate instance.

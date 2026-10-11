@@ -37,7 +37,7 @@ Proactive ingestion of work items from external tools. A **task source** is a us
 
 Re-exported from `mod.rs`:
 
-- Types: `TaskSource`, `TaskSourcePatch`, `FilterSpec`, `ProviderSlug`, `SourceTarget`, `FetchReason`, `EnrichedTask`, `FetchOutcome`; plus `NormalizedTask`, `TaskContainer`, `TaskFetchFilter`, `TaskKind` re-exported from `crate::integrations::composio::providers` (`pub use crate::integrations::composio::providers::{NormalizedTask, TaskContainer, TaskFetchFilter, TaskKind};` in `mod.rs`).
+- Types: `TaskSource`, `TaskSourcePatch`, `FilterSpec`, `ProviderSlug`, `SourceTarget`, `FetchReason`, `EnrichedTask`, `FetchOutcome`; plus `NormalizedTask`, `TaskContainer`, `TaskFetchFilter`, `TaskKind` re-exported from `crate::integrations::composio::contract` (`pub use crate::integrations::composio::contract::{NormalizedTask, TaskContainer, TaskFetchFilter, TaskKind};` in `mod.rs`).
 - Functions: `start_periodic_poll`, `run_source_once`.
 - Constant: `TASK_SOURCES_THREAD_ID` (`"task-sources"`).
 - RPC registry: `all_task_sources_controller_schemas`, `all_task_sources_registered_controllers`, `task_sources_schemas`.
@@ -142,7 +142,7 @@ SQL cascade). With no backend configured (the desktop default)
 - `crate::core::all`: `ControllerFuture`, `RegisteredController` for the RPC registry.
 - `crate::core::bus` (`BUS`) + `crate::core::events::DomainEvent`: `BUS.publish`/`BUS.subscribe` for event publish/subscribe.
 - `crate::config` (+ `config::rpc`), `Config`, `load_config_with_timeout`; reads the `[task_sources]` block for defaults and the master switch.
-- `crate::integrations::composio::providers`: `NormalizedTask`, `TaskContainer`, `TaskFetchFilter`, `TaskKind` (contract types re-exported from `tinymemory_api::composio::tasks`). The old `get_provider` / `ProviderContext` / `ComposioProvider::fetch_tasks` registry no longer exists; `mod.rs`'s intra-doc link to `fetch_tasks` is stale.
+- `crate::integrations::composio::contract`: `NormalizedTask`, `TaskContainer`, `TaskFetchFilter`, `TaskKind` (contract types re-exported from `tinymemory_api::composio::tasks`). The old `get_provider` / `ProviderContext` / `ComposioProvider::fetch_tasks` registry no longer exists; `mod.rs`'s intra-doc link to `fetch_tasks` is stale.
 - `crate::agent::triage`: `run_triage`, `apply_decision`, `TriageOutcome`, `TriggerEnvelope`; dispatches the proactive agent turn for `AgentTodoProactive` sources.
 - `crate::cron::scheduler_gate`: `wait_for_capacity` capacity semaphore; gates proactive triage turns behind background-AI throttling.
 

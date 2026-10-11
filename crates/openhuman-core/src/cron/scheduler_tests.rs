@@ -1,13 +1,15 @@
 use super::*;
 use crate::agent::error::AgentError;
 use crate::config::Config;
-use crate::cron::JobType;
-use crate::cron::SessionTarget;
-use crate::cron::{self, ActiveHours, DeliveryConfig};
 use crate::security::SecurityPolicy;
 use chrono::{Duration as ChronoDuration, Timelike, Utc};
 use std::sync::Arc;
 use tempfile::TempDir;
+use tinyflows_schedule::types::JobType;
+use tinyflows_schedule::types::SessionTarget;
+use {
+    crate::cron, tinyflows_schedule::types::ActiveHours, tinyflows_schedule::types::DeliveryConfig,
+};
 
 async fn test_config(tmp: &TempDir) -> Config {
     let ws = tmp.path().join("workspace");
@@ -27,7 +29,7 @@ fn test_job(command: &str) -> CronJob {
     CronJob {
         id: "test-job".into(),
         expression: "* * * * *".into(),
-        schedule: crate::cron::Schedule::Cron {
+        schedule: tinyflows_schedule::types::Schedule::Cron {
             expr: "* * * * *".into(),
             tz: None,
             active_hours: None,
@@ -280,6 +282,20 @@ async fn a_shell_job_runs_on_this_platform() {
         output.contains("tinyhumans"),
         "the job's stdout was not captured: {output}"
     );
+}
+
+#[cfg(feature = "modules")]
+#[tokio::test]
+async fn scheduled_shell_authorization_fails_closed_when_tinybox_is_disabled() {
+    let tmp = TempDir::new().unwrap();
+    let mut config = test_config(&tmp).await;
+    config.modules.enabled = false;
+    let security =
+        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
+
+    let result = authorize_shell_command(&config, &security, "echo must-not-run").await;
+
+    assert_eq!(result, Err("Command analysis is unavailable.".to_owned()));
 }
 
 /// A pipeline keeps the shell's own exit status, not `pipefail`'s.

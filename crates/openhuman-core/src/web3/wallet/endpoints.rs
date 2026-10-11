@@ -15,7 +15,7 @@ use tinywallet_web3::crypto::seams::RpcEndpoints;
 #[cfg(test)]
 use tinywallet_web3::crypto::defaults::SolanaClusterReferenceData;
 
-use super::ops::WalletChain;
+use tinywallet_web3::crypto::wallet::WalletChain;
 
 /// The `OPENHUMAN_WALLET_RPC_<NAME>` variable that overrides `network`.
 pub(crate) fn evm_rpc_env_var(network: EvmNetwork) -> &'static str {

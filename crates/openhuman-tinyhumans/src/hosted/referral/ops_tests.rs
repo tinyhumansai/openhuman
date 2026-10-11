@@ -1,10 +1,8 @@
 use super::*;
+use crate::hosted::test_support::store_session as store_session_token;
 use axum::{
     routing::{get, post},
     Json, Router,
-};
-use openhuman_embed::__host::security::credentials::{
-    AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME,
 };
 use serde_json::json;
 use tempfile::TempDir;
@@ -16,18 +14,6 @@ fn test_config(tmp: &TempDir) -> Config {
         config_path: tmp.path().join("config.toml"),
         ..Config::default()
     }
-}
-
-fn store_session_token(config: &Config, token: &str) {
-    AuthService::from_config(config)
-        .store_provider_token(
-            APP_SESSION_PROVIDER,
-            DEFAULT_AUTH_PROFILE_NAME,
-            token,
-            std::collections::HashMap::new(),
-            true,
-        )
-        .expect("store token");
 }
 
 async fn spawn_mock(app: Router) -> String {

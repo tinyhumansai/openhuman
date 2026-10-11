@@ -2,7 +2,7 @@
 // Resolve the native test-module release assets the Rust coverage lane needs,
 // straight from the compiled module registry (the authoritative pin).
 //
-// Usage: node scripts/ci/self-hosted/test-module-assets.mjs [host_key]
+// Usage: node scripts/ci/self-hosted/test-module-assets.mjs [host_key] [id,...]
 // Prints one line per module: `<id>\t<url>\t<archive>\t<sha256>`.
 //
 // Reading the registry instead of copying version + digest into a workflow
@@ -17,7 +17,14 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const REGISTRY_DIR = join(ROOT, "crates/openhuman-core/src/modules");
 
 /** Test modules the core suite loads, by registry record id. */
-export const TEST_MODULE_IDS = ["tinyjuice", "tinysearch"];
+export const TEST_MODULE_IDS = [
+  "tinyjuice",
+  "tinysearch",
+  "tinydocs",
+  "tinywallet",
+  "tinychannels",
+  "tinymcp",
+];
 
 /** Concatenate registry.rs and its `registry/records_*.rs` fragments. */
 export function readRegistrySource(dir = REGISTRY_DIR) {
@@ -62,7 +69,11 @@ export function resolveTestModuleAssets(src, hostKey, ids = TEST_MODULE_IDS) {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const hostKey = process.argv[2] ?? "ubuntu-22.04-x86_64";
-  for (const a of resolveTestModuleAssets(readRegistrySource(), hostKey)) {
+  for (const a of resolveTestModuleAssets(
+    readRegistrySource(),
+    hostKey,
+    process.argv[3]?.split(","),
+  )) {
     console.log([a.id, a.url, a.archive, a.sha256].join("\t"));
   }
 }

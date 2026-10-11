@@ -7,8 +7,8 @@ use crate::config::Config;
 use crate::core::Outcome;
 use crate::modules::client::{ModuleCallError, ModuleClient};
 
-use super::super::super::definitions::ChannelAuthMode;
-use super::super::types::ChannelTestResult;
+use tinychannels_bus::controllers::ChannelAuthMode;
+use tinychannels_bus::controllers::ChannelTestResult;
 
 /// Validate credentials inside TinyChannels, including native IMAP verification
 /// for email. No credentials or configuration are persisted.

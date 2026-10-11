@@ -66,6 +66,17 @@ pub fn spawn(host: Arc<ProfileHost>) -> tokio::task::JoinHandle<()> {
 pub async fn tick(host: &ProfileHost) -> TickReport {
     host.evict_idle().await;
     let mut report = TickReport::default();
+    // Due agent jobs, when a host delivery is installed to route their replies.
+    if crate::cron::host_delivery::installed().is_some() {
+        let swept = super::cron::sweep(host, chrono::Utc::now()).await;
+        if swept != super::cron::SweepReport::default() {
+            log::debug!(
+                "[profiles][background] cron ran={} skipped={}",
+                swept.ran,
+                swept.skipped
+            );
+        }
+    }
     let profiles = match host.list().await {
         Ok(profiles) => profiles,
         Err(error) => {

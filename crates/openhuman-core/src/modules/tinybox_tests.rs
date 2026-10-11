@@ -26,6 +26,7 @@ impl Drop for EnvironmentRestore {
 
 struct MockTinyBox {
     calls: Arc<Mutex<Vec<(String, Value)>>>,
+    docker_control_delay: std::time::Duration,
 }
 
 #[async_trait::async_trait]
@@ -42,6 +43,11 @@ impl Interface for MockTinyBox {
     }
 
     async fn call(&self, member: &MemberName, args: Value) -> tinybus::Result<Value> {
+        if matches!(member.as_str(), DOCKER_STATUS | CLEANUP_DOCKER)
+            && !self.docker_control_delay.is_zero()
+        {
+            tokio::time::sleep(self.docker_control_delay).await;
+        }
         self.calls
             .lock()
             .expect("call log lock")
@@ -64,6 +70,21 @@ impl Interface for MockTinyBox {
                 literal_words: vec!["printf".to_owned(), "hello".to_owned()],
             })
             .map_err(tinybus::Error::from),
+            DOCKER_STATUS => serde_json::to_value(contract::DockerStatus { available: true })
+                .map_err(tinybus::Error::from),
+            RUN_DOCKER | RUN_DOCKER_WITHOUT_WORKSPACE => {
+                serde_json::to_value(contract::DockerRunOutput {
+                    exit_code: 0,
+                    stdout: "ok".to_owned(),
+                    stderr: String::new(),
+                    timed_out: false,
+                })
+                .map_err(tinybus::Error::from)
+            }
+            CLEANUP_DOCKER => serde_json::to_value(contract::CleanupDockerOutput {
+                containers_stopped: 3,
+            })
+            .map_err(tinybus::Error::from),
             EXEC => Err(tinybus::Error::MethodFailed {
                 name: "ai.tinyhumans.tinybox.Error.Backend".to_owned(),
                 message: "private argument /home/user/token leaked by provider".to_owned(),
@@ -74,6 +95,12 @@ impl Interface for MockTinyBox {
 }
 
 async fn mock_client() -> (Connection, ModuleClient, Arc<Mutex<Vec<(String, Value)>>>) {
+    mock_client_with_docker_control_delay(std::time::Duration::ZERO).await
+}
+
+async fn mock_client_with_docker_control_delay(
+    docker_control_delay: std::time::Duration,
+) -> (Connection, ModuleClient, Arc<Mutex<Vec<(String, Value)>>>) {
     let bus = MemoryBus::new();
     Broker::new().spawn(bus.clone());
     let service = Connection::connect(bus.connect().await.expect("service transport"))
@@ -85,6 +112,7 @@ async fn mock_client() -> (Connection, ModuleClient, Arc<Mutex<Vec<(String, Valu
             ObjectPath::new(contract::OBJECT_PATH).expect("TinyBox path"),
             MockTinyBox {
                 calls: Arc::clone(&calls),
+                docker_control_delay,
             },
         )
         .await
@@ -192,6 +220,7 @@ async fn docker_command_refusal_is_not_retried_as_an_ordinary_call() {
             workspace: "/workspace".to_owned(),
             image: None,
             command: "printf secret".to_owned(),
+            login_shell: false,
             network: None,
             memory_limit_mb: None,
             cpus: None,
@@ -279,7 +308,7 @@ async fn pinned_loader_serves_the_published_tinybox_release() {
 
     crate::modules::ops::ensure_loaded(&config, MODULE_ID)
         .await
-        .expect("the OpenHuman release registry and TinyBus loader admit v0.1.19");
+        .expect("the OpenHuman release registry and TinyBus loader admit v0.1.20");
     let capabilities = super::capabilities(&config)
         .await
         .expect("the loaded release serves TinyBus capabilities");
@@ -294,6 +323,7 @@ async fn pinned_loader_serves_the_published_tinybox_release() {
             workspace: workspace.path().display().to_string(),
             image: Some("alpine:latest".to_owned()),
             command: "printf tinybox-module-run-ok".to_owned(),
+            login_shell: false,
             network: Some("none".to_owned()),
             memory_limit_mb: Some(128),
             cpus: Some(1.0),
@@ -343,6 +373,178 @@ fn every_host_operation_is_a_member_of_the_canonical_contract() {
         RELEASE_OUTPUT,
         START_JAILED_EXEC,
         RUN_DOCKER,
+        DOCKER_STATUS,
+        CLEANUP_DOCKER,
+        RUN_DOCKER_WITHOUT_WORKSPACE,
     ];
     assert_eq!(methods, contract::METHODS);
+}
+
+#[tokio::test]
+async fn no_workspace_docker_call_uses_its_typed_member_and_request() {
+    let (_service, client, calls) = mock_client().await;
+    let request = contract::DockerRunRequest {
+        workspace: String::new(),
+        image: Some("local-fixture:latest".to_owned()),
+        command: "printf ok".to_owned(),
+        login_shell: true,
+        network: Some("none".to_owned()),
+        memory_limit_mb: Some(128),
+        cpus: Some(1.5),
+        read_only_rootfs: Some(true),
+        read_only_mounts: Vec::new(),
+        extra_cap_drops: vec!["NET_RAW".to_owned()],
+        env: Default::default(),
+        label: Some("openhuman.runtime=true".to_owned()),
+        timeout_ms: 12_000,
+    };
+    let output: contract::DockerRunOutput =
+        call_with_client(&client, RUN_DOCKER_WITHOUT_WORKSPACE, (request,), false)
+            .await
+            .expect("the adapter decodes the typed no-workspace result");
+
+    assert_eq!(output.exit_code, 0);
+    let calls = calls.lock().expect("recorded TinyBox calls");
+    let call = calls
+        .iter()
+        .find(|(member, _)| member == RUN_DOCKER_WITHOUT_WORKSPACE)
+        .expect("no-workspace member called");
+    assert_eq!(
+        call.1,
+        json!([{
+            "workspace": "",
+            "image": "local-fixture:latest",
+            "command": "printf ok",
+            "login_shell": true,
+            "network": "none",
+            "memory_limit_mb": 128,
+            "cpus": 1.5,
+            "read_only_rootfs": true,
+            "read_only_mounts": [],
+            "extra_cap_drops": ["NET_RAW"],
+            "env": {},
+            "label": "openhuman.runtime=true",
+            "timeout_ms": 12_000
+        }])
+    );
+}
+
+#[tokio::test]
+async fn no_workspace_docker_refusal_is_not_retried_as_an_ordinary_call() {
+    let (_service, client, calls) = mock_client().await;
+    let error = call_run_docker_without_workspace_with_client(
+        &client,
+        contract::DockerRunRequest {
+            workspace: String::new(),
+            image: None,
+            command: "printf private".to_owned(),
+            login_shell: true,
+            network: None,
+            memory_limit_mb: None,
+            cpus: None,
+            read_only_rootfs: None,
+            read_only_mounts: Vec::new(),
+            extra_cap_drops: Vec::new(),
+            env: Default::default(),
+            label: None,
+            timeout_ms: 1_000,
+        },
+    )
+    .await
+    .expect_err("an unattested fixture cannot receive a shell command");
+
+    assert!(error.contains("MODULE_CALL_REPORTED"), "{error}");
+    assert!(!error.contains("printf private"));
+    let calls = calls.lock().expect("call log lock");
+    assert_eq!(calls.len(), 1, "only the public capabilities probe ran");
+    assert_eq!(calls[0].0, CAPABILITIES);
+}
+
+#[tokio::test]
+async fn docker_controls_use_typed_calls_with_validated_contract_capability(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (_service, client, calls) = mock_client().await;
+    let status = call_docker_status_with_client(
+        &client,
+        contract::DockerStatusRequest { timeout_ms: 2_000 },
+    )
+    .await?;
+    assert!(status.available);
+
+    let cleanup = call_cleanup_docker_with_client(
+        &client,
+        contract::CleanupDockerRequest {
+            label: "openhuman.sandbox=true".to_owned(),
+            timeout_ms: 2_000,
+        },
+    )
+    .await?;
+    assert_eq!(cleanup.containers_stopped, 3);
+
+    let calls = calls.lock().expect("recorded TinyBox calls");
+    let status_call = calls
+        .iter()
+        .find(|(member, _)| member == DOCKER_STATUS)
+        .expect("status member called");
+    assert_eq!(status_call.1, json!([{ "timeout_ms": 2_000 }]));
+    let cleanup_call = calls
+        .iter()
+        .find(|(member, _)| member == CLEANUP_DOCKER)
+        .expect("cleanup member called");
+    assert_eq!(
+        cleanup_call.1,
+        json!([{ "label": "openhuman.sandbox=true", "timeout_ms": 2_000 }])
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|(member, _)| member == CAPABILITIES)
+            .count(),
+        2
+    );
+    Ok(())
+}
+
+#[test]
+fn docker_control_transport_deadline_tracks_the_bounded_module_operation() {
+    assert_eq!(
+        docker_control_deadline(10_000, DOCKER_CALL_GRACE),
+        std::time::Duration::from_secs(15)
+    );
+    assert_eq!(
+        docker_control_deadline(1, DOCKER_CALL_GRACE),
+        std::time::Duration::from_millis(5_001)
+    );
+    assert_eq!(
+        docker_control_deadline(u64::MAX, DOCKER_CALL_GRACE),
+        std::time::Duration::from_secs(65),
+        "an invalid oversized request must not create an effectively unbounded bus wait"
+    );
+}
+
+#[tokio::test]
+async fn docker_status_transport_uses_its_bounded_deadline() {
+    let (_service, client, _) =
+        mock_client_with_docker_control_delay(std::time::Duration::from_millis(100)).await;
+    let error = call_docker_status_with_grace(
+        &client,
+        contract::DockerStatusRequest { timeout_ms: 5 },
+        std::time::Duration::from_millis(5),
+    )
+    .await
+    .expect_err("transport must stop waiting at operation deadline plus grace");
+
+    assert!(error.contains("MODULE_CALL_REPORTED"), "{error}");
+
+    let error = call_cleanup_docker_with_grace(
+        &client,
+        contract::CleanupDockerRequest {
+            label: "openhuman.sandbox=true".to_owned(),
+            timeout_ms: 5,
+        },
+        std::time::Duration::from_millis(5),
+    )
+    .await
+    .expect_err("cleanup transport must also stop at its bounded deadline plus grace");
+    assert!(error.contains("MODULE_CALL_REPORTED"), "{error}");
 }

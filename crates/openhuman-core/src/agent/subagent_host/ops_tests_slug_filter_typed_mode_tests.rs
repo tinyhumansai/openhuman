@@ -1,6 +1,6 @@
 use super::*;
-use crate::agent::harness::spawn_depth_context::current_spawn_depth;
 use crate::agent::subagent_host::run_subagent;
+use tinyagents_harness::context::{current_run_depth, with_run_depth, RunDepth};
 
 #[test]
 fn filter_named_scope_keeps_only_named() {
@@ -580,9 +580,13 @@ async fn runner_allows_spawn_at_max_depth() {
     let def = make_def_named_tools(&[]);
 
     let outcome = with_parent_context(parent, async {
-        with_spawn_depth(MAX_SPAWN_DEPTH - 1, async {
-            run_subagent(&def, "x", SubagentRunOptions::default()).await
-        })
+        with_run_depth(
+            RunDepth {
+                depth: MAX_SPAWN_DEPTH - 1,
+                max_depth: MAX_SPAWN_DEPTH,
+            },
+            async { run_subagent(&def, "x", SubagentRunOptions::default()).await },
+        )
         .await
     })
     .await
@@ -591,8 +595,8 @@ async fn runner_allows_spawn_at_max_depth() {
     assert_eq!(outcome.output, "ok");
     assert_eq!(provider.captured.lock().len(), 1);
     assert_eq!(
-        current_spawn_depth(),
-        0,
+        current_run_depth(),
+        None,
         "depth task-local must not leak after the run"
     );
 }

@@ -150,7 +150,11 @@ pub(super) fn build_session_agent(
         thread_id
     );
 
-    let agent_result = OpenHumanSessionHost::from_config_for_agent(&effective, target_agent_id);
+    let agent_result = OpenHumanSessionHost::from_config_for_agent_session(
+        &effective,
+        target_agent_id,
+        Some(thread_id),
+    );
 
     agent_result
         .map(|mut agent| {

@@ -110,3 +110,15 @@ fn artifacts_land_in_the_profiles_sandbox() {
     let config = profile_config(&layout, &id);
     assert!(config.files_dir().starts_with(&layout.sandbox_dir));
 }
+
+#[test]
+fn profiles_never_use_the_unrestricted_empty_channel_permission_map() {
+    let layout = profile_layout(Path::new("/srv/oh"), &id());
+    let config = profile_config(&layout, &id());
+    assert!(!config.agent.channel_permissions.is_empty());
+    assert!(config
+        .agent
+        .channel_permissions
+        .values()
+        .all(|v| v == "readonly"));
+}

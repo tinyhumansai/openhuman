@@ -11,7 +11,6 @@ use tinyagents_harness::multimodal::{
 use crate::config::Config;
 use crate::security::SecurityPolicy;
 
-pub(crate) mod codec;
 pub(crate) mod legacy;
 pub(crate) mod provider;
 

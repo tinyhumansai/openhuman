@@ -26,7 +26,7 @@ pub(crate) fn validate_and_migrate_graph(graph_json: Value) -> Result<WorkflowGr
 /// engine, not about OpenHuman. This host used to carry the whole walk.
 pub(crate) fn engine_compatibility_errors(
     graph: &WorkflowGraph,
-) -> Vec<crate::flows::FlowValidationError> {
+) -> Vec<tinyflows_catalog::FlowValidationError> {
     tinyflows::compat::errors(graph)
         .into_iter()
         .map(to_compat_validation_error)
@@ -42,8 +42,8 @@ pub(crate) use tinyflows::compat::UNSUPPORTED_NESTED_CONDITIONAL_FAN_IN;
 
 fn to_compat_validation_error(
     error: tinyflows::compat::CompatibilityError,
-) -> crate::flows::FlowValidationError {
-    crate::flows::FlowValidationError {
+) -> tinyflows_catalog::FlowValidationError {
+    tinyflows_catalog::FlowValidationError {
         code: error.code.to_string(),
         message: error.message,
         node_id: error.node_id,
@@ -81,8 +81,8 @@ pub(crate) use tinyflows::migrate::deserialize_graph as migrate_and_deserialize_
 /// stays consistent across `flows_validate` and the builder gate stack.
 pub(crate) fn to_flow_validation_error(
     err: &tinyflows::error::ValidationError,
-) -> crate::flows::FlowValidationError {
-    crate::flows::FlowValidationError {
+) -> tinyflows_catalog::FlowValidationError {
+    tinyflows_catalog::FlowValidationError {
         code: err.code().to_string(),
         message: err.to_string(),
         node_id: err.node_id().map(str::to_string),
@@ -137,8 +137,8 @@ pub(crate) fn config_aware_engine_compatibility_errors(
 /// save. Pure (no persistence, no config) — `valid == false` is a normal
 /// result, NOT an `Err`; `Err` is reserved for internal serialization faults
 /// (there are none on this path today).
-pub fn flows_validate(graph_json: Value) -> Outcome<crate::flows::FlowValidation> {
-    use crate::flows::FlowValidation;
+pub fn flows_validate(graph_json: Value) -> Outcome<tinyflows_catalog::FlowValidation> {
+    use tinyflows_catalog::FlowValidation;
     tracing::debug!(target: "flows", "[flows] flows_validate: validating candidate graph");
     // Split migrate/deserialize (a genuinely single failure) from structural
     // validation (which can surface many problems at once). A pre-validation
@@ -153,7 +153,7 @@ pub fn flows_validate(graph_json: Value) -> Outcome<crate::flows::FlowValidation
                 FlowValidation {
                     valid: false,
                     errors: vec![error.clone()],
-                    error_details: vec![crate::flows::FlowValidationError {
+                    error_details: vec![tinyflows_catalog::FlowValidationError {
                         code: "unparseable_graph".to_string(),
                         message: error,
                         node_id: None,
@@ -236,7 +236,7 @@ pub fn flows_validate(graph_json: Value) -> Outcome<crate::flows::FlowValidation
 /// - `"native"` — a tinyflows `WorkflowGraph` JSON (the same shape
 ///   `flows_create` accepts). Run straight through [`validate_and_migrate_graph`].
 /// - `"n8n"` — an n8n workflow export, mapped best-effort by
-///   [`crate::flows::n8n_import`] into a `WorkflowGraph` (unmapped
+///   [`tinyflows_catalog::import::n8n`] into a `WorkflowGraph` (unmapped
 ///   node types become annotated placeholders, expressions translated where
 ///   trivial) and THEN run through the same migrate + validate path, so the
 ///   host engine is the authority on the result's validity.
@@ -254,8 +254,8 @@ pub fn flows_validate(graph_json: Value) -> Outcome<crate::flows::FlowValidation
 pub fn flows_import(
     graph_json: Value,
     format: Option<String>,
-) -> Result<Outcome<crate::flows::FlowImport>, String> {
-    use crate::flows::{n8n_import, FlowImport};
+) -> Result<Outcome<tinyflows_catalog::FlowImport>, String> {
+    use tinyflows_catalog::{import::n8n as n8n_import, FlowImport};
 
     let requested = format
         .as_deref()

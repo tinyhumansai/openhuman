@@ -412,6 +412,12 @@ function chatTurnUsagePayload(event: ChatDoneEvent): {
 
 const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
   const dispatch = useAppDispatch();
+  const snapshotPollingRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    snapshotPollingRef.current = controller;
+    return () => controller.abort();
+  }, []);
   // Latest translator for the long-lived socket handlers below: a failed turn's
   // copy is rendered in the locale active when the error arrives.
   const { t } = useT();
@@ -620,6 +626,10 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
 
   useEffect(() => {
     if (socketStatus !== 'connected') return;
+    // A terminal snapshot must survive a socket subscription refresh, but
+    // cannot outlive the provider that owns its store projection.
+    const snapshotPolling = snapshotPollingRef.current;
+    if (!snapshotPolling) return;
 
     // When a turn ends, any follow-ups the user queued behind it are about to be
     // dispatched by the backend as fresh turns. Nothing else persists their
@@ -715,6 +725,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const finishChatDoneTurn = async (event: ChatDoneEvent, path: string) => {
+      if (snapshotPolling.signal.aborted) return;
       // One store update: freeze the turn's trail, end the tail, reveal the
       // persisted reply in the tail's slot. See `turnSettled`.
       rtLog('turn_settled', { thread: event.thread_id, request: event.request_id, path });
@@ -735,6 +746,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
       // Persist queued follow-ups (in order, after this turn's assistant reply)
       // and only then clear the queue + lifecycle.
       await flushQueuedFollowups(event.thread_id);
+      if (snapshotPolling.signal.aborted) return;
       dispatch(endInferenceTurn({ threadId: event.thread_id }));
       dispatch(clearThreadInferenceActive(event.thread_id));
       // Snapshot polling can outlive this completed turn. Capture the rows it
@@ -752,8 +764,14 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
       // ending the live lifecycle) matters: `hydrateRuntimeFromSnapshot`
       // intentionally refuses to overwrite an actively streaming turn.
       const completedSnapshot = await dispatch(
-        fetchAndHydrateCompletedTurnState(event.thread_id)
-      ).unwrap();
+        fetchAndHydrateCompletedTurnState(event.thread_id, { signal: snapshotPolling.signal })
+      )
+        .unwrap()
+        .catch(error => {
+          if (snapshotPolling.signal.aborted) return null;
+          throw error;
+        });
+      if (snapshotPolling.signal.aborted) return;
       if (!completedSnapshot) {
         dispatch(
           cancelUnresolvedTurnTimeline({ threadId: event.thread_id, rowIds: unresolvedRowIds })

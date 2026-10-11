@@ -54,14 +54,13 @@ pub mod identity_store;
 pub mod module_client;
 pub mod ops;
 pub(crate) mod processing;
-pub mod providers;
 pub mod schemas;
 pub mod tools;
 pub(crate) mod trigger_history;
 pub mod types;
 
 pub use crate::agent::prompts::types::ConnectedIntegration;
-pub use crate::integrations::composio::providers::ProviderUserProfile;
+pub use crate::integrations::composio::contract::ProviderUserProfile;
 pub use action_tool::ComposioActionTool;
 pub use bus::{
     register_composio_trigger_subscriber, ComposioConfigChangedSubscriber,
@@ -88,3 +87,6 @@ pub use types::{
     ComposioToolsResponse, ComposioTriggerEvent, ComposioTriggerHistoryEntry,
     ComposioTriggerHistoryResult, ComposioTriggerMetadata,
 };
+
+/// Product-specific task recency scoping used by the briefing runner.
+pub(crate) mod task_recency_context;

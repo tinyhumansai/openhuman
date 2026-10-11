@@ -2,7 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::inference::{LocalAiSpeechResult, LocalAiTtsResult};
+use {
+    tinyinference_local::status::LocalAiSpeechResult, tinyinference_local::status::LocalAiTtsResult,
+};
 
 /// Result of a speech-to-text transcription.
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -178,8 +178,11 @@ async fn an_inline_subagent_park_uses_the_short_window_without_being_detached() 
             web_origin(),
             APPROVAL_CHAT_CONTEXT.scope(
                 chat_ctx(),
-                crate::agent::harness::with_spawn_depth(
-                    1,
+                tinyagents_harness::context::with_run_depth(
+                    tinyagents_harness::context::RunDepth {
+                        depth: 1,
+                        max_depth: crate::agent::tinyagents::budget::MAX_SPAWN_DEPTH,
+                    },
                     g.intercept("skill_registry_install", "install", serde_json::json!({})),
                 ),
             ),

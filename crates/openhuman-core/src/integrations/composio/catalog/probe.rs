@@ -201,8 +201,8 @@ pub(crate) fn apply_probe_override(mut contract: ToolContract) -> ToolContract {
 /// "assume Read".
 pub(super) fn resolve_composio_action_scope(
     slug: &str,
-) -> Option<crate::integrations::composio::providers::ToolScope> {
-    use crate::integrations::composio::providers::{
+) -> Option<crate::integrations::composio::contract::ToolScope> {
+    use crate::integrations::composio::contract::{
         catalog_for_toolkit, classify_unknown, find_curated, toolkit_from_slug,
     };
 
@@ -246,7 +246,7 @@ pub(crate) async fn probe_tool_output_sample(
     }
 
     match resolve_composio_action_scope(slug) {
-        Some(crate::integrations::composio::providers::ToolScope::Read) => {}
+        Some(crate::integrations::composio::contract::ToolScope::Read) => {}
         Some(other) => {
             tracing::warn!(
                 target: "flows",
@@ -281,7 +281,7 @@ pub(crate) async fn probe_tool_output_sample(
         }
     }
 
-    let Some(toolkit) = crate::integrations::composio::providers::toolkit_from_slug(slug) else {
+    let Some(toolkit) = crate::integrations::composio::contract::toolkit_from_slug(slug) else {
         return Err(format!(
             "get_tool_output_sample: could not extract a toolkit from slug '{slug}' — it must \
              look like '<TOOLKIT>_<ACTION>'."

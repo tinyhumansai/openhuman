@@ -473,6 +473,14 @@ fn local_override(config: &Config, id: &str) -> Option<PathBuf> {
                 .map(PathBuf::from)
         })
         .or_else(|| {
+            // Integration tests compile the core as a dependency, without
+            // cfg(test), so fixture routing belongs in this shared loader.
+            (id == "tinyjuice")
+                .then(|| std::env::var_os("TINYJUICE_TEST_MODULE"))
+                .flatten()
+                .map(PathBuf::from)
+        })
+        .or_else(|| {
             // TinyConnectors exposes its contract to the host, but has no
             // host-side module namespace: it is resolved by its registry ID.
             (id == "tinyconnectors")

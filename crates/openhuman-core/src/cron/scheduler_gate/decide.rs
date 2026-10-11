@@ -1,94 +1,49 @@
-//! Gate decision function — turn sampled host [`Signals`] plus the user's
-//! [`SchedulerGateConfig`] into a [`Policy`].
-//!
-//! Pure: no I/O, no clock, no globals. Sampling the signals (battery probe,
-//! CPU sampler, server-mode detection) stays in the host that owns the
-//! hardware; this module only owns the decision.
+//! Product configuration and policy projection over pure host resource admission.
 
 use crate::config::schema::{PauseReason, Policy, SchedulerGateConfig, SchedulerGateMode};
+pub use crate::platform::resource_admission::Signals;
+use crate::platform::resource_admission::{self, Admission, Limits, Mode};
 
-/// One snapshot of the host signals the gate decides on.
-#[derive(Debug, Clone, Copy)]
-pub struct Signals {
-    pub on_ac_power: bool,
-    /// 0.0..=1.0, or `None` when no battery sensor is present (most servers).
-    pub battery_charge: Option<f32>,
-    /// Recent global CPU usage, 0..100.
-    pub cpu_usage_pct: f32,
-    pub server_mode: bool,
+fn admission_limits(cfg: &SchedulerGateConfig) -> Limits {
+    Limits {
+        mode: match cfg.mode {
+            SchedulerGateMode::Auto => Mode::Auto,
+            SchedulerGateMode::AlwaysOn => Mode::AlwaysOn,
+            SchedulerGateMode::Off => Mode::Off,
+        },
+        battery_floor: cfg.battery_floor,
+        cpu_busy_threshold_pct: cfg.cpu_busy_threshold_pct,
+        cpu_severe_pct: cfg.cpu_severe_pct,
+        require_ac_power: cfg.require_ac_power,
+    }
 }
 
-/// Compute the current [`Policy`] from sampled signals + user config.
-///
-/// Order of evaluation matters — explicit user overrides win first, then
-/// deployment mode, then dynamic host signals.
 pub fn decide(signals: &Signals, cfg: &SchedulerGateConfig) -> Policy {
-    match cfg.mode {
-        SchedulerGateMode::Off => {
-            return Policy::Paused {
-                reason: PauseReason::UserDisabled,
-            }
+    match resource_admission::decide(signals, &admission_limits(cfg)) {
+        Admission::Aggressive => Policy::Aggressive,
+        Admission::Normal => Policy::Normal,
+        Admission::Throttled => Policy::Throttled,
+        Admission::Paused { reason } => {
+            let reason = match reason {
+                resource_admission::PauseReason::UserDisabled => PauseReason::UserDisabled,
+                resource_admission::PauseReason::OnBattery => {
+                    log::debug!(
+                        "[scheduler_gate] policy decision: paused on_battery (require_ac_power=true, on_ac={})",
+                        signals.on_ac_power
+                    );
+                    PauseReason::OnBattery
+                }
+                resource_admission::PauseReason::CpuPressure => {
+                    log::debug!(
+                        "[scheduler_gate] policy decision: paused cpu_pressure (cpu={:.1}% >= severe={:.1}%)",
+                        signals.cpu_usage_pct,
+                        cfg.cpu_severe_pct.clamp(0.0, 100.0)
+                    );
+                    PauseReason::CpuPressure
+                }
+            };
+            Policy::Paused { reason }
         }
-        SchedulerGateMode::AlwaysOn => return Policy::Aggressive,
-        SchedulerGateMode::Auto => {}
-    }
-
-    if signals.server_mode {
-        return Policy::Aggressive;
-    }
-
-    // Clamp config-supplied thresholds so a malformed config.toml (e.g.
-    // `battery_floor = 1.5` or a negative cpu threshold) can't silently
-    // disable / force throttling — the field is `f32` and serde won't
-    // reject out-of-domain values for us.
-    let battery_floor = cfg.battery_floor.clamp(0.0, 1.0);
-    let cpu_threshold = cfg.cpu_busy_threshold_pct.clamp(0.0, 100.0);
-    let cpu_severe = cfg.cpu_severe_pct.clamp(0.0, 100.0);
-
-    // ── Pause checks come BEFORE the throttle gate — these are the
-    //    "stand down completely" signals. Hierarchy:
-    //      1. user policy (`require_ac_power` on battery)
-    //      2. host on fire (CPU severely pegged)
-
-    // (1) Power-aware stand-down. Only consult `on_ac_power` when the
-    //     user explicitly opts in — many desktops report `false` here
-    //     because they have no battery + no AC sensor, and we don't
-    //     want to silently disable background work for them.
-    if cfg.require_ac_power && !signals.on_ac_power {
-        log::debug!(
-            "[scheduler_gate] policy decision: paused on_battery (require_ac_power=true, on_ac={})",
-            signals.on_ac_power
-        );
-        return Policy::Paused {
-            reason: PauseReason::OnBattery,
-        };
-    }
-
-    // (2) Hard CPU ceiling — at >= cpu_severe_pct the host is unusable;
-    //     a Throttled 30s backoff is not enough, hold every job.
-    if signals.cpu_usage_pct >= cpu_severe {
-        log::debug!(
-            "[scheduler_gate] policy decision: paused cpu_pressure (cpu={:.1}% >= severe={:.1}%)",
-            signals.cpu_usage_pct,
-            cpu_severe,
-        );
-        return Policy::Paused {
-            reason: PauseReason::CpuPressure,
-        };
-    }
-
-    let battery_ok = signals.on_ac_power
-        || signals
-            .battery_charge
-            .map(|c| c >= battery_floor)
-            .unwrap_or(true); // no battery present == treat as plugged in
-
-    let cpu_ok = signals.cpu_usage_pct <= cpu_threshold;
-
-    if battery_ok && cpu_ok {
-        Policy::Normal
-    } else {
-        Policy::Throttled
     }
 }
 

@@ -1,13 +1,16 @@
 use crate::config::Config;
 use crate::cron::job_builder::{create_agent_job, AgentJobInput};
 use crate::cron::origin::{current_job_origin, current_turn_may_skip_approval};
-use crate::cron::{self, DeliveryConfig, JobType, Schedule, SessionTarget};
 use crate::security::SecurityPolicy;
 use crate::tools::schema_cache::static_schema;
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
 use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolExposure, ToolResult};
+use {
+    crate::cron, tinyflows_schedule::types::DeliveryConfig, tinyflows_schedule::types::JobType,
+    tinyflows_schedule::types::Schedule, tinyflows_schedule::types::SessionTarget,
+};
 
 pub struct CronAddTool {
     config: Arc<Config>,
@@ -167,10 +170,14 @@ impl Tool for CronAddTool {
                     }
                 };
 
-                if !self.security.is_command_allowed(command) {
-                    return Ok(ToolResult::error(format!(
-                        "Command blocked by security policy: {command}"
-                    )));
+                if let Err(reason) = super::super::scheduler::shell_job::authorize_shell_command(
+                    &self.config,
+                    &self.security,
+                    command,
+                )
+                .await
+                {
+                    return Ok(ToolResult::error(reason));
                 }
 
                 cron::add_shell_job(&self.config, name, schedule, command)

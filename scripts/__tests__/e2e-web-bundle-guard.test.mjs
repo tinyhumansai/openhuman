@@ -101,6 +101,9 @@ fi
   );
   writeExecutable(path.join(bin, "rustc"), `#!/usr/bin/env bash\necho 'host: test-triple'\n`);
   writeExecutable(path.join(bin, "cargo"), `#!/usr/bin/env bash\n${record("cargo")}\n`);
+  // Port availability belongs to e2e-web-port-guard.test.mjs. This fixture
+  // starts no real listeners, so its probes must not inspect other sessions.
+  writeExecutable(path.join(bin, "python3"), `#!/usr/bin/env bash\n${record("python3")}\nexit 0\n`);
 
   // The repo-level helpers e2e-web-build.sh shells out to.
   writeExecutable(

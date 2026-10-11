@@ -177,7 +177,20 @@ if [ -z "${TINYCONNECTORS_TEST_MODULE:-}" ]; then
   connectors_module="vendor/tinyconnectors/target/release/libtinyconnectors.so"
   echo "[rust-e2e] Building pinned TinyConnectors test module ..."
   "$CARGO_BIN" build --release --manifest-path "$connectors_manifest"
-  export TINYCONNECTORS_TEST_MODULE="$REPO_ROOT/$connectors_module"
+  connectors_module="$(node scripts/ci/stage-connector-test-module.mjs \
+    "$REPO_ROOT/$connectors_module" "$REPO_ROOT/target/test-modules/tinyconnectors")"
+  export TINYCONNECTORS_TEST_MODULE="$connectors_module"
+fi
+
+# The isolated module-admission suite requires a real native search module.
+# Build the pinned source, as the product unit runner does, before discovering
+# and executing the E2E targets; never fall back to release downloads in a test.
+if [ -z "${TINYSEARCH_TEST_MODULE:-}" ]; then
+  search_manifest="vendor/tinysearch/crates/tinysearch/Cargo.toml"
+  search_module="vendor/tinysearch/target/release/libtinysearch.so"
+  echo "[rust-e2e] Building pinned TinySearch test module ..."
+  "$CARGO_BIN" build --release --manifest-path "$search_manifest"
+  export TINYSEARCH_TEST_MODULE="$REPO_ROOT/$search_module"
 fi
 
 echo "[rust-e2e] Running ${#SUITES[@]} suite(s) serially."

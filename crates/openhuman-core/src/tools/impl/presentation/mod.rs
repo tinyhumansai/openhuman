@@ -63,6 +63,41 @@ const GENERATION_TIMEOUT: Duration = Duration::from_secs(30);
 /// coordinating with the orchestrator agent definition list.
 pub const TOOL_NAME: &str = "generate_presentation";
 
+#[async_trait]
+trait ImageInspector: Sync {
+    async fn inspect(&self, bytes: &[u8]) -> Result<tinydocs_bus::ImageFacts, String>;
+}
+
+struct ModuleImageInspector<'a> {
+    config: Option<&'a crate::config::Config>,
+}
+
+#[async_trait]
+impl ImageInspector for ModuleImageInspector<'_> {
+    async fn inspect(&self, bytes: &[u8]) -> Result<tinydocs_bus::ImageFacts, String> {
+        let loaded;
+        let config = match self.config {
+            Some(config) => config,
+            None => {
+                loaded = crate::config::ops::load_config_with_timeout()
+                    .await
+                    .map_err(|error| format!("config unavailable: {error}"))?;
+                &loaded
+            }
+        };
+        crate::modules::documents::ensure_ready(config)
+            .await
+            .map_err(|error| error.to_string())?;
+        tokio::time::timeout(
+            GENERATION_TIMEOUT,
+            crate::modules::documents::inspect_image(config, bytes),
+        )
+        .await
+        .map_err(|_| "image inspection timed out".to_string())?
+        .map_err(|error| error.to_string())
+    }
+}
+
 /// One-shot `.pptx` generator. See module docs for the request flow.
 pub struct PresentationTool {
     workspace_dir: PathBuf,
@@ -407,13 +442,27 @@ impl PresentationTool {
         &self,
         input: &GeneratePresentationInput,
     ) -> (Vec<Vec<ResolvedSlideImage>>, Vec<String>) {
+        self.resolve_images_with_inspector(
+            input,
+            &ModuleImageInspector {
+                config: self.config.as_ref(),
+            },
+        )
+        .await
+    }
+
+    async fn resolve_images_with_inspector(
+        &self,
+        input: &GeneratePresentationInput,
+        inspector: &impl ImageInspector,
+    ) -> (Vec<Vec<ResolvedSlideImage>>, Vec<String>) {
         let mut per_slide: Vec<Vec<ResolvedSlideImage>> = Vec::with_capacity(input.slides.len());
         let mut warnings: Vec<String> = Vec::new();
 
         for (slide_idx, spec) in input.slides.iter().enumerate() {
             let mut resolved = Vec::with_capacity(spec.images.len());
             for (img_idx, image) in spec.images.iter().enumerate() {
-                match self.resolve_one_image(image).await {
+                match self.resolve_one_image(image, inspector).await {
                     Ok(r) => resolved.push(r),
                     Err(reason) => {
                         // 1-based indices in the message (matches how the
@@ -436,7 +485,11 @@ impl PresentationTool {
     /// Returns `Err(reason)` (a short human-readable string) when the
     /// image cannot be embedded — the caller turns that into a skip
     /// warning.
-    async fn resolve_one_image(&self, image: &SlideImage) -> Result<ResolvedSlideImage, String> {
+    async fn resolve_one_image(
+        &self,
+        image: &SlideImage,
+        inspector: &impl ImageInspector,
+    ) -> Result<ResolvedSlideImage, String> {
         let bytes = match &image.source {
             SlideImageSource::Artifact { artifact_id } => {
                 read_artifact_bytes(&self.workspace_dir, &self.files_dir, artifact_id)
@@ -479,15 +532,7 @@ impl PresentationTool {
             ));
         }
 
-        let config = match &self.config {
-            Some(config) => config.clone(),
-            None => crate::config::ops::load_current_or_init()
-                .await
-                .map_err(|error| format!("could not load runtime configuration: {error}"))?,
-        };
-        let facts = crate::modules::documents::inspect_image(&config, &bytes)
-            .await
-            .map_err(|error| error.to_string())?;
+        let facts = inspector.inspect(&bytes).await?;
 
         Ok(ResolvedSlideImage {
             bytes,

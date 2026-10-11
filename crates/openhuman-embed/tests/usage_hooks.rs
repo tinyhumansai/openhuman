@@ -6,7 +6,7 @@ use common::{
     chat_completion, chat_requests, offline_config, route, runtime, scripted_provider,
     stub_backend, tool_call_completion,
 };
-use openhuman_embed::seams::{StopDecision, StopHook, TurnState};
+use openhuman_embed::seams::{StopDecision, StopHook, TurnCost, TurnState};
 use openhuman_embed::{
     AgentDefinitionSpec, AgentSpec, HostTurnTools, Runtime, Tool, ToolScopeSpec, Workspace,
 };
@@ -20,7 +20,7 @@ struct Policy {
     stop: bool,
 }
 #[async_trait::async_trait]
-impl StopHook for Policy {
+impl StopHook<TurnCost> for Policy {
     fn name(&self) -> &str {
         "usage-budget"
     }
@@ -52,8 +52,8 @@ impl Tool for Probe {
     fn parameters_schema(&self) -> Value {
         json!({"type":"object","properties":{}})
     }
-    async fn execute(&self, _: Value) -> anyhow::Result<openhuman_core::tools::ToolResult> {
-        Ok(openhuman_core::tools::ToolResult::success("value"))
+    async fn execute(&self, _: Value) -> anyhow::Result<tinytools::ToolResult> {
+        Ok(tinytools::ToolResult::success("value"))
     }
 }
 fn billed(mut response: Value) -> Value {

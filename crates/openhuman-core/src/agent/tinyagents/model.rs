@@ -107,7 +107,7 @@ fn response_to_model_response(
     // reply. Preserve it as a typed thinking block so it stays out of
     // `Message::text()` but survives persistence and the next turn's request,
     // where thinking-mode providers require it back.
-    if let Some(block) = crate::agent::message_convert::reasoning_content_block(
+    if let Some(block) = tinyagents_runtime::transcript::reasoning_content_block(
         response.reasoning_content.as_deref(),
     ) {
         content.push(block);

@@ -151,6 +151,10 @@ impl RuntimeBuilder {
         services(services: ServiceSet)
     );
     forward!(
+        /// See [`openhuman_embed::RuntimeBuilder::defer_services`].
+        defer_services()
+    );
+    forward!(
         /// See [`openhuman_embed::RuntimeBuilder::domains`].
         domains(domains: DomainSet)
     );

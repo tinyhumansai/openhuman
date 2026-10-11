@@ -72,6 +72,11 @@ impl ToolDispatch<(), crate::agent::tinyagents::host::OpenHumanRunContext> for D
         self.tool.clone()
     }
 
+    /// Delegated output must use the stricter agent-output screening policy.
+    fn output_origin(&self) -> tinyagents_harness::host::ContentOrigin {
+        tinyagents_harness::host::ContentOrigin::Agent
+    }
+
     async fn execute(
         &self,
         _state: &(),

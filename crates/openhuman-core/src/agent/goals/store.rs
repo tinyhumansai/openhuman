@@ -16,8 +16,8 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use super::ThreadGoal;
 use tinyagents_graph::goals::store as crate_store;
+use tinyagents_graph::goals::ThreadGoal;
 use tinyagents_harness::store::Store;
 use tinyagents_session::transcript::import::ops::open_session_stores;
 

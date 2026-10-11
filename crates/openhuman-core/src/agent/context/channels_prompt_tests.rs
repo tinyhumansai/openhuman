@@ -1,6 +1,9 @@
 use super::*;
-use crate::skills::{Workflow, WorkflowFrontmatter, WorkflowScope};
 use tempfile::tempdir;
+use {
+    tinyskills::Skill as Workflow, tinyskills::SkillFrontmatter as WorkflowFrontmatter,
+    tinyskills::SkillScope as WorkflowScope,
+};
 
 fn skill(name: &str, location: Option<std::path::PathBuf>) -> Workflow {
     Workflow {

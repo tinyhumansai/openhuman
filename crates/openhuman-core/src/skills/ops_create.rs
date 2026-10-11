@@ -9,7 +9,10 @@ use tinyskills::{
 };
 
 use super::ops_discover::{discover_workflows_inner, is_workspace_trusted};
-use super::ops_types::{Workflow, WorkflowScope, SKILL_TOML, WORKFLOW_TOML};
+use {
+    super::ops_types::SKILL_TOML, super::ops_types::WORKFLOW_TOML, tinyskills::Skill as Workflow,
+    tinyskills::SkillScope as WorkflowScope,
+};
 
 /// One declared `[[inputs]]` entry as supplied at create time by the
 /// Create-a-Workflow form.

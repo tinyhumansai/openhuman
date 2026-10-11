@@ -45,9 +45,11 @@ pub(crate) use contract::seed_live_catalog_cache;
 #[cfg(all(test, feature = "flows"))]
 pub(crate) use contract::seed_live_catalog_cache_expired;
 pub use contract::ToolContract;
+#[cfg(any(test, feature = "flows"))]
 pub(crate) use lookups::composio_required_args;
 #[cfg(test)]
 pub(crate) use probe::ProbedOutputSample;
+#[cfg(any(test, feature = "flows"))]
 pub(crate) use probe::{apply_probe_override, probe_tool_output_sample};
 #[cfg(test)]
 pub(crate) use probe::{seed_probe_cache, seed_probe_cache_expired};

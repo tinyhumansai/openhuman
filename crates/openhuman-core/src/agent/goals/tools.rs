@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tinyagents_graph::goals::{GoalTool, GoalToolKind, GoalUpdateHook};
 use tinytools::Tool;
 
-use super::{goal_to_value, store, ThreadGoal};
+use {super::goal_to_value, super::store, tinyagents_graph::goals::ThreadGoal};
 
 /// The model-facing goal tools for `workspace_dir`, each publishing
 /// `DomainEvent::ThreadGoalUpdated` after a write.

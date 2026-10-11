@@ -13,10 +13,13 @@
 
 use super::delivery::strip_openhuman_link_markup;
 use crate::config::Config;
-use crate::cron::{channel_bridge, CronJob, DeliveryStatus, JobOrigin};
 use crate::web_chat::{publish_web_channel_event, WebChannelEvent};
 use anyhow::{anyhow, Result};
 use std::path::Path;
+use {
+    crate::cron::channel_bridge, tinyflows_schedule::types::CronJob,
+    tinyflows_schedule::types::DeliveryStatus, tinyflows_schedule::types::JobOrigin,
+};
 
 /// What a scheduled run replies when it has nothing worth sending.
 pub(crate) const NO_REPLY: &str = "NO_REPLY";
@@ -148,6 +151,30 @@ pub(crate) async fn deliver_to_origin(
         ));
     };
     let text = output.trim();
+
+    // A hosted profile's host routes the reply itself.
+    if let (Some(sink), Some(profile_id)) = (
+        crate::cron::host_delivery::installed(),
+        crate::core::runtime::current_tenant()
+            .ok()
+            .and_then(|tenant| tenant.profile),
+    ) {
+        let thread_id = match origin {
+            JobOrigin::Web { thread_id, .. } => Some(thread_id.clone()),
+            JobOrigin::Channel { thread_id, .. } => thread_id.clone(),
+        };
+        sink.deliver(crate::cron::host_delivery::CronReply {
+            profile_id,
+            job_id: job.id.clone(),
+            run_id: run_id.to_string(),
+            thread_id,
+            origin: Some(origin.clone()),
+            text: text.to_string(),
+        })
+        .await
+        .map_err(|e| anyhow!("the host could not deliver the reply: {e}"))?;
+        return Ok(DeliveryStatus::Delivered);
+    }
 
     match origin {
         JobOrigin::Web {

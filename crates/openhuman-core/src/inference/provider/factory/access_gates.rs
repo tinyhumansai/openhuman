@@ -162,6 +162,15 @@ pub(crate) fn verify_session_active(config: &Config) -> anyhow::Result<()> {
     if !current_host_requires_session() {
         return Ok(());
     }
+    // A hosted profile on the operator's direct chat provider talks to that
+    // provider with the operator's key; it has no TinyHumans account.
+    if config
+        .profile_providers
+        .as_ref()
+        .is_some_and(|providers| providers.has_direct_chat())
+    {
+        return Ok(());
+    }
 
     verify_backend_session_active(config)
 }

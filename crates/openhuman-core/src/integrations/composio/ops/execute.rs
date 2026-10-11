@@ -3,9 +3,10 @@
 use crate::config::Config;
 use crate::core::Outcome;
 
-use super::super::module_client::{self as connectors, methods};
+use super::super::module_client::{self as connectors};
 use super::super::types::{ComposioExecuteRequest, ComposioExecuteResponse};
 use super::error_utils::{report_composio_op_error, OpResult};
+use tinyconnectors_bus::names::methods;
 
 /// The prefix the module puts on an error it has already classified.
 ///

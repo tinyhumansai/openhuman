@@ -19,12 +19,18 @@ pub(super) use turn::begin_turn_resume;
 use std::sync::Arc;
 
 use anyhow::Result;
+use tinyagents_graph::goals::ThreadGoalStatus;
 use tinyagents_runtime::{
     CommitReceipt, ResumePreparation, SessionBuilder, SessionTerminal, ToolSnapshot,
     TranscriptTarget, TurnPreparation,
 };
 use tinyinference_llm::message::Message;
 
+use super::announcement_notes::{
+    integration_announcement_note, mcp_announcement_note, skill_announcement_note,
+    skill_retraction_note,
+};
+use super::types::OpenHumanSessionHost;
 use crate::agent::{
     message_convert::{user_message_from_text, user_text_with_markers},
     session_host::{
@@ -32,12 +38,6 @@ use crate::agent::{
     },
     tinyagents::{host::OpenHumanRunContext, TurnContextMiddleware},
 };
-
-use super::announcement_notes::{
-    integration_announcement_note, mcp_announcement_note, skill_announcement_note,
-    skill_retraction_note,
-};
-use super::types::OpenHumanSessionHost;
 
 #[path = "runtime_session_progress.rs"]
 mod progress;
@@ -174,7 +174,7 @@ struct OpenHumanTurnPreludeMutable {
     /// Distinguishes a new session from a resumed session whose recorded tool
     /// snapshot simply had no TinyJuice declarations.
     recorded_tool_snapshot_adopted: bool,
-    workflows: Vec<crate::skills::Workflow>,
+    workflows: Vec<tinyskills::Skill>,
     composio_events: Option<tinybus::events::EventReceiver<crate::core::events::DomainEvent>>,
     skill_events: Option<tinybus::events::EventReceiver<crate::core::events::DomainEvent>>,
     /// The user-authored text of the in-flight turn, held until commit so the
@@ -422,9 +422,7 @@ impl OpenHumanTurnPrelude {
             )
             .await;
             match loaded {
-                Some(goal)
-                    if matches!(goal.status, crate::agent::goals::ThreadGoalStatus::Paused) =>
-                {
+                Some(goal) if matches!(goal.status, ThreadGoalStatus::Paused) => {
                     crate::agent::goals::runtime::resume_for_thread(
                         &self.workspace_dir,
                         self.thread_id.as_deref(),
@@ -739,8 +737,6 @@ impl OpenHumanSessionHost {
         };
         let artifact_store = super::artifact_wiring::build_artifact_store(
             &self.workspace_dir,
-            self.workspace_descriptor.as_ref(),
-            &self.action_dir,
             &self.event_session_id,
         );
 

@@ -21,14 +21,14 @@
 //!
 //! | Module | Contents |
 //! |---|---|
-//! | [`super::ops_types`] | Core types, constants, and frontmatter helpers |
+//! | [`super::ops_types`] | Host sidecar filenames and trust marker |
 //! | [`super::ops_discover`] | Scanning root directories, scope resolution, collision handling |
-//! | [`super::ops_parse`] | SKILL.md parsing, resource inventory, skill-resource reading |
+//! | `tinyskills` | Resource inventory and shared bundle parsing |
 //! | [`super::ops_create`] | Scaffolding new SKILL.md-based skills on disk |
 //! | [`super::ops_install`] | URL-based skill installation over HTTPS |
 
-// Re-export everything that was previously public from this file so external
-// callers are unaffected.
+// Host discovery, creation and installation entry points. Portable metadata
+// and parser contracts come directly from `tinyskills`.
 pub use super::bundled::install_bundled_skills;
 pub use super::ops_create::{create_workflow, CreateWorkflowParams, WorkflowCreateInputDef};
 pub use super::ops_discover::{
@@ -41,10 +41,8 @@ pub use super::ops_install::{
     UninstallWorkflowParams, DEFAULT_INSTALL_TIMEOUT_SECS, MAX_INSTALL_TIMEOUT_SECS,
     MAX_INSTALL_URL_LEN, MAX_WORKFLOW_MD_BYTES,
 };
-pub use super::ops_parse::inventory_resources;
-pub use super::ops_types::{
-    Workflow, WorkflowFrontmatter, WorkflowScope, MAX_WORKFLOW_RESOURCE_BYTES,
-};
+#[cfg(test)]
+use {tinyskills::Skill as Workflow, tinyskills::SkillScope as WorkflowScope};
 
 #[cfg(test)]
 pub(crate) use super::ops_create::create_workflow_inner;
@@ -55,11 +53,12 @@ pub(crate) use super::ops_install::{
     install_workflow_from_url_with_home, normalize_install_url, should_report_install_fetch_status,
 };
 #[cfg(test)]
-pub(crate) use super::ops_types::{
-    RESOURCE_DIRS, SKILL_MD, TRUST_MARKER, WORKFLOW_MD, WORKFLOW_TOML,
-};
-#[cfg(test)]
 pub(crate) use std::path::{Path, PathBuf};
+#[cfg(test)]
+pub(crate) use {
+    super::ops_types::TRUST_MARKER, super::ops_types::WORKFLOW_TOML, tinyskills::RESOURCE_DIRS,
+    tinyskills::SKILL_MD, tinyskills::WORKFLOW_MD,
+};
 
 #[cfg(test)]
 #[path = "ops_tests.rs"]

@@ -217,3 +217,66 @@ test("a failing case still fails the suite, and nothing after it runs", () => {
   assert.doesNotMatch(res.output, /SUITE-REPORTED-SUCCESS/);
   assert.deepEqual(res.runs, [runOf("scenario_a")]);
 });
+
+test("the E2E runner builds and exports its pinned search module fixture", () => {
+  const source = fs.readFileSync(runner, "utf8");
+  const start = source.indexOf("# Module-backed Composio coverage");
+  const end = source.indexOf('echo "[rust-e2e] Running', start);
+  assert.ok(start >= 0 && end > start, "module preparation block exists");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rust-e2e-modules-"));
+  const connectorDir = path.join(dir, "vendor/tinyconnectors/target/release");
+  fs.mkdirSync(connectorDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(connectorDir, "libtinyconnectors.so"),
+    "pinned connector fixture",
+  );
+  const runLog = path.join(dir, "runs.log");
+  const cargo = path.join(dir, "cargo");
+  fs.writeFileSync(
+    cargo,
+    '#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >> "$STUB_RUN_LOG"\n',
+    { mode: 0o755 },
+  );
+  try {
+    const output = execFileSync(
+      "bash",
+      [
+        "-c",
+        [
+          "set -euo pipefail",
+          'REPO_ROOT="$STUB_DIR"',
+          'CARGO_BIN="$STUB_DIR/cargo"',
+          "unset TINYCONNECTORS_TEST_MODULE TINYSEARCH_TEST_MODULE",
+          source.slice(start, end),
+          "printf 'search=%s\\n' \"${TINYSEARCH_TEST_MODULE:-}\"",
+        ].join("\n"),
+      ],
+      {
+        encoding: "utf8",
+        env: { ...process.env, STUB_DIR: dir, STUB_RUN_LOG: runLog },
+      },
+    );
+    assert.ok(
+      output.includes(
+        `search=${dir}/vendor/tinysearch/target/release/libtinysearch.so`,
+      ),
+      output,
+    );
+    assert.match(
+      fs.readFileSync(
+        path.join(dir, "target/test-modules/tinyconnectors/modules.toml"),
+        "utf8",
+      ),
+      /"libtinyconnectors\.so" = "[a-f0-9]{64}"/,
+    );
+    assert.ok(
+      fs
+        .readFileSync(runLog, "utf8")
+        .includes(
+          "build --release --manifest-path vendor/tinysearch/crates/tinysearch/Cargo.toml",
+        ),
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

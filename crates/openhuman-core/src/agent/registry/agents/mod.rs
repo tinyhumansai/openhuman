@@ -16,10 +16,6 @@
 //!   [`BUILTINS`] installs it as `PromptSource::Dynamic` on the parsed
 //!   definition. Most archetypes keep a `prompt_tests.rs` beside it.
 //!
-//! An archetype may additionally own a `graph.rs` exposing
-//! `fn graph() -> AgentGraph` for a bespoke turn graph; see
-//! [`BuiltinAgent::graph_fn`].
-//!
 //! `loader.rs` holds [`BUILTINS`], [`load_builtins`] and
 //! [`validate_tier_hierarchy`]. The slice also registers archetypes that
 //! live with other domains (`skills/*/agent/`,

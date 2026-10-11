@@ -47,6 +47,10 @@ where
 {
     let identity = crate::memory::scope::current();
     let ctx = captured();
+    // Box before either task-local wrapper. Their branching async states
+    // otherwise multiply a large task's inline size before Tokio can box it,
+    // overflowing the spawning thread (including the CLI's main stack).
+    let fut = Box::pin(fut);
     let fut = async move {
         match ctx {
             Some(ctx) => CoreContext::scope(ctx, fut).await,

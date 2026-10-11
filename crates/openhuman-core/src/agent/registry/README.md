@@ -64,13 +64,11 @@ directly into `AgentDefinition`), a `prompt.md` holding the static archetype
 body, and a `prompt.rs` that `include_str!`s that body and exposes
 `pub fn build(&PromptContext) -> anyhow::Result<String>`, appending
 runtime-dependent sections (rendered tool list, workspace) to it.
-Every archetype currently uses `AgentGraph::Default`; an archetype that needs a
-bespoke `AgentGraph` adds a `graph.rs` and sets `BuiltinAgent::graph_fn`. The per-archetype contract is
-documented on [`agents/mod.rs`](agents/mod.rs).
+Every archetype uses the shared sub-agent turn graph.
 
 [`agents/loader.rs`](agents/loader.rs) owns the `BUILTINS` slice and
 `load_builtins`, which parses each `agent.toml`, installs
-`PromptSource::Dynamic(prompt_fn)` and the optional graph, stamps
+`PromptSource::Dynamic(prompt_fn)`, stamps
 `DefinitionSource::Builtin`, checks that the folder id matches the TOML id,
 and then runs `validate_tier_hierarchy`: a `worker` may not list any agent-id
 subagent, and `chat -> chat` / `reasoning -> reasoning` delegation is

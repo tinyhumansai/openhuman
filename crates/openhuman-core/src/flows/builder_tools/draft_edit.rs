@@ -170,7 +170,7 @@ impl Tool for EditWorkflowTool {
                         Some(flow.id.clone()),
                         flow.name.clone(),
                         graph_json,
-                        crate::flows::DraftOrigin::Chat,
+                        tinyflows_catalog::DraftOrigin::Chat,
                     ) {
                         Ok(created) => {
                             let new_draft_id = created.value.id.clone();

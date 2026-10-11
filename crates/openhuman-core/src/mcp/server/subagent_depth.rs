@@ -33,23 +33,26 @@ pub const HEADER_SUBAGENT_DEPTH: &str = "X-OpenHuman-Subagent-Depth";
 /// Keep this as an alias to the harness limit so MCP, OpenHuman subagent
 /// execution, and TinyAgents `RunLimits.max_depth` all reject at the same
 /// nesting boundary.
-pub const MAX_SUBAGENT_DEPTH: usize = crate::agent::harness::MAX_SPAWN_DEPTH;
-
-tokio::task_local! {
-    static CHAIN_DEPTH: usize;
-}
+pub const MAX_SUBAGENT_DEPTH: usize = crate::agent::tinyagents::budget::MAX_SPAWN_DEPTH;
 
 /// Depth of the current delegation chain, or 0 when not inside one (top-level
 /// chat turns, ordinary tool calls).
 pub fn current_depth() -> usize {
-    CHAIN_DEPTH.try_with(|d| *d).unwrap_or(0)
+    tinyagents_harness::context::current_run_depth().map_or(0, |facts| facts.depth)
 }
 
 /// Run `fut` with the delegation-chain depth set to `depth`. Nested awaits in
 /// the same task (the spawned agent's run, its Claude Code turns, …) observe it
 /// via [`current_depth`].
 pub async fn scope<F: Future>(depth: usize, fut: F) -> F::Output {
-    CHAIN_DEPTH.scope(depth, fut).await
+    tinyagents_harness::context::with_run_depth(
+        tinyagents_harness::context::RunDepth {
+            depth,
+            max_depth: MAX_SUBAGENT_DEPTH,
+        },
+        fut,
+    )
+    .await
 }
 
 /// Parse the incoming depth header value. The header is external input, so

@@ -3,7 +3,6 @@
 //! OpenHuman's recoverable-failure headroom and terminal-inference fast-halt.
 
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
@@ -23,12 +22,12 @@ use super::loop_guards::{
     is_repeat_call_exempt, RECOVERABLE_NO_PROGRESS_FAILURE_THRESHOLD,
     RECOVERABLE_REPEAT_FAILURE_THRESHOLD,
 };
-use super::nudge_injector::PendingNudgeInjector;
 pub(crate) use crate::inference::failure_copy::user_actionable_escalation;
 use crate::inference::failure_copy::{
     recoverable_identical_halt_summary, recoverable_no_progress_halt_summary,
     terminal_inference_failure_kind, terminal_inference_halt_summary,
 };
+use tinyagents_harness::middleware::{EphemeralInstructionMiddleware, EphemeralInstructionQueue};
 use tinyinference_llm::failure::is_recoverable_failure_text as is_recoverable_tool_failure;
 
 /// `after_tool`: stop (or nudge) the run when tool calls keep failing with no
@@ -92,7 +91,7 @@ pub(crate) struct RepeatedToolFailureMiddleware {
     /// message joins the working transcript and is committed into durable
     /// history, where it replays as a stale instruction on every later turn
     /// (#6725).
-    pending_nudges: Arc<Mutex<Vec<String>>>,
+    pending_nudges: EphemeralInstructionQueue,
     /// `tool\u{1f}args` of the last finished command that exited non-zero,
     /// kept so a *repeat* of it still counts as a failure while a different
     /// command's non-zero exit counts as information (see `after_tool`).
@@ -126,7 +125,7 @@ impl RepeatedToolFailureMiddleware {
             target_scopes: std::sync::Mutex::new(std::collections::HashMap::new()),
             recoverable_sig_counts: std::sync::Mutex::new(std::collections::HashMap::new()),
             recoverable_consecutive: AtomicU32::new(0),
-            pending_nudges: Arc::new(Mutex::new(Vec::new())),
+            pending_nudges: EphemeralInstructionQueue::new(),
             call_effects: std::sync::Mutex::new(std::collections::HashMap::new()),
             tool_facts: None,
         }
@@ -143,25 +142,14 @@ impl RepeatedToolFailureMiddleware {
     /// The request-scoped half of this breaker. Register it **last**: its
     /// `before_model` must run after the transcript snapshot (which a failed
     /// turn persists) and after every reduction step.
-    pub(crate) fn nudge_injector(&self) -> PendingNudgeInjector {
-        PendingNudgeInjector {
-            pending: self.pending_nudges.clone(),
-        }
+    pub(crate) fn nudge_injector(&self) -> EphemeralInstructionMiddleware {
+        self.pending_nudges.middleware()
     }
 
-    fn queue_nudge(&self, instruction: impl Into<String>) {
-        if let Ok(mut pending) = self.pending_nudges.lock() {
-            pending.push(instruction.into());
-        }
-    }
-
-    /// Drain the queued nudges (what the injector does before a request).
+    /// Inspect pending product corrections in tests.
     #[cfg(test)]
     pub(crate) fn take_pending_nudges(&self) -> Vec<String> {
-        self.pending_nudges
-            .lock()
-            .map(|mut pending| std::mem::take(&mut *pending))
-            .unwrap_or_default()
+        self.pending_nudges.drain_all()
     }
 
     /// Clear the consecutive recoverable-failure streak. Called on any success or
@@ -371,7 +359,7 @@ impl Middleware<(), crate::agent::tinyagents::host::OpenHumanRunContext>
 
     async fn after_tool(
         &self,
-        _ctx: &mut RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>,
+        ctx: &mut RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>,
         _state: &(),
         invocation: &ToolInvocationIdentity,
         result: &mut TaToolResult,
@@ -514,7 +502,7 @@ impl Middleware<(), crate::agent::tinyagents::host::OpenHumanRunContext>
                         class,
                         "[tinyagents::mw] classified failure within budget — nudging recovery"
                     );
-                    self.queue_nudge(instruction);
+                    self.pending_nudges.push(ctx, instruction);
                 }
                 // The classified budget owns this known blocker. In particular,
                 // a different query must not reset its count or trigger a
@@ -683,7 +671,7 @@ impl Middleware<(), crate::agent::tinyagents::host::OpenHumanRunContext>
                 // Request-scoped, not steering: no run policy can reject it (a
                 // `Redirect` nudge aborted interactive turns, #4473), and it is
                 // never committed into durable history (#6725).
-                self.queue_nudge(instruction);
+                self.pending_nudges.push(ctx, instruction);
             }
             NoProgress::Halt(summary) => {
                 // #4092: if the blocker is user-actionable (a missing connection),

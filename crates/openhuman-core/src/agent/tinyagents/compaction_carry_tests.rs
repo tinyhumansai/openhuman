@@ -133,7 +133,7 @@ fn a_checkpoint_survives_the_session_transcript_round_trip() {
     // transcript form; the checkpoint must still read as one on the far side,
     // or the next turn would summarize it as raw history.
     let original = checkpoint("## Goal\nship it");
-    let native = crate::agent::message_convert::message_to_native_chat_message(&original)
+    let native = tinyagents_runtime::transcript::message_to_native_transcript(&original)
         .expect("user rows convert");
     let back = crate::agent::message_convert::chat_message_to_message(&native);
     assert!(is_checkpoint(&back), "{back:?}");

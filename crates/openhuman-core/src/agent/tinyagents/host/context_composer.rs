@@ -73,7 +73,7 @@ use crate::agent::prompts::{
     PromptContext, PromptTool, SystemPromptBuilder, ToolCallFormat,
 };
 use crate::config::{Config, DEFAULT_MODEL};
-use crate::skills::Workflow;
+use tinyskills::Skill as Workflow;
 
 /// Composes OpenHuman's system prompt for a TinyAgents turn.
 ///

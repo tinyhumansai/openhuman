@@ -176,6 +176,7 @@ impl crate::agent::tinyagents::host::OpenHumanRunContext {
     pub(crate) fn for_subagent(&self, def: &AgentDefinition, config: Option<&Config>) -> Self {
         let mut child = self.clone();
         child.tool_rules = child_rule_policy(self.tool_rules.as_deref(), config, def);
+        child.sandbox_mode = Some(def.sandbox_mode);
         child
     }
 }

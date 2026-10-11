@@ -262,7 +262,7 @@ export async function startMockServer(port = DEFAULT_PORT, options = {}) {
   }
 
   const preferredPort =
-    Number.isInteger(port) && port > 0 ? port : DEFAULT_PORT;
+    Number.isInteger(port) && port >= 0 ? port : DEFAULT_PORT;
   const retryIfInUse = options.retryIfInUse === true;
   const candidatePorts = retryIfInUse
     ? [

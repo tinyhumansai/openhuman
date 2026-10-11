@@ -546,7 +546,11 @@ fn a_mistyped_file_path_is_a_correctable_call_not_a_missing_program() {
 
 /// Queue one validation/no-progress-style nudge the way a first shell timeout
 /// does, and return the middleware holding it.
-async fn middleware_with_one_pending_nudge() -> RepeatedToolFailureMiddleware {
+async fn middleware_with_one_pending_nudge() -> (
+    RepeatedToolFailureMiddleware,
+    tinyagents_harness::context::RunContext<crate::agent::tinyagents::host::OpenHumanRunContext>,
+) {
+    let mut run_ctx = ctx();
     let handle = SteeringHandle::allow_all();
     let slot = std::sync::Arc::new(std::sync::Mutex::new(None));
     let mw = RepeatedToolFailureMiddleware::new(handle, 3, slot);
@@ -555,12 +559,12 @@ async fn middleware_with_one_pending_nudge() -> RepeatedToolFailureMiddleware {
         "shell",
         serde_json::json!({ "command": "whois a.io" }),
     );
-    mw.before_tool(&mut ctx(), &(), &mut call).await.unwrap();
+    mw.before_tool(&mut run_ctx, &(), &mut call).await.unwrap();
     let mut result = failing_result("shell", "Command timed out after 60s and was killed");
-    mw.after_tool(&mut ctx(), &(), &invocation("sh-1", "shell"), &mut result)
+    mw.after_tool(&mut run_ctx, &(), &invocation("sh-1", "shell"), &mut result)
         .await
         .unwrap();
-    mw
+    (mw, run_ctx)
 }
 
 fn nudge_request(leading: &TaMessage) -> ModelRequest {
@@ -588,14 +592,14 @@ fn system_messages(request: &ModelRequest) -> usize {
 /// result instead, and the leading system message stays byte-identical.
 #[tokio::test]
 async fn nudges_for_a_hoisting_model_add_no_system_message() {
-    let mw = middleware_with_one_pending_nudge().await;
+    let (mw, mut run_ctx) = middleware_with_one_pending_nudge().await;
     let injector = mw.nudge_injector();
     // The injector must remain in the before-model pass after a prior
     // middleware requests retry control, or the queued correction is lost.
-    assert!(tinyagents_harness::middleware::Middleware::is_observer(
-        &injector
-    ));
-    let mut run_ctx = ctx();
+    assert!(tinyagents_harness::middleware::Middleware::<
+        (),
+        crate::agent::tinyagents::host::OpenHumanRunContext,
+    >::is_observer(&injector));
     run_ctx.model_profile = Some(tinyinference_llm::model::ModelProfile {
         hoists_system_messages: true,
         mid_conversation_system_messages: true,
@@ -605,7 +609,7 @@ async fn nudges_for_a_hoisting_model_add_no_system_message() {
     let mut request = nudge_request(&leading);
 
     injector
-        .before_model(&mut run_ctx, &(), &mut request)
+        .before_model_dispatch(&mut run_ctx, &(), &mut request)
         .await
         .unwrap();
 
@@ -623,12 +627,12 @@ async fn nudges_for_a_hoisting_model_add_no_system_message() {
 /// Other models keep the tail system message the nudge always used.
 #[tokio::test]
 async fn nudges_for_other_models_stay_tail_system_messages() {
-    let mw = middleware_with_one_pending_nudge().await;
+    let (mw, mut run_ctx) = middleware_with_one_pending_nudge().await;
     let leading = TaMessage::system("persona");
     let mut request = nudge_request(&leading);
 
     mw.nudge_injector()
-        .before_model(&mut ctx(), &(), &mut request)
+        .before_model_dispatch(&mut run_ctx, &(), &mut request)
         .await
         .unwrap();
 

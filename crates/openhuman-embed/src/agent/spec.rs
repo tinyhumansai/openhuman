@@ -346,7 +346,10 @@ impl AgentSpec {
     /// Observe cumulative usage after each model call or vote to stop before
     /// the next call. Return `StopDecision::Continue` for observation alone;
     /// a budget policy can return `StopDecision::Stop`. Scoped to this agent; no runtime-global policy is replaced.
-    pub fn stop_hook(mut self, hook: std::sync::Arc<dyn crate::seams::StopHook>) -> Self {
+    pub fn stop_hook(
+        mut self,
+        hook: std::sync::Arc<dyn crate::seams::StopHook<crate::seams::TurnCost>>,
+    ) -> Self {
         self.hooks.push_stop(hook);
         self
     }

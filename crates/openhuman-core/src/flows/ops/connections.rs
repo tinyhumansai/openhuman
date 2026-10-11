@@ -117,7 +117,7 @@ pub async fn flows_list_connections(
 pub(super) fn build_flow_connections(
     composio: Vec<crate::integrations::composio::ComposioConnection>,
     http: Vec<crate::security::credentials::HttpCredentialSummary>,
-    identities: &[crate::integrations::composio::providers::ConnectedIdentity],
+    identities: &[crate::integrations::composio::contract::ConnectedIdentity],
 ) -> Vec<FlowConnection> {
     use crate::integrations::composio::contract::normalize_connection_identifier;
 

@@ -12,12 +12,12 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use common::{chat_completion, chat_requests, offline_config, runtime, stub_backend};
-use openhuman_core::tools::{PermissionLevel, ToolResult};
 use openhuman_embed::{
     AgentDefinitionSpec, AgentSpec, AgentTurnOrigin, ChannelError, HostTurnTools, Provider,
     Runtime, TelegramChannelSpec, Tool, ToolScopeSpec, Workspace,
 };
 use serde_json::{json, Value};
+use tinytools::{PermissionLevel, ToolResult};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 

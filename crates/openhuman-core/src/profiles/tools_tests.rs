@@ -184,3 +184,18 @@ fn a_missing_sandbox_is_refused() {
     let action = root().join("users").join(AGENT).join("sandbox");
     assert!(sandbox_policy_with(&root(), &SaasSandboxConfig::default(), &action, &action).is_err());
 }
+
+#[test]
+fn only_the_scheduler_and_clock_tools_are_operator_admittable() {
+    assert_eq!(
+        OPERATOR_ADMITTABLE,
+        ["cron", "current_time", "resolve_time"]
+    );
+    for tool in OPERATOR_ADMITTABLE {
+        assert!(!is_hard_denied(tool), "{tool}");
+        assert!(
+            !admits_with(tool, false, &[]),
+            "{tool} stays off without a scope"
+        );
+    }
+}

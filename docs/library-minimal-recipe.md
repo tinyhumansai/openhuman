@@ -93,7 +93,7 @@ The Decision column records the domains needed by the headless library host.
 | -------------------- | :-----: | :-----: | :------: | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
 | `skills`             |   ON    |   ON    | **KEEP** | python/js `SKILL.md` execution is a stated opencompany use case                                     | none (surface/prompt/startup only)                   |
 | `flows`              |   ON    |   ON    | **KEEP** | saved-workflow (`flows_create`+`flows_run`) runs are a stated use case                              | — (adds `tinyflows`, `jaq-*`, `rhai`; see cost note) |
-| `voice`              |   OFF   |   ON    | **DROP** | STT/TTS/dictation/podcast — a headless host does no audio I/O                                       | `hound`, `lettre`                                    |
+| `voice`              |   OFF   |   ON    | **DROP** | STT/TTS/dictation — a headless host does no audio I/O                                       | Loaded TinyVoice module                                    |
 | `web3`               |   OFF   |   ON    | **DROP** | crypto wallet / swap / x402 machine payments — not an opencompany path                              | `bitcoin`, `curve25519-dalek`                        |
 | `media`              |   ON    |   ON    | **DROP** | `media_generate_*` image/video tools — surface-only                                                 | none (backend-proxied)                               |
 | `meet`               |   OFF   |   ON    | **DROP** | Google-Meet join/live-STT/TTS bot — no headless use                                                 | none                                                 |
@@ -174,9 +174,8 @@ _closed and cleanly_ — controllers become unknown-method, tools are simply abs
 from the tool list (not degraded to runtime errors), CLI subcommands report a
 build-fact error:
 
-- **voice/audio:** voice + audio controllers unregistered (unknown-method over
-  RPC, absent from `/schema`); `audio_generate_podcast` tools absent; `openhuman
-voice` returns "voice disabled".
+- **voice:** voice controllers unregistered (unknown-method over RPC, absent
+  from `/schema`); `openhuman voice` returns "voice disabled".
 - **web3:** wallet / web3 / x402 controllers unregistered; swap/bridge/dapp agent
   tools absent; the x402 402-retry path returns unpaid; tinyplace on-chain
   payments degrade to graceful "wallet disabled" errors (tinyplace comms +

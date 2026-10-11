@@ -74,6 +74,14 @@ impl Config {
             model.map(str::trim).filter(|value| !value.is_empty())
         }
 
+        // A hosted profile's operator-fixed model outranks every per-agent pin.
+        if let Some(model) = self
+            .profile_providers
+            .as_ref()
+            .and_then(|binding| binding.chat_model())
+        {
+            return Some(model);
+        }
         let agent_id = agent_id.trim();
         if agent_id.is_empty() {
             return None;

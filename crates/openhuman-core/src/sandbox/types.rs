@@ -11,7 +11,7 @@ pub enum SandboxBackendKind {
     /// No sandbox — commands execute directly on the host.
     #[default]
     None,
-    /// OS-level process jail via `cwd_jail` (Landlock/Seatbelt/AppContainer).
+    /// Module-owned native process jail selected by TinyBox.
     Local,
     /// Docker container isolation.
     Docker,

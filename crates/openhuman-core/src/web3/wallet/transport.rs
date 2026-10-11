@@ -36,8 +36,8 @@ use tinywallet_crypto::rpc::{NetworkId, Transport, TransportError, TransportResu
 use tinywallet_web3::crypto::defaults::EvmNetwork;
 
 use super::endpoints::{rpc_url_for_chain, rpc_url_for_evm_network};
-use super::ops::WalletChain;
 use super::rpc::{redact_rpc_url, rest_get_text, rest_post_text, rpc_call_to};
+use tinywallet_web3::crypto::wallet::WalletChain;
 
 /// Adapter over OpenHuman's wallet RPC layer.
 ///

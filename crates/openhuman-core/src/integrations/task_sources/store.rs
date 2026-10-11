@@ -24,7 +24,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::config::Config;
-use crate::integrations::composio::providers::NormalizedTask;
+use crate::integrations::composio::contract::NormalizedTask;
 
 use super::types::{
     FetchReason, FilterSpec, ProviderSlug, SourceTarget, TaskSource, TaskSourcePatch,

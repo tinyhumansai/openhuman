@@ -373,3 +373,10 @@ fn tinyfish_takes_its_own_key_and_is_never_managed() {
         .insert("tinyfish".into(), SearchProviderSettings::managed());
     assert_eq!(cfg.route("tinyfish"), SearchRoute::Direct);
 }
+
+#[test]
+fn debug_never_discloses_direct_search_credentials() {
+    let mut config = SearchConfig::default();
+    config.exa.api_key = Some("u2-unique-search-secret".into());
+    assert!(!format!("{config:?}").contains("u2-unique-search-secret"));
+}

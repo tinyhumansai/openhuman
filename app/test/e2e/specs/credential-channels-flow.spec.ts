@@ -272,7 +272,13 @@ describe('Credential channels — Yuanbao and Email (IMAP/SMTP)', () => {
           if (channel === 'email') {
             expect(imapFixture?.connectionCount()).toBeGreaterThan(0);
             expect(out.ok).toBe(false);
-            expect(out.error).toContain('IMAP connection failed');
+            // Remote fault text is intentionally hidden by ModuleClient.
+            // The socket count above proves this is the live verifier's
+            // refusal, rather than an unavailable or incompatible module.
+            expect(out.error).toBe('MODULE_CALL_REPORTED: module execution failed');
+            for (const value of Object.values(credentials)) {
+              expect(out.error).not.toContain(value);
+            }
             const status = await statusFor(channel);
             expect(isConnected(status)).toBe(false);
             expect(status?.hasCredentials ?? status?.has_credentials).toBe(false);

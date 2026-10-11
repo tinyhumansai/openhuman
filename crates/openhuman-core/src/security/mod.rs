@@ -17,12 +17,10 @@ pub mod encryption;
 pub mod keyring_consent;
 pub mod live_policy;
 pub mod pairing;
-pub mod pii;
 pub mod policy;
 pub mod prompt_injection;
 pub mod scrub;
 pub mod secret_storage;
-pub mod secrets;
 
 #[allow(unused_imports)]
 pub use self::secret_storage::SecretStore;
@@ -39,11 +37,6 @@ pub use egress::{
 };
 pub use ops as rpc;
 pub use ops::*;
-#[allow(unused_imports)]
-pub use pairing::{
-    ensure_core_rpc_token_for_bind, is_public_bind, CoreBindTokenError, PairingGuard,
-    CORE_TOKEN_ENV_VAR,
-};
 pub use policy::validate_path_within_root;
 #[allow(unused_imports)]
 pub use policy::AutonomyLevel;
@@ -55,11 +48,13 @@ pub use policy::{CommandClass, GateDecision};
 #[allow(unused_imports)]
 pub use policy::{TrustedAccess, TrustedRoot};
 pub use policy::{POLICY_BLOCKED_MARKER, POLICY_DENIED_MARKER};
+#[allow(unused_imports)]
+pub use {
+    pairing::ensure_core_rpc_token_for_bind, pairing::is_public_bind, pairing::CoreBindTokenError,
+    pairing::CORE_TOKEN_ENV_VAR,
+};
 
 pub use schemas::{
     all_controller_schemas as all_security_controller_schemas,
     all_registered_controllers as all_security_registered_controllers,
 };
-
-#[allow(unused_imports)]
-pub use pii::{scan as scan_pii, CategoryHit, PiiCategory, PiiScanResult, RiskLevel};

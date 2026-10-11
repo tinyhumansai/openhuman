@@ -11,9 +11,13 @@
 
 use tempfile::TempDir;
 
-use super::ops::{setup, WalletAccount, WalletChain, WalletSetupParams, WalletSetupSource};
 use crate::config::rpc as config_rpc;
 use crate::config::test_env::EnvVarGuard;
+use {
+    super::ops::setup, super::ops::WalletSetupParams,
+    tinywallet_web3::crypto::wallet::WalletAccount, tinywallet_web3::crypto::wallet::WalletChain,
+    tinywallet_web3::crypto::wallet::WalletSetupSource,
+};
 
 pub(crate) static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 

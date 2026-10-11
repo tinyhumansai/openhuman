@@ -28,6 +28,14 @@ mkdir -p "${blobs}" "${dest}"
 
 verify() { echo "$1  $2" | sha256sum --check --status; }
 
+# Resolve before starting work: process substitution hides the resolver's exit
+# status, which used to continue with missing fixtures after a registry error.
+assets="$(node scripts/ci/self-hosted/test-module-assets.mjs "${host_key}")"
+if [ -z "${assets}" ]; then
+  echo "::error::registry resolved no native test module assets" >&2
+  exit 1
+fi
+
 while IFS=$'\t' read -r id url archive sha; do
   cached="${blobs}/${sha}-${archive}"
   if [ -f "${cached}" ] && verify "${sha}" "${cached}"; then
@@ -48,7 +56,7 @@ while IFS=$'\t' read -r id url archive sha; do
   mkdir -p "${dest}/${id}"
   # Do not restore the release builder's uid into the trusted tree.
   tar --no-same-owner -xzf "${cached}" -C "${dest}/${id}"
-done < <(node scripts/ci/self-hosted/test-module-assets.mjs "${host_key}")
+done <<< "${assets}"
 
 # The checkout action initializes root submodules, but the module build also
 # needs tinyconnectors' nested tinybus dependency.
@@ -71,10 +79,13 @@ fi
 touch "${conn_cached}"
 mkdir -p "${dest}/tinyconnectors"
 cp "${conn_cached}" "${dest}/tinyconnectors/libtinyconnectors.so"
+node scripts/ci/stage-connector-test-module.mjs \
+  "${dest}/tinyconnectors/libtinyconnectors.so" "${dest}/tinyconnectors" > /dev/null
 
 {
   echo "TINYJUICE_TEST_MODULE=${dest}/tinyjuice/libtinyjuice_module.so"
   echo "TINYSEARCH_TEST_MODULE=${dest}/tinysearch/libtinysearch.so"
+  echo "OPENHUMAN_MODULE_PATH=${dest}/tinydocs:${dest}/tinywallet:${dest}/tinychannels:${dest}/tinymcp${OPENHUMAN_MODULE_PATH:+:$OPENHUMAN_MODULE_PATH}"
   echo "TINYCONNECTORS_TEST_MODULE=${dest}/tinyconnectors/libtinyconnectors.so"
 } > "${env_file}"
 log "wrote ${env_file}"
