@@ -3396,23 +3396,7 @@ const messages: TranslationMap = {
     'पुन: उपयोग योग्य, चलाने योग्य प्रक्रियाएँ: एक लक्ष्य और उसे प्राप्त करने के चरण।',
   'activity.tabs.alerts': 'अलर्ट',
 
-  'harnessInit.title': 'सेटअप किया जा रहा है',
-
   'announcement.gotIt': 'समझ गया',
-  'harnessInit.subtitle': 'OpenHuman पहली बार शुरू होने पर आवश्यक घटक तैयार कर रहा है।',
-  'harnessInit.stepPython': 'Python रनटाइम',
-  'harnessInit.stepNode': 'Node.js रनटाइम',
-  'harnessInit.statePending': 'प्रतीक्षारत',
-  'harnessInit.stateRunning': 'इंस्टॉल हो रहा है…',
-  'harnessInit.stateDone': 'तैयार',
-  'harnessInit.stateSkipped': 'छोड़ा गया',
-  'harnessInit.stateFailed': 'विफल',
-  'harnessInit.failedMessage':
-    'कुछ सेटअप चरण पूरे नहीं हुए। आप पुनः प्रयास कर सकते हैं, या जारी रख सकते हैं: OpenHuman एक अंतर्निहित फॉलबैक का उपयोग करेगा।',
-  'harnessInit.retry': 'पुनः प्रयास करें',
-  'harnessInit.continueAnyway': 'फिर भी जारी रखें',
-  'harnessInit.runInBackground': 'पृष्ठभूमि में चलाएँ',
-  'harnessInit.backgroundHint': 'जब तक यह पूरा होता है, आप OpenHuman का उपयोग जारी रख सकते हैं।',
 
   'keyring.consent.title': 'सुरक्षित भंडारण अनुपलब्ध',
   'keyring.consent.description':

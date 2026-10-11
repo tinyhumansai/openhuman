@@ -3360,23 +3360,7 @@ const messages: TranslationMap = {
     '재사용 가능하고 실행 가능한 절차: 목표와 그것을 달성하기 위한 단계.',
   'activity.tabs.alerts': '알림',
 
-  'harnessInit.title': '설정하는 중',
-
   'announcement.gotIt': '확인',
-  'harnessInit.subtitle': 'OpenHuman이 처음 실행에 필요한 구성 요소를 준비하고 있습니다.',
-  'harnessInit.stepPython': 'Python 런타임',
-  'harnessInit.stepNode': 'Node.js 런타임',
-  'harnessInit.statePending': '대기 중',
-  'harnessInit.stateRunning': '설치 중…',
-  'harnessInit.stateDone': '준비됨',
-  'harnessInit.stateSkipped': '건너뜀',
-  'harnessInit.stateFailed': '실패',
-  'harnessInit.failedMessage':
-    '일부 설정 단계가 완료되지 않았습니다. 다시 시도하거나 계속 진행할 수 있습니다: OpenHuman이 내장 대체 기능을 사용합니다.',
-  'harnessInit.retry': '다시 시도',
-  'harnessInit.continueAnyway': '그래도 계속',
-  'harnessInit.runInBackground': '백그라운드에서 실행',
-  'harnessInit.backgroundHint': '이 작업이 완료되는 동안 계속 OpenHuman을 사용할 수 있습니다.',
 
   'keyring.consent.title': '보안 저장소를 사용할 수 없음',
   'keyring.consent.description':

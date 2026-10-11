@@ -23,7 +23,7 @@ OpenHuman-owned files:
 | [`config_patch.rs`](./config_patch.rs) | Partial update shape for the `[tokenjuice]` config block. |
 | [`repl_tools.rs`](./repl_tools.rs) | The three REPL tools (`juice_find`, `juice_extract`, `juice_summarize`) over a stored result. TinyJuice owns the ops and declarations (`tinyjuice::repl::tools`, cargo feature `tinytools`); the CCR store lives in the module, so each call fetches the original with `Retrieve` and hands the stock tool a one-entry store. Registered by [`tools/ops.rs`](../../tools/ops.rs) only while `repl_handle_active(config)`. |
 | [`tools.rs`](./tools.rs) | OpenHuman agent tool implementation for the retrieve tool (`RETRIEVE_TOOL_NAME = "juice_retrieve"`; `"tokenjuice_retrieve"` is a recognized recovery-tool alias, not the tool's registered name, see `RECOVERY_TOOL_NAMES`). |
-| `ml/` | Bridge from TinyJuice's optional ML callback into the shared `runtime::python_server` Kompress backend (ModernBERT token/sentence salience); opt-in via `config.tokenjuice.ml_compression_enabled` (default off), degrades gracefully when the flag is off or the runtime server is unavailable. |
+| Plain text | Compressed with TinyJuice's deterministic TextCrusher. |
 | [`savings.rs`](./savings.rs) | OpenHuman model-pricing attribution and persisted dashboard stats. |
 
 TinyJuice-owned engine pieces:
@@ -31,7 +31,7 @@ TinyJuice-owned engine pieces:
 | TinyJuice repository path | Role |
 | --- | --- |
 | `src/compress.rs` | Content router entry point. |
-| `src/compressors/` | JSON, code, log, search, diff, HTML, ML slot, and generic compressors. |
+| `src/compressors/` | JSON, code, log, search, diff, HTML, plain-text, and generic compressors. |
 | `src/cache/` | CCR store, retrieval markers, disk tier, ranged retrieval helpers. |
 | `src/rules/` | Rule loader/compiler and embedded rule table. |
 | `src/vendor/rules/*.json` | Vendored upstream rule JSON files. |
@@ -59,7 +59,7 @@ Everything with state stays where it was, reached only through TinyBus:
 | --- | --- |
 | `compress::route` / `compress_content` | Picks a compressor from the rule engine and records savings. |
 | `cache/`: the CCR store, retrieval markers, disk tier, ranged retrieval | Owns a disk tier and a marker vocabulary (`⟦tj:<hash>⟧`) the module must resolve. `juice_retrieve` is the model-facing half and is unchanged. |
-| `rules/`, `reduce/`, `ml/` | Rule tables, execution reduction, the ModernBERT callback. |
+| `rules/`, `reduce/` | Rule tables and execution reduction. |
 
 Why a content transform is not allowed to go through the bus: reaching it there
 needs the `modules` feature, a loaded cdylib, and `config.tokenjuice` /
@@ -75,8 +75,7 @@ unterminated quotes. A host-side rewrite was prototyped and thrown away in
 favour of extending `html_to_markdown` upstream.
 
 Anything beyond a pure transform still belongs behind the boundary: runtime
-services, settings persistence, JSON-RPC, tools, pricing, and the optional ML
-callback stay here.
+services, settings persistence, JSON-RPC, tools, and pricing stay here.
 
 ## Wiring
 

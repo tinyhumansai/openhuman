@@ -3958,24 +3958,7 @@ const en: TranslationMap = {
   'chat.files.error.delete_failed': 'Couldn’t delete the file. Please try again.',
   'chat.files.error.reveal_failed':
     'Couldn’t show the file. It may have been moved or deleted outside OpenHuman.',
-
-  // First-run initialization (harness_init)
-  'harnessInit.title': 'Setting things up',
   'announcement.gotIt': 'Got it',
-  'harnessInit.subtitle': 'OpenHuman is preparing components it needs on first launch.',
-  'harnessInit.stepPython': 'Python runtime',
-  'harnessInit.stepNode': 'Node.js runtime',
-  'harnessInit.statePending': 'Waiting',
-  'harnessInit.stateRunning': 'Installing…',
-  'harnessInit.stateDone': 'Ready',
-  'harnessInit.stateSkipped': 'Skipped',
-  'harnessInit.stateFailed': 'Failed',
-  'harnessInit.failedMessage':
-    'Some setup steps did not finish. You can retry, or continue: OpenHuman will use a built-in fallback.',
-  'harnessInit.retry': 'Retry',
-  'harnessInit.continueAnyway': 'Continue anyway',
-  'harnessInit.runInBackground': 'Run in background',
-  'harnessInit.backgroundHint': 'You can keep using OpenHuman while this finishes.',
 
   // Keyring consent & security
   'keyring.consent.title': 'Secure Storage Unavailable',

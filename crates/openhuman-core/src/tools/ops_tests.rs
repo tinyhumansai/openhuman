@@ -3,7 +3,10 @@ use crate::config::{BrowserConfig, Config};
 use crate::security::credentials::{AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME};
 use crate::security::AuditLogger;
 use crate::skills::types::ToolContent;
+use crate::tools::ops::{all_tools, tool_group};
+use std::collections::HashMap;
 use tempfile::TempDir;
+use tinytools::ToolResult;
 
 #[path = "../integrations/test_support.rs"]
 mod integration_test_support;
@@ -32,7 +35,7 @@ fn assert_contains_all(names: &[String], expected: &[&str]) {
 
 fn only_json_content(result: &ToolResult) -> &serde_json::Value {
     match result.content.as_slice() {
-        [ToolContent::Json { data }] => data,
+        [ToolContent::Json { data }] => &data,
         other => panic!("expected a single JSON content block, got {other:?}"),
     }
 }
@@ -317,7 +320,6 @@ const REPRESENTATIVE: &[(&str, crate::core::all::DomainGroup)] = {
         ("cron_add", G::Automation),
         ("composio_execute", G::Integrations),
         ("dashboard_model_health", G::Desktop),
-        ("node_exec", G::Runtimes),
         ("juice_retrieve", G::Inference),
         ("shell", G::Platform),
     ]

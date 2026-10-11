@@ -268,6 +268,8 @@ pub(crate) struct RequestRoute {
     pub(crate) tool_call_id: Option<String>,
     pub(crate) forced: bool,
     pub(crate) agent_id: Option<String>,
+    /// Instance barrier captured at registration, independent of decision context.
+    pub(crate) approval_scope: Option<Arc<super::ApprovalScope>>,
     /// The [`thread_route_key`] the request was parked under, so a decision
     /// made outside the parking task's scope clears the right route.
     pub(crate) thread_key: Option<String>,

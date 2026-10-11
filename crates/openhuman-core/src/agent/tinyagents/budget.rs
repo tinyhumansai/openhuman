@@ -14,10 +14,17 @@ pub struct ModelBudget {
     pub call: CallBudget,
 }
 impl ModelBudget {
+    /// Wait for live reservations when settled spend still affords admission.
+    /// Clones and child turns inherit this opt-in; internal retries stay fail-fast.
+    pub fn wait_for_capacity(mut self) -> Self {
+        self.ledger = self.ledger.wait_for_capacity();
+        self
+    }
+
     /// Apply the policy below retries and fallback selection.
     pub(crate) fn wrap(&self, model: Arc<dyn ChatModel<()>>) -> Arc<dyn ChatModel<()>> {
         Arc::new(tinyinference_llm::model::budget::BudgetedModel::new(
-            model,
+            Arc::new(super::budget_charge::GatewayChargeModel::new(model)),
             self.ledger.clone(),
             self.call,
         ))

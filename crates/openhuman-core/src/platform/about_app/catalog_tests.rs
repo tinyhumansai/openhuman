@@ -433,6 +433,7 @@ fn local_ai_catalog_does_not_advertise_model_downloads_or_installers() {
         "local_ai.download_model",
         "local_ai.manage_model_assets",
         "local_ai.piper_installer",
+        "local_ai.python_runtime_installer",
     ] {
         assert!(lookup(removed).is_none(), "`{removed}` is still advertised");
     }

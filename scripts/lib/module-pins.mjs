@@ -157,7 +157,7 @@ export function classifyPin({ id, version, submodulePath, actual, exemption }) {
 /**
  * Decide what a provider record's pin state means.
  *
- * A provider module (tinyruntime-nodejs, tinyruntime-python) is released from
+ * A provider module is released from
  * its OWN repository on its OWN version line, so its version can never equal
  * the tag of the shared source submodule it is built against. What can be
  * checked offline is: (1) the registry record names the release that

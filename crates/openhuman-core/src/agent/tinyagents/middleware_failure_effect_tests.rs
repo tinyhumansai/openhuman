@@ -93,7 +93,7 @@ fn a_timeout_before_the_tool_ran_is_transient() {
     // reconcile, even for an execute-class tool.
     assert_eq!(
         recovery_policy_with_effect(
-            "python_exec",
+            "shell",
             "Python runtime unavailable: runtime resolution timed out after 60s",
             false,
             CallEffect::SideEffecting
@@ -232,7 +232,7 @@ fn a_missing_shell_command_gets_one_correction() {
     );
     // Other tools keep the zero-retry `unsupported` verdict.
     assert_eq!(
-        recovery_policy("python_exec", "executable not found", false),
+        recovery_policy("shell", "executable not found", false),
         Some(("unsupported", 0))
     );
 }

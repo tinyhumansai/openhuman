@@ -12,7 +12,9 @@ export function discoverExamples(directory = resolve(root, "crates/openhuman-emb
     if (!source.includes("//! Title:") || !source.includes("//! Run:") || !source.includes("// ANCHOR:")) {
       throw new Error(`${file}: missing example metadata or documentation anchor`);
     }
-    return { name: file.slice(0, -3), features: feature && feature !== "default" ? [feature] : [] };
+    const profile = source.match(/^\/\/! Profile: (.+)$/m)?.[1]?.trim() ?? "dev";
+    const defaultFeatures = source.match(/^\/\/! Default features: (.+)$/m)?.[1]?.trim() !== "disabled";
+    return { name: file.slice(0, -3), features: feature && feature !== "default" ? [feature] : [], profile, defaultFeatures };
   });
 }
 export function offlineEnvironment(environment) {
@@ -29,10 +31,22 @@ export function assertExampleOutput(name, result) {
   }
 }
 export function runExamples({ run = spawnSync, examples = discoverExamples(), environment = process.env } = {}) {
-  // Keep the feature graph identical for every run so Cargo reuses one build.
-  const features = [...new Set(examples.flatMap((example) => example.features))].sort();
+  // Share one feature graph per declared build configuration. Measurements
+  // retain their release/minimal graph rather than inheriting other examples.
+  const configuration = (example) => `${example.profile ?? "dev"}:${example.defaultFeatures !== false}`;
+  const featureGroups = new Map();
+  for (const example of examples) {
+    const key = configuration(example);
+    const features = featureGroups.get(key) ?? new Set();
+    for (const feature of example.features) features.add(feature);
+    featureGroups.set(key, features);
+  }
   for (const example of examples) {
     const args = ["run", "--quiet", "-p", "openhuman-embed", "--example", example.name];
+    if (example.profile === "release") args.push("--release");
+    else if (example.profile && example.profile !== "dev") args.push("--profile", example.profile);
+    if (example.defaultFeatures === false) args.push("--no-default-features");
+    const features = [...featureGroups.get(configuration(example))].sort();
     if (features.length) args.push("--features", features.join(","));
     const result = run(resolve(root, "scripts/ci-cancel-aware.sh"), ["cargo", ...args], {
       cwd: root, encoding: "utf8", env: offlineEnvironment(environment), timeout: 1800000, maxBuffer: 16 * 1024 * 1024,

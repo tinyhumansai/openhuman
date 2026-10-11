@@ -66,29 +66,6 @@ pub struct TokenjuiceConfig {
     /// Enable the HTML→text extractor.
     #[serde(default = "default_true")]
     pub html_enabled: bool,
-
-    // --- ML plain-text compressor (Kompress) — opt-in, default OFF ---------
-    /// Enable the Python/ML plain-text compressor ("Kompress"). Runs as a
-    /// `kompress` backend of the runtime_python_server (requires
-    /// `runtime_python.enabled`); degrades gracefully when unavailable.
-    #[serde(default)]
-    pub ml_compression_enabled: bool,
-    /// HuggingFace model id for the ML compressor.
-    #[serde(default = "default_ml_model_id")]
-    pub ml_model_id: String,
-    /// Target compression ratio (0–1) hint for the ML compressor.
-    #[serde(default = "default_ml_target_ratio")]
-    pub ml_target_ratio: f64,
-    /// Idle seconds before the ML sidecar process is reaped to release memory.
-    #[serde(default = "default_ml_idle_timeout_secs")]
-    pub ml_sidecar_idle_timeout_secs: u64,
-    /// Maximum input characters the ML compressor will accept (larger inputs
-    /// fall back to a native compressor).
-    #[serde(default = "default_ml_max_input_chars")]
-    pub ml_max_input_chars: usize,
-    /// Inference device: `cpu` or `auto`.
-    #[serde(default = "default_ml_device")]
-    pub ml_device: String,
 }
 
 fn default_true() -> bool {
@@ -105,21 +82,6 @@ fn default_min_bytes() -> usize {
 }
 fn default_ccr_min_tokens() -> usize {
     500
-}
-fn default_ml_model_id() -> String {
-    "answerdotai/ModernBERT-base".to_string()
-}
-fn default_ml_target_ratio() -> f64 {
-    0.5
-}
-fn default_ml_idle_timeout_secs() -> u64 {
-    900
-}
-fn default_ml_max_input_chars() -> usize {
-    200_000
-}
-fn default_ml_device() -> String {
-    "cpu".to_string()
 }
 
 impl Default for TokenjuiceConfig {
@@ -138,12 +100,6 @@ impl Default for TokenjuiceConfig {
             search_enabled: true,
             code_enabled: true,
             html_enabled: true,
-            ml_compression_enabled: false,
-            ml_model_id: default_ml_model_id(),
-            ml_target_ratio: default_ml_target_ratio(),
-            ml_sidecar_idle_timeout_secs: default_ml_idle_timeout_secs(),
-            ml_max_input_chars: default_ml_max_input_chars(),
-            ml_device: default_ml_device(),
         }
     }
 }

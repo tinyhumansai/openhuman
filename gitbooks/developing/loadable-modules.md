@@ -23,7 +23,6 @@ The trade is explicit. A module shares the core's address space and crash domain
 | `tinywallet` | Key derivation and transaction signing |
 | `tinyjuice` | Tool-output compression and recovery |
 | `tinyvoice` | Audio framing, VAD, wake-word gating, hallucination detection |
-| `tinyruntime` + `tinyruntime-nodejs` + `tinyruntime-python` | Runtime discovery and warm interpreter pools |
 | `tinymcp` | The MCP client and registry |
 | `tinyconnectors` | OAuth connector actions and triggers |
 | `tinybox` | Sandbox capability discovery |

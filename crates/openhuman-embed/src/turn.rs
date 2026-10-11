@@ -177,7 +177,7 @@ impl Turn {
             + Sync
             + 'static,
     {
-        self.tool_hook(std::sync::Arc::new(crate::permission::PermissionHook(
+        self.tool_hook(std::sync::Arc::new(crate::permission::PermissionHook::new(
             callback,
         )))
     }

@@ -20,6 +20,7 @@ use tinytools::ToolTimeout;
 
 mod command_environment;
 pub use command_environment::CommandEnvironment;
+mod group_exit;
 mod process_cleanup;
 pub use process_cleanup::ProcessCleanup;
 
@@ -79,7 +80,7 @@ fn settings() -> &'static ToolTimeoutSettings {
 /// reach already-assembled harnesses on their next tool call.
 ///
 /// Long-running tools opt out through their own policy rather than here:
-/// scripting tools (`shell`, `node_exec`, …) are `Unbounded` unless the call
+/// the scripting tool (`shell`) are `Unbounded` unless the call
 /// passes `timeout_secs`, media generation carries its own budget, and
 /// `composio_connect` / `browser` size theirs to the approval park they wait
 /// on inside `execute`.
@@ -177,7 +178,7 @@ pub fn tool_execution_timeout_secs() -> u64 {
 }
 
 /// Resolve an **explicit** per-call timeout request for a tool that is
-/// otherwise unbounded (the scripting tools: `shell`, `node_exec`, `npm_exec`).
+/// otherwise unbounded (the scripting tool: `shell`).
 ///
 /// Unlike most tools — which inherit the global config-driven timeout so a hung
 /// network/MCP call can't wedge a session — scripting tools run with **no**
@@ -344,7 +345,18 @@ async fn collect_command_output(
         _ = async { let _ = cancellation.wait_for(|cancelled| *cancelled).await; } => {
             group.kill();
             child.start_kill()?;
-            child.wait().await?
+            // Pipe EOF and the shell's exit can precede a descendant's exit.
+            // Keep the leader unreaped while checking the reserved group.
+            let stopped = match group.0 {
+                Some(pid) => group_exit::wait(pid).await,
+                None => Ok(()),
+            };
+            let status = child.wait().await?;
+            // Disarm before propagating a check error after reaping: its PID
+            // could now be reused, including while unwinding this function.
+            group.0 = None;
+            stopped?;
+            status
         }
         result = child.wait() => result?,
     };

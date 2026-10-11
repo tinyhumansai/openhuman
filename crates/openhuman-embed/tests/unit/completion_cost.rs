@@ -67,3 +67,24 @@ fn buyer_charge_survives_without_normalized_token_usage() {
     assert_eq!(usage.cost_usd, Some(0.000007));
     assert_eq!(usage.input_tokens, 0);
 }
+
+#[test]
+fn authoritative_charge_presence_prevents_invalid_billing_fallbacks() {
+    for raw in [
+        json!({"usage": {"buyer_cost_micro": null, "cost": 0}}),
+        json!({"usage": {"buyer_cost_micro": "invalid", "cost": 0}}),
+        json!({"usage": {"cost": "invalid"}}),
+        json!({"openhuman_usage_meta": {"charged_amount_usd": null}, "usage": {"cost": 0}}),
+    ] {
+        assert_eq!(cost(Some(raw), Some(12)), None);
+    }
+    assert_eq!(
+        cost(
+            Some(
+                json!({"openhuman_usage_meta": {"charged_amount_usd": 0.0000064}, "usage": {"buyer_cost_micro": 42, "cost": 1}})
+            ),
+            Some(12)
+        ),
+        Some(0.0000064)
+    );
+}

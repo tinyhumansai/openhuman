@@ -84,24 +84,11 @@ const PIN_MAP = {
   tinywallet: { submodule: "vendor/tinywallet" },
   tinyjuice: { submodule: "vendor/tinyjuice" },
   tinyvoice: { submodule: "vendor/tinyvoice" },
-  tinyruntime: { submodule: "vendor/tinyruntime" },
   tinymcp: { submodule: "vendor/tinymcp" },
   tinyconnectors: { submodule: "vendor/tinyconnectors" },
   tinybox: { submodule: "vendor/tinybox" },
   tinychannels: { submodule: "vendor/tinychannels" },
   tinyhosts: { submodule: "vendor/tinyhosts" },
-  "tinyruntime-nodejs": {
-    submodule: null,
-    provider: { builtAgainst: "vendor/tinyruntime" },
-    reason:
-      "released from tinyhumansai/tinyruntime-nodejs on its own version line; checked via module-provider-pins.json",
-  },
-  "tinyruntime-python": {
-    submodule: null,
-    provider: { builtAgainst: "vendor/tinyruntime" },
-    reason:
-      "released from tinyhumansai/tinyruntime-python on its own version line; checked via module-provider-pins.json",
-  },
 };
 
 const failures = [];

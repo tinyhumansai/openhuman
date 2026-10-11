@@ -196,7 +196,7 @@ ls vendor/<module> | wc -l         # 0 = empty, whatever status says
 
 `cargo test -p openhuman --lib` on default features builds a smaller product than CI does, and the difference changes test outcomes, not just which tests exist. A feature flag can gate a tool's registration. A test can compare a static allowlist with what it finds by inspecting the built binary. The flag then moves the result silently, and the failure names a product concept, such as "agents that carry tools but whose prompt names none of them", with no mention of a feature.
 
-In one comparison, `openhuman --lib` failed 5 tests on default features and 3 under CI's set. The two that differed were profile artifacts: `every_prompt_names_at_least_one_tool_it_can_call` needs `runtime-node`, and `the_withheld_block_renders_for_a_renamed_session_with_a_filter` needs `documents`. Reproduce CI exactly before you assert anything:
+In one comparison, `openhuman --lib` failed 5 tests on default features and 3 under CI's set. The two that differed were profile artifacts: `every_prompt_names_at_least_one_tool_it_can_call` depends on its default registry, and `the_withheld_block_renders_for_a_renamed_session_with_a_filter` needs `documents`. Reproduce CI exactly before you assert anything:
 
 ```bash
 RUST_MIN_STACK=67108864 cargo test -p openhuman --lib \

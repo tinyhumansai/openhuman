@@ -6,7 +6,7 @@
 //!
 //! | Preset | HostKind | DomainSet | ServiceSet | Workspace / config |
 //! |---|---|---|---|---|
-//! | [`library`](RuntimeBuilder::library) | `Library` | `embedded` (+`mcp`/`skills` when compiled) | `harness_init` only | ephemeral, [`Resolved`](ConfigSource::Resolved) |
+//! | [`library`](RuntimeBuilder::library) | `Library` | `embedded` (+`mcp`/`skills` when compiled) | none | ephemeral, [`Resolved`](ConfigSource::Resolved) |
 //! | [`desktop`](RuntimeBuilder::desktop) | `TauriShell` | `full` | `desktop` | inherit, [`Discovered`](ConfigSource::Discovered) |
 //! | [`cli`](RuntimeBuilder::cli) | `detect_standalone()` | `full` | `desktop` | inherit, `Discovered` |
 //! | [`tui`](RuntimeBuilder::tui) | `detect_standalone()` | `full` | `none` | inherit, `Discovered` |
@@ -104,12 +104,9 @@ pub(crate) fn default_domains() -> DomainSet {
     domains
 }
 
-/// Background services a library runtime runs by default: only `harness_init`.
+/// Background services a library runtime runs by default: none.
 pub(crate) fn default_services() -> ServiceSet {
-    ServiceSet {
-        harness_init: true,
-        ..ServiceSet::none()
-    }
+    ServiceSet::none()
 }
 
 #[cfg(test)]

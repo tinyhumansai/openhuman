@@ -17,7 +17,10 @@ fn defaults_select_tinyhumans_with_logging_and_recall_on() {
     assert_eq!(config.recall.build_delay_secs, DEFAULT_BUILD_DELAY_SECS);
     assert_eq!(config.agent_id, None);
     assert_eq!(config.root, None);
-    assert_eq!(config.recall.team_limit, 0, "no team section by default");
+    assert_eq!(
+        config.recall.team_limit, 3,
+        "three other-agent turns per pack"
+    );
     assert!(
         config.split_github_by_repo,
         "one scope per repository by default"
@@ -25,8 +28,15 @@ fn defaults_select_tinyhumans_with_logging_and_recall_on() {
 }
 
 #[test]
-fn default_pre_turn_waits_five_seconds_for_memory() {
-    assert_eq!(MemoryConfig::default().recall.pre_turn_timeout_ms, 5_000);
+fn default_pre_turn_waits_ten_seconds_for_memory() {
+    assert_eq!(MemoryConfig::default().recall.pre_turn_timeout_ms, 10_000);
+}
+
+#[test]
+fn explicit_pre_turn_deadline_still_overrides_the_default() {
+    let config: MemoryConfig = toml::from_str("[recall]\npre_turn_timeout_ms = 5000")
+        .expect("the configured deadline parses");
+    assert_eq!(config.recall.pre_turn_timeout_ms, 5_000);
 }
 
 #[test]

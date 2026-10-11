@@ -122,17 +122,6 @@ pub const UNKNOWN_METHOD_PREFIX: &str = "unknown method: ";
 /// This also covers retired feature calls from older clients when no safe
 /// canonical handler exists (#3565: `openhuman.memory_tree_create_namespace`).
 ///
-/// `openhuman.harness_init_status` (#5157) is in the list for a *different*
-/// reason and must not be read as retired — it is a **live, registered**
-/// method (`harness_init::all_harness_init_registered_controllers`, tagged
-/// `DomainGroup::Platform`). It only misses when the caller and the running
-/// core disagree about the surface: an older core behind a newer UI bundle, a
-/// runtime `DomainSet` without `Platform` (e.g. `DomainSet::harness()`), or a
-/// slim feature build. Those are legitimate configurations, not core defects,
-/// so the miss stays debug-only — but do **not** delete the controller on the
-/// strength of this entry. `harness_init_status_is_registered_in_a_full_build`
-/// below pins that the method really is served, so a genuine regression fails
-/// a test instead of being silently swallowed by this allow-list.
 ///
 /// Each miss previously produced recurring Sentry events with zero user
 /// impact. The transport layer keeps these debug-only (never captured). The
@@ -145,7 +134,6 @@ const KNOWN_PROBE_METHODS: &[&str] = &[
     "auth.status",
     "config/get",
     "openhuman.memory_tree_create_namespace",
-    "openhuman.harness_init_status",
 ];
 
 /// Returns `true` when `method` is a known non-actionable unknown method name

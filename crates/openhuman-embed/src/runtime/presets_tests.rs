@@ -87,7 +87,6 @@ fn library_defaults_start_no_background_writers() {
     assert_eq!(
         default_services(),
         ServiceSet {
-            harness_init: true,
             ..ServiceSet::none()
         }
     );

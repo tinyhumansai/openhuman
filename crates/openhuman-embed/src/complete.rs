@@ -187,6 +187,12 @@ pub struct CompletionRequest {
     /// [`finish_reason`](CompletionResponse::finish_reason) `"length"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
+    /// Physical provider HTTP timeout in milliseconds, applied to each dispatch.
+    /// `None` retains the provider default. A transport timeout is an RPC
+    /// failure eligible for a completion ladder fallback; it does not replace
+    /// the terminal logical deadline set by [`Completer::timeout`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
     /// Sampling temperature.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
@@ -207,6 +213,7 @@ impl CompletionRequest {
             response_format: None,
             max_tokens: None,
             temperature: None,
+            timeout_ms: None,
             provider_options: Value::Null,
         }
     }
@@ -226,6 +233,13 @@ impl CompletionRequest {
     /// Set the output token ceiling.
     pub fn max_tokens(mut self, max_tokens: u32) -> Self {
         self.max_tokens = Some(max_tokens);
+        self
+    }
+
+    /// Bound each physical provider HTTP request, including repair attempts.
+    /// This leaves the logical call deadline and cancellation scope unchanged.
+    pub fn timeout_ms(mut self, timeout_ms: u64) -> Self {
+        self.timeout_ms = Some(timeout_ms);
         self
     }
 
@@ -252,6 +266,7 @@ impl CompletionRequest {
         request.response_format = self.response_format.map(ResponseFormat::into_wire);
         request.max_tokens = self.max_tokens;
         request.temperature = self.temperature;
+        request.timeout_ms = self.timeout_ms;
         request.provider_options = self.provider_options;
         request
     }
@@ -322,27 +337,25 @@ impl CompletionResponse {
             .and_then(|raw| raw.get("model"))
             .and_then(Value::as_str)
             .map(str::to_string);
-        // A relay may report its own upstream `cost: 0` while the buyer pays
-        // `buyer_cost_micro`. That actual bill precedes normalized estimates.
-        let cost_usd = raw
-            .as_ref()
-            .and_then(|raw| raw.pointer("/usage/buyer_cost_micro"))
-            .and_then(Value::as_f64)
-            .map(|micro| micro / 1_000_000.0)
-            .or_else(|| {
-                raw.as_ref()
-                    .and_then(|raw| raw.pointer("/usage/cost"))
-                    .and_then(Value::as_f64)
-            })
-            .or_else(|| {
+        // Presence chooses the authoritative bill. Malformed billing must
+        // remain unknown instead of falling through to a provider estimate.
+        let raw_cost = raw.as_ref().and_then(|raw| {
+            if let Some(managed) = raw.pointer("/openhuman_usage_meta/charged_amount_usd") {
+                Some(managed.as_f64())
+            } else if let Some(buyer) = raw.pointer("/usage/buyer_cost_micro") {
+                Some(buyer.as_f64().map(|micro| micro / 1_000_000.0))
+            } else {
+                raw.pointer("/usage/cost").map(Value::as_f64)
+            }
+        });
+        let cost_usd = raw_cost
+            .unwrap_or_else(|| {
                 response
                     .usage
                     .as_ref()
                     .and_then(|usage| usage.charged_amount)
                     .map(|amount| amount.micros as f64 / 1_000_000.0)
             })
-            // Invalid authoritative charges stay unknown, rather than being
-            // replaced by a lower-priority estimate or crediting the budget.
             .filter(|cost| cost.is_finite() && *cost >= 0.0);
         let usage = match response.usage {
             Some(usage) => Some(CompletionUsage {
@@ -456,6 +469,9 @@ impl Completer {
     }
 
     /// Bound the entire logical call, including structured repair attempts.
+    /// Expiration returns a terminal [`CoreError::DeadlineExceeded`]; a ladder
+    /// does not advance. Use [`CompletionRequest::timeout_ms`] to bound each
+    /// physical HTTP dispatch while allowing transport-error fallback.
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
         self
@@ -574,8 +590,9 @@ impl Completer {
         let format = request.response_format.clone();
         let model = request.model.clone();
         log::debug!(
-            "[embed] complete start method={COMPLETE} model={model} messages={}",
-            request.messages.len()
+            "[embed] complete start method={COMPLETE} model={model} messages={} timeout_ms={:?}",
+            request.messages.len(),
+            request.timeout_ms
         );
         let call = openhuman_core::inference::host_runtime::ops::complete_once(
             &endpoint,

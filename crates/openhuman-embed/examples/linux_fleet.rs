@@ -1,7 +1,9 @@
 //! Title: Linux agent fleet memory and latency
 //! Summary: Measure retained runtime-owned agents using loopback inference and two worker threads.
 //! Run: offline on Linux; use a fresh constrained cgroup for release measurements.
+//! Profile: release
 //! Feature: default
+//! Default features: disabled
 
 #![recursion_limit = "512"]
 
@@ -57,7 +59,6 @@ async fn measure(count: usize) -> anyhow::Result<()> {
         .mount(&mock).await;
     let mut config = openhuman_embed::RuntimeConfig::default();
     config.local_ai.runtime_enabled = false;
-    config.runtime_python.enabled = false;
     config.memory.conversations.enabled = false;
     config.agent.session_dual_write = false;
     config.agent.session_shadow_reads = false;

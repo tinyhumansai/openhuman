@@ -6,10 +6,7 @@
 
 mod install_tool;
 mod lsp;
-mod node_exec;
-mod npm_exec;
 mod proxy_config;
-mod python_exec;
 mod retrieve_tool_output;
 mod schedule;
 mod shell;
@@ -24,10 +21,7 @@ use tinytools::ToolRunContext;
 
 pub use install_tool::InstallToolTool;
 pub use lsp::{lsp_capability_enabled, LspTool, LSP_ENABLED_ENV};
-pub use node_exec::NodeExecTool;
-pub use npm_exec::NpmExecTool;
 pub use proxy_config::ProxyConfigTool;
-pub use python_exec::PythonExecTool;
 pub use retrieve_tool_output::{retrieve_tool_output_tool, RetrieveToolOutputTool};
 pub use schedule::ScheduleTool;
 pub use shell::ShellTool;
@@ -44,8 +38,7 @@ pub use update_check::UpdateCheckTool;
 /// while the allow/deny decision reads `workspace_dir` + `trusted_roots`
 /// (`SecurityPolicy::is_resolved_path_allowed_for`). Granting it in the
 /// filesystem copy alone would let an agent read and edit a checkout it could
-/// not then build, test, or commit, because `shell`, `python_exec`,
-/// `node_exec`, and `npm_exec` all resolve their paths through here.
+/// not then build, test, or commit, because the shell tool resolves its path through here.
 ///
 /// The grant is *additive and per-call*: it is pushed onto a clone, so nothing
 /// process-global is mutated and concurrent turns cannot race each other. It

@@ -53,7 +53,7 @@ OpenHuman's policy.
  |  tinyagents (+ tinytools, tinyinference)   tinymemory (+ tinycortex)    |
  |  tinybus  tinychannels  tinyflows  tinymcp  tinyskills  tinybox         |
  |  tinyconnectors  tinycomputer  tinydocs  tinysearch  tinyjuice          |
- |  tinyruntime  tinyvoice  tinywallet  tinyhosts                          |
+ |  tinyvoice  tinywallet  tinyhosts                                      |
  +-------------------------------------------------------------------------+
 ```
 
@@ -175,7 +175,6 @@ feature-gated by the feature of the same name.
 | [`src/tools/`](src/tools/README.md) | Assembles each session's tool list ([`tools/ops.rs`](./src/tools/ops.rs)), cross-cutting built-in tools, and tool policy. Domain tools live with their domain and are re-exported here. |
 | [`src/security/`](src/security/README.md) | The trust boundary: autonomy policy, approvals, credentials and secrets, redaction, egress and local-only mode, listener guard. |
 | [`src/sandbox/`](src/sandbox/README.md) | Sandbox backends for tool isolation (platform jail, Docker via `tinybox`). |
-| [`src/runtime/`](src/runtime/README.md) | Client side of code execution: `node_exec`, `npm_exec`, `python_exec`, `shell`, worker pools over the `tinyruntime` module. |
 | [`src/modules/`](src/modules/README.md)* | Loadable native modules: the `tinybus` module host, registry, attestation, and per-module clients (search, wallet, documents, computer, voice, ...). |
 | [`src/skills/`](src/skills/README.md) | SKILL.md discovery, install, and run over `tinyskills`. |
 | [`src/mcp/`](src/mcp/README.md) | Host half of MCP: configuration, lifecycle, and the MCP server surface over `tinymcp`. |
@@ -226,7 +225,6 @@ forwarding, and the library chain (`openhuman-embed`, then
 | `voice` | no | yes | The voice stack |
 | `web3` | no | yes | Real `web3`, `wallet`, `x402` (stubs otherwise) |
 | `documents` | no | yes | Document tools over the `tinydocs` module |
-| `runtime-node` | no | yes | Managed Node.js runtime and its tools |
 | `hosting` | no | yes | `openhuman::hosting` |
 | `crash-reporting` | no | yes | Sentry |
 | `whatsapp-web` | no | no | WhatsApp Web channel provider |
@@ -236,9 +234,9 @@ forwarding, and the library chain (`openhuman-embed`, then
 Gates come in two shapes. A leaf gate removes the module (`hosting`, `media`,
 `flows`, `modules`). A facade gate keeps the module declared and gates most
 of its contents inside its own `mod.rs` (`channels`, `mcp`, `skills`,
-`voice`, `web3`, `runtime-node`). Several facades also swap in a `stub.rs`
+`voice`, `web3`). Several facades also swap in a `stub.rs`
 with matching signatures so always-on callers need no `#[cfg]` (`web3` and
-its `wallet` and `x402` members, `skills`, `voice`, [`runtime/node`](./src/runtime/node/)). Stub
+its `wallet` and `x402` members, `skills`, `voice`). Stub
 drift is only caught by `cargo check --no-default-features`. Every compile-time gate
 composes with the matching runtime `DomainSet` flag. The kernel floor profile
 is `--no-default-features --features flows`. Read the policy comments above

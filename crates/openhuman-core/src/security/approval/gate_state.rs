@@ -40,6 +40,23 @@ impl ApprovalGate {
         request_id: &str,
         decision: ApprovalDecision,
     ) -> anyhow::Result<Option<PendingApproval>> {
+        // Release the routing lock before acquiring the instance barrier:
+        // registration holds that barrier while inserting its route.
+        let scope = self.request_scope(request_id);
+        match scope {
+            Some(scope) => scope
+                .with_open(|| self.decide_open(request_id, decision))
+                .unwrap_or(Ok(None)),
+            None => self.decide_open(request_id, decision),
+        }
+    }
+
+    /// Commit a decision and release its waiter while the instance is still open.
+    fn decide_open(
+        &self,
+        request_id: &str,
+        decision: ApprovalDecision,
+    ) -> anyhow::Result<Option<PendingApproval>> {
         if !matches!(
             decision,
             ApprovalDecision::ApproveOnce | ApprovalDecision::Deny
@@ -159,11 +176,12 @@ impl ApprovalGate {
     }
 
     /// Classify a [`Self::decide`] miss — i.e. when `decide` returned
-    /// `Ok(None)` because its conditional `UPDATE ... WHERE decided_at IS NULL`
-    /// matched 0 rows. Two very different states collapse into that `None`:
+    /// `Ok(None)` because the instance was closed or its conditional
+    /// `UPDATE ... WHERE decided_at IS NULL` matched 0 rows.
     ///
     /// - [`DecideMiss::AlreadyResolved`] — the row exists but was **already
-    ///   decided, lazily expired (denied), or superseded**. This is the benign
+    ///   decided, lazily expired (denied), superseded, or closed for removal**.
+    ///   This is the benign
     ///   double-tap / two-operator / expiry-while-live race the inline-approvals
     ///   design spec classifies as benign (TAURI-RUST-5EH).
     /// - [`DecideMiss::NeverRegistered`] — no row was ever persisted for this
@@ -174,10 +192,17 @@ impl ApprovalGate {
     /// We disambiguate by consulting [`store::get_decision`], which returns a
     /// decision only when `decided_at IS NOT NULL` — exactly the already-resolved
     /// case (expiry writes a `Deny` decision, so expired rows report here too).
-    /// A `decide` miss can't be an undecided-but-present row: that row would have
-    /// matched the `UPDATE`. If the lookup itself errors we conservatively keep
+    /// A closed instance can still have an undecided row while removal takes
+    /// its denial snapshot; this is also a benign refusal. If the lookup itself
+    /// errors we conservatively keep
     /// the event visible (`NeverRegistered`) rather than silently demoting.
     pub fn classify_decide_miss(&self, request_id: &str) -> DecideMiss {
+        if self
+            .request_scope(request_id)
+            .is_some_and(|scope| scope.is_closed())
+        {
+            return DecideMiss::AlreadyResolved;
+        }
         match store::get_decision(&self.config, request_id) {
             Ok(Some(_)) => DecideMiss::AlreadyResolved,
             Ok(None) => DecideMiss::NeverRegistered,
@@ -277,6 +302,14 @@ impl ApprovalGate {
     /// RPC handlers for diagnostics).
     pub fn session_id(&self) -> &str {
         &self.session_id
+    }
+
+    /// Clone the instance barrier without retaining the routing-map lock.
+    fn request_scope(&self, request_id: &str) -> Option<Arc<super::ApprovalScope>> {
+        self.request_routes
+            .lock()
+            .get(request_id)
+            .and_then(|route| route.approval_scope.clone())
     }
 
     fn take_waiter(&self, request_id: &str) -> Option<oneshot::Sender<ApprovalDecision>> {

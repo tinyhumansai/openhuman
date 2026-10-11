@@ -36,12 +36,6 @@ const stubSettings: tokenjuice.TokenjuiceSettings = {
   search_enabled: true,
   code_enabled: false,
   html_enabled: true,
-  ml_compression_enabled: false,
-  ml_model_id: 'model',
-  ml_target_ratio: 0.5,
-  ml_sidecar_idle_timeout_secs: 30,
-  ml_max_input_chars: 4096,
-  ml_device: 'cpu',
 };
 
 const stubSavings: tokenjuice.SavingsStats = {
@@ -72,7 +66,7 @@ describe('TokenUsagePanel', () => {
       // to enabled (after async settings load), proving the load actually settled.
       await waitFor(() => {
         const switches = screen.getAllByRole('switch');
-        expect(switches).toHaveLength(7);
+        expect(switches).toHaveLength(6);
         for (const sw of switches) expect(sw).not.toBeDisabled();
       });
       expect(
@@ -113,7 +107,7 @@ describe('TokenUsagePanel', () => {
 
       // Controls remain interactive despite the savings failure.
       const switches = screen.getAllByRole('switch');
-      expect(switches).toHaveLength(7);
+      expect(switches).toHaveLength(6);
       for (const sw of switches) expect(sw).not.toBeDisabled();
       expect(
         screen.getByRole('spinbutton', { name: 'settings.tokenUsage.ccrMinTokens' })
@@ -134,7 +128,7 @@ describe('TokenUsagePanel', () => {
       await screen.findByText('rpc down');
 
       const switches = screen.getAllByRole('switch');
-      expect(switches).toHaveLength(7);
+      expect(switches).toHaveLength(6);
       for (const sw of switches) expect(sw).toBeDisabled();
       expect(
         screen.getByRole('spinbutton', { name: 'settings.tokenUsage.ccrMinTokens' })

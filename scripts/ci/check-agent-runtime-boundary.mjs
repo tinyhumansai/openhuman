@@ -35,6 +35,7 @@ const embedContractExports = new Map(
     [
       "crates/openhuman-embed/src/lib.rs",
       [
+        "pub use tinytools::ToolPolicy;",
         "pub use tinyinference_llm::message::MessageDelta;",
         "pub use tinyinference_llm::model::{ChatModel, DeferredHandle, DeferredStatus, ModelProfile, ModelRequest, ModelResponse, ModelStream, ModelStreamItem, ModelStreamMetadata};",
         "pub use tinyinference_llm::{Error, Result};",
@@ -407,6 +408,20 @@ function isBehaviorFreeForwarder(source) {
 }
 
 function assertSelfTests() {
+  const embedPath = "crates/openhuman-embed/src/lib.rs";
+  const policyExport = [{ text: "pub use tinytools::ToolPolicy;" }];
+  if (
+    !isEmbedContractExport(embedPath, policyExport, 0) ||
+    isEmbedContractExport("crates/openhuman-core/src/lib.rs", policyExport, 0) ||
+    isEmbedContractExport(
+      embedPath,
+      [{ text: "pub use tinytools::{ToolPolicy, ToolRegistry};" }],
+      0,
+    )
+  )
+    throw new Error(
+      "agent-runtime boundary self-test: host tool policy export must stay exact",
+    );
   const sdkPath = "crates/openhuman-core/src/agent/tinyagents/budget.rs";
   const sdkStatement =
     "pub use tinyinference_llm::model::budget::{Budget, BudgetExceeded, BudgetSnapshot, CallBudget, Spend, SpendLimits};";

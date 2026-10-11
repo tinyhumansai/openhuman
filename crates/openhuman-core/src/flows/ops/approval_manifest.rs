@@ -124,10 +124,9 @@ pub async fn compute_approval_manifest(config: &Config, graph: &WorkflowGraph) -
                         // error (unknown tool, etc.) degrades conservatively
                         // to Network — over-asking is safe, under-asking
                         // re-introduces the mid-run park this feature removes.
-                        let class = crate::runtime::node::ops::classify_tool_call(
-                            config, &tool_name, &args,
-                        )
-                        .unwrap_or(CommandClass::Network);
+                        let class =
+                            crate::tools::native_ops::classify_tool_call(config, &tool_name, &args)
+                                .unwrap_or(CommandClass::Network);
                         push_gated(
                             &mut entries,
                             &mut seen_tools,

@@ -1,0 +1,236 @@
+use std::sync::Arc;
+use std::time::Instant;
+
+use crate::agent::host_runtime::{NativeRuntime, RuntimeAdapter};
+use crate::config::Config;
+use crate::core::bus::BUS;
+use crate::core::events::DomainEvent;
+use crate::security::{CommandClass, SecurityPolicy};
+use crate::tools;
+use crate::tools::native_ops_types::{ExecuteToolOutcome, RuntimeToolSummary};
+use tinytools::{PermissionLevel, Tool, ToolCallOptions, ToolScope};
+use tracing::{debug, trace};
+
+fn tool_scope_label(scope: ToolScope) -> &'static str {
+    match scope {
+        ToolScope::All => "all",
+        ToolScope::AgentOnly => "agent_only",
+        ToolScope::CliRpcOnly => "cli_rpc_only",
+    }
+}
+
+fn summarize_tool(tool: &dyn Tool) -> RuntimeToolSummary {
+    RuntimeToolSummary {
+        name: tool.name().to_string(),
+        description: tool.description().to_string(),
+        category: tool.category().to_string(),
+        permission_level: tool.permission_level().to_string(),
+        scope: tool_scope_label(tool.scope()).to_string(),
+        supports_markdown: tool.supports_markdown(),
+        parameters: tool.parameters_schema(),
+    }
+}
+
+fn classify_shell_tool_call(security: &SecurityPolicy, args: &serde_json::Value) -> CommandClass {
+    let command = args
+        .get("command")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let mut class = security.classify_command(command);
+    if let Some(declared) = args
+        .get("category")
+        .and_then(|value| value.as_str())
+        .and_then(SecurityPolicy::parse_declared_class)
+    {
+        class = class.max(declared);
+    }
+    class
+}
+
+fn command_class_for_tool(
+    security: &SecurityPolicy,
+    tool: &dyn Tool,
+    args: &serde_json::Value,
+) -> CommandClass {
+    if tool.name() == "shell" {
+        return classify_shell_tool_call(security, args);
+    }
+
+    let permission = tool.permission_level_with_args(args);
+    match permission {
+        PermissionLevel::None | PermissionLevel::ReadOnly => {
+            if tool.external_effect_with_args(args) {
+                CommandClass::Network
+            } else {
+                CommandClass::Read
+            }
+        }
+        PermissionLevel::Write | PermissionLevel::Execute => {
+            if tool.external_effect_with_args(args) {
+                CommandClass::Network
+            } else {
+                CommandClass::Write
+            }
+        }
+        PermissionLevel::Dangerous => CommandClass::Destructive,
+    }
+}
+
+pub fn build_runtime_tools(config: &Config) -> Result<Vec<Box<dyn Tool>>, String> {
+    debug!(
+        workspace = %config.workspace_dir.display(),
+        "[native_ops] build_runtime_tools: start"
+    );
+    let security = Arc::new(SecurityPolicy::from_config(
+        &config.autonomy,
+        &config.workspace_dir,
+        &config.action_dir,
+    ));
+    // Phase 1 of #1401: see comment in channels/runtime/startup.rs.
+    let audit = crate::security::get_or_create_workspace_audit_logger(
+        crate::config::AuditConfig::default(),
+        config.workspace_dir.clone(),
+    )
+    .map_err(|e| e.to_string())?;
+    let runtime: Arc<dyn RuntimeAdapter> = Arc::new(NativeRuntime::new());
+    trace!("[native_ops] build_runtime_tools: tools::ops::all_tools_with_runtime");
+    let built = tools::ops::all_tools_with_runtime(
+        Arc::new(config.clone()),
+        &security,
+        runtime,
+        audit,
+        &config.browser,
+        &config.http_request,
+        &config.action_dir,
+        &config.agents,
+        config,
+        None,
+    );
+    debug!(
+        tool_count = built.len(),
+        "[native_ops] build_runtime_tools: done"
+    );
+    Ok(built)
+}
+
+pub fn list_tools(config: &Config) -> Result<Vec<RuntimeToolSummary>, String> {
+    debug!("[native_ops] list_tools: start");
+    let mut summaries: Vec<RuntimeToolSummary> = build_runtime_tools(config)?
+        .into_iter()
+        .map(|tool| summarize_tool(tool.as_ref()))
+        .collect();
+    summaries.sort_by(|a, b| a.name.cmp(&b.name));
+    debug!(count = summaries.len(), "[native_ops] list_tools: done");
+    Ok(summaries)
+}
+
+pub fn classify_tool_call(
+    config: &Config,
+    tool_name: &str,
+    args: &serde_json::Value,
+) -> Result<CommandClass, String> {
+    debug!(tool_name, "[native_ops] classify_tool_call: start");
+    let security =
+        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
+    let tools = build_runtime_tools(config)?;
+    let tool = tools
+        .into_iter()
+        .find(|tool| tool.name() == tool_name)
+        .ok_or_else(|| {
+            debug!(tool_name, "[native_ops] classify_tool_call: tool not found");
+            format!("unknown tool `{tool_name}`")
+        })?;
+    let class = command_class_for_tool(&security, tool.as_ref(), args);
+    debug!(
+        tool_name,
+        ?class,
+        permission = %tool.permission_level_with_args(args),
+        external_effect = tool.external_effect_with_args(args),
+        "[native_ops] classify_tool_call: done"
+    );
+    Ok(class)
+}
+
+pub async fn execute_tool(
+    config: &Config,
+    tool_name: &str,
+    args: serde_json::Value,
+    prefer_markdown: bool,
+) -> Result<ExecuteToolOutcome, String> {
+    debug!(
+        tool_name,
+        prefer_markdown, "[native_ops] execute_tool: start"
+    );
+    let tools = build_runtime_tools(config)?;
+    trace!(
+        tool_count = tools.len(),
+        tool_name,
+        "[native_ops] execute_tool: runtime tools built"
+    );
+    let tool = tools
+        .into_iter()
+        .find(|tool| tool.name() == tool_name)
+        .ok_or_else(|| {
+            debug!(tool_name, "[native_ops] execute_tool: tool not found");
+            format!("unknown tool `{tool_name}`")
+        })?;
+
+    let started = Instant::now();
+    debug!(
+        tool_name,
+        "[native_ops] execute_tool: publish ToolExecutionStarted"
+    );
+    BUS.publish(DomainEvent::ToolExecutionStarted {
+        tool_name: tool_name.to_string(),
+        session_id: "javascript".to_string(),
+    });
+
+    trace!(
+        tool_name,
+        "[native_ops] execute_tool: dispatch execute_with_options"
+    );
+    let execution = tool
+        .execute_with_options(args, ToolCallOptions { prefer_markdown })
+        .await
+        .map_err(|error| {
+            debug!(
+                tool_name,
+                error = %error,
+                "[native_ops] execute_tool: tool execution failed"
+            );
+            format!("tool `{tool_name}` failed: {error:#}")
+        });
+
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+    let success = execution
+        .as_ref()
+        .map(|result| !result.is_error)
+        .unwrap_or(false);
+    debug!(
+        tool_name,
+        success, elapsed_ms, "[native_ops] execute_tool: publish ToolExecutionCompleted"
+    );
+    BUS.publish(DomainEvent::ToolExecutionCompleted {
+        tool_name: tool_name.to_string(),
+        session_id: "javascript".to_string(),
+        success,
+        elapsed_ms,
+    });
+
+    let result = execution?;
+    trace!(
+        tool_name,
+        success = !result.is_error,
+        elapsed_ms,
+        "[native_ops] execute_tool: returning outcome"
+    );
+    Ok(ExecuteToolOutcome {
+        tool_name: tool_name.to_string(),
+        elapsed_ms,
+        result,
+    })
+}
+
+#[cfg(test)]
+#[path = "ops_tests.rs"]
+mod tests;

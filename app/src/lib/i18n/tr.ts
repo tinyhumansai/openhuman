@@ -3649,23 +3649,7 @@ const messages: TranslationMap = {
   'chat.files.error.delete_failed': 'Dosya silinemedi. Lütfen yeniden deneyin.',
   'chat.files.error.reveal_failed':
     'Dosya gösterilemedi. OpenHuman dışında taşınmış veya silinmiş olabilir.',
-  'harnessInit.title': 'Hazırlık yapılıyor',
   'announcement.gotIt': 'Anladım',
-  'harnessInit.subtitle': 'OpenHuman, ilk açılışta ihtiyaç duyduğu bileşenleri hazırlıyor.',
-  'harnessInit.stepPython': 'Python çalışma zamanı',
-  'harnessInit.stepNode': 'Node.js çalışma zamanı',
-  'harnessInit.statePending': 'Bekliyor',
-  'harnessInit.stateRunning': 'Yükleniyor…',
-  'harnessInit.stateDone': 'Hazır',
-  'harnessInit.stateSkipped': 'Atlandı',
-  'harnessInit.stateFailed': 'Başarısız',
-  'harnessInit.failedMessage':
-    'Bazı kurulum adımları tamamlanmadı. Yeniden deneyebilir veya devam edebilirsiniz: OpenHuman yerleşik bir yedek kullanacak.',
-  'harnessInit.retry': 'Yeniden dene',
-  'harnessInit.continueAnyway': 'Yine de devam et',
-  'harnessInit.runInBackground': 'Arka planda çalıştır',
-  'harnessInit.backgroundHint':
-    "Bu işlem tamamlanırken OpenHuman'ı kullanmaya devam edebilirsiniz.",
   'keyring.consent.title': 'Güvenli depolama kullanılamıyor',
   'keyring.consent.description':
     'İşletim sisteminizin anahtar zincirine erişilemiyor. OpenHuman, gizli bilgileri bunun yerine yerel şifreli depolamada saklamak için izninize ihtiyaç duyuyor.',

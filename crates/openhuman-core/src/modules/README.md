@@ -3,8 +3,7 @@
 This folder is the host for loadable native modules. A module is a first-party
 `cdylib` that speaks the tinybus module ABI and ships separately from the core
 binary: `tinycomputer`, `tinysearch`, `tinydocs`, `tinywallet`, `tinyjuice`,
-`tinyvoice`, `tinyruntime` (with its `tinyruntime-nodejs` and
-`tinyruntime-python` providers), `tinymcp`, `tinyconnectors`, `tinybox`,
+`tinyvoice`, `tinymcp`, `tinyconnectors`, `tinybox`,
 `tinychannels` and `tinyhosts`. The core downloads a module from a pinned
 GitHub release, checks it against a digest compiled into this crate, lets
 tinybus admit it, attaches it to a private in-process broker, and then calls
@@ -214,7 +213,6 @@ download, its `dlopen`, or its resident memory.
 | [`documents.rs`](documents.rs) | `tinydocs` | `generate_docx`, `generate_pptx`, `extract_text`, `extract_document`, `render_pdf`. Inbound bytes ride a tinybus stream; produced documents are held by the module and pulled with `ReadOutput`, then released. Feature `documents`. |
 | [`wallet.rs`](wallet.rs) | `tinywallet` | `derive_account`, `sign_transaction_in_module`, `sign_message`, `export_key`. Key material goes only to an attested module whose attested digest is one the registry pinned (`attested_proxy`). Feature `web3`. |
 | [`voice.rs`](voice.rs) | `tinyvoice` | Intent routing, command extraction, wake-word and hallucination checks, capture preparation, WAV encoding, frame energies, and a `VadSession` driven from the always-on capture loop. Every call returns a `VoiceCallError` the caller falls back from. Feature `voice`. |
-| [`runtime.rs`](runtime.rs) | `tinyruntime` + providers | `ensure_language` loads the router and the language provider, then `resolve`, `execute`, `languages`, `pool_stats`. Settings (`settings_for`, `pool_settings_for`) are read from config on every call. |
 | [`desktop.rs`](desktop.rs) | `tinycomputer` | The shared proxy for TinyComputer: loads it with an 8 second bound, reinitializes it when its configuration fingerprint changes, and exposes `call`, `permissions`, `state`, `jev_ready`. |
 | [`computer_config.rs`](computer_config.rs) | `tinycomputer` | The private configuration: `jev` (decision model), `planner` (planner, rescue and output models), `browser` (Chrome path), `trace_path`. Rebuilt from `[computer]` and stored credentials on every call; `OPENHUMAN_COMPUTER_TRACE` turns tracing on. |
 | [`computer.rs`](computer.rs) | `tinycomputer` | `status` for the Computer settings page: lifecycle state, configured routes, and optionally what the module reports through `Describe`. |
@@ -225,7 +223,7 @@ download, its `dlopen`, or its resident memory.
 | [`connectors.rs`](connectors.rs) | `tinyconnectors` | `proxy`, `call`, `call_stateless`, `call_bare`, `reconcile_route_if_loaded`. Builds the route configuration (signed-in backend or the user's own Composio key) and reconciles it on every call so sign-out reaches the module. |
 | [`search/mod.rs`](search/mod.rs) | `tinysearch` | `module_config` from the host's resolved search policy, and `configured_tool_specs` computed synchronously from that same configuration. |
 | [`search/proxy.rs`](search/proxy.rs) | `tinysearch` | Lazy load, private reinitialization on configuration change, and serialized `list_tools` / `execute_tool`; `refresh_loaded` after settings saves and credential changes. |
-| [`tokenjuice_host.rs`](tokenjuice_host.rs) | `tinyjuice` | The reverse direction: an `MlHost` object the host serves at the contract's `ML_HOST_NAME` / `ML_HOST_PATH`, so the module can call the host's ML compressor and one tool-less model call for its summary stage. |
+| [`tokenjuice_host.rs`](tokenjuice_host.rs) | `tinyjuice` | The reverse direction: an `MlHost` object the host serves at the contract's `ML_HOST_NAME` / `ML_HOST_PATH` for the module's tool-less summary model call. |
 
 `tinymcp`, `tinybox`, `tinychannels` and `tinyhosts` have registry records but
 no host file in this folder.
@@ -293,7 +291,7 @@ loadable:
   cache-path helpers (`prune_stale_versions` and friends) belong to tinybus
   (`vendor/tinybus`). Change them there.
 - Each module's behavior lives in its own repository under `vendor/`
-  (`tinydocs`, `tinywallet`, `tinyvoice`, `tinyruntime`, `tinycomputer`,
+  (`tinydocs`, `tinywallet`, `tinyvoice`, `tinycomputer`,
   `tinysearch`, `tinyconnectors`, `tinyjuice`, `tinymcp`, `tinybox`,
   `tinychannels`, `tinyhosts`). This folder holds only the host half of each
   call and the host's policy around it.
@@ -305,7 +303,6 @@ loadable:
   | `tinydocs-bus` | `documents` |
   | `tinyvoice-bus` | `voice` |
   | `tinyjuice-bus` | inference kernel |
-  | `tinyruntime-bus` | runtime clients |
   | `tinywallet-bus` | `web3` (the chain primitives are in `tinywallet-crypto`) |
   | `tinymcp-bus` | `mcp` |
   | `tinysearch-bus` | search provider declarations and bus payloads |

@@ -25,12 +25,6 @@ pub struct TokenjuiceSettingsPatch {
     pub search_enabled: Option<bool>,
     pub code_enabled: Option<bool>,
     pub html_enabled: Option<bool>,
-    pub ml_compression_enabled: Option<bool>,
-    pub ml_model_id: Option<String>,
-    pub ml_target_ratio: Option<f64>,
-    pub ml_sidecar_idle_timeout_secs: Option<u64>,
-    pub ml_max_input_chars: Option<usize>,
-    pub ml_device: Option<String>,
 }
 
 impl TokenjuiceSettingsPatch {
@@ -74,30 +68,6 @@ impl TokenjuiceSettingsPatch {
         }
         if let Some(v) = self.html_enabled {
             cfg.html_enabled = v;
-        }
-        if let Some(v) = self.ml_compression_enabled {
-            cfg.ml_compression_enabled = v;
-        }
-        if let Some(v) = &self.ml_model_id {
-            if !v.trim().is_empty() {
-                cfg.ml_model_id = v.clone();
-            }
-        }
-        if let Some(v) = self.ml_target_ratio {
-            if (0.0..=1.0).contains(&v) {
-                cfg.ml_target_ratio = v;
-            }
-        }
-        if let Some(v) = self.ml_sidecar_idle_timeout_secs {
-            cfg.ml_sidecar_idle_timeout_secs = v;
-        }
-        if let Some(v) = self.ml_max_input_chars {
-            cfg.ml_max_input_chars = v;
-        }
-        if let Some(v) = &self.ml_device {
-            if !v.trim().is_empty() {
-                cfg.ml_device = v.clone();
-            }
         }
     }
 }

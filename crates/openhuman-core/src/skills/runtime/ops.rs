@@ -1,10 +1,6 @@
-//! Skill runtime operations that coordinate reusable language runtimes.
+//! Skill runtime availability probes and skill execution orchestration.
 
 use serde::Serialize;
-
-use crate::config::Config;
-use crate::runtime::node::{NodeBootstrap, NodeSource};
-use crate::runtime::python::{PythonBootstrap, PythonSource};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeRequirement {
@@ -44,7 +40,7 @@ pub struct ResolveRuntimesOutcome {
 }
 
 pub async fn resolve_runtimes(
-    config: &Config,
+    _config: &crate::config::Config,
     requirement: RuntimeRequirement,
 ) -> ResolveRuntimesOutcome {
     tracing::debug!(
@@ -56,13 +52,13 @@ pub async fn resolve_runtimes(
         requirement,
         RuntimeRequirement::All | RuntimeRequirement::Node
     ) {
-        runtimes.push(resolve_node(config).await);
+        runtimes.push(resolve_host_runtime("node", "node"));
     }
     if matches!(
         requirement,
         RuntimeRequirement::All | RuntimeRequirement::Python
     ) {
-        runtimes.push(resolve_python(config).await);
+        runtimes.push(resolve_host_runtime("python", "python3"));
     }
     tracing::debug!(
         count = runtimes.len(),
@@ -71,95 +67,56 @@ pub async fn resolve_runtimes(
     ResolveRuntimesOutcome { runtimes }
 }
 
-async fn resolve_node(config: &Config) -> ResolvedRuntimeSummary {
-    if !config.node.enabled {
-        return ResolvedRuntimeSummary {
-            runtime: "node".to_string(),
-            enabled: false,
-            available: false,
-            source: None,
-            version: None,
-            binary: None,
-            bin_dir: None,
-            error: Some("node runtime disabled".to_string()),
-        };
-    }
-    let bootstrap = NodeBootstrap::new(std::sync::Arc::new(config.clone()));
-    match bootstrap.resolve().await {
-        Ok(resolved) => ResolvedRuntimeSummary {
-            runtime: "node".to_string(),
-            enabled: true,
-            available: true,
-            source: Some(
-                match resolved.source {
-                    NodeSource::System => "system",
-                    NodeSource::Managed => "managed",
-                }
-                .to_string(),
-            ),
-            version: Some(resolved.version),
-            binary: Some(resolved.node_bin.display().to_string()),
-            bin_dir: Some(resolved.bin_dir.display().to_string()),
-            error: None,
-        },
-        Err(error) => ResolvedRuntimeSummary {
-            runtime: "node".to_string(),
-            enabled: true,
-            available: false,
-            source: None,
-            version: None,
-            binary: None,
-            bin_dir: None,
-            error: Some(error.to_string()),
-        },
+fn resolve_host_runtime(runtime: &str, command: &str) -> ResolvedRuntimeSummary {
+    let output = std::process::Command::new(command)
+        .arg("--version")
+        .output();
+    let binary = find_host_binary(command);
+    let (version, error) = match output {
+        Ok(output) if output.status.success() => (
+            Some(String::from_utf8_lossy(&output.stdout).trim().to_string()),
+            None,
+        ),
+        Ok(output) => (
+            None,
+            Some(String::from_utf8_lossy(&output.stderr).trim().to_string()),
+        ),
+        Err(error) => (None, Some(error.to_string())),
+    };
+    ResolvedRuntimeSummary {
+        runtime: runtime.to_string(),
+        enabled: true,
+        available: version.is_some(),
+        source: version.as_ref().map(|_| "host".to_string()),
+        version,
+        binary,
+        bin_dir: None,
+        error,
     }
 }
 
-async fn resolve_python(config: &Config) -> ResolvedRuntimeSummary {
-    if !config.runtime_python.enabled {
-        return ResolvedRuntimeSummary {
-            runtime: "python".to_string(),
-            enabled: false,
-            available: false,
-            source: None,
-            version: None,
-            binary: None,
-            bin_dir: None,
-            error: Some("python runtime disabled".to_string()),
-        };
-    }
-    let bootstrap = PythonBootstrap::new(std::sync::Arc::new(config.clone()));
-    match bootstrap.resolve().await {
-        Ok(resolved) => ResolvedRuntimeSummary {
-            runtime: "python".to_string(),
-            enabled: true,
-            available: true,
-            source: Some(
-                match resolved.source {
-                    PythonSource::System => "system",
-                    PythonSource::Managed => "managed",
-                }
-                .to_string(),
-            ),
-            version: Some(resolved.version),
-            binary: Some(resolved.python_bin.display().to_string()),
-            bin_dir: resolved
-                .python_bin
-                .parent()
-                .map(|path| path.display().to_string()),
-            error: None,
-        },
-        Err(error) => ResolvedRuntimeSummary {
-            runtime: "python".to_string(),
-            enabled: true,
-            available: false,
-            source: None,
-            version: None,
-            binary: None,
-            bin_dir: None,
-            error: Some(error.to_string()),
-        },
-    }
+fn find_host_binary(command: &str) -> Option<String> {
+    let path = std::env::var_os("PATH")?;
+    let extensions = if cfg!(windows) {
+        std::env::var_os("PATHEXT")
+            .map(|extensions| {
+                std::env::split_paths(&extensions)
+                    .map(|extension| extension.to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+            })
+            .filter(|extensions| !extensions.is_empty())
+            .unwrap_or_else(|| vec![".COM".into(), ".EXE".into(), ".BAT".into(), ".CMD".into()])
+    } else {
+        vec![String::new()]
+    };
+    std::env::split_paths(&path)
+        .flat_map(|directory| {
+            extensions
+                .iter()
+                .map(move |extension| directory.join(format!("{command}{extension}")))
+        })
+        .find(|candidate| candidate.is_file())
+        .map(|candidate| candidate.display().to_string())
 }
 
 #[cfg(test)]

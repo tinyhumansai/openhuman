@@ -13,14 +13,9 @@
   ],
   "exemptions": [
     {
-      "id": "tinywallet",
-      "expect": "v0.7.4-6-gaccb920a",
-      "reason": "The vendored tree includes six unreleased commits; the shipped v0.7.4 artifact remains the last published runtime module. Remove this exception when the next artifact is published and both pins advance."
-    },
-    {
-      "id": "tinychannels",
-      "expect": "v0.1.12-3-g5e3b2044",
-      "reason": "The vendored tree includes three unreleased commits; the shipped v0.1.12 artifact remains the last published runtime module. Remove this exception when the next artifact is published and both pins advance."
+      "id": "tinybox",
+      "expect": "v0.1.16-7-gb61c6bce",
+      "reason": "The upstream submodule includes seven unreleased commits while the registry continues to load the published v0.1.16 module. Remove this exception when the next TinyBox artifact is published and both pins advance."
     }
   ]
 }

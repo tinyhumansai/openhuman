@@ -32,13 +32,19 @@ pub enum ApprovalsError {
 pub struct Approvals {
     agent_id: String,
     removed: tokio::sync::watch::Receiver<bool>,
+    lifecycle: std::sync::Arc<super::lifecycle::ApprovalState>,
 }
 
 impl Approvals {
-    pub(crate) fn new(agent_id: &str, removed: tokio::sync::watch::Receiver<bool>) -> Self {
+    pub(crate) fn new(
+        agent_id: &str,
+        removed: tokio::sync::watch::Receiver<bool>,
+        lifecycle: std::sync::Arc<super::lifecycle::ApprovalState>,
+    ) -> Self {
         Self {
             agent_id: agent_id.to_string(),
             removed,
+            lifecycle,
         }
     }
 
@@ -66,6 +72,16 @@ impl Approvals {
     /// agent's standing grants come from
     /// [`Access::auto_approve`](crate::Access::auto_approve).
     pub fn decide(
+        &self,
+        request_id: &str,
+        decision: ApprovalDecision,
+    ) -> Result<PendingApproval, ApprovalsError> {
+        self.lifecycle
+            .with_live(|| self.decide_live(request_id, decision))
+            .unwrap_or_else(|| Err(ApprovalsError::NotFound(request_id.to_owned())))
+    }
+
+    fn decide_live(
         &self,
         request_id: &str,
         decision: ApprovalDecision,

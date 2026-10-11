@@ -869,30 +869,6 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
                 break;
             };
             match event {
-                crate::core_host::core::events::DomainEvent::HarnessInitProgress {
-                    step_id,
-                    state,
-                    message,
-                    percent,
-                } => {
-                    let payload = serde_json::json!({
-                        "step_id": step_id,
-                        "state": state,
-                        "message": message,
-                        "percent": percent,
-                    });
-                    let _ = io_memory_sync.emit("init:progress", &payload);
-                }
-                crate::core_host::core::events::DomainEvent::HarnessInitCompleted {
-                    overall,
-                    failed_required,
-                } => {
-                    let payload = serde_json::json!({
-                        "overall": overall,
-                        "failed_required": failed_required,
-                    });
-                    let _ = io_memory_sync.emit("init:completed", &payload);
-                }
                 // Live per-step progress of an in-flight flow run (issue G2).
                 // Best-effort: the durable `flow_runs` row is the source of
                 // truth and the Workflows UI keeps a 2s poller as fallback, so

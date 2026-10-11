@@ -2,7 +2,6 @@
 
 pub mod config_patch;
 pub use tinyjuice::host::{focus, generate};
-pub mod ml;
 pub mod repl_tools;
 pub mod savings;
 pub mod schemas;
@@ -93,7 +92,6 @@ pub(crate) fn install_request(config: &crate::config::Config) -> InstallRequest 
             search_enabled: tj.search_enabled,
             code_enabled: tj.code_enabled,
             html_enabled: tj.html_enabled,
-            ml_text_enabled: tj.ml_compression_enabled,
             min_bytes_to_compress: tj.min_bytes_to_compress,
             ccr_min_tokens: tj.ccr_min_tokens,
             // The summary stage still needs a context token per call, which
@@ -122,7 +120,6 @@ pub(crate) fn install_request(config: &crate::config::Config) -> InstallRequest 
 }
 
 pub async fn install_from_config(config: &crate::config::Config) -> Result<(), String> {
-    ml::configure(config.clone());
     savings::configure(
         config
             .default_model

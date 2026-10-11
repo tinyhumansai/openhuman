@@ -73,8 +73,8 @@ pub fn start(_config: &crate::config::Config) {}
 
 /// Boots the domain from the runtime's startup path.
 ///
-/// This is MCP's one entry in `start_boot_once_jobs`, the way `harness_init`
-/// and the skill-catalog refresh each have theirs. The orchestration here —
+/// This is MCP's one entry in `start_boot_once_jobs`, alongside the
+/// skill-catalog refresh. The orchestration here —
 /// that the service must exist before installed servers can dial it, and that
 /// the reconnect supervisor must run until the process ends — is this domain's
 /// own, and the `Once` guard on the supervisor keeps a repeated boot from

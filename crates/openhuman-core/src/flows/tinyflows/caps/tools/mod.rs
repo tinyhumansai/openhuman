@@ -38,7 +38,7 @@ pub(crate) use native::NativeToolBackend;
 /// Prefix marking a `tool_call` node's slug as a NATIVE OpenHuman tool (the
 /// "Tool" node) rather than a Composio action (the "App action" node). e.g.
 /// `oh:web_search`. Native tools run through the same agent tool registry the
-/// assistant uses (`runtime_node::ops::execute_tool`), so a flow can call
+/// assistant uses (`tools::native_ops::execute_tool`), so a flow can call
 /// search / media generation / file / shell / etc. — the full toolset.
 pub(crate) const NATIVE_TOOL_PREFIX: &str = "oh:";
 

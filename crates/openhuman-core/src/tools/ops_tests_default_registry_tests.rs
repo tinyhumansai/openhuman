@@ -425,7 +425,7 @@ fn all_tools_default_registry_contains_expected_baseline_surface() {
     );
     let names = tool_names(&tools);
 
-    let mut expected = vec![
+    let expected = vec![
         "shell",
         "file_read",
         "file_write",
@@ -466,11 +466,6 @@ fn all_tools_default_registry_contains_expected_baseline_surface() {
         "gitbooks_get_page",
         "image_info",
     ];
-    // Managed Node tools exist only when the runtime is compiled in — same
-    // shape as the `channels` conditional just below.
-    if cfg!(feature = "runtime-node") {
-        expected.extend(&["node_exec", "npm_exec"]);
-    }
     assert_contains_all(&names, &expected);
 }
 #[test]

@@ -44,3 +44,11 @@ A standalone completer does not claim the process runtime slot. An agent-backed 
 The example checks that exactly one inference request was made and verifies the returned text. It uses a local provider fixture by default; the source contains the explicit opt-in live route path.
 
 Choose `Agent` when a model should call tools, resume a durable thread or execute with an agent's access context. Choose the structured completion helpers when the host only needs a validated data result. For routes and transport failures see [providers](providers.md) and [errors](errors.md).
+
+## Timeouts and fallback
+
+Set `CompletionRequest::timeout_ms(120_000)` to bound each physical provider HTTP request to 120 seconds. The optional field defaults to unset and is omitted from serialized requests when absent, retaining the provider's transport defaults. Each structured repair attempt receives its own physical timeout; this is not a total completion or ladder deadline.
+
+A physical timeout is an RPC transport failure, so an explicit `CompletionLadder` can try its next route. By contrast, `Completer::timeout(duration)` bounds the entire logical completion, including repair attempts, and returns terminal `DeadlineExceeded`. Cancellation also stops the ladder without fallback. You can use both bounds when the host needs separate physical and logical limits.
+
+A timed-out physical attempt has unknown reported cost. Ladder aggregate cost stays unknown, and a budgeted call keeps its conservative reservation if no authoritative usage arrived. The remaining budget may therefore refuse a fallback before it sends another request. See the [routing guide](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/ROUTING.md) for the explicit ladder API.

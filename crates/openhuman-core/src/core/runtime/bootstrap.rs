@@ -390,12 +390,6 @@ pub(crate) async fn start_core_runtime_services(
     };
 
     // Long-lived bootstrap loops selected by ServiceSet.
-    // One-time first-run initialization (managed Python runtime, Kompress,
-    // managed Node runtime). Spawned AFTER subscribers are live but does NOT
-    // block the ready signal — the core becomes RPC-ready immediately and the
-    // frontend watches per-step progress via `openhuman.harness_init_status`.
-    // On a warm host every step's `is_done` probe passes and this settles
-    // instantly. See `crate::agent::harness_init`.
     crate::core::runtime::services::start_boot_once_jobs(services, cfg).await;
 
     // Long-lived bootstrap loops selected by ServiceSet. These start only

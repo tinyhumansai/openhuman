@@ -52,6 +52,26 @@ impl TurnBusy {
             .insert(id);
         Self { key, id }
     }
+
+    /// A turn in flight on `thread_id` itself, for a turn whose session id does
+    /// not map to its thread: a relayed channel turn runs under the channel
+    /// pipeline's own session id, which [`background_completions`] never
+    /// learns, so marking that session would leave the thread looking idle.
+    pub(crate) fn start_on_thread(thread_id: &str) -> Self {
+        Self::start(&format!("{THREAD_MARK}{thread_id}"))
+    }
+}
+
+/// Prefix of a busy session id that names its thread directly
+/// ([`TurnBusy::start_on_thread`]). Not a character a session id carries.
+const THREAD_MARK: char = '\u{2}';
+
+/// The thread a busy session id is a turn on.
+fn thread_of(session: &str) -> Option<String> {
+    match session.strip_prefix(THREAD_MARK) {
+        Some(thread) => Some(thread.to_string()),
+        None => background_completions::thread_for_session(session),
+    }
 }
 
 impl Drop for TurnBusy {
@@ -68,16 +88,14 @@ impl Drop for TurnBusy {
 }
 
 /// Is any in-flight turn of the calling profile running on `thread_id`?
-pub(super) fn is_busy(thread_id: &str) -> bool {
+pub(crate) fn is_busy(thread_id: &str) -> bool {
     let me = caller();
     busy()
         .lock()
         .expect("background_delivery busy poisoned")
         .keys()
         .filter_map(|key| session_of(key, &me))
-        .any(|session| {
-            background_completions::thread_for_session(session).as_deref() == Some(thread_id)
-        })
+        .any(|session| thread_of(session).as_deref() == Some(thread_id))
 }
 
 /// Forget every in-flight turn of the calling profile on `thread_id`. A turn
@@ -90,9 +108,7 @@ pub(crate) fn clear_busy_for_thread(thread_id: &str) -> usize {
     let mut busy = busy().lock().expect("background_delivery busy poisoned");
     let before = busy.len();
     busy.retain(|key, _| {
-        session_of(key, &me).is_none_or(|session| {
-            background_completions::thread_for_session(session).as_deref() != Some(thread_id)
-        })
+        session_of(key, &me).is_none_or(|session| thread_of(session).as_deref() != Some(thread_id))
     });
     let cleared = before - busy.len();
     if cleared > 0 {

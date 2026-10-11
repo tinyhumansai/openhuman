@@ -115,15 +115,16 @@ async fn scenario() {
 
     let observed = Arc::new(Outcomes::default());
     // A whole-turn deadline drops inference and leaves the same agent reusable.
-    assert!(matches!(
-        blocked
-            .turn("deadline")
-            .timeout(Duration::from_millis(100))
-            .observer(observed.clone())
-            .send()
-            .await,
-        Err(CoreError::DeadlineExceeded { .. })
-    ));
+    let deadline = blocked
+        .turn("deadline")
+        .timeout(Duration::from_millis(100))
+        .observer(observed.clone())
+        .send()
+        .await;
+    assert!(
+        matches!(deadline, Err(CoreError::DeadlineExceeded { .. })),
+        "{deadline:?}"
+    );
     assert_eq!(agent.run("after deadline").await.unwrap().reply, "finished");
     assert_eq!(
         *observed.0.lock().unwrap(),

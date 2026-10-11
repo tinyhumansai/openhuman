@@ -36,6 +36,25 @@ test('cookbook metadata must come from example headers', () => {
   assert.deepEqual(exampleMetadata(example, 'hello'), { name: 'hello', title: 'Hello', summary: 'Builds an offline agent.', run: 'offline', feature: undefined });
   assert.throws(() => exampleMetadata('fn main() {}', 'bad'), /headers/);
 });
+test('cookbook benchmark commands use the declared release profile without default features', () => {
+  const root = mkdtempSync(resolve(tmpdir(), 'embed-benchmark-docs-'));
+  try {
+    mkdirSync(resolve(root, 'gitbooks/developing/embed'), { recursive: true });
+    mkdirSync(resolve(root, 'crates/openhuman-embed/examples'), { recursive: true });
+    mkdirSync(resolve(root, 'crates/openhuman-embed/src'), { recursive: true });
+    writeFileSync(resolve(root, 'gitbooks/developing/embed/index.md'), '# Benchmarks\n');
+    writeFileSync(resolve(root, 'crates/openhuman-embed/src/lib.rs'), 'pub use runtime::Runtime;');
+    writeFileSync(resolve(root, 'crates/openhuman-embed/examples/retained_fleet.rs'), example + '//! Profile: release\n//! Feature: default\n//! Default features: disabled\n');
+    writeFileSync(resolve(root, 'crates/openhuman-embed/examples/hello.rs'), example);
+    const capabilities = resolve(root, 'capabilities.json');
+    writeFileSync(capabilities, '{"schema_version":1,"compiled_features":{}}');
+    generateEmbedDocs({ root, capabilities });
+    const cookbook = readFileSync(resolve(root, 'gitbooks/developing/embed/cookbook.md'), 'utf8');
+    assert.match(cookbook, /Run: `cargo run -p openhuman-embed --release --example retained_fleet --no-default-features`/);
+    assert.match(cookbook, /Run: `cargo run -p openhuman-embed --example hello`/);
+    assert.doesNotMatch(cookbook, /--features none/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 test('generate then check is stable, edited source fails check, no prose authored by tooling', () => {
   const root = mkdtempSync(resolve(tmpdir(), 'embed-docs-'));
   try {

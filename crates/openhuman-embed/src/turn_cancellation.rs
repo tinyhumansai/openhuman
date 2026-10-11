@@ -51,6 +51,10 @@ impl TurnCancellation {
         self.0.cleanup.wait().await;
     }
 
+    pub(crate) fn is_cancelled(&self) -> bool {
+        *self.0.requested.borrow()
+    }
+
     pub(crate) async fn cancelled(&self) {
         let mut requested = self.0.requested.subscribe();
         let _ = requested.wait_for(|requested| *requested).await;

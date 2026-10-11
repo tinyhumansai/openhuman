@@ -338,7 +338,7 @@ impl AgentSpec {
             + Sync
             + 'static,
     {
-        self.tool_hook(std::sync::Arc::new(crate::permission::PermissionHook(
+        self.tool_hook(std::sync::Arc::new(crate::permission::PermissionHook::new(
             callback,
         )))
     }
@@ -364,8 +364,9 @@ impl AgentSpec {
     /// The agent's own in-process tools, built fresh for every turn.
     ///
     /// Until this existed, an embedder's tools could only reach an agent over
-    /// [`mcp`](Self::mcp): a spec is data, and the session behind it is rebuilt
-    /// from that data on every turn, so a `Box<dyn Tool>` had nowhere to live
+    /// the `mcp` builder (with the `mcp` feature enabled): a spec is data, and
+    /// the session behind it is rebuilt from that data on every turn, so a
+    /// `Box<dyn Tool>` had nowhere to live
     /// in between. The cost was paid by the model — a discovery call to learn
     /// what the server offers, an `mcp_call_tool` envelope whose inner
     /// `arguments` object no provider can validate or constrain decoding

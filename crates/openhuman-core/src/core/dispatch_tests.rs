@@ -122,7 +122,6 @@ fn is_known_probe_method_matches_allow_list_exactly() {
         "auth.status",
         "config/get",
         "openhuman.memory_tree_create_namespace",
-        "openhuman.harness_init_status",
     ] {
         assert!(
             is_known_probe_method(m),
@@ -137,27 +136,6 @@ fn is_known_probe_method_matches_allow_list_exactly() {
     assert!(!is_known_probe_method("rpc.discover.extra")); // exact match only
     assert!(!is_known_probe_method("memory_tree_create_namespace"));
     assert!(!is_known_probe_method(""));
-}
-
-/// `openhuman.harness_init_status` is allow-listed as a debug-only miss so
-/// client/core surface skew stops paging Sentry (#5157) — but it is a
-/// **live** method, not a retired one. That allow-list entry means a
-/// genuine regression (controller dropped from the registry) would go
-/// completely silent: no error, no warn, no Sentry event. This test is the
-/// replacement signal — if the method stops being served in a full build,
-/// this fails instead of the regression shipping unnoticed.
-#[test]
-fn harness_init_status_is_registered_in_a_full_build() {
-    let served: Vec<String> = crate::core::all::all_controller_schemas()
-        .iter()
-        .map(crate::core::all::rpc_method_name)
-        .collect();
-    assert!(
-        served.iter().any(|m| m == "openhuman.harness_init_status"),
-        "harness_init_status must remain a registered controller — it is \
-         allow-listed in KNOWN_PROBE_METHODS for client/core skew only, so \
-         losing the real handler would be silently swallowed"
-    );
 }
 
 #[tokio::test]

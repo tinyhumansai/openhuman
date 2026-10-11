@@ -468,7 +468,7 @@ fn local_override(config: &Config, id: &str) -> Option<PathBuf> {
 /// Where downloaded artifacts are kept.
 ///
 /// The user cache directory, falling back to the workspace when there is none —
-/// the same shape the Node and Python runtime installers use, for the same
+/// the same shape used by other module asset installers, for the same
 /// reason: a headless container often has no `XDG_CACHE_HOME`, and failing to
 /// install because of that would be worse than writing beside the workspace.
 #[must_use]

@@ -50,6 +50,7 @@ pub mod run_mode;
 // multi-tenancy), so "bring your own summarizer" is the case this seam exists
 // for rather than an exotic one.
 pub mod budget;
+mod budget_charge;
 pub mod payload_summarizer;
 mod policy_denial;
 pub(crate) mod reaper;

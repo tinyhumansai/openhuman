@@ -321,7 +321,10 @@ impl ProfileHost {
         // table that routes them is process-local and empty after a restart,
         // so recover them in this profile's scope (on every open): the drains then run as this profile, on its tables alone.
         CoreContext::sync_scope(Arc::clone(&context), || {
-            crate::agent::orchestration::background_delivery::recover_on_open(&layout.workspace_dir)
+            crate::agent::orchestration::background_delivery::recover_on_open(
+                &layout.workspace_dir,
+                crate::agent::orchestration::delivery_drain::DrainFence::of(Arc::clone(&fence)),
+            )
         });
         let state = Arc::new(Profile {
             id: id.clone(),

@@ -24,6 +24,18 @@ const lc = (s) => String(s ?? "").toLowerCase();
 const containsAny = (text, words) =>
   words.some((w) => lc(text).includes(lc(w)));
 
+/** Give the timeout comparison five seconds more than the active default. */
+export const extendedPreTurnWait = (defaultWait) => {
+  if (
+    !Number.isSafeInteger(defaultWait) ||
+    defaultWait < 1 ||
+    defaultWait > Number.MAX_SAFE_INTEGER - 5_000
+  ) {
+    throw new TypeError("pre-turn timeout must be a positive safe integer");
+  }
+  return defaultWait + 5_000;
+};
+
 // ---------------------------------------------------------------------------
 // A. Storing
 // ---------------------------------------------------------------------------
@@ -245,6 +257,7 @@ const recall = {
     // B5: the pre-turn pack at the default wait, then a larger one.
     const policy = await ctx.rpc("openhuman.memory_policy_get", {});
     const defaultWait = pick(policy, "recall.pre_turn_timeout_ms");
+    const extendedWait = extendedPreTurnWait(defaultWait);
     const probes = [
       "What do I usually want in meeting summaries?",
       "Who is my manager?",
@@ -255,27 +268,30 @@ const recall = {
     for (const p of probes) await ctx.turn(tDef, p);
     const atDefault =
       (await countLogLines(ctx.logFile, /pre_turn timed out/)) - before;
-    await ctx.rpc("openhuman.memory_policy_set", { pre_turn_timeout_ms: 6000 });
-    const tBig = ctx.newThread("B5-6000ms");
+    await ctx.rpc("openhuman.memory_policy_set", {
+      pre_turn_timeout_ms: extendedWait,
+    });
+    const tBig = ctx.newThread(`B5-${extendedWait}ms`);
     for (const p of probes) await ctx.turn(tBig, p);
     const atLarge =
       (await countLogLines(ctx.logFile, /pre_turn timed out/)) -
       before -
       atDefault;
     await ctx.rpc("openhuman.memory_policy_set", {
-      pre_turn_timeout_ms: defaultWait ?? 1500,
+      pre_turn_timeout_ms: defaultWait,
     });
     ctx.results.pre_turn = {
       default_ms: defaultWait,
+      extended_ms: extendedWait,
       timed_out_at_default: atDefault,
-      timed_out_at_6000: atLarge,
+      timed_out_at_extended: atLarge,
       turns_each: probes.length,
     };
     check(
       "B5-pre-turn-default",
       atDefault === 0,
       `no pre-turn pack times out at the default wait (${defaultWait} ms)`,
-      `${atDefault}/${probes.length} timed out at the default, ${atLarge}/${probes.length} at 6000 ms`,
+      `${atDefault}/${probes.length} timed out at the default, ${atLarge}/${probes.length} at ${extendedWait} ms`,
       atDefault ? "high" : "low",
     );
   },

@@ -87,7 +87,8 @@ pub const EVENTS_INTERFACE: &str = "ai.tinyhumans.openhuman.Events";
 /// ingestion) and `CronSystemJobDue` (host-owned cron jobs).
 /// `1.9.0` adds an optional `agent_id` to `ApprovalRequested`,
 /// `ApprovalDecided` and `FlowApprovalRequested` (additive).
-pub const EVENTS_VERSION: Version = Version::new(1, 9, 0);
+/// `1.10.0` removes the first-run harness initialization progress events.
+pub const EVENTS_VERSION: Version = Version::new(1, 10, 0);
 
 /// The bus. Initialised once by [`init`]; safe to touch before that.
 pub static BUS: OnceBus<DomainEvent> = OnceBus::new();

@@ -21,7 +21,6 @@ fn http_only() -> ServiceSet {
         login_gated: false,
         update_scheduler: false,
         memory_queue: false,
-        harness_init: false,
         skill_catalog_refresh: false,
         mcp_boot: false,
         integrations: false,

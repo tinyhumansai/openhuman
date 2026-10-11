@@ -83,11 +83,6 @@ scheduler-gate
 # with nothing to attach, and the absence is silent.
 file-logging
 
-# The managed Node.js toolchain (download/verify/extract/install a pinned
-# release) and the JavaScript language surface on top of it. Carries `xz2` and
-# its static liblzma C build.
-runtime-node
-
 # The `hosting_*` agent tools: put a workspace on a real hosting provider and
 # manage its sites, databases, environment, domains and deployments over the
 # tinyhosts unified model. Its gate in the root Cargo.toml declares

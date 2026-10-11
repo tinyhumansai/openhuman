@@ -51,8 +51,6 @@ pub struct ServiceSet {
     pub update_scheduler: bool,
     /// Start memory queue workers during runtime bootstrap.
     pub memory_queue: bool,
-    /// Run one-shot harness initialization during runtime bootstrap.
-    pub harness_init: bool,
     /// Refresh the skill catalog during runtime bootstrap.
     pub skill_catalog_refresh: bool,
     /// Boot installed MCP servers and supervise reconnects during runtime bootstrap.
@@ -74,7 +72,6 @@ impl ServiceSet {
             login_gated: true,
             update_scheduler: true,
             memory_queue: true,
-            harness_init: true,
             skill_catalog_refresh: true,
             mcp_boot: true,
             integrations: true,
@@ -93,7 +90,6 @@ impl ServiceSet {
             login_gated: false,
             update_scheduler: false,
             memory_queue: false,
-            harness_init: false,
             skill_catalog_refresh: false,
             mcp_boot: false,
             integrations: false,
@@ -112,7 +108,6 @@ impl ServiceSet {
             login_gated: false,
             update_scheduler: false,
             memory_queue: false,
-            harness_init: false,
             skill_catalog_refresh: false,
             mcp_boot: false,
             integrations: false,
@@ -141,7 +136,6 @@ impl ServiceSet {
             login_gated: true,
             update_scheduler: false,
             memory_queue: true,
-            harness_init: true,
             skill_catalog_refresh: true,
             mcp_boot: false,
             integrations: false,

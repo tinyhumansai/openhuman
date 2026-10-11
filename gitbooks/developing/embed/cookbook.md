@@ -82,7 +82,7 @@ Measure retained runtime-owned agents using loopback inference and two worker th
 
 [Source](https://github.com/tinyhumansai/openhuman/blob/main/crates/openhuman-embed/examples/linux_fleet.rs) · offline on Linux; use a fresh constrained cgroup for release measurements.
 
-Run: `cargo run -p openhuman-embed --example linux_fleet`
+Run: `cargo run -p openhuman-embed --release --example linux_fleet --no-default-features`
 
 ## Connect an actual MCP protocol stub over loopback
 

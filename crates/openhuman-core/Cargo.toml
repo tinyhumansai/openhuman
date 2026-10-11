@@ -187,26 +187,6 @@ tinytools = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinytools"
 tinytools-agent = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinytools-agent" }
 tinytools-std = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinytools-std" }
 
-# tinyruntime — the runtime router
-# (https://github.com/tinyhumansai/tinyruntime). Only the *contract* crate is
-# taken here, never the router itself: the router ships as a loadable TinyBus
-# module, and a host that also compiled it would carry the download pipeline, the
-# worker pool, and their dependency trees for nothing.
-#
-# `tinyruntime-bus` is deliberately dependency-light — `serde` and `serde_json`
-# and nothing else — which is what makes naming the payload types cost this
-# manifest almost nothing. The module's own CI asserts it stays that way.
-#
-# After cloning: `git submodule update --init --recursive vendor/tinyruntime`.
-tinyruntime-bus = { path = "../../vendor/tinyruntime/crates/tinyruntime-bus" }
-#
-# `tinyruntime-pyserver` is the one library crate of that repository the core
-# links: the persistent Python worker (spaCy, Kompress) that
-# `runtime::python_server` hosts. It is a pure library (no bus, no module), so
-# it needs no registry record; it carries only `serde`, `tokio` and `tracing`,
-# which this manifest already has. The pin is the tinyruntime module pin plus
-# the crate itself; see `scripts/ci/module-pin-exemptions.json`.
-tinyruntime-pyserver = { path = "../../vendor/tinyruntime/crates/tinyruntime-pyserver" }
 
 # TinyMemory (https://github.com/tinyhumansai/tinymemory), three crates:
 # - `tinymemory-api`: the engine contract (`MemoryEngine`: recall / fetch /
@@ -379,8 +359,8 @@ sha2 = "0.10"
 # cargo error, not a warning.
 # Archive handling for the Piper voice installer and the document tools. The
 # Node.js and Python toolchain archives are no longer unpacked here — the
-# `tinyruntime` module owns that — which is what let `xz2` and its static
-# liblzma C build leave this manifest entirely.
+# OpenHuman no longer downloads or unpacks Node.js or Python; both use the host
+# toolchain through the shell.
 tar = "0.4"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 # gzip decoder for the Piper tar.gz binary releases on macOS / Linux. Already
@@ -901,34 +881,6 @@ web3 = [
     "modules",
 ]
 
-# Managed Node.js runtime: `runtime::node` (the client that asks the
-# `tinyruntime` module for a toolchain), the `runtime::javascript` language slot
-# over it, `runtime::pool::node`, the `node_exec` / `npm_exec` agent tools, and
-# the `node_runtime` harness-init step. Default-ON. Slim builds opt out via
-# `--no-default-features --features "<list without runtime-node>"`.
-#
-# This gate no longer sheds a dependency. It used to carry the exclusive `xz2`
-# and its static liblzma C build; downloading and unpacking a toolchain moved to
-# the `tinyruntime` module, so that native build left this manifest for every
-# configuration rather than only for slim ones. What the gate still buys is the
-# absence of the tools and controllers themselves.
-#
-# FACADE + STUB, not a leaf gate. `ShellTool` holds `Option<Arc<NodeBootstrap>>`
-# for managed-Node PATH injection and `tools/impl/system/shell.rs` is kernel, so
-# deleting the module would take the shell tool with it. `runtime/node/stub.rs`
-# carries the `NodeBootstrap` type surface; registration sites (`node_runtime_step`,
-# the `javascript` controllers, `node_exec`/`npm_exec`) are leaf-gated at their call
-# sites, because registration sites want absence.
-#
-# The generic native-tool dispatcher (`runtime::node::ops` / `runtime::node::types`)
-# is deliberately NOT gated: it backs both the gated `javascript.*` controllers and
-# the ungated `flows` `oh:` `NativeToolBackend`, so native flow tools keep working
-# when the managed Node runtime is compiled out.
-#
-# Off-state: `try_cached`/`probe_installed` return `None`, so the shell never
-# prepends a managed bin dir — identical to today's `node.enabled = false` path.
-runtime-node = []
-
 # Media-generation + image domains: the `media_generate_*` agent tools
 # (image/video via OpenRouter through the backend's
 # `/agent-integrations/openrouter` proxy) and the `openhuman::image` tool
@@ -964,8 +916,7 @@ flows = ["dep:tinyflows", "dep:tinyflows-catalog", "dep:tinyflows-copilot", "tin
 # The dep list is INTENTIONALLY EMPTY — do not "fix" it. Unlike `voice`
 # (`hound`/`lettre`), these domains have no exclusive dependencies: every crate
 # they touch (serde, serde_json, tokio, anyhow, async-trait, …) is shared with
-# always-on domains, and `runtime_node`/`runtime_python` are used by Agent /
-# Flows / Memory too. This gate's value is tool-surface + prompt-bloat +
+# always-on domains. This gate's value is tool-surface + prompt-bloat +
 # startup cost, NOT binary size.
 #
 # NOTE: `openhuman::skills::types` and `::ops_types` stay compiled even when

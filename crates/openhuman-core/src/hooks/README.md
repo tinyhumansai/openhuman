@@ -116,7 +116,7 @@ them:
 
 | Tool family | Names | Pre event | Post event |
 | --- | --- | --- | --- |
-| `SHELL_TOOLS` | `shell`, `run_command`, `bash`, `node_exec`, `npm_exec` | `beforeShellExecution` | `afterShellExecution` |
+| `SHELL_TOOLS` | `shell`, `run_command`, `bash` | `beforeShellExecution` | `afterShellExecution` |
 | `READ_TOOLS` | `file_read`, `read_diff` | `beforeReadFile` | none |
 | `WRITE_TOOLS` | `file_write`, `edit`, `apply_patch`, `update_memory_md` | none | `afterFileEdit` |
 | MCP | names starting `mcp_`, `mcp:` or `mcp__` | `beforeMCPExecution` | `afterMCPExecution` |

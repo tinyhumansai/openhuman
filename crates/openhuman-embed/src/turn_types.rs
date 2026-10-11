@@ -166,7 +166,7 @@ pub struct TurnRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
     /// Conversation this turn belongs to. The core does **not** mint one, so
-    /// [`Turn::send`] does; see [`TurnOutcome::session_id`].
+    /// [`Turn::send`](crate::Turn::send) does; see [`TurnOutcome::session_id`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thread_id: Option<String>,
     /// Per-turn working directory for the agent's filesystem and shell tools.
@@ -215,14 +215,14 @@ pub struct TurnOutcome {
     pub reply: String,
     /// The conversation this turn ran in — the caller's `session_id` when one
     /// was supplied, otherwise the one minted for it. Pass it to the next
-    /// [`Turn::session`] to continue the conversation.
+    /// [`Turn::session`](crate::Turn::session) to continue the conversation.
     pub session_id: String,
     /// What the turn spent: tokens, cost, context window, and any synchronous
     /// children it ran.
     ///
     /// Present only when the turn returned. A turn that **failed** also spent
     /// what it spent, and there is no outcome to carry it on -- use
-    /// [`Turn::meter`] for that, which fires either way.
+    /// [`Turn::meter`](crate::Turn::meter) for that, which fires either way.
     ///
     /// `None` when the turn ran against a caller-built runtime's orchestrator
     /// rather than a runtime-owned [`Agent`](crate::Agent): that path answers
@@ -230,7 +230,7 @@ pub struct TurnOutcome {
     /// report from. `None` also when the session reported nothing at all.
     pub usage: Option<openhuman_core::agent::tinyagents::host::LastTurnUsage>,
     /// [`reply`](Self::reply) parsed as JSON, when the turn asked for a JSON
-    /// [`response_format`](Turn::response_format) and the reply parses.
+    /// [`response_format`](crate::Turn::response_format) and the reply parses.
     /// `None` otherwise -- including a reply the model did not shape, which
     /// the host should treat as a failed structured answer.
     pub structured: Option<serde_json::Value>,

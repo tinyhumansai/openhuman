@@ -43,7 +43,6 @@ pub fn chat_completion(content: &str) -> serde_json::Value {
 pub fn offline_config() -> Config {
     let mut config = Config::default();
     config.local_ai.runtime_enabled = false;
-    config.runtime_python.enabled = false;
     // Conversation memory ingest is intentionally fire-and-forget. It can
     // still be buffering after a turn returns, which is useful in the product
     // but unrelated to these tests' contracts and would race the final

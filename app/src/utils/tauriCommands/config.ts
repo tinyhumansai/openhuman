@@ -486,7 +486,7 @@ export async function openhumanGetAutonomySettings(): Promise<CommandResponse<Au
  * already-canonicalised path strings; the UI renders them verbatim instead of
  * hard-coding defaults like `~/OpenHuman/projects`.
  *
- * - `action_dir` — agent CWD for `shell` / `node_exec` / `npm_exec` / file
+ * - `action_dir` — agent CWD for `shell` / file
  *   writes. Defaults to `projects_dir`; overridable via `OPENHUMAN_ACTION_DIR`.
  * - `workspace_dir` — internal product state (memory / sessions / vault).
  *   Agent-blocked.

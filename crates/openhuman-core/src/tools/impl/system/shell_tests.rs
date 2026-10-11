@@ -1,7 +1,6 @@
 use super::super::shell_platform::{PYTHON_UTF8_DEFAULTS, SAFE_ENV_VARS};
 use super::*;
 use crate::agent::host_runtime::{NativeRuntime, RuntimeAdapter};
-use crate::config::test_env::EnvVarGuard;
 use crate::security::{AutonomyLevel, CommandClass, SecurityPolicy};
 
 fn test_security(autonomy: AutonomyLevel) -> Arc<SecurityPolicy> {

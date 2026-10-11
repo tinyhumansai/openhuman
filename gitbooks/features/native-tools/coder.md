@@ -43,5 +43,5 @@ With the autonomy policy on, `workspace_only` confines the tools to the working 
 
 ## See also
 
-- [System and utilities](system-and-utilities.md): `shell`, `node_exec`, `npm_exec` and `python_exec` for the rest of the dev loop.
+- [System and utilities](system-and-utilities.md): `shell` for the rest of the dev loop, including Node.js, npm and Python commands available on the host's `PATH`.
 - [Agent coordination](agent-coordination.md): `todo` and `spawn_subagent` for larger refactors.

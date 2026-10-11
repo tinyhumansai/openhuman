@@ -265,6 +265,8 @@ pub(crate) fn instantiate(runtime: &Runtime, spec: AgentSpec) -> Result<AgentInn
     });
     let mut overrides = openhuman_core::agent::host_overrides::HostOverrides::default();
     overrides.parent = runtime.core_runtime().context().host_overrides();
+    let lifecycle = super::lifecycle::Lifecycle::new();
+    overrides.approval_scope = Some(lifecycle.approval_scope());
     overrides.model = provider.custom_model();
     overrides.role_models = provider.role_models().clone();
     overrides.session_store = parts.session_store;
@@ -275,9 +277,13 @@ pub(crate) fn instantiate(runtime: &Runtime, spec: AgentSpec) -> Result<AgentInn
     for hook in parts.tool_hooks {
         overrides.tool_hook(hook.name(), Some(hook.clone()));
     }
-    let lifecycle = super::lifecycle::Lifecycle::new();
     let approval_subscription = parts.approval_handler.map(|handler| {
-        super::approval_handler::ApprovalSubscription::new(&id, handler, lifecycle.removed())
+        super::approval_handler::ApprovalSubscription::new(
+            &id,
+            handler,
+            lifecycle.removed(),
+            lifecycle.approval_state(),
+        )
     });
     let overlay = ContextOverlay {
         host_overrides: Some(overrides.clone()),

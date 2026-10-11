@@ -201,7 +201,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
             outputs: vec![FieldSchema {
                 name: "settings",
                 ty: TypeSchema::Json,
-                comment: "The tokenjuice config (router/CCR/compressor toggles + ML fields).",
+                comment: "The tokenjuice config (router/CCR/compressor toggles).",
                 required: true,
             }],
         },

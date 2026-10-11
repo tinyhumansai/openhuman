@@ -7,6 +7,14 @@
 //! bounds are host-supplied upper bounds for every allowed route, not billing
 //! estimates; providers cannot be forced to honour a monetary cap locally.
 //!
+//! Admission is fail-fast by default. [`ModelBudget::wait_for_capacity`] opts
+//! a policy into waiting only when live reservations prevent an otherwise
+//! affordable call; clones and child turns inherit it. Calls that fit still
+//! run concurrently, while settled spend that cannot fit refuses immediately.
+//! Canceling before admission reserves nothing. Internal transport retries
+//! remain fail-fast, and unknown dispatched charges are never refunded.
+//! Hosts retain their existing logical deadlines and cancellation controls.
+//!
 //! Budgeted calls currently accept text only. Input bounds use serialized-byte
 //! counts conservatively; multimodal requests fail before dispatch. Choose
 //! bounds that include model framing and the maximum price on allowed routes.

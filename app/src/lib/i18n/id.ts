@@ -3421,24 +3421,7 @@ const messages: TranslationMap = {
     'Prosedur yang dapat digunakan kembali dan dijalankan: tujuan beserta langkah-langkah untuk mencapainya.',
   'activity.tabs.alerts': 'Peringatan',
 
-  'harnessInit.title': 'Menyiapkan semuanya',
-
   'announcement.gotIt': 'Mengerti',
-  'harnessInit.subtitle':
-    'OpenHuman sedang menyiapkan komponen yang dibutuhkan saat pertama kali dijalankan.',
-  'harnessInit.stepPython': 'Runtime Python',
-  'harnessInit.stepNode': 'Runtime Node.js',
-  'harnessInit.statePending': 'Menunggu',
-  'harnessInit.stateRunning': 'Memasang…',
-  'harnessInit.stateDone': 'Siap',
-  'harnessInit.stateSkipped': 'Dilewati',
-  'harnessInit.stateFailed': 'Gagal',
-  'harnessInit.failedMessage':
-    'Beberapa langkah penyiapan tidak selesai. Anda dapat mencoba lagi atau melanjutkan: OpenHuman akan menggunakan cadangan bawaan.',
-  'harnessInit.retry': 'Coba lagi',
-  'harnessInit.continueAnyway': 'Lanjutkan saja',
-  'harnessInit.runInBackground': 'Jalankan di latar belakang',
-  'harnessInit.backgroundHint': 'Anda dapat terus menggunakan OpenHuman saat proses ini selesai.',
 
   'keyring.consent.title': 'Penyimpanan aman tidak tersedia',
   'keyring.consent.description':

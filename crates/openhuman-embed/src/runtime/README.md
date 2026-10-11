@@ -14,7 +14,7 @@ for what many agents on one runtime cost in memory.
 
 `RuntimeBuilder::new()` starts from safe defaults: an ephemeral workspace,
 `Provider::inherit()`, `Access::supervised()`, `HostKind::Library`, only the
-`harness_init` background service, and `DomainSet::embedded()` plus `mcp` and
+no background services by default, and `DomainSet::embedded()` plus `mcp` and
 `skills` when those features are compiled in. `build()` then runs these steps
 in order:
 

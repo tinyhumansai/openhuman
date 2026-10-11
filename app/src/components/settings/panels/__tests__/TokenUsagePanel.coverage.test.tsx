@@ -60,12 +60,6 @@ const SETTINGS: TokenjuiceSettings = {
   search_enabled: false,
   code_enabled: false,
   html_enabled: false,
-  ml_compression_enabled: false,
-  ml_model_id: 'm',
-  ml_target_ratio: 0.5,
-  ml_sidecar_idle_timeout_secs: 60,
-  ml_max_input_chars: 1000,
-  ml_device: 'cpu',
 };
 
 const bucket = (over: Partial<SavingsStats['total']> = {}): SavingsStats['total'] => ({
@@ -228,7 +222,6 @@ describe('TokenUsagePanel — compression toggles', () => {
     ['settings.tokenUsage.search', 'search_enabled'],
     ['settings.tokenUsage.code', 'code_enabled'],
     ['settings.tokenUsage.html', 'html_enabled'],
-    ['settings.tokenUsage.ml', 'ml_compression_enabled'],
     ['settings.tokenUsage.ccrEnabled', 'ccr_enabled'],
     ['settings.tokenUsage.ccrDisk', 'ccr_disk_enabled'],
   ])('toggling "%s" patches only %s', async (label, key) => {

@@ -567,11 +567,7 @@ export const skillsApi = {
     return raw.runs;
   },
 
-  /**
-   * Resolve the reusable Node/Python runtimes backing script-based skills.
-   * The backend reuses `runtime_node` and `runtime_python`; this call is a
-   * cheap UI/prod-smoke probe unless it has to bootstrap a missing managed runtime.
-   */
+  /** Probe whether the host Node.js and Python executables are available on PATH. */
   resolveRuntimes: async (
     runtime: 'all' | 'node' | 'python' = 'all'
   ): Promise<ResolveSkillRuntimesResult> => {

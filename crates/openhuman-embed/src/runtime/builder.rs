@@ -30,13 +30,9 @@ use crate::Session;
 // the default triples through this module.
 pub(crate) use super::build::apply_provider;
 
-/// Whether `services` asks for any background work beyond the one-shot
-/// harness init, which a library runtime has never started on its own.
+/// Whether `services` asks for any background work.
 pub(crate) fn requests_background_services(services: ServiceSet) -> bool {
-    ServiceSet {
-        harness_init: false,
-        ..services
-    } != ServiceSet::none()
+    services != ServiceSet::none()
 }
 
 #[cfg(test)]
@@ -347,12 +343,12 @@ impl RuntimeBuilder {
 
     /// Override which background services run.
     ///
-    /// The library default is deliberately minimal (only the harness init
-    /// step): cron, the login-gated services and the memory queue each write
+    /// The library default is deliberately minimal (no services): cron, the
+    /// login-gated services and the memory queue each write
     /// to the workspace on their own schedule, turning a library call into a
     /// background process the caller did not ask for.
     ///
-    /// A set that selects anything beyond `harness_init` (`cron: true` to let
+    /// A set that selects background work (`cron: true` to let
     /// [`crate::Runtime::cron`] jobs fire on their own, say) is started by
     /// [`build`](Self::build) and stopped when the runtime drops; see
     /// [`crate::Runtime::start_services`] / [`crate::Runtime::stop_services`]. Starting is

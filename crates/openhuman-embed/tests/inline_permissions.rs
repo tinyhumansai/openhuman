@@ -165,4 +165,35 @@ async fn scenario() {
         1,
         "closing the UI granted permission"
     );
+    repeated_permissions(&runtime).await;
+}
+
+async fn repeated_permissions(runtime: &Runtime) {
+    let provider = scripted_provider(vec![tool_call_completion("probe", "{}")], "done").await;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let tool_calls = calls.clone();
+    let agent = runtime
+        .agent(
+            AgentSpec::new("repeated-permissions")
+                .provider(route(&provider, "fixture"))
+                .definition(
+                    AgentDefinitionSpec::new()
+                        .bare_prompt("Use probe then answer")
+                        .tools(ToolScopeSpec::HostOnly),
+                )
+                .tools(move |_| {
+                    HostTurnTools::advertised(vec![Box::new(Probe(tool_calls.clone()))])
+                })
+                .can_use_tool(|_| {
+                    Box::pin(async { ToolHookDecision::Deny("first policy refused".into()) })
+                })
+                .can_use_tool(|_| Box::pin(async { ToolHookDecision::Proceed })),
+        )
+        .unwrap();
+    assert!(agent.run("perform probe").await.is_err());
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "later permission erased the earlier denial"
+    );
 }

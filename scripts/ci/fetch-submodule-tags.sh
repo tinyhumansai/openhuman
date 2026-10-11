@@ -12,7 +12,7 @@ cd "$(dirname "$0")/../.."
 
 for module in \
   vendor/tinydocs vendor/tinywallet vendor/tinymemory vendor/tinyjuice \
-  vendor/tinyvoice vendor/tinyruntime vendor/tinymcp vendor/tinyconnectors \
+  vendor/tinyvoice vendor/tinymcp vendor/tinyconnectors \
   vendor/tinysearch vendor/tinybox vendor/tinychannels vendor/tinyhosts
 do
   if [ "$(git -C "$module" rev-parse --is-shallow-repository)" = true ]; then

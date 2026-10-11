@@ -183,7 +183,7 @@ brain_limit = 6
 history_limit = 6
 team_limit = 3                   # 0 leaves other agents' turns out
 build_beliefs_every = 10         # turns between belief builds; 0 = off
-pre_turn_timeout_ms = 5000
+pre_turn_timeout_ms = 10000
 compaction_timeout_ms = 8000
 build_delay_secs = 300
 

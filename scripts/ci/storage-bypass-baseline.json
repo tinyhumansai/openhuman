@@ -330,13 +330,6 @@
   },
   {
     "rule": "json-write",
-    "path": "crates/openhuman-core/src/runtime/python_server/kompress.rs",
-    "line": 150,
-    "text": "tokio::fs::write(",
-    "occurrence": 1
-  },
-  {
-    "rule": "json-write",
     "path": "crates/openhuman-core/src/security/audit.rs",
     "line": 284,
     "text": "let mut file = OpenOptions::new()",

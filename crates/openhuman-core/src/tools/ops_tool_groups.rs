@@ -215,11 +215,6 @@ pub(crate) fn tool_group(name: &str) -> crate::core::all::DomainGroup {
     if name.starts_with("dashboard_") || name.starts_with("desktop_") {
         return DomainGroup::Desktop;
     }
-    // Runtimes: the managed Node/Python execution tools. These live under
-    // `tools/impl/system/` rather than `runtime/`, so they are matched by name.
-    if name == "node_exec" || name == "npm_exec" || name == "python_exec" {
-        return DomainGroup::Runtimes;
-    }
     // Inference: the CCR retrieval surface. Matched against the crate's own
     // constant list rather than a name prefix — the live tool is
     // `juice_retrieve`, and `tokenjuice_retrieve` / `retrieve_tool_output`

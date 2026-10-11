@@ -7,14 +7,13 @@ icon: gear
 
 These are small tools the agent uses to finish a task.
 
+Use the `shell` tool for Node.js, npm, and Python commands. OpenHuman uses the host's `node` and `python3` executables on `PATH`; install them with the platform package manager when needed.
+
 ## Tools in the family
 
 | Tool | What it does |
 | --- | --- |
 | `shell` | Run a shell command. Output is bounded and the exit code is captured. |
-| `node_exec` | Run a Node.js snippet, useful for one-off scripting. |
-| `npm_exec` | Run an `npm`, `pnpm` or `yarn` script. |
-| `python_exec` | Run a Python 3 snippet or `.py` script. |
 | `current_time` | Get the current time in any timezone, with formatting options. |
 | `schedule` | Do something once at a given time. For recurring jobs see [Cron](cron.md). |
 | `pushover` | Send a push notification to your devices. |

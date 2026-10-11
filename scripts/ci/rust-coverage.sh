@@ -42,9 +42,21 @@ llvm_cov_package() {
   bash scripts/ci-cancel-aware.sh cargo llvm-cov "$@"
 }
 
-llvm_cov_embed() {
+llvm_cov_product_facade() {
   bash scripts/ci-cancel-aware.sh cargo llvm-cov \
     --features "${PRODUCT_FEATURES}" "$@"
+}
+
+llvm_cov_embed() {
+  (
+    # Embed's integration hosts persist fixture credentials with the real
+    # encrypted backend. Supply only this suite a disposable master key;
+    # core's missing-key regressions and the caller's environment stay intact.
+    unset OPENHUMAN_KEYRING_MASTER_KEY_FILE
+    OPENHUMAN_KEYRING_MASTER_KEY="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
+    export OPENHUMAN_KEYRING_MASTER_KEY
+    llvm_cov_product_facade "$@"
+  )
 }
 
 integration_test_targets() {
@@ -220,7 +232,7 @@ fi
 # remaining crates do not expose that feature vocabulary.
 suite "openhuman-embed" llvm_cov_embed --no-report --no-fail-fast -p openhuman-embed --all-targets
 suite "openhuman-rpc" llvm_cov_package --no-report --no-fail-fast -p openhuman-rpc --all-targets
-suite "openhuman-tinyhumans" llvm_cov_embed --no-report --no-fail-fast -p openhuman-tinyhumans --all-targets
+suite "openhuman-tinyhumans" llvm_cov_product_facade --no-report --no-fail-fast -p openhuman-tinyhumans --all-targets
 # The terminal frontend builds the core a third time (default features, not the
 # product set). It is on by default and on in the PR lane; OH_COV_TUI=0 is an
 # opt-out for local runs.

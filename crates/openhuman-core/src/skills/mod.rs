@@ -17,7 +17,7 @@
 //! inert serde/std-only type definitions with zero coupling to the gated
 //! siblings, and they are load-bearing far outside this domain:
 //! `tools::traits` re-exports `ToolResult`/`ToolContent` out of [`types`] as
-//! the crate's unified tool-result type (`mcp`, `runtime::node`, and
+//! the crate's unified tool-result type (`mcp` and
 //! ~236 files consume it), and `Workflow`/`WorkflowFrontmatter`/
 //! `WorkflowScope` from [`ops_types`] appear in always-on agent-harness and
 //! prompt signatures. Gating them would take down the entire tool trait

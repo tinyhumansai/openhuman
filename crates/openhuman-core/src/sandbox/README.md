@@ -2,7 +2,7 @@
 
 Decides where an agent's command runs: directly on the host, inside an OS jail
 confined to the action dir, or in a throwaway Docker container. The tools that
-spawn processes (`shell`, `node_exec`, `npm_exec`, `python_exec`) and the
+spawn processes (`shell`) and the
 flows code-runner capability call into it when the agent runs in sandboxed
 mode. The core process itself always runs on the host; only the spawned
 command is confined.
@@ -205,9 +205,8 @@ The settings surface (`get_sandbox_settings`, `[security.sandbox]` and
   OS jail and spawns through `NoopBackend`. Check the handle's status, not the
   kind.
 - `ShellTool::run_sandboxed` (`tools/impl/system/shell.rs`) passes
-  `RuntimeConfig::default()` rather than the loaded config, while
-  `node_exec`, `npm_exec`, `python_exec` and the flows code runner pass the
-  loaded `runtime` block. So `[runtime] kind = "docker"` and
+  `RuntimeConfig::default()` rather than the loaded config, while the flows
+  code runner passes the loaded `runtime` block. So `[runtime] kind = "docker"` and
   `[runtime.local_jail]` do not reach the shell tool's sandbox today.
 - Every current caller passes `is_remote_session = false`, so in practice
   Docker is chosen only by `[runtime] kind = "docker"`.

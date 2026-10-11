@@ -75,7 +75,6 @@ pub mod memory;
 pub mod modules;
 pub mod platform;
 pub mod profiles;
-pub mod runtime;
 pub mod sandbox;
 pub mod search;
 pub mod security;

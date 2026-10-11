@@ -431,7 +431,7 @@ impl Runtime {
 
     /// Start the background services this runtime's [`ServiceSet`] selects
     /// (the cron scheduler, channel listeners, …). [`RuntimeBuilder::build`]
-    /// already does this when the set asks for more than `harness_init`; call
+    /// already does this when the set asks for background work; call
     /// it after [`stop_services`](Self::stop_services) to restart them.
     /// Idempotent while they run.
     pub async fn start_services(&self) {
