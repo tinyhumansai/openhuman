@@ -432,3 +432,66 @@ fn older_on_disk_schema_under_a_cached_path_is_remigrated() {
     .unwrap();
     assert_eq!(get_source(&config, &src.id).unwrap().id, src.id);
 }
+
+/// The pipeline reads the ledger once and decides both dedup questions from
+/// the map, so the map must answer exactly what the point queries do: an
+/// entry's presence is `was_ingested`, and its hash matching is
+/// `is_ingested`. Checked for every case the pipeline can meet — absent,
+/// present and unchanged, present and edited — and across two sources, since
+/// dedup is per-source.
+#[test]
+fn ingested_hashes_agrees_with_the_point_queries() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let mk = |config: &Config| {
+        add_source(
+            config,
+            ProviderSlug::Github,
+            None,
+            None,
+            github_filter(),
+            1800,
+            SourceTarget::TodoOnly,
+            25,
+        )
+        .unwrap()
+    };
+    let a = mk(&config);
+    let b = mk(&config);
+
+    let seen = sample_task("42", "Fix bug", "2025-01-01T00:00:00Z");
+    let seen_hash = content_hash(&seen);
+    let edited = sample_task("42", "Fix bug", "2025-02-01T00:00:00Z");
+    let edited_hash = content_hash(&edited);
+    assert_ne!(seen_hash, edited_hash);
+
+    mark_ingested(&config, &a.id, &seen).unwrap();
+    let other = sample_task("99", "Other", "2025-01-01T00:00:00Z");
+    mark_ingested(&config, &b.id, &other).unwrap();
+
+    let map = ingested_hashes(&config, &a.id).unwrap();
+    // Only this source's entries, which is what `WHERE source_id` gave.
+    assert_eq!(map.len(), 1);
+    assert!(!map.contains_key("99"));
+
+    for (external_id, hash) in [
+        ("42", seen_hash.as_str()),
+        ("42", edited_hash.as_str()),
+        ("7", seen_hash.as_str()),
+    ] {
+        assert_eq!(
+            map.get(external_id).map(String::as_str) == Some(hash),
+            is_ingested(&config, &a.id, external_id, hash).unwrap(),
+            "is_ingested mismatch for ({external_id}, {hash})"
+        );
+        assert_eq!(
+            map.contains_key(external_id),
+            was_ingested(&config, &a.id, external_id).unwrap(),
+            "was_ingested mismatch for {external_id}"
+        );
+    }
+
+    // An empty ledger is an empty map, not an error.
+    let fresh = mk(&config);
+    assert!(ingested_hashes(&config, &fresh.id).unwrap().is_empty());
+}

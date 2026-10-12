@@ -261,3 +261,39 @@ fn a_corrupt_ledger_payload_is_an_error() {
         .unwrap();
     assert!(store.list_ingested("s", 10).is_err());
 }
+
+/// Same contract as the SQLite backend: the map the pipeline reads once must
+/// answer exactly what `is_ingested` / `was_ingested` answer per call.
+#[test]
+fn ingested_hashes_agrees_with_the_point_queries() {
+    let store = docs();
+    store.add_source(&source("s")).unwrap();
+    store.add_source(&source("t")).unwrap();
+
+    let original = task("1", "Fix it");
+    let edited = task("1", "Fix it properly");
+    assert_ne!(content_hash(&original), content_hash(&edited));
+    store.mark_ingested("s", &original).unwrap();
+    store.mark_ingested("t", &task("2", "Other")).unwrap();
+
+    let map = store.ingested_hashes("s").unwrap();
+    assert_eq!(map.len(), 1, "only this source's ledger");
+    assert!(!map.contains_key("2"));
+
+    for (external_id, hash) in [
+        ("1", content_hash(&original)),
+        ("1", content_hash(&edited)),
+        ("9", content_hash(&original)),
+    ] {
+        assert_eq!(
+            map.get(external_id) == Some(&hash),
+            store.is_ingested("s", external_id, &hash).unwrap(),
+            "is_ingested mismatch for ({external_id}, {hash})"
+        );
+        assert_eq!(
+            map.contains_key(external_id),
+            store.was_ingested("s", external_id).unwrap(),
+            "was_ingested mismatch for {external_id}"
+        );
+    }
+}

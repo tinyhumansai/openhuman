@@ -291,6 +291,29 @@ impl Docs {
         })
     }
 
+    /// The source's whole ledger as `external_id -> content_hash`. Reads the
+    /// same documents [`Self::list_ingested_refs`] does and pulls one more
+    /// field out of them, so it costs no extra round-trip.
+    pub(super) fn ingested_hashes(
+        &self,
+        source_id: &str,
+    ) -> Result<std::collections::HashMap<String, String>> {
+        let query = Query::filter(Filter::eq("source_id", source_id));
+        self.0.run(|docs| async move {
+            Ok(docs
+                .query_all(INGESTED, &query)
+                .await?
+                .iter()
+                .filter_map(|stored| {
+                    Some((
+                        text(&stored.doc, "external_id")?.to_string(),
+                        text(&stored.doc, "content_hash")?.to_string(),
+                    ))
+                })
+                .collect())
+        })
+    }
+
     pub(super) fn list_ingested_refs(&self, source_id: &str) -> Result<Vec<IngestedTaskRef>> {
         let query = Query::filter(Filter::eq("source_id", source_id))
             .sort(Sort::asc("ingested_ms"))

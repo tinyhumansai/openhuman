@@ -12,7 +12,7 @@
 //! function here is served from the document port instead
 //! (`store_documents.rs`).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
@@ -353,6 +353,33 @@ pub fn was_ingested(config: &Config, source_id: &str, external_id: &str) -> Resu
             conn.prepare("SELECT 1 FROM ingested_tasks WHERE source_id = ?1 AND external_id = ?2")?;
         let mut rows = stmt.query(params![source_id, external_id])?;
         Ok(rows.next()?.is_some())
+    })
+}
+
+/// The whole dedup ledger for one source as `external_id -> content_hash`.
+///
+/// One query in place of the per-task [`is_ingested`] / [`was_ingested`] pair:
+/// both are decided by this map, since `is_ingested` is "an entry exists and
+/// its hash matches" and `was_ingested` is "an entry exists". That matters
+/// because [`with_connection`] opens a fresh SQLite connection and runs
+/// [`ensure_schema_initialized`] on every call, so a fetch of N tasks paid
+/// 2N of those.
+pub fn ingested_hashes(config: &Config, source_id: &str) -> Result<HashMap<String, String>> {
+    if let Some(docs) = super::store_documents::current()? {
+        return docs.ingested_hashes(source_id);
+    }
+    with_connection(config, |conn| {
+        let mut stmt = conn
+            .prepare("SELECT external_id, content_hash FROM ingested_tasks WHERE source_id = ?1")?;
+        let rows = stmt.query_map(params![source_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut out = HashMap::new();
+        for row in rows {
+            let (external_id, hash) = row?;
+            out.insert(external_id, hash);
+        }
+        Ok(out)
     })
 }
 
