@@ -47,8 +47,13 @@ const EX63_ENV = { CI_SCRATCH_DIR: "/scratch" };
 
 test("EX63 installs script dependencies only after changed areas are detected", () => {
   const detect = ciLanes.indexOf("- name: Detect changed areas");
-  const install = ciLanes.indexOf("- name: Install jq for release-script tests");
-  assert.ok(detect >= 0 && install > detect, "filter outputs must exist before they gate jq installation");
+  const install = ciLanes.indexOf(
+    "- name: Install jq for release-script tests",
+  );
+  assert.ok(
+    detect >= 0 && install > detect,
+    "filter outputs must exist before they gate jq installation",
+  );
 });
 
 const plans = () => [
@@ -243,6 +248,7 @@ test("untouched areas leave only the always-on gates", () => {
     "static:feature-forwarding",
     "static:crate-chain",
     "static:process-statics",
+    "static:storage-bypass",
     "static:module-pins",
     "static:submodule-monotonic",
   ]);
@@ -280,6 +286,7 @@ test("the storage area arms only the storage-drivers lane, with the sqlite and f
         "static:feature-forwarding",
         "static:crate-chain",
         "static:process-statics",
+        "static:storage-bypass",
         "static:module-pins",
         "static:submodule-monotonic",
       ],
@@ -735,4 +742,41 @@ test("process-static scan uses cancellation supervision in both profiles", () =>
       "bash scripts/ci-cancel-aware.sh node scripts/ci/check-process-statics.mjs",
     );
   }
+});
+
+test("storage-bypass runs under cancellation supervision in both profiles", () => {
+  for (const profile of ["hosted", "ex63"]) {
+    const plan = buildPlan({
+      profile,
+      areas: NONE,
+      env: profile === "ex63" ? EX63_ENV : {},
+    });
+    const check = plan.lanes
+      .flatMap((lane) => lane.checks)
+      .find((check) => check.name === "storage-bypass");
+    assert.equal(check.when, true);
+    assert.equal(
+      check.run,
+      "bash scripts/ci-cancel-aware.sh node scripts/ci/check-storage-bypass.mjs",
+    );
+  }
+});
+
+test("storage checker and debt policy changes arm their own scripts lane", () => {
+  const filters = fs.readFileSync(
+    path.join(repoRoot, ".github/ci-paths-filter.yml"),
+    "utf8",
+  );
+  const scripts = filters.split(/^scripts:\s*$/m)[1].split(/^\S[^\n]*:/m)[0];
+  for (const pattern of [
+    "scripts/ci/check-storage-bypass.mjs",
+    "scripts/ci/check-crate-chain.mjs",
+    "scripts/ci/storage-bypass-debt.mjs",
+    "scripts/ci/storage-bypass*.json",
+    "scripts/ci/storage-bypass*.md",
+  ])
+    assert.ok(
+      scripts.includes(`'${pattern}'`),
+      `${pattern} must arm the scripts area`,
+    );
 });

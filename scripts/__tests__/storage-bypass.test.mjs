@@ -142,6 +142,81 @@ test("a new database open fails the check", () => {
   );
 });
 
+test("an embed Tokio file writer cannot bypass the host storage scan", () => {
+  const { status, out } = run(
+    {
+      "crates/openhuman-embed/src/preferences.rs":
+        "async fn save() { tokio::fs::write(path, bytes).await; }\n",
+    },
+    [],
+  );
+  assert.equal(status, 1);
+  assert.match(out, /New storage-bypass sites/);
+  assert.match(
+    out,
+    /json-write: crates\/openhuman-embed\/src\/preferences\.rs:1/,
+  );
+});
+
+test("every host crate rejects a new raw state writer", () => {
+  for (const name of [
+    "core",
+    "embed",
+    "tinyhumans",
+    "rpc",
+    "app",
+    "cli",
+    "tui",
+  ]) {
+    const rel = `crates/openhuman-${name}/src/new_state.rs`;
+    const result = run(
+      { [rel]: "async fn save() { tokio::fs::write(path, bytes).await; }\n" },
+      [],
+    );
+    assert.equal(result.status, 1, name);
+    assert.ok(result.out.includes(rel), name);
+  }
+});
+
+test("file mutations, temporary builders and serializers are findings", () => {
+  for (const source of [
+    "tokio::fs::rename(old, new);",
+    "std::fs::copy(old, new);",
+    "std::fs::hard_link(old, new);",
+    "tempfile::Builder::new();",
+    "serde_json::to_writer(file, value);",
+    "serde_json::to_writer_pretty(file, value);",
+  ])
+    assert.ok(scan("x.rs", source).length > 0, source);
+});
+
+test("known filesystem writer helpers are reviewed at their definition", () => {
+  for (const name of ["write_private", "create_private", "write_atomic"]) {
+    assert.ok(
+      scan("x.rs", `pub fn ${name}(path: &Path) { helper(path); }`).length > 0,
+      name,
+    );
+  }
+});
+
+test("vendored openers with database and stream path arguments are findings", () => {
+  for (const source of [
+    'let store = OtherStore::open(root.join("cache.db"));',
+    'let store = OtherStore::open(root.join("messages.jsonl"));',
+  ])
+    assert.ok(scan("x.rs", source).length > 0, source);
+});
+
+test("baseline regeneration cannot accept an additional core writer", () => {
+  const result = run(
+    { [`${SRC}/foo/store.rs`]: "std::fs::write(p, b);\n" },
+    [],
+    ["--write-baseline"],
+  );
+  assert.equal(result.status, 1);
+  assert.deepEqual(result.after, []);
+});
+
 test("the storage module, tests and allowlisted fallbacks are not flagged", () => {
   const { status } = run(
     {
@@ -170,15 +245,14 @@ test("a fixed site left in the baseline fails until removed", () => {
   assert.match(out, /Fixed sites still in the baseline/);
 });
 
-test("--write-baseline records the current sites", () => {
+test("--write-baseline refuses a missing debt baseline", () => {
   const { status, after } = run(
     { [`${SRC}/foo/store.rs`]: "fn f() { std::fs::write(p, b); }\n" },
     null,
     ["--write-baseline"],
   );
-  assert.equal(status, 0);
-  assert.equal(after.length, 1);
-  assert.equal(after[0].rule, "json-write");
+  assert.equal(status, 1);
+  assert.equal(after, null);
 });
 
 test("an allowlisted file may hold only its pinned site", () => {
