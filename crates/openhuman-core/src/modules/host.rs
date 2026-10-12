@@ -111,6 +111,19 @@ impl ModuleRuntime {
 ///
 /// Does not panic: a lost initialisation race reuses the winner's runtime.
 pub async fn runtime() -> tinybus::Result<&'static ModuleRuntime> {
+    runtime_now()
+}
+
+/// Spawn lifecycle cleanup on the process executor, without loading an artifact.
+pub(crate) fn spawn_cleanup<F>(future: F) -> tinybus::Result<tokio::task::JoinHandle<F::Output>>
+where
+    F: std::future::Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    Ok(runtime_now()?.spawn(future))
+}
+
+fn runtime_now() -> tinybus::Result<&'static ModuleRuntime> {
     if let Some(existing) = RUNTIME.get() {
         return Ok(existing);
     }

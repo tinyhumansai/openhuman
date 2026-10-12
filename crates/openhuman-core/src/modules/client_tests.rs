@@ -325,7 +325,11 @@ async fn private_object_clients_dispatch_only_to_the_configured_object() {
         )
         .unwrap();
     let record = registry::find("tinysearch").unwrap();
-    let object = ModuleObjectClient { record, proxy };
+    let object = ModuleObjectClient {
+        record,
+        proxy,
+        timeout: None,
+    };
 
     assert_eq!(object.call::<u32>("Sum", (20_u32, 22_u32)).await, Ok(42));
     assert_eq!(root_calls.load(std::sync::atomic::Ordering::SeqCst), 0);

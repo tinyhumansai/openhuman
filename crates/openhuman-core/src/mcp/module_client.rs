@@ -26,6 +26,8 @@ use tinymcp_bus::{
     ValidateServerArgumentsRequest,
 };
 
+use super::host_cleanup::{CleanupAction, CleanupReservation, CLEANUP_RESERVATIONS};
+
 use crate::{
     config::Config,
     modules::{client::ModuleCallError, client::ModuleClient},
@@ -35,15 +37,6 @@ const MODULE: &str = "tinymcp";
 const TRANSITION_TIMEOUT: Duration = Duration::from_secs(30);
 const TRANSITION_POLL_INTERVAL: Duration = Duration::from_millis(20);
 static CLIENTS: OnceLock<Mutex<HashMap<PathBuf, Arc<McpConfiguredClient>>>> = OnceLock::new();
-type CleanupAction = Arc<dyn Fn() -> bool + Send + Sync>;
-
-#[derive(Default)]
-struct CleanupReservation {
-    after_close: Mutex<Option<CleanupAction>>,
-}
-
-static CLEANUP_RESERVATIONS: OnceLock<Mutex<HashMap<PathBuf, Arc<CleanupReservation>>>> =
-    OnceLock::new();
 static SHUTDOWN_REGISTERED: AtomicBool = AtomicBool::new(false);
 static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
 
@@ -127,115 +120,15 @@ pub(crate) trait McpModulePort: Send + Sync {
     }
 }
 
-struct TinyMcpPort {
-    root: ModuleClient,
-}
+#[path = "module_port.rs"]
+mod module_port;
+use module_port::TinyMcpPort;
 
-#[async_trait]
-impl McpModulePort for TinyMcpPort {
-    async fn open_configured(
-        &self,
-        data_dir: &str,
-        config: &McpClientConfig,
-    ) -> Result<OpenConfiguredResponse, ModuleCallError> {
-        self.root
-            .call_confidential(
-                MODULE,
-                names::methods::OPEN_CONFIGURED,
-                (OpenConfiguredRequest {
-                    data_dir: data_dir.to_owned(),
-                    client: config.clone(),
-                },),
-            )
-            .await
-    }
+#[path = "cached_cleanup.rs"]
+mod cached_cleanup;
 
-    async fn close(&self, data_dir: &str) -> Result<Option<String>, ModuleCallError> {
-        self.root
-            .call(MODULE, names::methods::CLOSE, (data_dir.to_owned(),))
-            .await
-    }
-
-    async fn transition_status(
-        &self,
-        transition_id: &str,
-    ) -> Result<TransitionStatus, ModuleCallError> {
-        self.root
-            .call(
-                MODULE,
-                names::methods::TRANSITION_STATUS,
-                (transition_id.to_owned(),),
-            )
-            .await
-    }
-
-    async fn call_object(
-        &self,
-        object_path: &str,
-        member: &str,
-        args: Value,
-        confidential: bool,
-    ) -> Result<Value, ModuleCallError> {
-        #[cfg(feature = "modules")]
-        {
-            let object = self.root.object_client(MODULE, object_path).await?;
-            if confidential {
-                object.call_confidential(member, args).await
-            } else {
-                object.call(member, args).await
-            }
-        }
-        #[cfg(not(feature = "modules"))]
-        {
-            let _ = (object_path, member, args, confidential);
-            Err(ModuleCallError::Unavailable)
-        }
-    }
-
-    async fn prepare_agent_tools(
-        &self,
-        request: PrepareAgentToolsRequest,
-    ) -> Result<Vec<McpToolPresentation>, ModuleCallError> {
-        self.root
-            .call(MODULE, names::methods::PREPARE_AGENT_TOOLS, (request,))
-            .await
-    }
-
-    async fn validate_server_arguments(
-        &self,
-        request: ValidateServerArgumentsRequest,
-    ) -> Result<ServerArgumentsValidation, ModuleCallError> {
-        self.root
-            .call_confidential(
-                MODULE,
-                names::methods::VALIDATE_SERVER_ARGUMENTS,
-                (request,),
-            )
-            .await
-    }
-
-    async fn normalize_tool_arguments(
-        &self,
-        arguments: Option<Value>,
-    ) -> Result<Map<String, Value>, ModuleCallError> {
-        self.root
-            .call_confidential(
-                MODULE,
-                names::methods::NORMALIZE_TOOL_ARGUMENTS,
-                (arguments,),
-            )
-            .await
-    }
-
-    async fn transform_text(
-        &self,
-        request: tinymcp_bus::TransformTextRequest,
-    ) -> Result<String, ModuleCallError> {
-        self.root
-            .call_confidential(MODULE, names::methods::TRANSFORM_TEXT, (request,))
-            .await
-    }
-}
+#[path = "agent_cleanup.rs"]
+pub(crate) mod agent_cleanup;
 
 /// One workspace's serialized TinyMCP lifecycle and private object proxy.
 pub(crate) struct McpConfiguredClient {
@@ -391,9 +284,7 @@ impl McpConfiguredClient {
             .to_owned();
         Ok(Self::with_port(
             data_dir,
-            Box::new(TinyMcpPort {
-                root: ModuleClient::new(config.clone()),
-            }),
+            Box::new(TinyMcpPort::new(ModuleClient::new(config.clone()))),
         ))
     }
 
@@ -427,257 +318,6 @@ impl McpConfiguredClient {
         }
     }
 
-    /// Close an already-open agent-scoped client without creating one. A
-    /// failed close remains in the cache, marked unavailable, so shutdown or
-    /// a later cleanup attempt can retry the module's retained transition.
-    pub(crate) async fn close_agent_data_dir(data_dir: &std::path::Path) -> bool {
-        let key = data_dir.to_path_buf();
-        let reservation = Self::reservation_for(&key);
-        let Some(client) = Self::retire_cached_client(&key) else {
-            return Self::finish_cleanup(&key, None, reservation);
-        };
-        if let Some(cleaned) = Self::finish_closed_client_synchronously(&key, &client, &reservation)
-        {
-            return cleaned;
-        }
-        Self::close_retired_client(key, client, reservation).await
-    }
-
-    /// Marks the exact cached client unavailable before scheduling cleanup.
-    /// If no Tokio runtime is active, the retired client remains cached for the
-    /// registered shutdown hook to close later.
-    pub(crate) fn schedule_agent_close_data_dir(data_dir: &std::path::Path) {
-        let key = data_dir.to_path_buf();
-        let reservation = Self::reservation_for(&key);
-        let Some(client) = Self::retire_cached_client(&key) else {
-            Self::finish_cleanup(&key, None, reservation);
-            return;
-        };
-        if Self::finish_closed_client_synchronously(&key, &client, &reservation).is_some() {
-            return;
-        }
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-            return;
-        };
-        runtime.spawn(async move {
-            if !Self::close_retired_client(key, client, reservation).await {
-                tracing::warn!("[mcp] agent client close remains pending for retry");
-            }
-        });
-    }
-
-    /// Retires the exact scoped client and runs `after_close` only after the
-    /// module acknowledges its close. The path remains unavailable until the
-    /// callback succeeds, so a replacement cannot reuse files being purged.
-    pub(crate) fn schedule_agent_close_and_cleanup(
-        data_dir: &std::path::Path,
-        after_close: CleanupAction,
-    ) {
-        let key = data_dir.to_path_buf();
-        let reservation = Self::reservation_with_action(&key, after_close);
-        let Some(client) = Self::retire_cached_client(&key) else {
-            if !Self::finish_cleanup(&key, None, reservation) {
-                tracing::warn!("[mcp] agent cleanup remains pending for retry");
-            }
-            return;
-        };
-        if Self::finish_closed_client_synchronously(&key, &client, &reservation).is_some() {
-            return;
-        }
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-            return;
-        };
-        runtime.spawn(async move {
-            if !Self::close_retired_client(key, client, reservation).await {
-                tracing::warn!("[mcp] agent close and cleanup remain pending for retry");
-            }
-        });
-    }
-
-    fn retry_orphaned_cleanups() {
-        let reservations = CLEANUP_RESERVATIONS
-            .get()
-            .map(|reservations| {
-                reservations
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .iter()
-                    .map(|(path, reservation)| (path.clone(), Arc::clone(reservation)))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        for (data_dir, reservation) in reservations {
-            let has_client = CLIENTS.get().is_some_and(|clients| {
-                clients
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .contains_key(&data_dir)
-            });
-            if !has_client {
-                Self::finish_cleanup(&data_dir, None, reservation);
-            }
-        }
-    }
-
-    pub(crate) fn agent_close_pending(data_dir: &std::path::Path) -> bool {
-        Self::cleanup_pending(data_dir)
-            || CLIENTS
-                .get()
-                .and_then(|clients| {
-                    clients
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .get(data_dir)
-                        .map(|client| client.retiring.load(Ordering::Acquire))
-                })
-                .unwrap_or(false)
-    }
-
-    fn cleanup_pending(data_dir: &std::path::Path) -> bool {
-        CLEANUP_RESERVATIONS.get().is_some_and(|reservations| {
-            reservations
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .contains_key(data_dir)
-        })
-    }
-
-    fn reservation_for(data_dir: &std::path::Path) -> Arc<CleanupReservation> {
-        let reservations = CLEANUP_RESERVATIONS.get_or_init(|| Mutex::new(HashMap::new()));
-        let mut reservations = reservations
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        Arc::clone(
-            reservations
-                .entry(data_dir.to_path_buf())
-                .or_insert_with(|| Arc::new(CleanupReservation::default())),
-        )
-    }
-
-    fn reservation_with_action(
-        data_dir: &std::path::Path,
-        action: CleanupAction,
-    ) -> Arc<CleanupReservation> {
-        loop {
-            let reservation = Self::reservation_for(data_dir);
-            let mut after_close = reservation
-                .after_close
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let current = CLEANUP_RESERVATIONS
-                .get()
-                .and_then(|reservations| {
-                    reservations
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .get(data_dir)
-                        .is_some_and(|stored| Arc::ptr_eq(stored, &reservation))
-                        .then_some(())
-                })
-                .is_some();
-            if !current {
-                continue;
-            }
-            after_close.get_or_insert(action);
-            return Arc::clone(&reservation);
-        }
-    }
-
-    fn retire_cached_client(data_dir: &std::path::Path) -> Option<Arc<Self>> {
-        let clients = CLIENTS.get().map(|clients| {
-            clients
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-        })?;
-        let client = clients.get(data_dir)?;
-        client.retiring.store(true, Ordering::Release);
-        Some(Arc::clone(client))
-    }
-
-    fn finish_closed_client_synchronously(
-        data_dir: &std::path::Path,
-        client: &Arc<Self>,
-        reservation: &Arc<CleanupReservation>,
-    ) -> Option<bool> {
-        let Ok(state) = client.state.try_lock() else {
-            return None;
-        };
-        let is_closed = matches!(&*state, State::Closed);
-        drop(state);
-        is_closed.then(|| {
-            Self::finish_cleanup(data_dir, Some(Arc::clone(client)), Arc::clone(reservation))
-        })
-    }
-
-    async fn close_retired_client(
-        data_dir: PathBuf,
-        client: Arc<Self>,
-        reservation: Arc<CleanupReservation>,
-    ) -> bool {
-        match client.close().await {
-            Ok(()) => Self::finish_cleanup(&data_dir, Some(client), reservation),
-            Err(error) => {
-                tracing::warn!(?error, "[mcp] agent client close remains pending");
-                false
-            }
-        }
-    }
-
-    fn finish_cleanup(
-        data_dir: &std::path::Path,
-        client: Option<Arc<Self>>,
-        reservation: Arc<CleanupReservation>,
-    ) -> bool {
-        let after_close = reservation
-            .after_close
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let reservations = CLEANUP_RESERVATIONS.get_or_init(|| Mutex::new(HashMap::new()));
-        let is_current = reservations
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(data_dir)
-            .is_some_and(|stored| Arc::ptr_eq(stored, &reservation));
-        if !is_current {
-            return false;
-        }
-        let mut clients = if let Some(client) = client.as_ref() {
-            let Some(clients) = CLIENTS.get() else {
-                return false;
-            };
-            let clients = clients
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if !clients
-                .get(data_dir)
-                .is_some_and(|current| Arc::ptr_eq(current, client))
-            {
-                return false;
-            }
-            Some(clients)
-        } else {
-            None
-        };
-        if after_close.as_ref().is_some_and(|action| !action()) {
-            return false;
-        }
-        if let Some(clients) = clients.as_mut() {
-            clients.remove(data_dir);
-        }
-        let mut reservations = reservations
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if reservations
-            .get(data_dir)
-            .is_some_and(|stored| Arc::ptr_eq(stored, &reservation))
-        {
-            reservations.remove(data_dir);
-            true
-        } else {
-            false
-        }
-    }
-
     /// Calls one member on this workspace's private configured object.
     pub(crate) async fn call<R: DeserializeOwned>(
         &self,
@@ -705,10 +345,8 @@ impl McpConfiguredClient {
         &self,
         request: PrepareAgentToolsRequest,
     ) -> Result<Vec<McpToolPresentation>, ModuleCallError> {
-        if SHUTTING_DOWN.load(Ordering::Acquire) {
-            return Err(ModuleCallError::Unavailable);
-        }
-        if self.retiring.load(Ordering::Acquire) {
+        let _accepted = self.state.lock().await;
+        if SHUTTING_DOWN.load(Ordering::Acquire) || self.retiring.load(Ordering::Acquire) {
             return Err(ModuleCallError::Unavailable);
         }
         self.port.prepare_agent_tools(request).await
@@ -737,10 +375,8 @@ impl McpConfiguredClient {
         &self,
         request: ValidateServerArgumentsRequest,
     ) -> Result<ServerArgumentsValidation, ModuleCallError> {
-        if SHUTTING_DOWN.load(Ordering::Acquire) {
-            return Err(ModuleCallError::Unavailable);
-        }
-        if self.retiring.load(Ordering::Acquire) {
+        let _accepted = self.state.lock().await;
+        if SHUTTING_DOWN.load(Ordering::Acquire) || self.retiring.load(Ordering::Acquire) {
             return Err(ModuleCallError::Unavailable);
         }
         self.port.validate_server_arguments(request).await
@@ -752,10 +388,8 @@ impl McpConfiguredClient {
         &self,
         arguments: Option<Value>,
     ) -> Result<Map<String, Value>, ModuleCallError> {
-        if SHUTTING_DOWN.load(Ordering::Acquire) {
-            return Err(ModuleCallError::Unavailable);
-        }
-        if self.retiring.load(Ordering::Acquire) {
+        let _accepted = self.state.lock().await;
+        if SHUTTING_DOWN.load(Ordering::Acquire) || self.retiring.load(Ordering::Acquire) {
             return Err(ModuleCallError::Unavailable);
         }
         self.port.normalize_tool_arguments(arguments).await
@@ -766,10 +400,8 @@ impl McpConfiguredClient {
         &self,
         value: &str,
     ) -> Result<String, ModuleCallError> {
-        if SHUTTING_DOWN.load(Ordering::Acquire) {
-            return Err(ModuleCallError::Unavailable);
-        }
-        if self.retiring.load(Ordering::Acquire) {
+        let _accepted = self.state.lock().await;
+        if SHUTTING_DOWN.load(Ordering::Acquire) || self.retiring.load(Ordering::Acquire) {
             return Err(ModuleCallError::Unavailable);
         }
         self.port
@@ -1067,3 +699,7 @@ fn current_agent_context_is_removed() -> bool {
 #[cfg(test)]
 #[path = "module_client_tests.rs"]
 mod tests;
+
+#[cfg(all(test, feature = "modules"))]
+#[path = "module_client_owner_tests.rs"]
+mod owner_tests;

@@ -275,7 +275,7 @@ fn removing_an_agent_releases_everything_it_held() {
                 "the context left the registry, so its cron jobs stay dormant"
             );
             assert!(
-                openhuman_core::mcp::host::take_agent_host(&workspace_dir, "parker").is_none(),
+                openhuman_core::mcp::host::take_agent_cleanup(&workspace_dir, "parker").is_none(),
                 "no MCP host is kept for a removed agent"
             );
             removed(parker.turn("again").send().await, "parker");

@@ -9,6 +9,14 @@ use std::sync::OnceLock;
 
 use crate::config::Config;
 
+pub use super::host_cleanup::{
+    reserve_agent_directory, spawn_agent_cleanup, AgentDirectoryCleanup,
+};
+#[cfg(not(feature = "mcp"))]
+pub use super::host_cleanup::{take_agent_cleanup, AgentMcpCleanup};
+#[cfg(feature = "mcp")]
+pub use super::module_client::agent_cleanup::{take_agent_cleanup, AgentMcpCleanup};
+
 const PROXY_SERVICE_KEY: &str = "tool.mcp_client";
 const DEFAULT_CORE_PORT: u16 = 7788;
 static DEFAULT_CONFIG: OnceLock<Config> = OnceLock::new();
@@ -95,10 +103,10 @@ pub fn schedule_agent_close_with_cleanup(
     let _ = after_close();
 }
 
-/// No agent-scoped module cleanup is pending when MCP is disabled.
+/// Host-owned directory cleanup can remain pending even without MCP.
 #[cfg(not(feature = "mcp"))]
-pub fn agent_close_pending(_workspace_dir: &std::path::Path, _agent_id: &str) -> bool {
-    false
+pub fn agent_close_pending(workspace_dir: &std::path::Path, agent_id: &str) -> bool {
+    super::host_cleanup::directory_pending(workspace_dir, agent_id)
 }
 
 /// Converts the MCP section of product configuration to the module contract.

@@ -507,6 +507,7 @@ fn map_ws(err: crate::HarnessError) -> RuntimeError {
         crate::HarnessError::Workspace { what, source } => RuntimeError::Workspace { what, source },
         crate::HarnessError::Invalid(msg) => RuntimeError::Invalid(msg),
         crate::HarnessError::Build(e) => RuntimeError::Build(e),
+        crate::HarnessError::McpCleanup(e) => RuntimeError::Build(e.into()),
         crate::HarnessError::Call(e) => RuntimeError::Call(e),
         crate::HarnessError::AlreadyRunning => RuntimeError::AlreadyRunning,
     }

@@ -65,6 +65,8 @@ pub fn start(config: &crate::config::Config) {
 #[cfg(feature = "mcp")]
 pub(crate) mod module_client;
 
+mod host_cleanup;
+
 /// Brings this domain up — the build without it, where there is nothing to do.
 #[cfg(not(feature = "mcp"))]
 pub fn start(_config: &crate::config::Config) {}

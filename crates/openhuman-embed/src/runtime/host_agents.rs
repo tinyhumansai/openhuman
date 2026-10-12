@@ -15,7 +15,40 @@ use openhuman_core::agent::host_agents::{HostAgent, HostAgentResolver};
 use crate::agent::AgentInner;
 
 /// The live agents of one runtime, by id.
-pub(crate) type AgentMap = Mutex<HashMap<String, Weak<AgentInner>>>;
+pub(crate) type AgentMap = Mutex<AgentRegistry>;
+
+/// Failed cleanup retains its captured owner and purge intent, without keeping
+/// an agent or the runtime guard alive. The original live runtime's
+/// `remove_agent` can retry this record. Its process-local directory fence
+/// survives a lost record, without automatic durable retry or reclamation.
+#[derive(Clone)]
+pub(crate) struct PendingCleanup {
+    pub(crate) cleanup: Option<openhuman_core::mcp::host::AgentMcpCleanup>,
+    pub(crate) directory: openhuman_core::mcp::host::AgentDirectoryCleanup,
+    pub(crate) instance: Weak<AgentInner>,
+    pub(crate) home: std::path::PathBuf,
+    pub(crate) purge: bool,
+    pub(crate) retry_running: Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[derive(Default)]
+pub(crate) struct AgentRegistry {
+    live: HashMap<String, Weak<AgentInner>>,
+    pub(crate) pending: HashMap<String, PendingCleanup>,
+}
+
+impl std::ops::Deref for AgentRegistry {
+    type Target = HashMap<String, Weak<AgentInner>>;
+    fn deref(&self) -> &Self::Target {
+        &self.live
+    }
+}
+
+impl std::ops::DerefMut for AgentRegistry {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.live
+    }
+}
 
 pub(crate) struct RuntimeAgents(pub(crate) Arc<AgentMap>);
 
