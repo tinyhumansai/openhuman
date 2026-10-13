@@ -128,9 +128,16 @@ pub(crate) async fn store_all(
         placed.push((node, item));
     }
 
-    while !placed.is_empty() {
-        let take = placed.len().min(STORE_CHUNK);
-        let chunk: Vec<_> = placed.drain(..take).collect();
+    // Consumed through one iterator rather than `drain(..n)`: draining the
+    // front of a `Vec` shifts every still-pending entry left, which is
+    // O(N^2 / STORE_CHUNK) copying over a large sync — paid exactly on the
+    // syncs this batching is meant to speed up.
+    let mut placed = placed.into_iter();
+    loop {
+        let chunk: Vec<_> = placed.by_ref().take(STORE_CHUNK).collect();
+        if chunk.is_empty() {
+            break;
+        }
         // Cloned because a rejected batch hands nothing back, and the
         // item-by-item retry below needs the items. One clone per chunk
         // against one request per chunk instead of one per item.
