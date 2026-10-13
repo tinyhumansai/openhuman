@@ -19,6 +19,7 @@ describe('builtinCloudProviders', () => {
     ['minimax', 'https://api.minimax.io/v1', 'bearer'],
     ['sumopod', 'https://ai.sumopod.com/v1', 'bearer'],
     ['modelscope', 'https://api-inference.modelscope.cn/v1', 'bearer'],
+    ['llmtr', 'https://llmtr.com/v1', 'bearer'],
   ] as const)('maps %s to its endpoint and auth style', (slug, endpoint, authStyle) => {
     expect(defaultEndpointForBuiltinCloudProvider(slug)).toBe(endpoint);
     expect(authStyleForBuiltinCloudProvider(slug)).toBe(authStyle);
@@ -46,7 +47,16 @@ describe('builtinCloudProviders', () => {
         'vercel-ai-gateway',
         'sumopod',
         'modelscope',
+        'llmtr',
       ])
     );
   });
+
+  it.each(['LLMTR', 'llm-tr', 'llmtr.com', ''])(
+    'resolves no endpoint or auth style for the near-miss slug %j',
+    slug => {
+      expect(defaultEndpointForBuiltinCloudProvider(slug)).toBe('');
+      expect(authStyleForBuiltinCloudProvider(slug)).toBeUndefined();
+    }
+  );
 });

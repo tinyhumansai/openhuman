@@ -64,6 +64,7 @@ fn builtin_cloud_provider_defaults_cover_phase_one_presets() {
             "https://api-inference.modelscope.cn/v1",
             AuthStyle::Bearer,
         ),
+        ("llmtr", "LLMTR", "https://llmtr.com/v1", AuthStyle::Bearer),
     ] {
         let entry = super::builtin_cloud_provider(slug).expect("builtin preset");
         assert_eq!(entry.slug, slug);

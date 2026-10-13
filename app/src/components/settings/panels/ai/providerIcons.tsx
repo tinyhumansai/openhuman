@@ -35,6 +35,7 @@ import fireworksLogo from '../../../../assets/provider-icons/fireworks.svg';
 import gmiLogo from '../../../../assets/provider-icons/gmi.ico';
 import groqLogo from '../../../../assets/provider-icons/groq.svg';
 import kilocodeLogo from '../../../../assets/provider-icons/kilocode.ico';
+import llmtrLogo from '../../../../assets/provider-icons/llmtr.svg';
 import lmstudioLogo from '../../../../assets/provider-icons/lmstudio.svg';
 import minimaxLogo from '../../../../assets/provider-icons/minimax.svg';
 import modelscopeLogo from '../../../../assets/provider-icons/modelscope.svg';
@@ -84,6 +85,7 @@ const PROVIDER_ASSETS: Record<string, ProviderAsset> = {
   gmi: { src: gmiLogo, monochrome: false },
   groq: { src: groqLogo, monochrome: true },
   kilocode: { src: kilocodeLogo, monochrome: false },
+  llmtr: { src: llmtrLogo, monochrome: true },
   lmstudio: { src: lmstudioLogo, monochrome: true },
   minimax: { src: minimaxLogo, monochrome: true },
   modelscope: { src: modelscopeLogo, monochrome: true },

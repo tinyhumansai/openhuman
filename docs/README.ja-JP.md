@@ -260,7 +260,7 @@ Claude Code、Codex、OpenClaw、Hermes を使ったことがあれば、基本�
 | ツール | [ネイティブツール](https://tinyhumans.gitbook.io/openhuman/features/native-tools): シェルとコーダー、スクレイパー、ドキュメント、画像・動画の生成、cron |
 | MCP とスキル | [MCP サーバーとスキルバンドル](https://tinyhumans.gitbook.io/openhuman/features/integrations/mcp-and-skills) |
 | OAuth 連携 | [Composio 経由の119個のアプリ](https://tinyhumans.gitbook.io/openhuman/features/integrations)。何かが起きたときにエージェントを起動する[トリガー](https://tinyhumans.gitbook.io/openhuman/features/integrations/triggers)に対応 |
-| モデル | [ローカルモデル（Ollama、LM Studio、MLX）と26プロバイダーの BYOK](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-and-byok-models)、さらに[自動モデルルーティング](https://tinyhumans.gitbook.io/openhuman/features/model-routing) |
+| モデル | [ローカルモデル（Ollama、LM Studio、MLX）と27プロバイダーの BYOK](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-and-byok-models)、さらに[自動モデルルーティング](https://tinyhumans.gitbook.io/openhuman/features/model-routing) |
 | チャネル | エージェントの窓口となる[14のメッセージングチャネル](https://tinyhumans.gitbook.io/openhuman/features/channels): Telegram、Discord、iMessage、メールなど |
 | ワークフロー | [永続的なワークフローグラフ](https://tinyhumans.gitbook.io/openhuman/features/workflows): cron、イベント、手動のトリガー、承認ステップ、一時停止後の再開 |
 | 安全性 | [承認ゲート](https://tinyhumans.gitbook.io/openhuman/features/approval-gate)、[サンドボックス実行](https://tinyhumans.gitbook.io/openhuman/features/privacy-and-security)（OS のジェイルまたは Docker）、ローカルのみで動かす[プライバシーモード](https://tinyhumans.gitbook.io/openhuman/features/privacy-mode)、秘密情報は [OS のキーリング](https://tinyhumans.gitbook.io/openhuman/features/os-keyring-and-secret-storage)に保存 |

@@ -260,7 +260,7 @@ Claude Code, Codex, OpenClaw, Hermes를 써 보셨다면 이미 아는 개념들
 | 도구 | [네이티브 도구](https://tinyhumans.gitbook.io/openhuman/features/native-tools): 셸과 코더, 스크레이퍼, 문서, 이미지 및 영상 생성, cron |
 | MCP와 스킬 | [MCP 서버와 스킬 번들](https://tinyhumans.gitbook.io/openhuman/features/integrations/mcp-and-skills) |
 | OAuth 연동 | [Composio를 통한 119개 앱](https://tinyhumans.gitbook.io/openhuman/features/integrations), 무슨 일이 생기면 에이전트를 시작하는 [트리거](https://tinyhumans.gitbook.io/openhuman/features/integrations/triggers) 포함 |
-| 모델 | [로컬 모델(Ollama, LM Studio, MLX)과 26개 제공업체용 BYOK](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-and-byok-models), 그리고 [자동 모델 라우팅](https://tinyhumans.gitbook.io/openhuman/features/model-routing) |
+| 모델 | [로컬 모델(Ollama, LM Studio, MLX)과 27개 제공업체용 BYOK](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-and-byok-models), 그리고 [자동 모델 라우팅](https://tinyhumans.gitbook.io/openhuman/features/model-routing) |
 | 채널 | 에이전트 프런트엔드로 쓰는 [메시징 채널 14개](https://tinyhumans.gitbook.io/openhuman/features/channels): Telegram, Discord, iMessage, 이메일 등 |
 | 워크플로 | [내구성 있는 워크플로 그래프](https://tinyhumans.gitbook.io/openhuman/features/workflows): cron, 이벤트, 수동 트리거, 승인 단계, 일시 중지 후 재개 |
 | 안전 | [승인 게이트](https://tinyhumans.gitbook.io/openhuman/features/approval-gate), [샌드박스 실행](https://tinyhumans.gitbook.io/openhuman/features/privacy-and-security)(OS 격리 또는 Docker), 로컬 전용 실행을 위한 [프라이버시 모드](https://tinyhumans.gitbook.io/openhuman/features/privacy-mode), [OS 키링](https://tinyhumans.gitbook.io/openhuman/features/os-keyring-and-secret-storage)에 보관하는 비밀 정보 |

@@ -229,6 +229,14 @@ export const BUILTIN_CLOUD_PROVIDERS: BuiltinCloudProvider[] = [
     tone: TONE.indigo,
     keyPlaceholder: 'ms-...',
   },
+  {
+    slug: 'llmtr',
+    label: 'LLMTR',
+    endpoint: 'https://llmtr.com/v1',
+    authStyle: 'bearer',
+    tone: TONE.rose,
+    keyPlaceholder: 'llmtr-...',
+  },
 ];
 
 // NOTE: Claude Code CLI is intentionally NOT a builtin chip. It is a
