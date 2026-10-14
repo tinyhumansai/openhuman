@@ -1,5 +1,13 @@
 //! [`ApprovalSecurityMiddleware`]: route external-effect tool calls through
 //! OpenHuman's human-in-the-loop approval gate at the tool boundary.
+//!
+//! When the caller attaches the session's permission snapshot
+//! ([`ApprovalSecurityMiddleware::with_session_permission`]), `requires_approval`
+//! first asks whether the permission layer will refuse the call anyway
+//! (issue #7649): this wrap sits OUTSIDE `ToolPolicyMiddleware`, so a
+//! permission-refused call used to raise an approval card and was denied only
+//! after the human answered. A denied verdict skips the prompt — the inner
+//! permission layer answers with its own reason instead.
 
 use std::sync::Arc;
 
@@ -57,12 +65,37 @@ pub(crate) struct ApprovalSecurityMiddleware {
     /// The same `Arc`-shared tool sets the runner registers, used to resolve a
     /// call's OpenHuman `Tool` by name so `external_effect_with_args` can gate.
     tool_sets: Vec<Arc<Vec<Box<dyn Tool>>>>,
+    /// The session's channel-permission snapshot and channel name, when the
+    /// caller has one (the session chat / live paths pass
+    /// `ToolPolicyEnforcement`'s; CLI and sub-agent paths pass `None`).
+    ///
+    /// `requires_approval` consults it before prompting (issue #7649): this
+    /// middleware is the OUTER tool wrap, and the permission ceiling lives on
+    /// the inner `ToolPolicyMiddleware` — so without the pre-check a call the
+    /// session refuses anyway raises an approval card first and is denied only
+    /// after the human answers. A permission-refused call must fail with the
+    /// permission layer's own message instead of interrupting anyone.
+    permission: Option<(crate::tools::agent_policy::ToolPolicySession, String)>,
 }
 
 impl ApprovalSecurityMiddleware {
     /// Build the middleware over the runner's shared tool sets.
     pub(crate) fn new(tool_sets: Vec<Arc<Vec<Box<dyn Tool>>>>) -> Self {
-        Self { tool_sets }
+        Self {
+            tool_sets,
+            permission: None,
+        }
+    }
+
+    /// Attach the session permission boundary the pre-check consults
+    /// (`ToolPolicySession` + channel); `None` keeps the prompt-first
+    /// behaviour for paths with no session permission snapshot.
+    pub(crate) fn with_session_permission(
+        mut self,
+        permission: Option<(crate::tools::agent_policy::ToolPolicySession, String)>,
+    ) -> Self {
+        self.permission = permission;
+        self
     }
 
     /// Whether the named tool declares an external effect for these args.
@@ -107,12 +140,46 @@ impl ApprovalResolver<crate::agent::tinyagents::host::OpenHumanRunContext>
         // Resolve external-effect up front so no tool borrow is held across the
         // approval await.
         let has_ext = self.requires_approval(&call.name, &call.arguments).await;
+        if !has_ext {
+            tracing::debug!(
+                tool = %call.name,
+                has_external_effect = false,
+                "[tinyagents::mw] checking tool for approval"
+            );
+            return false;
+        }
+        // Issue #7649: the session's permission ceiling runs INSIDE this wrap
+        // (`ToolPolicyMiddleware::channel_permission_block`), so a call it will
+        // refuse reaches that refusal only after this prompt — approval-then-
+        // deny. Consult the identical verdict here: a call the session refuses
+        // regardless of the human's answer must not raise a card; returning
+        // `false` falls through to the permission layer, which denies with its
+        // own rendered reason. `false` for `desktop_approval_disabled` is exact:
+        // the inherent check above already returned `false` when desktop
+        // approvals are disabled, and that is the value the inner
+        // `ToolPolicyMiddleware` computes for the same tool on the same config.
+        if let Some((session, channel)) = &self.permission {
+            let view = super::tool_policy::SessionPermissionView {
+                session,
+                tool_sets: &self.tool_sets,
+                channel,
+            };
+            if view.channel_permission_block(call, false).is_some() {
+                tracing::debug!(
+                    tool = %call.name,
+                    channel = %channel,
+                    "[tinyagents::mw] skipping approval prompt: the session permission \
+                     layer will refuse this call"
+                );
+                return false;
+            }
+        }
         tracing::debug!(
             tool = %call.name,
-            has_external_effect = has_ext,
+            has_external_effect = true,
             "[tinyagents::mw] checking tool for approval"
         );
-        has_ext
+        true
     }
 
     async fn resolve(

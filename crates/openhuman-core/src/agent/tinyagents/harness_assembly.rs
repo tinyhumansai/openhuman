@@ -580,12 +580,21 @@ pub(super) fn assemble_turn_harness(
     // `ApprovalGate`, a denial short-circuits with a model-consumable result, and
     // an approved call records a terminal audit row. Replaces the inline approval
     // block that used to live in the legacy tool adapter.
+    //
+    // The session permission snapshot rides along (issue #7649): this wrap is
+    // OUTSIDE `ToolPolicyMiddleware`, so `requires_approval` must pre-check the
+    // permission ceiling or a call the session refuses anyway prompts the human
+    // before it is denied.
     if !hosted_security_gate {
+        let session_permission = tool_policy
+            .as_ref()
+            .map(|enforcement| (enforcement.session.clone(), enforcement.channel.clone()));
         harness.push_tool_middleware(Arc::new(ApprovalGateMiddleware::new(
             "approval_security",
-            Arc::new(middleware::ApprovalSecurityMiddleware::new(
-                tool_sets.clone(),
-            )),
+            Arc::new(
+                middleware::ApprovalSecurityMiddleware::new(tool_sets.clone())
+                    .with_session_permission(session_permission),
+            ),
         )));
     }
 

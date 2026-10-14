@@ -50,6 +50,23 @@ struct SessionToolPolicy {
     agent_definition_id: String,
 }
 
+/// The borrowed session-scoped view every "can this session call this tool?"
+/// answer is rendered from: the channel-permission snapshot, the shared tool
+/// sets a call's `Tool` is resolved from, and the channel name.
+///
+/// [`ToolPolicyMiddleware`] builds one per call. [`crate::agent::tinyagents::middleware::ApprovalSecurityMiddleware`]
+/// builds the same view in its `requires_approval` pre-check (issue #7649):
+/// the approval wrap sits OUTSIDE this middleware, so the pre-check is the
+/// last chance to keep an approval card from firing for a call the
+/// permission layer will refuse regardless of the answer. Hosting the logic
+/// here — rather than copying the predicates — is what keeps the two gates
+/// from ever disagreeing ("two sources of truth ... is the bug").
+pub(crate) struct SessionPermissionView<'a> {
+    pub(crate) session: &'a crate::tools::agent_policy::ToolPolicySession,
+    pub(crate) tool_sets: &'a [Arc<Vec<Box<dyn Tool>>>],
+    pub(crate) channel: &'a str,
+}
+
 #[async_trait]
 impl ToolCallPolicy<OpenHumanRunContext> for SessionToolPolicy {
     fn name(&self) -> &str {
@@ -97,11 +114,116 @@ impl ToolPolicyMiddleware {
         }
     }
 
+    /// The borrowed session view this middleware renders its permission
+    /// answers from.
+    pub(crate) fn view(&self) -> SessionPermissionView<'_> {
+        SessionPermissionView {
+            session: &self.session,
+            tool_sets: &self.tool_sets,
+            channel: &self.channel,
+        }
+    }
+
     fn resolve_tool(&self, name: &str) -> Option<&Box<dyn Tool>> {
-        self.tool_sets
-            .iter()
-            .flat_map(|set| set.iter())
-            .find(|t| t.name() == name)
+        resolve_tool_in(&self.tool_sets, name)
+    }
+
+    /// The delegation tools this session can actually call that reach one of
+    /// `owners`, as tool names. See [`SessionPermissionView::callable_delegates_for`].
+    fn callable_delegates_for(&self, owners: &[&str]) -> Vec<String> {
+        self.view().callable_delegates_for(owners)
+    }
+
+    /// The answer to a `use_skill` call naming a tool `pack` does not contain:
+    /// the tools in it this session can call, or the pack's route when none.
+    pub(crate) fn no_such_pack_tool<'a>(
+        &self,
+        pack: &'static tinyagents_harness::tool::packs::ToolPack,
+        tool: &'a str,
+    ) -> tinyagents_harness::tool::packs::NoSuchPackTool<'a> {
+        self.view().no_such_pack_tool(pack, tool)
+    }
+
+    /// The route sentence for a pack, resolved against THIS session.
+    pub(crate) fn route_for_pack(
+        &self,
+        pack: &tinyagents_harness::tool::packs::ToolPack,
+    ) -> String {
+        self.view().route_for_pack(pack)
+    }
+
+    /// Render a `use_skill` listing scoped to what this session may call.
+    ///
+    /// This lives in the middleware because the middleware is the only layer
+    /// that holds the session — `UseSkillTool` is built once per registry and
+    /// has no idea who is calling it. Only the disclosure half is rendered here:
+    /// a call that names a `tool` is the execution half, which
+    /// `channel_permission_block` has already gated and the tool's own
+    /// `execute` dispatches. Returns `None` when there is nothing to scope (a
+    /// tool named, no `skill` argument, no pack handle), so the call falls
+    /// through to the tool's own `execute` unchanged.
+    pub(crate) fn render_skill_for_session(&self, call: &TaToolCall) -> Option<TaToolResult> {
+        if tinyagents_harness::tool::packs::named_tool(&call.arguments).is_some() {
+            return None;
+        }
+        let skill = call
+            .arguments
+            .get("skill")
+            .and_then(serde_json::Value::as_str)?;
+        let tool = self.resolve_tool(&call.name)?;
+        let handle = crate::tools::host_extensions::pack_registry_handle(tool.as_ref())?;
+        let is_callable = |name: &str| !self.session.decision_for(name).blocks_execution();
+        let route = crate::tools::toolpacks::pack(skill)
+            .map(|pack| self.route_for_pack(pack))
+            .unwrap_or_default();
+        let rendered = tinyagents_harness::tool::packs::render_pack_filtered(
+            &crate::tools::toolpacks::CATALOG,
+            skill,
+            handle,
+            // The same predicate the gate applies to `use_skill`'s inner tool.
+            // Two sources of truth for "can this session call it" is the bug.
+            &is_callable,
+            &route,
+        );
+        Some(match rendered {
+            Ok(text) => TaToolResult::success(text),
+            Err(message) => TaToolResult::error(message),
+        })
+    }
+
+    /// The channel-permission gate the engine ran before the builder policy: a
+    /// session-level deny, then a per-call permission-level ceiling check.
+    /// Returns the blocking message when the call must not execute. The
+    /// predicates live on [`SessionPermissionView`] so the approval
+    /// middleware's pre-check (issue #7649) consults the identical logic.
+    pub(crate) fn channel_permission_block(
+        &self,
+        call: &TaToolCall,
+        desktop_approval_disabled: bool,
+    ) -> Option<String> {
+        self.view()
+            .channel_permission_block(call, desktop_approval_disabled)
+    }
+}
+
+/// Finds the registered [`Tool`] named `name` across `tool_sets`, if any.
+/// Free-standing so both [`ToolPolicyMiddleware`] and the borrowed
+/// [`SessionPermissionView`] return references into the caller's tool sets
+/// rather than through a moved view value.
+fn resolve_tool_in<'a>(
+    tool_sets: &'a [Arc<Vec<Box<dyn Tool>>>],
+    name: &str,
+) -> Option<&'a Box<dyn Tool>> {
+    tool_sets
+        .iter()
+        .flat_map(|set| set.iter())
+        .find(|t| t.name() == name)
+}
+
+impl SessionPermissionView<'_> {
+    /// Finds the registered [`Tool`] named `name`, if any.
+    fn resolve_tool(&self, name: &str) -> Option<&Box<dyn Tool>> {
+        resolve_tool_in(self.tool_sets, name)
     }
 
     /// The delegation tools this session can actually call that reach one of
@@ -191,48 +313,9 @@ impl ToolPolicyMiddleware {
         )
     }
 
-    /// Render a `use_skill` listing scoped to what this session may call.
-    ///
-    /// This lives in the middleware because the middleware is the only layer
-    /// that holds the session — `UseSkillTool` is built once per registry and
-    /// has no idea who is calling it. Only the disclosure half is rendered here:
-    /// a call that names a `tool` is the execution half, which
-    /// `channel_permission_block` has already gated and the tool's own
-    /// `execute` dispatches. Returns `None` when there is nothing to scope (a
-    /// tool named, no `skill` argument, no pack handle), so the call falls
-    /// through to the tool's own `execute` unchanged.
-    pub(crate) fn render_skill_for_session(&self, call: &TaToolCall) -> Option<TaToolResult> {
-        if tinyagents_harness::tool::packs::named_tool(&call.arguments).is_some() {
-            return None;
-        }
-        let skill = call
-            .arguments
-            .get("skill")
-            .and_then(serde_json::Value::as_str)?;
-        let tool = self.resolve_tool(&call.name)?;
-        let handle = crate::tools::host_extensions::pack_registry_handle(tool.as_ref())?;
-        let is_callable = |name: &str| !self.session.decision_for(name).blocks_execution();
-        let route = crate::tools::toolpacks::pack(skill)
-            .map(|pack| self.route_for_pack(pack))
-            .unwrap_or_default();
-        let rendered = tinyagents_harness::tool::packs::render_pack_filtered(
-            &crate::tools::toolpacks::CATALOG,
-            skill,
-            handle,
-            // The same predicate the gate applies to `use_skill`'s inner tool.
-            // Two sources of truth for "can this session call it" is the bug.
-            &is_callable,
-            &route,
-        );
-        Some(match rendered {
-            Ok(text) => TaToolResult::success(text),
-            Err(message) => TaToolResult::error(message),
-        })
-    }
-
     /// The channel-permission gate the engine ran before the builder policy: a
-    /// session-level deny, then a per-call permission-level ceiling check. Returns
-    /// the blocking message when the call must not execute.
+    /// session-level deny, then a per-call permission-level ceiling check.
+    /// Returns the blocking message when the call must not execute.
     pub(crate) fn channel_permission_block(
         &self,
         call: &TaToolCall,
@@ -250,7 +333,7 @@ impl ToolPolicyMiddleware {
                     tool: &call.name,
                     required: decision.required_permission,
                     allowed: decision.allowed_permission,
-                    channel: &self.channel,
+                    channel: self.channel,
                 }
                 .render(),
             );
@@ -327,7 +410,7 @@ impl ToolPolicyMiddleware {
                     tool: &call.name,
                     required: call_required,
                     allowed: decision.allowed_permission,
-                    channel: &self.channel,
+                    channel: self.channel,
                 }
                 .render(),
             );

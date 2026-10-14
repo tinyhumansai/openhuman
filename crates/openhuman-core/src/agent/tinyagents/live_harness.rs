@@ -9,7 +9,8 @@
 //!
 //! 1. the SDK tool-policy projection (`require_sandbox`),
 //! 2. human-in-the-loop approval (`ApprovalSecurityMiddleware` through the
-//!    global `ApprovalGate`),
+//!    global `ApprovalGate`; it pre-checks the session permission snapshot so a
+//!    call the layer in 4 will refuse never raises a card — issue #7649),
 //! 3. the CLI/RPC-only scope gate,
 //! 4. the session's `ToolPolicyMiddleware` (deny / require-approval rules),
 //! 5. credential scrubbing of every tool result,
@@ -94,9 +95,13 @@ pub(crate) fn assemble_live_tool_harness(
     ));
     harness.push_tool_middleware(Arc::new(ApprovalGateMiddleware::new(
         "approval_security",
-        Arc::new(middleware::ApprovalSecurityMiddleware::new(
-            tool_sets.clone(),
-        )),
+        Arc::new(
+            middleware::ApprovalSecurityMiddleware::new(tool_sets.clone()).with_session_permission(
+                tool_policy
+                    .as_ref()
+                    .map(|enforcement| (enforcement.session.clone(), enforcement.channel.clone())),
+            ),
+        ),
     )));
     harness.push_tool_middleware(Arc::new(middleware::CliRpcOnlyMiddleware::new(
         tool_sets.clone(),
