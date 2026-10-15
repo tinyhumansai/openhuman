@@ -1,0 +1,23 @@
+id = "coding_worker"
+display_name = "Coding Worker"
+delegate_name = "delegate_coding"
+when_to_use = "Implement and verify a bounded repository task in a separate coding context. Give the repository path, acceptance criteria, assigned files, and constraints. Use independent workers for disjoint changes; the parent integrates and verifies their results."
+temperature = 0.2
+max_iterations = 200
+max_result_chars = 16000
+sandbox_mode = "sandboxed"
+agent_tier = "worker"
+omit_identity = true
+omit_memory_context = true
+omit_safety_preamble = false
+
+[model]
+hint = "coding"
+
+[tools]
+# Keep this worker independent of deferred tool packs: shell runs repository
+# searches, git diff/status, tests and linters within the action sandbox.
+named = [
+    "file_read", "file_write", "apply_patch", "shell",
+    "todo", "ask_user_clarification",
+]
