@@ -3,8 +3,9 @@
 `SecurityPolicy` and the autonomy/risk machinery it implements. This is where
 every invariant AGENTS.md lists for the autonomy policy is actually enforced:
 `action_dir` vs `workspace_dir`, workspace-internal path protection,
-fail-closed command classification, always-forbidden system/credential paths,
-trusted roots, and the per-hour action budget.
+always-forbidden system/credential paths, trusted roots, and the per-hour
+action budget. Command classification and gating are the TinySecurity
+module's; this folder only asks it (see `native_commands.rs`).
 
 ## Autonomy is off by default
 
@@ -26,9 +27,10 @@ impl in [`types.rs`](./types.rs).
 ## Responsibilities
 
 - Build a `SecurityPolicy` from `AutonomyConfig` (`SecurityPolicy::from_config`).
-- Classify shell commands into a risk level (`CommandRiskLevel`) and a
-  fail-closed gate class (`CommandClass`), and turn that into a `GateDecision`
-  for the current `AutonomyLevel`.
+- Ask the security module about a shell command (`check_command`) and project
+  its answer into a `GateDecision`, a `CommandClass` and the host's
+  policy-blocked messages (`Refusal`). Own the tier table that the flow nodes
+  still read (`gate_decision`).
 - Decide whether a filesystem path is reachable at all
   (`is_always_forbidden`), workspace-internal state
   (`is_workspace_internal_path`), or covered by a `TrustedRoot`.
@@ -41,16 +43,17 @@ impl in [`types.rs`](./types.rs).
 
 | File | Purpose |
 | --- | --- |
-| [`types.rs`](./types.rs) | `SecurityPolicy` fields, `AutonomyLevel`, `CommandRiskLevel`, `GateDecision`, `ToolOperation`, `ActionTracker`, `TrustedRoot`/`TrustedAccess`, `WORKSPACE_INTERNAL_DIRS`/`WORKSPACE_INTERNAL_FILES`, the two policy markers |
+| [`types.rs`](./types.rs) | `SecurityPolicy` fields, `AutonomyLevel`, `GateDecision`, `ToolOperation`, `ActionTracker`, `TrustedRoot`/`TrustedAccess`, `WORKSPACE_INTERNAL_DIRS`/`WORKSPACE_INTERNAL_FILES`, the two policy markers |
 | [`path_checks.rs`](./path_checks.rs) | `is_workspace_internal_path`, `is_always_forbidden`, `check_cross_profile`, `is_within_trusted_root`, `is_resolved_path_allowed[_for]`, `check_resolved_against_forbidden` |
-| [`command_checks.rs`](./command_checks.rs) | `classify_command`, `gate_decision`, `check_gated_command`, `is_command_allowed`, `command_risk_level`, `parse_declared_class`, `is_command_executor`, `split_unquoted_segments` |
+| [`command_checks.rs`](./command_checks.rs) | `gate_decision` (the tier table, mirrored by the module), `parse_declared_class` |
+| [`native_commands.rs`](./native_commands.rs) | `SecurityPolicy::check_command` / `command_class_gate[_blocking]`, `CommandQuery`, `CommandFlow`, `CommandStage`, `CommandVerdict`, `Refusal`, the `CommandGateway` seam, and the translation to the module's `CommandPolicy` |
 | [`enforcement.rs`](./enforcement.rs) | `can_act`, `enforce_write_tier`, `enforce_tool_operation`, `record_action`/`is_rate_limited`, `from_config`, `with_privacy_mode`, `openhuman_scratch_dir`/`ensure_openhuman_scratch_dir`, `validate_path_within_root` |
-| TinyBox module `CommandAnalysis` (`tinybox-bus`) | Module-produced command segments, classifications, structural flags, and literal path words; the host applies autonomy, allowlist, approval, and protected-path policy to these facts |
+| TinySecurity module `CheckCommand` / `ClassifyCommand` (`tinysecurity-bus`) | Command class, gate, risk and refusal category for one command under the host-registered `CommandPolicy` |
 
 ## Public surface
 
 Re-exported through `policy/mod.rs` and then through `security/mod.rs`:
-`SecurityPolicy`, `AutonomyLevel`, `CommandClass`, `CommandRiskLevel`,
+`SecurityPolicy`, `AutonomyLevel`, `CommandClass`,
 `GateDecision`, `ToolOperation`, `ActionTracker`,
 `TrustedRoot`, `TrustedAccess`, `POLICY_BLOCKED_MARKER`,
 `POLICY_DENIED_MARKER`, `validate_path_within_root`,
@@ -94,15 +97,16 @@ Each of these must not be weakened to make a feature work:
   Gray-area directories (`/usr`, `/opt`, `/var`, `~/Library`) deliberately
   stay in the user-overridable `forbidden_paths` list instead, so a grant can
   still reach, for example, `/usr/local/...`.
-- `classify_command`'s fail-closed floor ([`command_checks.rs`](./command_checks.rs)): a
-  command that is not provably read-only (and not a recognized
-  network/destructive command) is at least `CommandClass::Write`. The highest
-  class across `;`/`|`/`&&`/`||`/newline-separated segments wins, and any
-  unquoted redirect (`>`, `>>`) or `tee` lifts the whole command to at least
-  `Write`. An LLM-declared category (`parse_declared_class`) is
-  escalate-only: `agent/tinyagents/host/security_gate.rs` combines it as
-  `class = check_gated_command(cmd)?.max(declared)`, so the model can raise
-  the gate but never lower what the runtime determined.
+- The command floor is the module's, and it fails closed. A command that is not
+  provably read-only is at least `CommandClass::Write`; the highest class across
+  `;`/`|`/`&&`/`||`/newline-separated segments wins; an unquoted redirect or
+  `tee` lifts it to at least `Write`; a quoted heredoc body is data. An
+  LLM-declared category (`parse_declared_class`) is escalate-only: it travels
+  as `declared_class` and the module takes the maximum, so the model can raise
+  the gate but never lower what the module determined. The module's answer is
+  `Allow`, `Prompt` or a refusal; a module that cannot answer is
+  `Refusal::Unavailable`, never an allow. Nothing in this folder classifies a
+  command.
 - Approval gate default-on, marker semantics. `POLICY_BLOCKED_MARKER`
   (`[policy-blocked]`) prefixes a permanent rejection: the identical call
   can never succeed in the current tier (read-only blocking a write, a
@@ -124,10 +128,11 @@ Each of these must not be weakened to make a feature work:
 
 - [`policy_tests.rs`](./policy_tests.rs), [`policy_allowlist_tests.rs`](./policy_allowlist_tests.rs), [`policy_injection_tests.rs`](./policy_injection_tests.rs),
   [`policy_paths_and_risk_tests.rs`](./policy_paths_and_risk_tests.rs), [`policy_trusted_roots_tests.rs`](./policy_trusted_roots_tests.rs), and
-  [`policy_workspace_internal_tests.rs`](./policy_workspace_internal_tests.rs): behavior tests for classification,
-  path checks, and tier enforcement.
+  [`policy_workspace_internal_tests.rs`](./policy_workspace_internal_tests.rs): behavior tests for
+  path checks and tier enforcement.
 - [`policy_disabled_tests.rs`](./policy_disabled_tests.rs): behavior with `[autonomy] enabled = false`.
-- [`proptest_tests.rs`](./proptest_tests.rs): property tests over command classification.
+- [`proptest_tests.rs`](./proptest_tests.rs): property tests over the path check.
+- [`native_commands_tests.rs`](./native_commands_tests.rs) and `native_commands_stub.rs`: the projection of the module's answer, the fail-closed paths, and a scripted `CommandGateway` for tests of what a caller does with each answer. What the module itself answers is pinned by the module-backed tests in `modules/security_command_tests.rs` and `modules/security_command_characterization_tests.rs`, which run against the released archive.
 - [`enforcement_scratch_dir_tests_tests.rs`](./enforcement_scratch_dir_tests_tests.rs): `openhuman_scratch_dir` is
   namespaced on every platform and `ensure_openhuman_scratch_dir` creates it.
 

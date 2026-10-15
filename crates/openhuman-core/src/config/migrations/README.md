@@ -6,7 +6,7 @@ Startup data-migration runner gated by `Config::schema_version`. Each migration 
 
 ## Responsibilities
 
-- Maintain `CURRENT_SCHEMA_VERSION` (currently `11`) as the target schema version, bumped alongside every new migration.
+- Maintain `CURRENT_SCHEMA_VERSION` (currently `15`) as the target schema version, bumped alongside every new migration.
 - Run pending migrations in order, each guarded by an exact `schema_version ==` check so a failed earlier step is never skipped (the 0→1 step uses `< 1`).
 - Seed brand-new workspaces (`seed_new_workspace`) with the managed `openhuman` cloud-provider entry at creation time, because a fresh config is stamped at `CURRENT_SCHEMA_VERSION` and crosses no gate.
 - Persist each version bump via `Config::save()` **only after** the migration reports success; on a save failure, roll the in-memory `schema_version` back so the next launch retries the same gate.
@@ -40,7 +40,7 @@ Startup data-migration runner gated by `Config::schema_version`. Each migration 
 ## Public surface
 
 - `migrations::run_pending(config: &mut Config) -> impl Future<Output = ()>`: the only `pub` entry point; called by `Config::load_or_init`.
-- `migrations::CURRENT_SCHEMA_VERSION: u32`: target schema version (`14`).
+- `migrations::CURRENT_SCHEMA_VERSION: u32`: target schema version (`15`).
 - `migrations::seed_new_workspace(config: &mut Config)`: `pub(crate)`; called by `Config::load_or_init` when it creates a fresh `config.toml`.
 
 Except for the crate-visible pre-decode bridge in `retire_cloud_provider_type`, individual migration modules (`phase_out_profile_md`, `unify_ai_provider_settings`, …) are **private** to the module; each exposes a `run(...)` fn and a `*Stats` struct used internally by the runner for diagnostics logging.

@@ -4,6 +4,9 @@
 //! can be screened before any model or tool execution path.
 
 mod detector;
+mod module_scan;
+
+pub use module_scan::{module_scan, ModuleScan, ModuleVerdict};
 
 pub use detector::{
     enforce_prompt_input, scan_tool_definition, PromptEnforcementAction, PromptEnforcementContext,

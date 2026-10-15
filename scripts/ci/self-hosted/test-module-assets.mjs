@@ -27,6 +27,7 @@ export const TEST_MODULE_IDS = [
   "tinymcp",
   "tinyhosts",
   "tinyconnectors",
+  "tinysecurity",
 ];
 
 /** Concatenate registry.rs and its `registry/records_*.rs` fragments. */
@@ -43,9 +44,12 @@ export function readRegistrySource(dir = REGISTRY_DIR) {
 /** `release_url` per record id, from the same source text. */
 export function parseReleaseUrls(src) {
   const urls = new Map();
-  const re = /id: "([^"]+)",[\s\S]*?release_url: "([^"]+)"/g;
-  for (const m of src.matchAll(re)) {
-    if (!urls.has(m[1])) urls.set(m[1], m[2]);
+  // Keep fields inside their record. A global regex can skip an empty URL
+  // and accidentally associate the following module's release with this id.
+  for (const record of parseRecords(src).values()) {
+    if (record.id && record.releaseUrl && !urls.has(record.id)) {
+      urls.set(record.id, record.releaseUrl);
+    }
   }
   return urls;
 }

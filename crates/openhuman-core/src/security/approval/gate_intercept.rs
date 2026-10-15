@@ -215,6 +215,7 @@ impl ApprovalGate {
                 origin = ?origin,
                 "[approval::gate] auto_approve_all full origin (debug-only)"
             );
+            self.audit_unprompted_allow(tool_name, "auto_approve_all", &origin.class().to_string());
             return (GateOutcome::Allow, None);
         }
 
@@ -229,6 +230,11 @@ impl ApprovalGate {
                 auto_approved = true,
                 "[approval::gate] approval gate off for this agent — allowing without prompt"
             );
+            self.audit_unprompted_allow(
+                tool_name,
+                "approvals_disabled",
+                &origin.class().to_string(),
+            );
             return (GateOutcome::Allow, None);
         }
 
@@ -242,6 +248,11 @@ impl ApprovalGate {
             tracing::debug!(
                 tool = tool_name,
                 "[approval::gate] auto_approve allowlist hit, skipping prompt"
+            );
+            self.audit_unprompted_allow(
+                tool_name,
+                "auto_approve_allowlist",
+                &origin.class().to_string(),
             );
             return (GateOutcome::Allow, None);
         }

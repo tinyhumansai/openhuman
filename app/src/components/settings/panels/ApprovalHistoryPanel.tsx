@@ -34,6 +34,44 @@ const DateTimeCell = ({ value }: { value: string }) => {
   );
 };
 
+const pct = (millis: number | null | undefined) =>
+  millis == null ? '–' : `${(millis / 10).toFixed(millis % 10 === 0 ? 0 : 1)}%`;
+
+/**
+ * The automatic-decision line under a verdict: who decided, the Jev scores and
+ * when the grant expires. Renders nothing for a human decision.
+ */
+const AutoVerdict = ({ entry }: { entry: ApprovalAuditEntry }) => {
+  const { t } = useT();
+  if (!entry.decided_by?.startsWith('auto:')) return null;
+  const jev = entry.decided_by === 'auto:jev';
+  const judge = entry.judge;
+  return (
+    <div className="mt-1 flex flex-col items-end gap-0.5" data-testid="approval-history-auto">
+      <Badge variant="primary" data-testid="approval-history-auto-badge">
+        {t(jev ? 'settings.approvalHistory.autoJev' : 'settings.approvalHistory.autoPolicy')}
+      </Badge>
+      {jev && judge && (
+        <span className="text-xs text-content-muted" data-testid="approval-history-judge-scores">
+          {t('settings.approvalHistory.judgeScores')
+            .replace('{intent}', pct(judge.intent_millis))
+            .replace('{reversible}', pct(judge.reversible_millis))
+            .replace('{exfiltrate}', pct(judge.exfiltrate_millis))}
+          {judge.cached ? ` · ${t('settings.approvalHistory.judgeCached')}` : ''}
+        </span>
+      )}
+      {entry.expires_at && (
+        <span className="text-xs text-content-muted" data-testid="approval-history-expiry">
+          {t('settings.approvalHistory.judgeExpires').replace(
+            '{time}',
+            new Date(entry.expires_at).toLocaleString()
+          )}
+        </span>
+      )}
+    </div>
+  );
+};
+
 /** Badge tone per decision: approvals read sage, a denial coral. */
 const DECISION_VARIANT: Record<ApprovalDecision, 'success' | 'danger'> = {
   approve_once: 'success',
@@ -150,11 +188,14 @@ const ApprovalHistoryPanel = () => {
       align: 'right',
       className: 'w-px whitespace-nowrap',
       cell: entry => (
-        <Badge
-          variant={DECISION_VARIANT[entry.decision]}
-          data-testid={`approval-history-decision-${entry.decision}`}>
-          {t(DECISION_LABEL_KEY[entry.decision])}
-        </Badge>
+        <div className="flex flex-col items-end">
+          <Badge
+            variant={DECISION_VARIANT[entry.decision]}
+            data-testid={`approval-history-decision-${entry.decision}`}>
+            {t(DECISION_LABEL_KEY[entry.decision])}
+          </Badge>
+          <AutoVerdict entry={entry} />
+        </div>
       ),
     },
   ];

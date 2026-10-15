@@ -36,6 +36,9 @@ pub(crate) mod tool_outcome_capture;
 pub(crate) mod tool_output;
 pub(crate) mod tool_policy;
 pub(crate) mod turn_context;
+#[cfg(feature = "security-module")]
+#[allow(dead_code)]
+pub(crate) mod tinysecurity;
 
 /// Render the canonical TinyTools content blocks at the OpenHuman boundary.
 /// Middleware that used the retired string-shaped harness result must not

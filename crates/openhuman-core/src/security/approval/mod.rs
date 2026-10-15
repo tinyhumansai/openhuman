@@ -35,5 +35,5 @@ pub use schemas::all_controller_schemas as all_approval_controller_schemas;
 pub use schemas::all_registered_controllers as all_approval_registered_controllers;
 pub use types::{
     ApprovalAuditEntry, ApprovalDecision, ApprovalSourceContext, ExecutionOutcome, GateOutcome,
-    PendingApproval,
+    JudgeVerdict, PendingApproval,
 };

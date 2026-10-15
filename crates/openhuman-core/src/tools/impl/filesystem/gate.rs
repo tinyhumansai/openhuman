@@ -65,7 +65,15 @@ impl FsGate for SecurityPolicy {
     }
 
     fn write_needs_approval(&self) -> bool {
-        self.gate_decision(CommandClass::Write) == GateDecision::Prompt
+        // The module's gate for write-class actions. An unanswered question is a
+        // prompt, never a silent allow.
+        match self.command_class_gate_blocking(CommandClass::Write) {
+            Ok(gate) => gate == GateDecision::Prompt,
+            Err(refusal) => {
+                log::warn!("[fs][gate] tier gate unavailable; asking for approval: {refusal:?}");
+                true
+            }
+        }
     }
 
     fn action_dir(&self) -> &Path {

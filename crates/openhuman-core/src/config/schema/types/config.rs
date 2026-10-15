@@ -191,6 +191,12 @@ pub struct Config {
     #[serde(default)]
     pub sandbox: SandboxConfig,
 
+    /// The single `[security]` table: audit, approval timing, and the
+    /// `[security.autonomy|sandbox|privacy]` overlay folded into the legacy
+    /// tables at load. See [`SecurityConfig`].
+    #[serde(default)]
+    pub security: SecurityConfig,
+
     #[serde(default)]
     pub runtime: RuntimeConfig,
 

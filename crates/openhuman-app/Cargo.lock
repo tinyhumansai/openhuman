@@ -608,7 +608,7 @@ dependencies = [
  "cap-primitives",
  "cap-std",
  "io-lifetimes 3.0.1",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -625,7 +625,7 @@ dependencies = [
  "maybe-owned",
  "rustix 1.1.5",
  "rustix-linux-procfs",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
  "winx",
 ]
 
@@ -1536,7 +1536,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2659,7 +2659,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "20fd6de4ccfcc187e38bc21cfa543cb5a302cb86a8b114eb7f0bf0dc9f8ac00f"
 dependencies = [
  "io-lifetimes 3.0.1",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3284,7 +3284,7 @@ dependencies = [
  "png 0.18.1",
  "serde",
  "thiserror 2.0.20",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3887,6 +3887,7 @@ dependencies = [
  "tinymemory-tools",
  "tinyredact",
  "tinysearch-bus",
+ "tinysecurity-bus",
  "tinyskills",
  "tinyskills-drivers",
  "tinystoragedrivers",
@@ -4618,7 +4619,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5034,7 +5035,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5102,7 +5103,7 @@ dependencies = [
  "security-framework 3.7.0",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5714,7 +5715,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6427,7 +6428,7 @@ dependencies = [
  "serde_with",
  "swift-rs",
  "thiserror 2.0.20",
- "toml 1.1.6+spec-1.1.0",
+ "toml 0.9.12+spec-1.1.0",
  "url",
  "urlpattern",
  "uuid",
@@ -6463,10 +6464,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.5",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6748,14 +6749,14 @@ dependencies = [
 
 [[package]]
 name = "tinybox-bus"
-version = "0.1.33"
+version = "0.1.34"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "tinybus"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "async-trait",
  "flate2",
@@ -6776,7 +6777,7 @@ dependencies = [
 
 [[package]]
 name = "tinybus-macros"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6785,7 +6786,7 @@ dependencies = [
 
 [[package]]
 name = "tinybus-module"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "async-trait",
  "serde",
@@ -6811,7 +6812,7 @@ dependencies = [
 
 [[package]]
 name = "tinycomputer-bus"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7150,7 +7151,7 @@ dependencies = [
 
 [[package]]
 name = "tinymcp"
-version = "0.18.4"
+version = "0.18.5"
 dependencies = [
  "base64 0.23.1",
  "dirs 7.0.0",
@@ -7176,7 +7177,7 @@ dependencies = [
 
 [[package]]
 name = "tinymcp-bus"
-version = "0.18.4"
+version = "0.18.5"
 dependencies = [
  "schemars 1.2.2",
  "serde",
@@ -7260,6 +7261,14 @@ dependencies = [
  "schemars 1.2.2",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "tinysecurity-bus"
+version = "0.7.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -7851,7 +7860,7 @@ dependencies = [
  "png 0.18.1",
  "serde",
  "thiserror 2.0.20",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7923,7 +7932,7 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset",
  "tempfile",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

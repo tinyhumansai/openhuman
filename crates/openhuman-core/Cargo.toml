@@ -255,6 +255,7 @@ tinychannels-bus = { version = "0.1", path = "../../vendor/tinychannels/crates/t
 # never loads a module. The kernel-floor ratchet catches exactly that, and did.
 tinybus = { path = "../../vendor/tinybus/crates/tinybus", default-features = false, features = ["macros", "uds"] }
 tinysearch-bus = { path = "../../vendor/tinysearch/crates/tinysearch-bus", features = ["schemars"] }
+tinysecurity-bus = { path = "../../vendor/tinysecurity/crates/tinysecurity-bus", optional = true }
 # Registry vocabulary is available even when the loader is disabled, so the
 # pre-core client can identify and report an unavailable module safely.
 tinycomputer-bus = { path = "../../vendor/tinycomputer/crates/tinycomputer-bus" }
@@ -508,7 +509,6 @@ tinychannels-runtime = { path = "../../vendor/tinychannels/crates/tinychannels-r
 # The real TinyChannels module, linked into the test binary (never the product)
 # as the fixture behind `channels::module_fixture`.
 tinychannels-module = { path = "../../vendor/tinychannels/crates/tinychannels-module", features = ["static-link"] }
-tinybox-core = { path = "../../vendor/tinybox/crates/tinybox-core" }
 # The TinyMemory reference engine (an in-memory `MemoryEngine`) and the
 # behavioural suite every engine must pass. Memory unit tests bind it as the
 # engine instead of talking to CortexDB.
@@ -604,7 +604,7 @@ storage-file = []
 # costs no new native builds. It matches `scripts/ci/product-features.txt`. This
 # does NOT move the kernel floor: that profile is
 # `--no-default-features --features flows` and never reads this list.
-default = ["media", "skills", "flows", "mcp", "channels", "http-server", "scheduler-gate", "file-logging", "modules", "tinymemes", "storage-sqlite"]
+default = ["media", "skills", "flows", "mcp", "channels", "http-server", "scheduler-gate", "file-logging", "modules", "security-module", "tinymemes", "storage-sqlite"]
 # The core's domain-owned HTTP surfaces (#5048): the `/v1` OpenAI-compatible
 # router (`inference::http`), the WebSocket dictation handler
 # (`voice::streaming`), the `openhuman text-input run` dev server, and the MCP
@@ -695,6 +695,7 @@ modules = [
     "dep:tinystoragedrivers-busproxy",
     "dep:tinybus-module",
 ]
+security-module = ["modules", "dep:tinysecurity-bus"]
 # Voice domain: STT/TTS providers, the standalone dictation
 # server, and always-on listening.
 # The desktop product enables voice explicitly; contributor defaults leave it

@@ -5448,7 +5448,6 @@ dependencies = [
  "tinyagents-session",
  "tinyagents-tasks",
  "tinybox-bus",
- "tinybox-core",
  "tinybus",
  "tinybus-module",
  "tinychannels",
@@ -5481,6 +5480,7 @@ dependencies = [
  "tinymemory-tools",
  "tinyredact",
  "tinysearch-bus",
+ "tinysecurity-bus",
  "tinyskills",
  "tinyskills-drivers",
  "tinystoragedrivers",
@@ -5549,6 +5549,7 @@ dependencies = [
  "tinyagents-harness",
  "tinyagents-session",
  "tinyagents-tasks",
+ "tinybox-bus",
  "tinybus",
  "tinychannels",
  "tinycomputer-bus",
@@ -5558,6 +5559,7 @@ dependencies = [
  "tinyinference-local",
  "tinyinference-voice",
  "tinymcp-bus",
+ "tinymemory-api",
  "tinysearch-bus",
  "tinystoragedrivers-core",
  "tinytools",
@@ -5590,6 +5592,7 @@ dependencies = [
  "jsonschema",
  "log",
  "openhuman",
+ "rand 0.10.2",
  "reqwest 0.12.28",
  "sentry",
  "serde",
@@ -8573,14 +8576,14 @@ dependencies = [
 
 [[package]]
 name = "tinybox-bus"
-version = "0.1.33"
+version = "0.1.34"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "tinybox-core"
-version = "0.1.33"
+version = "0.1.34"
 dependencies = [
  "async-trait",
  "serde",
@@ -8590,7 +8593,7 @@ dependencies = [
 
 [[package]]
 name = "tinybox-docker"
-version = "0.1.33"
+version = "0.1.34"
 dependencies = [
  "async-trait",
  "serde_json",
@@ -8601,7 +8604,7 @@ dependencies = [
 
 [[package]]
 name = "tinybox-drivers"
-version = "0.1.33"
+version = "0.1.34"
 dependencies = [
  "log",
  "serde_json",
@@ -8612,7 +8615,7 @@ dependencies = [
 
 [[package]]
 name = "tinybox-host"
-version = "0.1.33"
+version = "0.1.34"
 dependencies = [
  "async-trait",
  "cap-std",
@@ -8626,7 +8629,7 @@ dependencies = [
 
 [[package]]
 name = "tinybox-jail"
-version = "0.1.33"
+version = "0.1.34"
 dependencies = [
  "landlock",
  "log",
@@ -8639,7 +8642,7 @@ dependencies = [
 
 [[package]]
 name = "tinybox-linux"
-version = "0.1.33"
+version = "0.1.34"
 dependencies = [
  "async-trait",
  "tinybox-core",
@@ -8647,7 +8650,7 @@ dependencies = [
 
 [[package]]
 name = "tinybox-microvm"
-version = "0.1.33"
+version = "0.1.34"
 dependencies = [
  "async-trait",
  "serde",
@@ -8657,7 +8660,7 @@ dependencies = [
 
 [[package]]
 name = "tinybox-module"
-version = "0.1.33"
+version = "0.1.34"
 dependencies = [
  "log",
  "tempfile",
@@ -8680,7 +8683,7 @@ dependencies = [
 
 [[package]]
 name = "tinybox-ssh"
-version = "0.1.33"
+version = "0.1.34"
 dependencies = [
  "async-trait",
  "tinybox-core",
@@ -8690,7 +8693,7 @@ dependencies = [
 
 [[package]]
 name = "tinybus"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "async-trait",
  "flate2",
@@ -8711,7 +8714,7 @@ dependencies = [
 
 [[package]]
 name = "tinybus-macros"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -8720,7 +8723,7 @@ dependencies = [
 
 [[package]]
 name = "tinybus-module"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "async-trait",
  "serde",
@@ -8839,7 +8842,7 @@ dependencies = [
 
 [[package]]
 name = "tinycomputer"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "getrandom 0.4.3",
  "serde",
@@ -8857,7 +8860,7 @@ dependencies = [
 
 [[package]]
 name = "tinycomputer-accessibility"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "arboard",
  "command-group",
@@ -8872,7 +8875,7 @@ dependencies = [
 
 [[package]]
 name = "tinycomputer-browser"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "agent-browser",
  "base64 0.22.1",
@@ -8890,7 +8893,7 @@ dependencies = [
 
 [[package]]
 name = "tinycomputer-bus"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -8899,7 +8902,7 @@ dependencies = [
 
 [[package]]
 name = "tinycomputer-core"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -8911,7 +8914,7 @@ dependencies = [
 
 [[package]]
 name = "tinycomputer-cursor"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "getrandom 0.4.3",
  "serde",
@@ -8921,7 +8924,7 @@ dependencies = [
 
 [[package]]
 name = "tinycomputer-desktop"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "agent-desktop-core",
  "agent-desktop-linux",
@@ -8936,7 +8939,7 @@ dependencies = [
 
 [[package]]
 name = "tinycomputer-engine"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "getrandom 0.4.3",
  "serde",
@@ -9454,7 +9457,7 @@ dependencies = [
 
 [[package]]
 name = "tinymcp"
-version = "0.18.4"
+version = "0.18.5"
 dependencies = [
  "base64 0.23.1",
  "dirs 7.0.0",
@@ -9484,7 +9487,7 @@ dependencies = [
 
 [[package]]
 name = "tinymcp-bus"
-version = "0.18.4"
+version = "0.18.5"
 dependencies = [
  "schemars",
  "serde",
@@ -9582,6 +9585,14 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "tinysecurity-bus"
+version = "0.7.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

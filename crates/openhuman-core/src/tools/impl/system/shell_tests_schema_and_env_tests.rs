@@ -1,21 +1,70 @@
 use super::*;
 
 #[tokio::test]
-async fn configured_shell_fails_closed_when_tinybox_analysis_is_disabled() {
-    let mut config = crate::config::Config::default();
-    config.modules.enabled = false;
+async fn configured_shell_fails_closed_when_the_security_module_cannot_answer() {
+    let gateway = StubGateway::refuse(Refusal::Unavailable);
     let tool = ShellTool::with_config(
-        test_security(AutonomyLevel::Full),
+        gated_security(AutonomyLevel::Full, gateway.clone()),
         test_runtime(),
         test_audit(),
-        Arc::new(config),
+        Arc::new(crate::config::Config::default()),
     );
 
-    let error = tool
-        .prepare_authorization(&json!({"command": "cat ~/.ssh/id_rsa"}))
+    let result = tool
+        .execute(json!({"command": "cat ~/.ssh/id_rsa"}))
         .await
-        .expect_err("hosted shell authorization requires TinyBox analysis");
-    assert_eq!(error.to_string(), "command analysis is unavailable");
+        .unwrap();
+    assert!(
+        result.is_error,
+        "an unanswered question must not run the command"
+    );
+    assert!(result.output().contains("authorization unavailable"));
+    assert_eq!(gateway.asked().len(), 1);
+}
+
+#[tokio::test]
+async fn shell_run_asks_the_module_at_the_execute_stage_with_the_exact_command() {
+    let gateway = StubGateway::allow();
+    let tool = ShellTool::new(
+        gated_security(AutonomyLevel::Supervised, gateway.clone()),
+        test_runtime(),
+        test_audit(),
+    );
+    let _ = tool.execute(json!({"command": "true"})).await.unwrap();
+    let asked = gateway.asked();
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].command, "true");
+    assert_eq!(asked[0].flow, CommandFlow::Harness);
+    assert_eq!(asked[0].stage, CommandStage::Execute);
+}
+
+#[tokio::test]
+async fn a_refused_shell_command_never_reaches_the_runtime_and_carries_the_reason() {
+    for (reason, needle) in [
+        (Refusal::ReadOnly, "read-only mode"),
+        (Refusal::Hidden, "hidden command"),
+        (Refusal::Protected, "protected path"),
+        (Refusal::RateLimit, "Rate limit exceeded"),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let marker = tmp.path().join("ran");
+        let tool = ShellTool::new(
+            gated_security(AutonomyLevel::Supervised, StubGateway::refuse(reason)),
+            test_runtime(),
+            test_audit(),
+        );
+        let result = tool
+            .execute(json!({"command": format!("touch {}", marker.display())}))
+            .await
+            .unwrap();
+        assert!(result.is_error, "{reason:?}");
+        assert!(
+            result.output().contains(needle),
+            "{reason:?}: {}",
+            result.output()
+        );
+        assert!(!marker.exists(), "{reason:?} must not run the command");
+    }
 }
 
 #[cfg(feature = "modules")]
@@ -95,7 +144,10 @@ async fn shell_emits_audit_line_on_denial() {
     use crate::security::AuditEvent;
     let (audit, tmp) = audit_with_tempdir();
     let tool = ShellTool::new(
-        test_security(AutonomyLevel::ReadOnly),
+        gated_security(
+            AutonomyLevel::ReadOnly,
+            StubGateway::refuse(Refusal::ReadOnly),
+        ),
         test_runtime(),
         audit,
     );
@@ -172,14 +224,11 @@ async fn shell_executes_allowed_command() {
 #[tokio::test]
 async fn shell_destructive_command_is_gated_not_run_inline() {
     // `rm -rf /` is Destructive → it must route through the human approval
-    // gate (external_effect), never auto-run. Assert the classification
-    // here rather than executing it.
+    // gate (external_effect), never auto-run. The class itself is the security
+    // module's answer (pinned by the module-backed command tests); the tool's
+    // part is declaring every command an external effect.
     let security = test_security(AutonomyLevel::Supervised);
     let tool = ShellTool::new(security.clone(), test_runtime(), test_audit());
-    assert_eq!(
-        security.classify_command("rm -rf /"),
-        CommandClass::Destructive
-    );
     assert!(tool.external_effect_with_args(&json!({"command": "rm -rf /"})));
 }
 

@@ -35,10 +35,11 @@ mod retire_chat_v1_model;
 pub(crate) mod retire_cloud_provider_type;
 mod retire_local_whisper_stt;
 mod retire_managed_tier_slugs;
+pub(crate) mod security_policy;
 mod unify_ai_provider_settings;
 
 /// Current target schema version. Bumped alongside every new migration.
-pub const CURRENT_SCHEMA_VERSION: u32 = 14;
+pub const CURRENT_SCHEMA_VERSION: u32 = 15;
 
 /// Give a brand-new [`Config`] the managed `openhuman` cloud-provider entry.
 ///
@@ -658,6 +659,18 @@ pub async fn run_pending(config: &mut Config) {
         if let Err(err) = config.save().await {
             config.schema_version = 13;
             log::warn!("[migrations] schema_version 14 save failed: {err:#}");
+        }
+    }
+
+    // 14 -> 15: the single `[security]` table. The document rewrite already ran
+    // when this config was parsed (`security_policy::rewrite_document`); the
+    // step persists the folded shape once so the retired
+    // `autonomy.max_cost_per_day_cents` key leaves the file.
+    if config.schema_version == 14 {
+        config.schema_version = 15;
+        if let Err(err) = config.save().await {
+            config.schema_version = 14;
+            log::warn!("[migrations] schema_version 15 save failed: {err:#}");
         }
     }
 }

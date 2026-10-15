@@ -88,9 +88,9 @@ source "$SCRIPT_DIR/modules/stage-local-modules.sh"
 # against the core locally.
 local_source_ids=()
 if local_module_source_is_source; then
-  local_source_ids+=(tinyconnectors tinyjuice tinysearch tinyhosts tinymcp)
+  local_source_ids+=(tinyconnectors tinyjuice tinysearch tinyhosts tinymcp tinysecurity)
 else
-  for released_id in tinychannels tinyjuice tinysearch; do
+  for released_id in tinychannels tinyjuice tinysearch tinysecurity; do
     released_dir="$(stage_release_module "$released_id" "$wallet_platform" "$module_ext")"
     if [ "$released_id" = "tinychannels" ]; then
       tinychannels_dir="$released_dir"

@@ -163,6 +163,11 @@ fn to_audit(stored: &Versioned<Value>) -> Option<ApprovalAuditEntry> {
         expires_at: pending.expires_at,
         decided_at,
         decision,
+        decided_by: text(&stored.doc, "decided_by").map(str::to_owned),
+        judge: stored
+            .doc
+            .get("judge")
+            .and_then(|value| serde_json::from_value(value.clone()).ok()),
     })
 }
 

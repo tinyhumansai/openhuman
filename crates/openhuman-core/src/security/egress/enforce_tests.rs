@@ -54,15 +54,47 @@ fn local_only_blocks_each_external_surface() {
 
 #[test]
 fn standard_mode_allows_everything() {
-    // Standard / Sensitive never block here.
-    assert!(!local_only_blocks(
-        PrivacyMode::Standard,
-        &external_composio()
-    ));
+    assert!(!egress_blocks(PrivacyMode::Standard, &external_composio()));
+    // The LocalOnly decision itself never blocks Sensitive.
     assert!(!local_only_blocks(
         PrivacyMode::Sensitive,
         &external_composio()
     ));
+}
+
+#[test]
+fn sensitive_is_not_standard_for_unassessed_external_content() {
+    let desc = external_composio();
+    assert_eq!(desc.risk_level, IdentificationRisk::Unknown);
+    assert!(egress_blocks(PrivacyMode::Sensitive, &desc));
+    assert!(!egress_blocks(PrivacyMode::Standard, &desc));
+}
+
+#[test]
+fn sensitive_permits_assessed_clean_content_and_blocks_identifying() {
+    let clean = external_composio().with_risk(IdentificationRisk::None, vec![]);
+    assert!(!egress_blocks(PrivacyMode::Sensitive, &clean));
+    let low = external_composio().with_risk(IdentificationRisk::Low, vec![]);
+    assert!(!egress_blocks(PrivacyMode::Sensitive, &low));
+    for risk in [IdentificationRisk::Medium, IdentificationRisk::High] {
+        assert!(egress_blocks(
+            PrivacyMode::Sensitive,
+            &external_composio().with_risk(risk, vec![])
+        ));
+    }
+    let credential =
+        external_composio().with_risk(IdentificationRisk::None, vec!["credential".into()]);
+    assert!(egress_blocks(PrivacyMode::Sensitive, &credential));
+}
+
+#[test]
+fn sensitive_permits_local_runtime_control_plane_and_metadata_only() {
+    let local = EgressDescriptor::inference("ollama", "llama3", false);
+    assert!(!egress_blocks(PrivacyMode::Sensitive, &local));
+    let pricing = EgressDescriptor::integration("/agent-integrations/pricing");
+    assert!(!egress_blocks(PrivacyMode::Sensitive, &pricing));
+    let metadata = EgressDescriptor::integration("/agent-integrations/composio/connections");
+    assert!(!egress_blocks(PrivacyMode::Sensitive, &metadata));
 }
 
 #[test]

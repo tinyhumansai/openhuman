@@ -1,0 +1,91 @@
+# Released-artifact integration checks: the fixture loads the published
+# archive through the compiled registry digest (see security-native-fixture.sh).
+name: Security Native
+
+on:
+  pull_request:
+    branches: [main, release]
+    paths:
+      - .github/workflows/security-native.yml
+      - .gitmodules
+      - vendor/tinysecurity
+      - crates/openhuman-core/src/modules/security*.rs
+      - crates/openhuman-core/src/modules/registry/records_security.rs
+      - crates/openhuman-core/src/security/policy/**
+      - scripts/ci/security-native-fixture.sh
+      - Cargo.lock
+  workflow_dispatch: {}
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: security-native-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: Native policy (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: "2"
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Install Linux inference prerequisites
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          key: security-native-${{ runner.os }}
+      - name: Exercise attested adapter and latency budget
+        shell: bash
+        run: bash scripts/ci/security-native-fixture.sh
+
+  latency-budget:
+    name: Release latency budget
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CARGO_BUILD_JOBS: "2"
+      GH_TOKEN: ${{ github.token }}
+      OPENHUMAN_SECURITY_PERF_BUDGET: "1"
+      OPENHUMAN_SECURITY_PERF_OUT: ${{ github.workspace }}/target/security-perf.json
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Install Linux inference prerequisites
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          key: security-native-latency-${{ runner.os }}
+      - name: Fail when native p50/p99 exceed the committed budget
+        shell: bash
+        run: bash scripts/ci/security-native-fixture.sh
+      - name: Record measured latency and calls per turn
+        if: always()
+        shell: bash
+        run: |
+          if [ -f "$OPENHUMAN_SECURITY_PERF_OUT" ]; then
+            cat "$OPENHUMAN_SECURITY_PERF_OUT"
+            { echo '### Native security latency'; echo '```json'; cat "$OPENHUMAN_SECURITY_PERF_OUT"; echo; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-perf
+          path: target/security-perf.json
+          if-no-files-found: ignore

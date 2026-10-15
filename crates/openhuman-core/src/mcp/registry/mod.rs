@@ -472,6 +472,52 @@ pub(crate) fn tools_safe_for_agent(
         .collect()
 }
 
+/// [`tools_safe_for_agent`] plus the security module's `ScanToolDefinition`.
+///
+/// The module verdict is context: a `Blocked` tool is dropped (with the rule ids
+/// only, never the text), `Suspicious` and an unavailable module change nothing
+/// beyond the host scan. It never re-admits a tool the host dropped.
+#[cfg(feature = "mcp")]
+pub(crate) async fn tools_safe_for_agent_scanned(
+    server: &str,
+    tools: Vec<tinymcp_bus::McpTool>,
+) -> Vec<tinymcp_bus::McpTool> {
+    let tools = tools_safe_for_agent(server, tools);
+    #[cfg(feature = "security-module")]
+    {
+        use crate::modules::security::text::{scan_tool_definition, ScanVerdict};
+        let Some(config) = crate::core::runtime::CoreContext::current_embedder_config() else {
+            return tools;
+        };
+        if !config.modules.enabled {
+            return tools;
+        }
+        let mut kept = Vec::with_capacity(tools.len());
+        for tool in tools {
+            let definition = serde_json::json!({
+                "description": tool.description,
+                "input_schema": tool.input_schema,
+            });
+            match scan_tool_definition(&config, &tool.name, &definition).await {
+                Ok(scan) if scan.verdict == ScanVerdict::Blocked => {
+                    tracing::warn!(
+                        server,
+                        tool = %tool.name,
+                        rules = %scan.rule_ids.join(","),
+                        "[mcp] dropped a remote tool blocked by the security module scan"
+                    );
+                }
+                _ => kept.push(tool),
+            }
+        }
+        // Needed when `security-module` is on: the fallback tail below is cfg-gated out.
+        #[allow(clippy::needless_return)]
+        return kept;
+    }
+    #[cfg(not(feature = "security-module"))]
+    tools
+}
+
 // ---------------------------------------------------------------------------
 // Disabled facade — compiled only when the `mcp` feature is OFF.
 // ---------------------------------------------------------------------------
@@ -480,3 +526,7 @@ pub(crate) fn tools_safe_for_agent(
 mod stub;
 #[cfg(not(feature = "mcp"))]
 pub use stub::*;
+
+#[cfg(all(test, feature = "mcp"))]
+#[path = "mod_tests.rs"]
+mod tests;

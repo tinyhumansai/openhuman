@@ -31,6 +31,11 @@ async fn boot_skips_disabled_components() {
     }
     load_declared_modules(&config).await;
     for record in crate::modules::registry::ALL {
+        // Security enforcement has no `[components]` switch by design.
+        if crate::modules::registry::component_for(record.id).is_none() {
+            assert_eq!(record.id, "tinysecurity", "{} has no component", record.id);
+            continue;
+        }
         assert!(
             crate::modules::ops::disabled_component(&config, record.id).is_some(),
             "{} should be disabled",

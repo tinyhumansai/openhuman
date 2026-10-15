@@ -108,9 +108,8 @@ async fn execute_owned(
     let status = tinybox::jail_status(config)
         .await
         .map_err(|_| anyhow::anyhow!("TinyBox native jail status is unavailable"))?;
-    if !status.available || !status.suitable_for_untrusted_code {
-        anyhow::bail!("TinyBox native jail cannot meet the required isolation floor");
-    }
+    super::ops::require_untrusted_isolation(status.available, status.suitable_for_untrusted_code)
+        .map_err(|error| anyhow::anyhow!(error))?;
     if explicitly_requested && status.backend != "landlock" {
         anyhow::bail!("requested Landlock sandbox is unavailable");
     }

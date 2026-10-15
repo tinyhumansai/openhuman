@@ -228,6 +228,20 @@ pub(crate) fn local_status_for_jail(
     }
 }
 
+/// Fail-closed gate for every spawn that runs untrusted code: a jail that is
+/// missing, inactive (Noop) or not suitable for untrusted code is a denial,
+/// never a silent downgrade to unsandboxed execution.
+#[cfg(any(feature = "modules", test))]
+pub(crate) fn require_untrusted_isolation(
+    available: bool,
+    suitable_for_untrusted_code: bool,
+) -> Result<(), String> {
+    match local_status_for_jail(available, suitable_for_untrusted_code) {
+        SandboxStatus::Ready => Ok(()),
+        _ => Err("the sandbox cannot meet the isolation floor for untrusted code".to_owned()),
+    }
+}
+
 pub async fn create_sandbox_backend(
     ctx: &DispatchCtx,
     policy: &SandboxPolicy,

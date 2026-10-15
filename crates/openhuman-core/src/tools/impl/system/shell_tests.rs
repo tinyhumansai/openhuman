@@ -1,15 +1,27 @@
 use super::*;
 use crate::agent::host_runtime::{NativeRuntime, RuntimeAdapter};
+use crate::security::policy::native_commands_stub::StubGateway;
+use crate::security::policy::{CommandFlow, CommandStage, Refusal};
 use crate::security::{AutonomyLevel, SecurityPolicy};
-use tinybox_bus::CommandClass;
 
+/// A policy whose command gateway allows everything, so a test of the tool's
+/// own behaviour (execution, timeouts, environment, audit) does not depend on
+/// loading the security module. What the module answers for a command is pinned
+/// by the module-backed tests in `modules/security_command_tests.rs`.
 fn test_security(autonomy: AutonomyLevel) -> Arc<SecurityPolicy> {
-    Arc::new(SecurityPolicy {
-        autonomy,
-        workspace_dir: std::env::temp_dir(),
-        action_dir: std::env::temp_dir(),
-        ..SecurityPolicy::default()
-    })
+    gated_security(autonomy, StubGateway::allow())
+}
+
+fn gated_security(autonomy: AutonomyLevel, gateway: Arc<StubGateway>) -> Arc<SecurityPolicy> {
+    Arc::new(
+        SecurityPolicy {
+            autonomy,
+            workspace_dir: std::env::temp_dir(),
+            action_dir: std::env::temp_dir(),
+            ..SecurityPolicy::default()
+        }
+        .with_gateway(gateway),
+    )
 }
 
 fn test_runtime() -> Arc<dyn RuntimeAdapter> {

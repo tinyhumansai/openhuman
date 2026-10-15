@@ -35,7 +35,7 @@
 //! and catalog reads that carry no user content). See [`is_control_plane`] for
 //! the exact boundary and why it is drawn where it is.
 
-use super::types::{EgressDescriptor, EgressReason};
+use super::types::{DataKind, EgressDescriptor, EgressReason, IdentificationRisk};
 use crate::config::PrivacyMode;
 use crate::security::live_policy::current_privacy_mode;
 use tinytools::status::POLICY_BLOCKED_MARKER;
@@ -45,15 +45,61 @@ use tinytools::status::POLICY_BLOCKED_MARKER;
 /// transfer actually leaves the device (`desc.is_external`), and it is **not**
 /// an exempt backend control-plane round-trip ([`is_control_plane`]).
 ///
-/// Every other mode (`Standard` / `Sensitive`) permits everything here — the
-/// heightened-caution behaviours for `Sensitive` are approval/redaction slices,
-/// not an egress block. Local runtimes (`desc.is_external == false`) are always
+/// `Standard` permits everything here; `Sensitive` has its own decision,
+/// [`sensitive_blocks`], combined with this one by [`egress_blocks`]. Local runtimes (`desc.is_external == false`) are always
 /// permitted: nothing leaves the device.
 ///
 /// Extracted as a pure fn so the truth table is unit-testable without touching
 /// the process-global live policy.
 pub fn local_only_blocks(mode: PrivacyMode, desc: &EgressDescriptor) -> bool {
     mode == PrivacyMode::LocalOnly && desc.is_external && !is_control_plane(desc)
+}
+
+/// Pure decision for [`PrivacyMode::Sensitive`], the descriptor-level mirror of
+/// the tinysecurity module's Sensitive egress rule: an external, content-bearing,
+/// non-control-plane transfer is refused unless its identification risk was
+/// *assessed* and is `None` or `Low` with no credential or identifier category.
+/// An unassessed (`Unknown`) classification is refused, never assumed clean.
+///
+/// Metadata-only transfers and backend control-plane round-trips carry no user
+/// content and stay permitted, as do local runtimes.
+pub fn sensitive_blocks(mode: PrivacyMode, desc: &EgressDescriptor) -> bool {
+    if mode != PrivacyMode::Sensitive || !desc.is_external || is_control_plane(desc) {
+        return false;
+    }
+    if desc
+        .data_kinds
+        .iter()
+        .all(|kind| *kind == DataKind::Metadata)
+    {
+        return false;
+    }
+    let identifying_category = desc.risk_categories.iter().any(|category| {
+        let category = category.to_ascii_lowercase();
+        [
+            "credential",
+            "secret",
+            "token",
+            "password",
+            "identifier",
+            "email",
+            "phone",
+            "ssn",
+            "card",
+        ]
+        .iter()
+        .any(|needle| category.contains(needle))
+    });
+    match desc.risk_level {
+        IdentificationRisk::None | IdentificationRisk::Low => identifying_category,
+        IdentificationRisk::Unknown | IdentificationRisk::Medium | IdentificationRisk::High => true,
+    }
+}
+
+/// Whether `mode` refuses the transfer described by `desc` (either restrictive
+/// mode).
+pub fn egress_blocks(mode: PrivacyMode, desc: &EgressDescriptor) -> bool {
+    local_only_blocks(mode, desc) || sensitive_blocks(mode, desc)
 }
 
 /// Is `desc` a backend **control-plane** round-trip that must keep flowing even
@@ -136,7 +182,15 @@ pub(crate) fn is_control_plane(desc: &EgressDescriptor) -> bool {
 /// descriptor — never raw payload) and how to lift the block. No marker; callers
 /// that need the [`POLICY_BLOCKED_MARKER`] prefix add it (see
 /// [`local_only_tool_block`]).
-fn block_message(desc: &EgressDescriptor) -> String {
+fn block_message(mode: PrivacyMode, desc: &EgressDescriptor) -> String {
+    if mode == PrivacyMode::Sensitive {
+        return format!(
+            "Sensitive privacy mode is active: this action would send content to external \
+             service `{}` without a clean identification assessment. Change the privacy \
+             mode in Settings to allow it.",
+            desc.service
+        );
+    }
     format!(
         "Local-only privacy mode is active: this action needs external service \
          `{}`. Disable local-only mode in Settings to allow it.",
@@ -153,14 +207,15 @@ fn block_message(desc: &EgressDescriptor) -> String {
 /// transfer is neither disclosed as pending nor dispatched.
 pub fn enforce_egress(desc: &EgressDescriptor) -> anyhow::Result<()> {
     let mode = current_privacy_mode();
-    if local_only_blocks(mode, desc) {
+    if egress_blocks(mode, desc) {
         log::warn!(
-            "[privacy][egress-enforce] LocalOnly BLOCK provider={} service={} reason={:?} — refused",
+            "[privacy][egress-enforce] {:?} BLOCK provider={} service={} reason={:?} — refused",
+            mode,
             desc.provider_slug,
             desc.service,
             desc.reason,
         );
-        anyhow::bail!("{}", block_message(desc));
+        anyhow::bail!("{}", block_message(mode, desc));
     }
     log::debug!(
         "[privacy][egress-enforce] privacy_mode={:?} provider={} service={} reason={:?} — permitted",
@@ -180,14 +235,18 @@ pub fn enforce_egress(desc: &EgressDescriptor) -> anyhow::Result<()> {
 /// `Some`, short-circuit with `Ok(ToolResult::error(message))`.
 pub fn local_only_tool_block(desc: &EgressDescriptor) -> Option<String> {
     let mode = current_privacy_mode();
-    if local_only_blocks(mode, desc) {
+    if egress_blocks(mode, desc) {
         log::warn!(
-            "[privacy][egress-enforce] LocalOnly BLOCK (tool) provider={} service={} reason={:?} — refused",
+            "[privacy][egress-enforce] {:?} BLOCK (tool) provider={} service={} reason={:?} — refused",
+            mode,
             desc.provider_slug,
             desc.service,
             desc.reason,
         );
-        Some(format!("{POLICY_BLOCKED_MARKER} {}", block_message(desc)))
+        Some(format!(
+            "{POLICY_BLOCKED_MARKER} {}",
+            block_message(mode, desc)
+        ))
     } else {
         log::debug!(
             "[privacy][egress-enforce] privacy_mode={:?} (tool) provider={} service={} reason={:?} — permitted",

@@ -3888,6 +3888,11 @@ const messages: TranslationMap = {
   'settings.approvalHistory.tableTitle': 'Decisiones',
   'settings.approvalHistory.tableDesc':
     'Cada aprobación o negación, con la herramienta y lo que se le pidió que hiciera.',
+  'settings.approvalHistory.autoJev': 'Aprobado automáticamente por Jev',
+  'settings.approvalHistory.autoPolicy': 'Aprobado automáticamente por política',
+  'settings.approvalHistory.judgeScores': 'Intención {intent} · Reversible {reversible} · Exfiltración {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'Veredicto en caché',
+  'settings.approvalHistory.judgeExpires': 'La concesión caduca {time}',
   'settings.approvalHistory.column.time': 'Hora',
   'settings.approvalHistory.column.tool': 'Herramienta / acción',
   'settings.approvalHistory.column.decision': 'Decisión',

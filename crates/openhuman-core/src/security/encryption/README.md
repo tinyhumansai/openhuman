@@ -4,9 +4,7 @@ AES-256-GCM at-rest crypto for AI memory storage and the encrypt/decrypt RPC sur
 
 ## Public surface
 
-- `pub struct EncryptedPayload` (`core.rs:18-26`): `{ ciphertext, nonce, salt }` triple persisted to disk.
-- `pub struct EncryptionKey` (`core.rs:29-32`): `[u8; 32]` AES-256 key wrapper.
-- `impl EncryptionKey::derive(password: &str, salt: &[u8]) -> Result<Self, String>` (`core.rs:35`): Argon2id with parameters `m=65536, t=3, p=1`.
+- Removed: the host `EncryptedPayload`/`EncryptionKey` primitives (`core.rs`) now live in the tinysecurity module (`PasswordCrypt2`, `modules/security_crypto.rs`); the legacy payload layout is unchanged and pinned by `modules/fixtures/legacy_password_payload.json`.
 - `pub async fn encrypt_secret(config: &Config, plaintext: &str) -> Result<Outcome<String>, String>` (`ops.rs:6`): RPC handler, delegates to `credentials::rpc::encrypt_secret`.
 - `pub async fn decrypt_secret(config: &Config, ciphertext: &str) -> Result<Outcome<String>, String>` (`ops.rs:13`): RPC handler, delegates to `credentials::rpc::decrypt_secret`.
 - RPC `encryption.{encrypt_secret, decrypt_secret}`, defined in [`schemas.rs`](./schemas.rs) (re-exported via `all_encryption_controller_schemas` / `all_encryption_registered_controllers`).

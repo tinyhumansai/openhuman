@@ -179,6 +179,30 @@ path = "../../tests/memory_cortexdb_live.rs"
 # scripts/test-memory-cortexdb-live.sh, which boots the server in Docker.
 
 [[test]]
+name = "security_characterization_e2e"
+path = "../../tests/security_characterization_e2e.rs"
+
+[[test]]
+name = "security_policy_characterization"
+path = "../../tests/security_policy_characterization.rs"
+
+[[test]]
+name = "security_approval_characterization"
+path = "../../tests/security_approval_characterization.rs"
+
+[[test]]
+name = "security_redaction_characterization"
+path = "../../tests/security_redaction_characterization.rs"
+
+[[test]]
+name = "security_sandbox_characterization"
+path = "../../tests/security_sandbox_characterization.rs"
+
+[[test]]
+name = "security_crypto_characterization"
+path = "../../tests/security_crypto_characterization.rs"
+
+[[test]]
 name = "json_rpc_e2e"
 path = "../../tests/json_rpc_e2e.rs"
 # `voice::reply_speech::{test_seam, TEST_SEAM_ENV}` — the reply-speech seam
@@ -351,8 +375,12 @@ futures = "0.3"
 serde = { version = "1", features = ["derive"] }
 tempfile = "3"
 tinyinference-llm = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-llm" }
+# The owning PII safety contract, for the shared security redaction corpus.
+tinymemory-api = { path = "../../vendor/tinymemory/crates/tinymemory-api", features = ["local-safety"] }
 # The document-port contract for failure injection in cron storage regressions.
 tinystoragedrivers-core = { git = "https://github.com/tinyhumansai/tinystoragedrivers", tag = "v0.11.0" }
+# The shell command-class vocabulary, for the security policy characterization.
+tinybox-bus = { path = "../../vendor/tinybox/crates/tinybox-bus" }
 tinytools = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinytools" }
 tinytools-std = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinytools-std" }
 # The completion log a detached sub-agent leaves, for the SaaS delivery-recovery e2e.
@@ -412,6 +440,7 @@ default = [
     "scheduler-gate",
     "file-logging",
     "modules",
+    "security-module",
     "jev",
     "tinymemes",
     "storage-sqlite",
@@ -426,6 +455,7 @@ documents = ["openhuman-rpc/documents"]
 hosting = ["openhuman-rpc/hosting"]
 tinymemes = ["openhuman-rpc/tinymemes"]
 modules = ["openhuman-rpc/modules"]
+security-module = ["openhuman-rpc/security-module"]
 voice = ["openhuman-rpc/voice"]
 web3 = ["openhuman-rpc/web3"]
 # Storage drivers for `[storage] url` (see the core `storage` domain).

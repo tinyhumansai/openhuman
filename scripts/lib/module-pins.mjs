@@ -49,8 +49,9 @@ export function parseAllList(src) {
   if (!block) throw new Error("registry.rs: could not find `pub const ALL`");
   return block[1]
     .replace(/\/\/[^\n]*/g, "")
-    // `#[cfg(feature = "…")]` on an element: the record is still in `ALL` for
-    // the builds that carry its optional contract crate, so it is still pinned.
+    // `#[cfg(...)]` on an element: the record is still in `ALL` for the builds
+    // that carry its feature (including `cfg(any(...))`, whose commas must not
+    // split the list), so it is still pinned.
     .replace(/#\[[^\]]*\]/g, "")
     .split(",")
     .map((s) => s.trim())

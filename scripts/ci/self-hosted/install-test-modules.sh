@@ -61,7 +61,7 @@ done <<< "${assets}"
 # Every staged directory goes on the search path the loader already honours
 # (release mode); each holds the released library.
 module_dirs=""
-for id in tinybox tinydocs tinywallet tinychannels tinymcp tinyjuice tinysearch tinyhosts tinyconnectors; do
+for id in tinybox tinydocs tinywallet tinychannels tinymcp tinyjuice tinysearch tinyhosts tinyconnectors tinysecurity; do
   module_dirs="${module_dirs:+${module_dirs}:}${dest}/${id}"
 done
 # mcp_registry_multi_server loads TinyMCP by file, not by search path, as

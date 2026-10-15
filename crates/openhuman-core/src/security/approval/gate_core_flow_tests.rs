@@ -254,6 +254,44 @@ async fn auto_approve_all_resolves_allow() {
     );
 }
 
+/// An `auto_approve_all` bypass must leave a row in the security audit log:
+/// skipping the prompt is exactly the decision an auditor needs to see.
+#[tokio::test]
+async fn auto_approve_all_writes_audit_row() {
+    let _env = crate::config::TEST_ENV_LOCK.lock().await;
+    let (gate, dir) = test_gate();
+    let policy = crate::security::SecurityPolicy {
+        auto_approve_all: true,
+        ..crate::security::SecurityPolicy::default()
+    };
+    let _policy_guard = crate::security::live_policy::install_scoped(
+        Arc::new(policy),
+        dir.path().to_path_buf(),
+        dir.path().to_path_buf(),
+    );
+
+    let outcome = turn_origin::with_origin(
+        web_origin(),
+        gate.intercept(
+            &ApprovalTurnContext::default(),
+            "openhuman_test_aaa_audit",
+            "noop",
+            serde_json::json!({}),
+        ),
+    )
+    .await;
+    assert!(matches!(outcome, GateOutcome::Allow));
+
+    let log = std::fs::read_to_string(dir.path().join("audit.log"))
+        .expect("auto_approve_all must append an audit row");
+    let row: serde_json::Value =
+        serde_json::from_str(log.lines().last().expect("one row")).expect("json row");
+    assert_eq!(row["event_type"], "policy_decision");
+    assert_eq!(row["action"]["command"], "openhuman_test_aaa_audit");
+    assert_eq!(row["action"]["policy_decision"], "auto_approve_all");
+    assert_eq!(row["action"]["allowed"], true);
+}
+
 /// Control test: with `auto_approve_all: false` (the default), a
 /// WebChat-origin call parks normally — it does NOT resolve to `Allow`
 /// until a decision is sent on the oneshot.

@@ -58,6 +58,26 @@ async fn backend_dispatch_forwards_the_workflow_connection_id() {
         )
         .expect("store test session token");
 
+    assert_eq!(
+        crate::security::credentials::session_support::resolve_backend_credential(&config)
+            .expect("resolve fixture credential"),
+        crate::security::credentials::session_support::BackendCredential::Session(
+            "test-token".to_owned()
+        )
+    );
+    let route = crate::modules::connectors::module_config(&config)
+        .expect("fixture must configure the connector backend route");
+    assert_eq!(route["route"], "proxy");
+    assert_eq!(route["base_url"], format!("http://{addr}"));
+    crate::modules::ops::ensure_loaded(&config, "tinyconnectors")
+        .await
+        .expect("load fixture connector module");
+    assert_eq!(
+        crate::modules::connectors::module_config(&config)
+            .expect("module loading must retain the fixture backend route")["route"],
+        "proxy"
+    );
+
     let response = execute_for_connection(
         &config,
         "GITHUB_LIST_REPOSITORY_ISSUES",

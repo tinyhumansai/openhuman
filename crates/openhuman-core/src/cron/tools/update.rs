@@ -98,12 +98,9 @@ impl Tool for CronUpdateTool {
         };
 
         if let Some(command) = &patch.command {
-            if let Err(reason) = super::super::scheduler::shell_job::authorize_shell_command(
-                &self.config,
-                &self.security,
-                command,
-            )
-            .await
+            if let Err(reason) =
+                super::super::scheduler::shell_job::authorize_shell_command(&self.security, command)
+                    .await
             {
                 return Ok(ToolResult::error(reason));
             }

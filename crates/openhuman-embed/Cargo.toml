@@ -17,13 +17,14 @@ result_large_err = "allow"
 langfuse = ["openhuman-core/langfuse", "tinyagents-harness/langfuse"]
 # `channels` is in core's default set already; enabling it here too compiles
 # the `Runtime::channels` facade in a default build.
-default = ["openhuman-core/default", "channels", "modules"]
+default = ["openhuman-core/default", "channels", "modules", "security-module"]
 http-server = ["openhuman-core/http-server"]
 inference = ["openhuman-core/inference"]
 documents = ["openhuman-core/documents"]
 hosting = ["openhuman-core/hosting"]
 tinymemes = ["openhuman-core/tinymemes"]
 modules = ["openhuman-core/modules", "tinybus/modules"]
+security-module = ["openhuman-core/security-module"]
 voice = ["openhuman-core/voice"]
 web3 = ["openhuman-core/web3"]
 # Storage drivers for `[storage] url` (see the core `storage` domain).
@@ -98,6 +99,7 @@ url = "2"
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
+rand = "0.10"
 async-trait = "0.1"
 tinymemory-api = { path = "../../vendor/tinymemory/crates/tinymemory-api", features = ["conformance"] }
 dirs = "6"

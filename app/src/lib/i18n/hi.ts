@@ -3804,6 +3804,11 @@ const messages: TranslationMap = {
   'settings.approvalHistory.tableTitle': 'निर्णय',
   'settings.approvalHistory.tableDesc':
     'प्रत्येक उपकरण के साथ स्वीकृति या इनकार करते हैं और उसे क्या करना चाहिए।',
+  'settings.approvalHistory.autoJev': 'Jev द्वारा स्वतः स्वीकृत',
+  'settings.approvalHistory.autoPolicy': 'नीति द्वारा स्वतः स्वीकृत',
+  'settings.approvalHistory.judgeScores': 'इरादा {intent} · उलटने योग्य {reversible} · डेटा रिसाव {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'कैश किया गया निर्णय',
+  'settings.approvalHistory.judgeExpires': 'अनुमति समाप्त होगी {time}',
   'settings.approvalHistory.column.time': 'समय',
   'settings.approvalHistory.column.tool': 'उपकरण / कार्रवाई',
   'settings.approvalHistory.column.decision': 'निर्णय',

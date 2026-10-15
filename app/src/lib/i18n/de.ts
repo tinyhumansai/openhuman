@@ -3920,6 +3920,11 @@ const messages: TranslationMap = {
   'settings.approvalHistory.tableTitle': 'Beschlüsse',
   'settings.approvalHistory.tableDesc':
     'Jeder genehmigt oder leugnet, mit dem Werkzeug und was es verlangt wurde.',
+  'settings.approvalHistory.autoJev': 'Automatisch von Jev genehmigt',
+  'settings.approvalHistory.autoPolicy': 'Automatisch per Richtlinie genehmigt',
+  'settings.approvalHistory.judgeScores': 'Absicht {intent} · Umkehrbar {reversible} · Datenabfluss {exfiltrate}',
+  'settings.approvalHistory.judgeCached': 'Zwischengespeichertes Urteil',
+  'settings.approvalHistory.judgeExpires': 'Freigabe läuft ab {time}',
   'settings.approvalHistory.column.time': 'Uhrzeit',
   'settings.approvalHistory.column.tool': 'Instrument/Aktion',
   'settings.approvalHistory.column.decision': 'Beschluss',

@@ -31,6 +31,7 @@ fn full_product_features_enabled() -> bool {
         ("web3", cfg!(feature = "web3")),
         ("documents", cfg!(feature = "documents")),
         ("modules", cfg!(feature = "modules")),
+        ("security-module", cfg!(feature = "security-module")),
         ("flows", cfg!(feature = "flows")),
         ("skills", cfg!(feature = "skills")),
         ("mcp", cfg!(feature = "mcp")),

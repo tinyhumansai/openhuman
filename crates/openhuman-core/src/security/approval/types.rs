@@ -130,6 +130,23 @@ pub struct ApprovalAuditEntry {
     pub expires_at: Option<DateTime<Utc>>,
     pub decided_at: DateTime<Utc>,
     pub decision: ApprovalDecision,
+    /// Who decided: `auto:jev`, `auto:host-policy`, or absent for a human.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decided_by: Option<String>,
+    /// The judge's verdict when `decided_by` is `auto:jev`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub judge: Option<JudgeVerdict>,
+}
+
+/// Nonsensitive judge evidence shown in approval history: the fixed outcome
+/// and scores in thousandths, never provider text or credentials.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JudgeVerdict {
+    pub outcome: String,
+    pub intent_millis: Option<u16>,
+    pub reversible_millis: Option<u16>,
+    pub exfiltrate_millis: Option<u16>,
+    pub cached: bool,
 }
 
 /// Result of `approval_preauthorize_flow`: which trust grants were newly

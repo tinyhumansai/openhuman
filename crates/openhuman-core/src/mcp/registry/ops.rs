@@ -229,7 +229,7 @@ pub async fn mcp_clients_connect(
     )
     .await?;
 
-    let tools = super::tools_safe_for_agent(&server_id, outcome.tools);
+    let tools = super::tools_safe_for_agent_scanned(&server_id, outcome.tools).await;
     let tool_count = u32::try_from(tools.len()).unwrap_or(u32::MAX);
 
     BUS.publish(DomainEvent::McpServerConnected {
@@ -326,7 +326,7 @@ pub async fn mcp_clients_update_env(
 
     match outcome.status {
         UpdateEnvStatus::Connected => {
-            let tools = super::tools_safe_for_agent(&server_id, outcome.tools);
+            let tools = super::tools_safe_for_agent_scanned(&server_id, outcome.tools).await;
             let tool_count = u32::try_from(tools.len()).unwrap_or(u32::MAX);
 
             BUS.publish(DomainEvent::McpServerConnected {
@@ -542,7 +542,7 @@ pub async fn mcp_clients_list_tools(
         }
     };
 
-    let tools = super::tools_safe_for_agent(&server_id, tools);
+    let tools = super::tools_safe_for_agent_scanned(&server_id, tools).await;
     let count = tools.len();
 
     Ok(Outcome::new(

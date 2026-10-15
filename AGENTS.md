@@ -550,6 +550,7 @@ Direct rendered submodules under `vendor/`:
 | --- | --- |
 | `tinyagents` | Provider-neutral agent harness and durable typed state graph: model/tool loop, tool-call dialects and parsing, middleware, retries, caching, sessions/transcripts, and graph execution. |
 | `tinybox` | Isolated execution environments for code the host does not trust; box lifecycle and isolation backends. |
+| `tinysecurity` | Native security policy engines and their transport-free bus contract. OpenHuman owns trusted configuration translation, product RPCs, and host execution adapters. Hosts link `tinysecurity-bus` only. |
 | `tinybus` | TinyBus runtime and module contracts: discovery/loading, ABI and manifest admission, transport, proxies, lifecycle, and module bus behavior. |
 | `tinychannels` | Portable channel/message contracts, configuration/schema, routing metadata, and channel backend abstractions. OpenHuman owns its concrete product/backend adapters. |
 | `tinyconnectors` | OAuth connector module behavior: account linking, available actions, action execution, and connector webhooks. |
@@ -598,6 +599,7 @@ method constants, request and response types, and its contract version.
 | `tinymcp-bus` | `mcp` |
 | `tinychannels-bus` | channel vocabulary |
 | `tinyconnectors-bus` | OAuth connector (Composio) wire contract; called through `integrations/composio/module_client.rs` |
+| `tinysecurity-bus` | `security-module` (filesystem path authorization, shell command gating, the network and write tier gates, and password crypt today; approvals and sandbox plans pending, issue #7328); called through `modules/security.rs`, `modules/security_command.rs` and `modules/security_crypto.rs` |
 
 Rules:
 

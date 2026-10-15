@@ -40,8 +40,6 @@ pub struct AutonomyConfig {
     pub forbidden_paths: Vec<String>,
     #[serde(default = "default_max_actions_per_hour")]
     pub max_actions_per_hour: u32,
-    #[serde(default = "default_max_cost_per_day_cents")]
-    pub max_cost_per_day_cents: u32,
     #[serde(default = "default_true")]
     pub require_approval_for_medium_risk: bool,
     #[serde(default = "default_true")]
@@ -94,10 +92,6 @@ fn default_max_actions_per_hour() -> u32 {
     // ceiling above realistic per-hour traffic is functionally infinite;
     // u32::MAX lets the field stay a plain `u32` without a sentinel option.
     u32::MAX
-}
-
-fn default_max_cost_per_day_cents() -> u32 {
-    500
 }
 
 fn default_allowed_commands() -> Vec<String> {
@@ -198,7 +192,6 @@ impl Default for AutonomyConfig {
             allowed_commands: default_allowed_commands(),
             forbidden_paths: default_forbidden_paths(),
             max_actions_per_hour: default_max_actions_per_hour(),
-            max_cost_per_day_cents: default_max_cost_per_day_cents(),
             require_approval_for_medium_risk: default_true(),
             block_high_risk_commands: default_true(),
             auto_approve: default_auto_approve(),

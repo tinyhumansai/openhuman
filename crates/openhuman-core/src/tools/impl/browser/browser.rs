@@ -80,7 +80,7 @@ async fn approve_browser_action(
     let input_detail = match action {
         Action::Fill { value, .. } => format!(" ({} input characters)", value.chars().count()),
         Action::Type { text, .. } => format!(" ({} input characters)", text.chars().count()),
-        Action::Press { key } => format!(" ({key})"),
+        Action::Press { key, .. } => format!(" ({key})"),
         _ => String::new(),
     };
     let digest_hex = format!("{digest:x}");

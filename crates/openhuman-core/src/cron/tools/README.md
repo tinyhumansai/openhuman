@@ -41,7 +41,7 @@ strictest values.
 | --- | --- | --- | --- | --- |
 | `CronAddTool` | `cron_add` | `Execute` | `true` | `cron::add_shell_job` / `cron::add_agent_job` |
 | `CronListTool` | `cron_list` | trait default (`ReadOnly`) | trait default (`false`) | `cron::list_jobs` |
-| `CronUpdateTool` | `cron_update` | `Execute` | `true` | `cron::update_job` (after `SecurityPolicy::is_command_allowed` on `patch.command`) |
+| `CronUpdateTool` | `cron_update` | `Execute` | `true` | `cron::update_job` (after `shell_job::authorize_shell_command` on `patch.command`) |
 | `CronRemoveTool` | `cron_remove` | `Write` | `true` | `cron::remove_job` |
 | `CronRunTool` | `cron_run` | `Execute` | `true` | `cron::get_job` + `cron::scheduler::execute_job_now`, then `cron::record_run` / `cron::record_last_run` |
 | `CronRunsTool` | `cron_runs` | trait default (`ReadOnly`) | trait default (`false`) | `cron::list_runs` (output truncated to `MAX_RUN_OUTPUT_CHARS = 500`) |
@@ -58,7 +58,7 @@ or immediately execute a stored command or agent prompt on the host.
   the presence of `prompt` when omitted), `command` or `prompt`,
   `session_target` (`SessionTarget`, default `Isolated`), `model`,
   `delivery`, `delete_after_run` (defaults to `true` for `at` schedules).
-- Shell commands are checked with `SecurityPolicy::is_command_allowed` before
+- Shell commands are checked by the security module (`shell_job::authorize_shell_command`) before
   being scheduled.
 - Agent jobs default to `DeliveryConfig { mode: "proactive", best_effort:
   true, .. }`. `validate_delivery` only inspects `mode: "announce"`: it

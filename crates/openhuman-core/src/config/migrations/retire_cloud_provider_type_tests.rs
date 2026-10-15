@@ -81,7 +81,10 @@ async fn failed_upgrade_save_retains_version_and_model_for_retry() {
     );
     config.config_path = dir.path().join("retry.toml");
     crate::config::migrations::run_pending(&mut config).await;
-    assert_eq!(config.schema_version, 14);
+    assert_eq!(
+        config.schema_version,
+        crate::config::migrations::CURRENT_SCHEMA_VERSION
+    );
     let persisted: crate::config::Config =
         toml::from_str(&std::fs::read_to_string(config.config_path).unwrap()).unwrap();
     assert_eq!(

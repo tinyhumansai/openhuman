@@ -180,3 +180,26 @@ fn audit_rotation_creates_numbered_backup() -> Result<()> {
     );
     Ok(())
 }
+
+#[cfg(unix)]
+#[test]
+fn audit_log_file_is_owner_only() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = TempDir::new()?;
+    let config = AuditConfig {
+        enabled: true,
+        max_size_mb: 10,
+        ..Default::default()
+    };
+    let logger = AuditLogger::new(config, tmp.path().to_path_buf())?;
+    logger.log(&AuditEvent::new(AuditEventType::SecurityEvent))?;
+    let mode = std::fs::metadata(tmp.path().join("audit.log"))?
+        .permissions()
+        .mode();
+    assert_eq!(
+        mode & 0o077,
+        0,
+        "audit log must not be group/world accessible, mode={mode:o}"
+    );
+    Ok(())
+}

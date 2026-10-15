@@ -9,6 +9,7 @@ use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn test_config(tmp: &TempDir, api_url: &str) -> Config {
+    crate::hosted::test_support::init_keyring();
     Config {
         workspace_dir: tmp.path().join("workspace"),
         action_dir: tmp.path().join("workspace"),

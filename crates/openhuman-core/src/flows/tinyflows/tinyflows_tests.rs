@@ -73,11 +73,12 @@ fn edge(from: &str, to: &str) -> Edge {
 fn http_adapter(allowed_domains: Vec<String>) -> OpenHumanHttp {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
-    let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
-        &config.workspace_dir,
-        &config.action_dir,
-    ));
+    // The network gate asks the security module for the tier; these tests are
+    // about the adapter's own guards, so the tier table answers.
+    let security = Arc::new(
+        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir)
+            .with_gateway(crate::security::policy::native_commands_stub::StubGateway::tiered()),
+    );
     OpenHumanHttp {
         security,
         http_config: crate::config::HttpRequestConfig {

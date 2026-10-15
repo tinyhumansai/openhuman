@@ -45,17 +45,9 @@ pub struct TrustedRoot {
     pub access: TrustedAccess,
 }
 
-/// Risk score for shell command execution.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CommandRiskLevel {
-    Low,
-    Medium,
-    High,
-}
-
 /// What the harness should do with an acting tool call of a given
 /// [`CommandClass`] under the session's [`AutonomyLevel`]. Computed by
-/// [`SecurityPolicy::gate_decision`]; the harness translates `Prompt` into an
+/// [`SecurityPolicy::gate_decision`] (and, for a command, the module's gate); the harness translates `Prompt` into an
 /// `ApprovalGate` round-trip *before* the tool's `execute()` runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GateDecision {
@@ -167,6 +159,10 @@ pub(super) const WORKSPACE_INTERNAL_DIRS: &[&str] = &[
     "tinyplace",
 ];
 
+/// Per-profile internal-state directory families under the workspace.
+pub(super) const WORKSPACE_INTERNAL_PREFIXES: &[&str] =
+    &["memory-", "memory_tree-", "session_raw-"];
+
 /// The artifact store under `workspace_dir`. Its per-artifact directories are
 /// internal state (see `is_workspace_internal_path`); only
 /// [`ARTIFACT_TOOL_RESULTS_DIR`] inside it stays agent-readable.
@@ -254,7 +250,6 @@ pub struct SecurityPolicy {
     pub allowed_commands: Vec<String>,
     pub forbidden_paths: Vec<String>,
     pub max_actions_per_hour: u32,
-    pub max_cost_per_day_cents: u32,
     pub require_approval_for_medium_risk: bool,
     pub block_high_risk_commands: bool,
     /// Directories outside the workspace the agent may access (read or read-write).
@@ -305,6 +300,10 @@ pub struct SecurityPolicy {
     /// default. `pub(crate)` was an over-tight first cut that broke
     /// `examples/mouse_smoke.rs` with E0451.
     pub canonical_workspace: Arc<OnceCell<PathBuf>>,
+    /// Who answers shell-command questions for this policy. `None` (the
+    /// production value) is the TinySecurity module; a host that cannot load it
+    /// installs its own fail-closed gateway.
+    pub command_gateway: Option<super::native_commands::SharedCommandGateway>,
 }
 
 impl Default for SecurityPolicy {
@@ -405,7 +404,6 @@ impl Default for SecurityPolicy {
             // The rate-limiter check is `count <= max`, so u32::MAX is functionally
             // infinite without requiring an Option sentinel on the field type.
             max_actions_per_hour: u32::MAX,
-            max_cost_per_day_cents: 500,
             require_approval_for_medium_risk: true,
             block_high_risk_commands: true,
             trusted_roots: Vec::new(),
@@ -414,6 +412,7 @@ impl Default for SecurityPolicy {
             auto_approve_all: false,
             tracker: ActionTracker::new(),
             canonical_workspace: Arc::new(OnceCell::new()),
+            command_gateway: None,
         }
     }
 }

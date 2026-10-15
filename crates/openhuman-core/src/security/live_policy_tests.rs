@@ -232,3 +232,32 @@ async fn effective_falls_back_to_the_process_policy_for_an_agent_without_one() {
         crate::core::runtime::CoreContext::scope(agent_context(None), async { effective() }).await;
     assert!(Arc::ptr_eq(&seen.expect("process policy"), &process));
 }
+
+#[test]
+fn reload_from_config_keeps_privacy_and_bumps_generation() {
+    let _env = crate::config::TEST_ENV_LOCK.blocking_lock();
+    let workspace = std::env::temp_dir().join("openhuman_reload_from_config_test");
+    install(
+        Arc::new(SecurityPolicy::default()),
+        workspace.clone(),
+        workspace.clone(),
+    );
+    let before = generation();
+    let mut config = crate::config::Config {
+        workspace_dir: workspace.clone(),
+        action_dir: workspace,
+        ..Default::default()
+    };
+    config.autonomy.enabled = true;
+    config.privacy.mode = PrivacyMode::LocalOnly;
+    let after = reload_from_config(&config);
+    assert!(after > before);
+    let policy = current().expect("policy installed");
+    assert!(policy.enabled);
+    assert_eq!(policy.privacy_mode, PrivacyMode::LocalOnly);
+    assert_eq!(current_privacy_mode(), PrivacyMode::LocalOnly);
+    // An autonomy-only reload afterwards must not drop the stored mode.
+    reload_from(&config.autonomy);
+    assert_eq!(current_privacy_mode(), PrivacyMode::LocalOnly);
+    let _ = reload_privacy(PrivacyMode::Standard);
+}

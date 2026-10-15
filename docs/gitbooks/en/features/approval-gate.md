@@ -21,6 +21,7 @@ Three protections do not depend on `[autonomy] enabled`:
 
 - Credential stores and system roots stay unreachable. `~/.ssh`, `~/.gnupg`, `~/.aws` and system roots are always refused, as are `..` traversal and null bytes in a path.
 - Hard blocks inside the tools themselves, including the tool-policy middleware, always run.
+- Path checks that gate file access are answered by the TinySecurity module and fail closed if it is unavailable. The approval prompts, allow-list and optional Jev auto-approve judge described here still run in the core.
 - Sandboxing is separate. The platform jail and the Docker backend are chosen by `[runtime]` and the session's origin, not by the autonomy tier. See [Privacy and security](privacy-and-security.md).
 
 Everything below describes the policy with `[autonomy] enabled = true`.

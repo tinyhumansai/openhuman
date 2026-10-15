@@ -16,17 +16,23 @@ use tinytools_std::filesystem::{
     GitOperationsTool, GlobTool, GrepTool, ListFilesTool,
 };
 
+use crate::security::policy::native_commands_stub::StubGateway;
 use crate::security::{AutonomyLevel, SecurityPolicy};
 use tinytools::status::POLICY_BLOCKED_MARKER;
 
 fn policy(dir: &Path, autonomy: AutonomyLevel, max_actions_per_hour: u32) -> Arc<SecurityPolicy> {
-    Arc::new(SecurityPolicy {
-        autonomy,
-        workspace_dir: dir.to_path_buf(),
-        action_dir: dir.to_path_buf(),
-        max_actions_per_hour,
-        ..SecurityPolicy::default()
-    })
+    // Class questions are answered with the tier table, so these tests need not
+    // load the security module.
+    Arc::new(
+        SecurityPolicy {
+            autonomy,
+            workspace_dir: dir.to_path_buf(),
+            action_dir: dir.to_path_buf(),
+            max_actions_per_hour,
+            ..SecurityPolicy::default()
+        }
+        .with_gateway(StubGateway::tiered()),
+    )
 }
 
 fn supervised(dir: &Path) -> Arc<SecurityPolicy> {

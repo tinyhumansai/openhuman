@@ -22,6 +22,9 @@ pub enum AuditEventType {
     AuthSuccess,
     AuthFailure,
     PolicyViolation,
+    /// A policy or approval decision that let a call through without a prompt
+    /// (`auto_approve_all`, the per-agent gate-off, the allowlist).
+    PolicyDecision,
     SecurityEvent,
 }
 
@@ -130,6 +133,15 @@ impl AuditEvent {
             policy_decision: None,
             approval_id: None,
         });
+        self
+    }
+
+    /// Record which policy path produced the decision (for example
+    /// `auto_approve_all`). No-op until [`Self::with_action`] set an action.
+    pub fn with_policy_decision(mut self, decision: &str) -> Self {
+        if let Some(action) = self.action.as_mut() {
+            action.policy_decision = Some(decision.to_string());
+        }
         self
     }
 
@@ -281,10 +293,15 @@ impl AuditLogger {
         // race on rotation renames.
         let _guard = self.write_lock.lock();
         self.rotate_if_needed()?;
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.log_path)?;
+        let mut opts = OpenOptions::new();
+        opts.create(true).append(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            // Owner-only: audit rows name commands and paths.
+            opts.mode(0o600);
+        }
+        let mut file = opts.open(&self.log_path)?;
 
         writeln!(file, "{}", line)?;
         file.sync_all()?;

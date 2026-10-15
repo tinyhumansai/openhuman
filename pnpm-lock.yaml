@@ -29,6 +29,9 @@ importers:
       husky:
         specifier: ^9.1.7
         version: 9.1.7
+      smol-toml:
+        specifier: 1.6.1
+        version: 1.6.1
       tsx:
         specifier: ^4.20.3
         version: 4.21.0

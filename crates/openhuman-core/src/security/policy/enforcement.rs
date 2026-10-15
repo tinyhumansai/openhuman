@@ -263,7 +263,6 @@ impl SecurityPolicy {
             allowed_commands: autonomy_config.allowed_commands.clone(),
             forbidden_paths: autonomy_config.forbidden_paths.clone(),
             max_actions_per_hour: autonomy_config.max_actions_per_hour,
-            max_cost_per_day_cents: autonomy_config.max_cost_per_day_cents,
             require_approval_for_medium_risk: autonomy_config.require_approval_for_medium_risk,
             block_high_risk_commands: autonomy_config.block_high_risk_commands,
             trusted_roots,
@@ -272,7 +271,18 @@ impl SecurityPolicy {
             auto_approve_all: autonomy_config.auto_approve_all,
             tracker: ActionTracker::new(),
             canonical_workspace: Arc::new(OnceCell::new()),
+            command_gateway: None,
         }
+    }
+
+    /// Build the policy from the whole [`Config`]: autonomy, workspace roots and
+    /// the `[privacy]` mode together, so the egress posture is never silently
+    /// `Standard`. Prefer this over [`from_config`](Self::from_config) wherever a
+    /// `Config` is in hand.
+    #[must_use]
+    pub fn from_full_config(config: &crate::config::Config) -> Self {
+        Self::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir)
+            .with_privacy_mode(config.privacy.mode)
     }
 
     /// Return a copy of this policy with `privacy_mode` set. Used by the live-

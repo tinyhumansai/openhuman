@@ -54,10 +54,21 @@ impl OpenHumanSessionHost {
                 session_id: Some(self.event_session_id()),
             },
         );
+        // Module scan: context only (can add a refusal, never lift one).
+        let module_blocked = !self.untrusted_input
+            && matches!(guard.action, PromptEnforcementAction::Allow)
+            && crate::security::prompt_injection::module_scan(message)
+                .await
+                .is_some_and(|scan| scan.blocks());
         // A host-only session reading untrusted data has opted out; see
         // `set_untrusted_input`, which refuses any other session.
-        if !self.untrusted_input && !matches!(guard.action, PromptEnforcementAction::Allow) {
+        if module_blocked
+            || (!self.untrusted_input && !matches!(guard.action, PromptEnforcementAction::Allow))
+        {
             let user_message = match guard.action {
+                PromptEnforcementAction::Allow if module_blocked => {
+                    "Prompt blocked by security policy."
+                }
                 PromptEnforcementAction::Allow => "Message accepted.",
                 PromptEnforcementAction::Blocked => "Prompt blocked by security policy.",
                 PromptEnforcementAction::ReviewBlocked => {
@@ -65,6 +76,7 @@ impl OpenHumanSessionHost {
                 }
             };
             let action_tag = match guard.action {
+                PromptEnforcementAction::Allow if module_blocked => "module_blocked",
                 PromptEnforcementAction::Allow => "allow",
                 PromptEnforcementAction::Blocked => "blocked",
                 PromptEnforcementAction::ReviewBlocked => "review_blocked",

@@ -2,60 +2,58 @@
 //! forbidden-path argument scan and a hard timeout.
 
 use crate::config::Config;
+use crate::security::policy::{CommandFlow, CommandQuery, CommandStage, Refusal};
 use crate::security::SecurityPolicy;
 use tinyflows_schedule::types::CronJob;
 use tokio::time::Duration;
 
 pub(super) const SHELL_JOB_TIMEOUT_SECS: u64 = 120;
 
-/// Check a scheduled shell command using the parser facts from the pinned
-/// TinyBox module. The host owns the allowlist and protected-path decisions;
-/// a missing module is a refusal, never a request to parse locally.
+/// Check a scheduled shell command when a job is created or edited. The
+/// security module classifies it under the scheduled-execution rule (curated
+/// allowlist plus the configured risk restrictions); this host only reports
+/// the verdict. A missing or faulted module is a refusal, never a request to
+/// parse locally. Nothing is reserved from the hourly budget.
 pub(crate) async fn authorize_shell_command(
-    config: &Config,
     security: &SecurityPolicy,
     command: &str,
 ) -> Result<(), String> {
-    #[cfg(feature = "modules")]
-    {
-        let analysis = match crate::modules::tinybox::analyze_command(config, command.to_owned())
-            .await
-        {
-            Ok(analysis) => analysis,
-            Err(_) => {
-                #[cfg(test)]
-                {
-                    if !config.modules.enabled {
-                        return Err("Command analysis is unavailable.".to_owned());
-                    }
-                    // Scheduler unit tests exercise process and retry behavior
-                    // without loading a native artifact. Production has no
-                    // parser fallback and fails closed below.
-                    security
-                        .check_gated_command(command)
-                        .map_err(|_| "blocked by security policy: command rejected".to_owned())?;
-                    if !security.is_command_allowed(command) {
-                        return Err("blocked by security policy: command not allowed".to_owned());
-                    }
-                    return Ok(());
-                }
-                #[cfg(not(test))]
-                return Err("Command analysis is unavailable.".to_owned());
+    ask_module(security, command, CommandStage::Authorize).await
+}
+
+/// Admit a scheduled shell command immediately before it runs. As
+/// [`authorize_shell_command`], and an allowed command also spends one action
+/// of the scope's hourly budget.
+pub(crate) async fn admit_shell_command(
+    security: &SecurityPolicy,
+    command: &str,
+) -> Result<(), String> {
+    ask_module(security, command, CommandStage::Execute).await
+}
+
+async fn ask_module(
+    security: &SecurityPolicy,
+    command: &str,
+    stage: CommandStage,
+) -> Result<(), String> {
+    security
+        .check_command(CommandQuery {
+            command,
+            declared: None,
+            flow: CommandFlow::Scheduled,
+            stage,
+        })
+        .await
+        .map(|_| ())
+        .map_err(|refusal| {
+            log::debug!("[cron][shell] command refused stage={stage:?} reason={refusal:?}");
+            match refusal {
+                Refusal::Protected => "blocked by security policy: command rejected".to_owned(),
+                Refusal::RateLimit => "blocked by security policy: rate limit exceeded".to_owned(),
+                Refusal::Unavailable => "Command analysis is unavailable.".to_owned(),
+                _ => "blocked by security policy: command not allowed".to_owned(),
             }
-        };
-        security
-            .check_gated_command_analysis(&analysis)
-            .map_err(|_| "blocked by security policy: command rejected".to_owned())?;
-        if !security.is_command_allowed_analysis(&analysis) {
-            return Err("blocked by security policy: command not allowed".to_owned());
-        }
-        Ok(())
-    }
-    #[cfg(not(feature = "modules"))]
-    {
-        let _ = (config, security, command);
-        Err("Command analysis is unavailable.".to_owned())
-    }
+        })
 }
 
 #[cfg(test)]
@@ -153,7 +151,7 @@ pub(super) async fn run_job_command_with_timeout(
         );
     }
 
-    if let Err(reason) = authorize_shell_command(config, security, &job.command).await {
+    if let Err(reason) = admit_shell_command(security, &job.command).await {
         return (false, reason);
     }
 

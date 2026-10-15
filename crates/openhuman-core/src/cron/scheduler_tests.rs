@@ -1,5 +1,7 @@
 use super::*;
 use crate::config::Config;
+use crate::security::policy::native_commands_stub::StubGateway;
+use crate::security::policy::{CommandFlow, CommandStage, Refusal};
 use crate::security::SecurityPolicy;
 use chrono::{Duration as ChronoDuration, Timelike, Utc};
 use std::sync::Arc;
@@ -284,18 +286,65 @@ async fn a_shell_job_runs_on_this_platform() {
     );
 }
 
-#[cfg(feature = "modules")]
 #[tokio::test]
-async fn scheduled_shell_authorization_fails_closed_when_tinybox_is_disabled() {
+async fn scheduled_shell_authorization_fails_closed_when_the_module_cannot_answer() {
     let tmp = TempDir::new().unwrap();
-    let mut config = test_config(&tmp).await;
-    config.modules.enabled = false;
+    let config = test_config(&tmp).await;
     let security =
+        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir)
+            .with_gateway(StubGateway::refuse(Refusal::Unavailable));
+
+    for result in [
+        authorize_shell_command(&security, "echo must-not-run").await,
+        admit_shell_command(&security, "echo must-not-run").await,
+    ] {
+        assert_eq!(result, Err("Command analysis is unavailable.".to_owned()));
+    }
+}
+
+/// The module's reasons map onto the scheduler's existing refusal strings, and
+/// authorization asks under the scheduled-execution rule without spending the
+/// budget while admission (the run) does.
+#[tokio::test]
+async fn scheduled_shell_refusals_keep_their_messages_and_stages() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp).await;
+    let base =
         SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
-
-    let result = authorize_shell_command(&config, &security, "echo must-not-run").await;
-
-    assert_eq!(result, Err("Command analysis is unavailable.".to_owned()));
+    for (reason, message) in [
+        (
+            Refusal::Protected,
+            "blocked by security policy: command rejected",
+        ),
+        (
+            Refusal::RateLimit,
+            "blocked by security policy: rate limit exceeded",
+        ),
+        (
+            Refusal::NotAllowed,
+            "blocked by security policy: command not allowed",
+        ),
+        (
+            Refusal::HighRisk,
+            "blocked by security policy: command not allowed",
+        ),
+    ] {
+        let security = base.clone().with_gateway(StubGateway::refuse(reason));
+        assert_eq!(
+            authorize_shell_command(&security, "ls").await,
+            Err(message.to_owned()),
+            "{reason:?}"
+        );
+    }
+    let gateway = StubGateway::allow();
+    let security = base.with_gateway(gateway.clone());
+    authorize_shell_command(&security, "ls").await.unwrap();
+    admit_shell_command(&security, "ls").await.unwrap();
+    let asked = gateway.asked();
+    assert_eq!(asked.len(), 2);
+    assert!(asked.iter().all(|q| q.flow == CommandFlow::Scheduled));
+    assert_eq!(asked[0].stage, CommandStage::Authorize);
+    assert_eq!(asked[1].stage, CommandStage::Execute);
 }
 
 /// A pipeline keeps the shell's own exit status, not `pipefail`'s.

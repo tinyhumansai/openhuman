@@ -389,3 +389,57 @@ fn config_disables_sandbox_for_legacy_flag_or_component() {
     config.components.sandbox = false;
     assert!(config_disables_sandbox(&config));
 }
+
+// ── SaaS precedence (issue #7328 phase-0 characterization) ────────────
+
+const SAAS_CHILD: &str = "OPENHUMAN_SANDBOX_SAAS_TEST_CHILD";
+
+/// Mode is process-owned and irreversible, so the SaaS assertion runs in a
+/// fresh libtest process instead of locking the whole suite into SaaS.
+#[tokio::test]
+async fn saas_requires_the_sandbox_even_when_the_host_turns_it_off() {
+    let module = module_path!().split_once("::").expect("crate module").1;
+    let test = format!("{module}::saas_requires_the_sandbox_even_when_the_host_turns_it_off");
+    if std::env::var(SAAS_CHILD).as_deref() == Ok(test.as_str()) {
+        crate::core::runtime::mode::lock_mode(crate::core::runtime::Mode::Saas).unwrap();
+        assert!(crate::core::runtime::is_saas());
+        // `OPENHUMAN_SANDBOX=off` is set by the parent. The SaaS rule is checked
+        // before the host switch and before any config is read, for every agent mode.
+        for mode in [
+            None,
+            Some(SandboxMode::None),
+            Some(SandboxMode::ReadOnly),
+            Some(SandboxMode::Sandboxed),
+        ] {
+            assert!(
+                command_requires_sandbox(&DispatchCtx::process_default(), mode)
+                    .await
+                    .unwrap(),
+                "SaaS must sandbox every command, mode {mode:?}"
+            );
+        }
+        return;
+    }
+    let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args(["--exact", &test, "--nocapture", "--test-threads=1"])
+        .env(SAAS_CHILD, &test)
+        .env(SANDBOX_OFF_ENV, "off")
+        .output()
+        .expect("run isolated SaaS test");
+    assert!(
+        output.status.success() && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+        "isolated test {test} failed: {}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // The parent process stays single-user: the off switch still wins here.
+    assert!(!crate::core::runtime::is_saas());
+}
+
+#[test]
+fn untrusted_isolation_denies_noop_and_unsuitable_jails() {
+    assert!(require_untrusted_isolation(true, true).is_ok());
+    assert!(require_untrusted_isolation(true, false).is_err());
+    assert!(require_untrusted_isolation(false, true).is_err());
+    assert!(require_untrusted_isolation(false, false).is_err());
+}

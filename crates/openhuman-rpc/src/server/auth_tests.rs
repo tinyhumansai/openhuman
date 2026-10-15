@@ -71,44 +71,37 @@ fn is_external_inference_path_matches_only_v1_routes() {
 
 #[test]
 fn verify_external_inference_bearer_for_config_accepts_stored_key() {
+    const CHILD: &str = "OPENHUMAN_TEST_STORED_KEY_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        // Core is a normal dependency: its keyring state is process-wide.
+        // An isolated child cannot inherit another test's cached keychain failure.
+        let workspace = tempfile::tempdir().expect("scratch keyring workspace");
+        let bytes: [u8; 32] = rand::random();
+        let key: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "server::auth::tests::verify_external_inference_bearer_for_config_accepts_stored_key",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("OPENHUMAN_WORKSPACE", workspace.path())
+            .env("OPENHUMAN_KEYRING_BACKEND", "encrypted_file")
+            .env("OPENHUMAN_KEYRING_MASTER_KEY", key)
+            .env_remove("OPENHUMAN_KEYRING_MASTER_KEY_FILE")
+            .status()
+            .expect("run isolated stored-key assertions");
+        assert!(status.success(), "stored-key child failed: {status}");
+        return;
+    }
+    crate::embed::process::init_master_key().expect("headless test master key");
     // Keep a session_store test from installing a storage backend mid-test.
     let _slot = crate::STORAGE_SLOT_TEST_LOCK.blocking_lock();
-    // This headless fixture exercises the encrypted profile without the
-    // operator's keychain or a caller-supplied master-key file.
-    struct FixtureKey {
-        key: Option<std::ffi::OsString>,
-        file: Option<std::ffi::OsString>,
-        workspace: Option<std::ffi::OsString>,
-        backend: Option<std::ffi::OsString>,
-    }
-    impl Drop for FixtureKey {
-        fn drop(&mut self) {
-            for (name, value) in [
-                ("OPENHUMAN_KEYRING_MASTER_KEY", self.key.take()),
-                ("OPENHUMAN_KEYRING_MASTER_KEY_FILE", self.file.take()),
-                ("OPENHUMAN_WORKSPACE", self.workspace.take()),
-                ("OPENHUMAN_KEYRING_BACKEND", self.backend.take()),
-            ] {
-                match value {
-                    Some(value) => std::env::set_var(name, value),
-                    None => std::env::remove_var(name),
-                }
-            }
-        }
-    }
     let tmp = tempfile::tempdir().unwrap();
-    let _key = FixtureKey {
-        key: std::env::var_os("OPENHUMAN_KEYRING_MASTER_KEY"),
-        file: std::env::var_os("OPENHUMAN_KEYRING_MASTER_KEY_FILE"),
-        workspace: std::env::var_os("OPENHUMAN_WORKSPACE"),
-        backend: std::env::var_os("OPENHUMAN_KEYRING_BACKEND"),
-    };
-    std::env::remove_var("OPENHUMAN_KEYRING_MASTER_KEY_FILE");
-    std::env::set_var("OPENHUMAN_KEYRING_MASTER_KEY", "11".repeat(32));
-    std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
-    std::env::set_var("OPENHUMAN_KEYRING_BACKEND", "encrypted_file");
-    crate::embed::process::init_master_key().expect("initialize fixture master key");
+    let workspace = std::path::PathBuf::from(std::env::var_os("OPENHUMAN_WORKSPACE").unwrap());
     let config = Config {
+        workspace_dir: workspace.clone(),
+        action_dir: workspace,
         config_path: tmp.path().join("config.toml"),
         ..Default::default()
     };

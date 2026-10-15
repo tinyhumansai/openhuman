@@ -268,6 +268,18 @@ async fn handle_agent_run_turn(req: AgentTurnRequest) -> Result<AgentTurnRespons
             };
             return Err(msg.to_string());
         }
+        // Module scan: context only. It can add a refusal (`Blocked`), never
+        // lift one, and an unavailable module changes nothing.
+        if let Some(scan) = crate::security::prompt_injection::module_scan(user_prompt).await {
+            if scan.blocks() {
+                tracing::warn!(
+                    channel = %channel_name,
+                    rules = %scan.rule_ids.join(","),
+                    "[agent::bus] prompt rejected by security module scan"
+                );
+                return Err("Prompt blocked by security policy.".to_string());
+            }
+        }
     }
 
     // Resolve the target agent's declared sandbox mode so any

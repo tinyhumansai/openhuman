@@ -558,7 +558,7 @@ fn config_active_user_and_daemon_public_helpers_cover_path_branches() {
         daemon.workspace_dir,
         tmp.path().join("openhuman").join("workspace")
     );
-    assert!(daemon.security.audit.enabled);
+    assert!(daemon.audit.enabled);
 }
 
 #[test]

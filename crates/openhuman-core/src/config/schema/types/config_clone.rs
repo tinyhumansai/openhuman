@@ -39,6 +39,7 @@ impl Clone for Config {
             hooks: self.hooks.clone(),
             privacy: self.privacy,
             sandbox: self.sandbox.clone(),
+            security: self.security.clone(),
             runtime: self.runtime.clone(),
             shell: self.shell.clone(),
             web_chat: self.web_chat.clone(),

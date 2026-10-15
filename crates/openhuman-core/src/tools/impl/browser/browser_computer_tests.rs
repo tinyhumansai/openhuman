@@ -53,7 +53,8 @@ fn every_direct_or_controller_action_that_can_submit_needs_confirmation() {
         delay_ms: None
     }));
     assert!(needs_host_confirmation(&Action::Press {
-        key: "Enter".into()
+        key: "Enter".into(),
+        target: None
     }));
     assert!(!needs_host_confirmation(&Action::Hover {
         target: Target::reference("e1")

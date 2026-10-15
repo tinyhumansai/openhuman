@@ -9,5 +9,5 @@ pub fn redact(value: &str) -> String {
 }
 
 #[cfg(test)]
-#[path = "core_tests.rs"]
+#[path = "redact_tests.rs"]
 mod tests;

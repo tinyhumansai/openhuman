@@ -233,6 +233,52 @@ pub fn reload_from(autonomy_config: &crate::config::AutonomyConfig) {
     );
 }
 
+/// Rebuild the live policy from the whole [`Config`] (autonomy, privacy mode,
+/// workspace roots), bump the generation counter and, with the
+/// `security-module` feature, drive the module to the matching policy
+/// generation. Installs the policy when none exists yet.
+///
+/// This is the single reinit driver: callers that hold a `Config` use it
+/// instead of the autonomy-only [`reload_from`], so the privacy mode can never
+/// be dropped on a reload. Returns the new host generation.
+pub fn reload_from_config(config: &crate::config::Config) -> u64 {
+    let rebuilt = Arc::new(SecurityPolicy::from_full_config(config));
+    match STATE.get() {
+        None => {
+            install(
+                Arc::clone(&rebuilt),
+                config.workspace_dir.clone(),
+                config.action_dir.clone(),
+            );
+        }
+        Some(state) => {
+            if let Ok(mut guard) = state.policy.write() {
+                *guard = Arc::clone(&rebuilt);
+            }
+            if let Ok(mut guard) = state.workspace_dir.write() {
+                *guard = config.workspace_dir.clone();
+            }
+            if let Ok(mut guard) = state.action_dir.write() {
+                *guard = config.action_dir.clone();
+            }
+            if let Ok(mut guard) = state.privacy_mode.write() {
+                *guard = rebuilt.privacy_mode;
+            }
+        }
+    }
+    let state = STATE.get().expect("live policy installed above");
+    let generation = state.generation.fetch_add(1, Ordering::Relaxed) + 1;
+    tracing::info!(
+        generation,
+        enabled = rebuilt.enabled,
+        privacy_mode = ?rebuilt.privacy_mode,
+        "[security:live_policy] SecurityPolicy rebuilt from full config"
+    );
+    #[cfg(feature = "security-module")]
+    crate::modules::security::spawn_activation(config.clone(), generation);
+    generation
+}
+
 /// Swap the active Privacy Mode on the process-global live policy and rebuild
 /// the current policy around it, bumping the generation counter. Called by
 /// `config.set_privacy_mode` (#4435) so a Settings-driven mode change takes

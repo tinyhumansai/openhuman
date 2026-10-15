@@ -31,15 +31,7 @@ impl SecurityGate for OpenHumanSecurityGate {
     /// choice. A refusal at any stage is still terminal, and `channel_approved`
     /// is carried forward so a later prompting stage does not ask twice.
     async fn authorize_tool(&self, call: &ToolCallRequest) -> TaResult<GateDecision> {
-        self.authorize_tool_with_facts(call, None).await
-    }
-
-    async fn authorize_tool_with_context(
-        &self,
-        call: &ToolCallRequest,
-        context: Option<&serde_json::Value>,
-    ) -> TaResult<GateDecision> {
-        self.authorize_tool_with_facts(call, context).await
+        self.authorize_tool_inner(call).await
     }
 
     /// Runs OpenHuman's prompt-injection detector over `text`.

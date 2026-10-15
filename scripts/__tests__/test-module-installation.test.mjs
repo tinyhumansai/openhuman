@@ -419,3 +419,13 @@ test("the CI installer builds nothing: every module, tinyconnectors included, is
   assert.match(connectors.sha256, /^[a-f0-9]{64}$/);
   assert.match(connectors.url, /\/releases\/download\/v\d+\.\d+\.\d+\//);
 });
+
+test("the CI installer stages the checksum-pinned tinysecurity release on the module path", () => {
+  const source = readFileSync(installer, "utf8");
+  assert.match(source, /tinyconnectors tinysecurity; do/);
+  const assets = resolveTestModuleAssets(readRegistrySource(), "ubuntu-24.04-x86_64");
+  const security = assets.find((asset) => asset.id === "tinysecurity");
+  assert.ok(security, "the installer resolves tinysecurity from the registry");
+  assert.match(security.sha256, /^[a-f0-9]{64}$/);
+  assert.match(security.url, /\/releases\/download\/v\d+\.\d+\.\d+\//);
+});

@@ -82,6 +82,8 @@ Memory only helps if it is safe to keep. Every item goes through secret and PII 
 
 **Key in keyring, ciphertext on disk.** For local secrets that must be saved in app files, OpenHuman stores encrypted ciphertext on disk and keeps the master decryption key in the OS keyring. See [OS keyring and secret storage](os-keyring-and-secret-storage.md).
 
+**Fail-closed path authorization.** Filesystem authorization for the agent's tools is decided by the TinySecurity native module, whose released archive is checked against a pinned SHA-256 before it loads. If the module is missing, fails admission, times out or answers with something malformed, the access is denied. There is no local fallback. Shell policy, approvals and redaction still run in the core and move to the module in later releases.
+
 **Sandboxed execution.** Shell commands and code the agent runs go through a sandbox backend chosen per session: none, the OS jail (Landlock on Linux, Seatbelt on macOS), or a Docker container with no network, dropped capabilities and a read-only root filesystem by default. Skills are not sandboxed separately. A skill runs as its own agent session under the same execution policy as any other turn.
 
 **Working-folder-scoped tools.** The native [filesystem tools](native-tools/coder.md) act inside the agent's working folder. That confinement is part of the autonomy policy, which is off by default. Until you set `[autonomy] enabled = true`, it is not enforced. What is enforced either way is the hard floor: credential stores and system roots. See [Approval gate](approval-gate.md).

@@ -127,6 +127,9 @@ jobs:
           touch .env
           touch app/.env
 
+      - name: Exercise attested native security adapter and latency budget
+        shell: bash
+        run: bash scripts/ci/security-native-fixture.sh
       - name: Install checksum-pinned native test modules
         run: |
           # Keep fixtures in a trusted tree and resolve their verified releases

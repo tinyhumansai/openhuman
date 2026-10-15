@@ -135,7 +135,7 @@ pub async fn apply_autonomy_settings(
 
     config.save().await.map_err(|e| e.to_string())?;
 
-    crate::security::live_policy::reload_from(&config.autonomy);
+    crate::security::live_policy::reload_from_config(config);
     crate::core::bus::BUS.publish(crate::core::events::DomainEvent::AutonomyConfigChanged);
 
     let snapshot = snapshot_config_json(config)?;

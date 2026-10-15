@@ -332,7 +332,7 @@
     "rule": "json-write",
     "path": "crates/openhuman-core/src/security/audit.rs",
     "line": 284,
-    "text": "let mut file = OpenOptions::new()",
+    "text": "let mut opts = OpenOptions::new();",
     "occurrence": 1
   },
   {

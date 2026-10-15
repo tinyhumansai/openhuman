@@ -534,19 +534,11 @@ fn clear_all_also_withdraws_a_completion_a_delivery_has_leased() {
 
 #[test]
 fn the_session_cache_evicts_its_oldest_mapping_only() {
-    let _guard = test_guard();
-    for i in 0..(SESSION_THREADS_CAP + 5) {
-        note_session_thread(&format!("evict-sess-{i}"), &format!("evict-thread-{i}"));
-    }
-    assert_eq!(thread_for_session("evict-sess-0"), None, "oldest evicted");
-    for survivor in [5, SESSION_THREADS_CAP / 2, SESSION_THREADS_CAP + 4] {
-        assert_eq!(
-            thread_for_session(&format!("evict-sess-{survivor}")).as_deref(),
-            Some(format!("evict-thread-{survivor}").as_str()),
-            "a surviving session still resolves to its own thread"
-        );
-    }
+    isolation::assert_session_cache_eviction();
 }
+
+#[path = "background_completions_isolation_tests.rs"]
+mod isolation;
 
 #[test]
 fn a_delete_marker_outlives_compaction() {

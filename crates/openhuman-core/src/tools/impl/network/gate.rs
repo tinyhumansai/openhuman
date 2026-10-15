@@ -105,9 +105,24 @@ impl NetGate for RoutedGate {
     }
 }
 
+/// The module's tier gate for a network-class action, or `None` when it cannot
+/// answer.
+fn network_gate(policy: &SecurityPolicy) -> Option<GateDecision> {
+    match policy.command_class_gate_blocking(CommandClass::Network) {
+        Ok(gate) => Some(gate),
+        Err(refusal) => {
+            log::warn!("[network][gate] tier gate unavailable; refusing: {refusal:?}");
+            None
+        }
+    }
+}
+
 impl NetGate for SecurityPolicy {
     fn can_act(&self) -> bool {
+        // The module's gate for network-class actions: a tier that blocks them
+        // (read-only), or a module that cannot answer, refuses the call.
         SecurityPolicy::can_act(self)
+            && network_gate(self).is_some_and(|gate| gate != GateDecision::Block)
     }
 
     fn is_rate_limited(&self) -> bool {
@@ -119,7 +134,9 @@ impl NetGate for SecurityPolicy {
     }
 
     fn network_needs_approval(&self) -> bool {
-        self.gate_decision(CommandClass::Network) == GateDecision::Prompt
+        // An unanswered question is a prompt, never a silent allow; `can_act`
+        // refuses the call itself when the module cannot answer.
+        network_gate(self).is_none_or(|gate| gate == GateDecision::Prompt)
     }
 
     fn local_only_block(&self, host: &str) -> Option<String> {

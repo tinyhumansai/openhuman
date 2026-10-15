@@ -137,7 +137,7 @@ pub(crate) fn build_channel_turn_parts(
     // are exercised at runtime. The logger is workspace-scoped and shared, so
     // concurrent sessions append to one `audit.log` without racing on rotation.
     let audit = crate::security::get_or_create_workspace_audit_logger(
-        crate::config::AuditConfig::default(),
+        config.security.audit.clone(),
         config.workspace_dir.clone(),
     )?;
     let workspace = config.workspace_dir.clone();

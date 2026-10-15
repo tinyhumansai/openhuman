@@ -475,7 +475,7 @@ dependencies = [
 
 [[package]]
 name = "tinybus"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "async-trait",
  "serde",
@@ -488,7 +488,7 @@ dependencies = [
 
 [[package]]
 name = "tinybus-module"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "async-trait",
  "serde",
@@ -817,4 +817,4 @@ checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 
 [[patch.unused]]
 name = "tinybus-macros"
-version = "0.1.5"
+version = "0.1.6"

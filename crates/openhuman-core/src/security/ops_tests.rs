@@ -101,3 +101,12 @@ async fn load_and_get_security_policy_info_reflects_env_overlay() {
         );
     }
 }
+
+#[test]
+fn security_policy_info_reports_the_privacy_mode_and_enabled_flag() {
+    let mut config = Config::default();
+    config.privacy.mode = crate::config::PrivacyMode::LocalOnly;
+    let outcome = security_policy_info_for_config(&config);
+    assert_eq!(outcome.value["privacy_mode"], json!("local_only"));
+    assert_eq!(outcome.value["enabled"], json!(false));
+}

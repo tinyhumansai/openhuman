@@ -1,0 +1,225 @@
+{
+  "rows": [
+    {
+      "file": "crates/openhuman-app/src/claude_code.rs",
+      "spawns": 3,
+      "trust": "operator",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-app/src/core_process.rs",
+      "spawns": 4,
+      "trust": "operator",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-app/src/file_logging.rs",
+      "spawns": 3,
+      "trust": "host-probe",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-app/src/lib.rs",
+      "spawns": 3,
+      "trust": "operator",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-app/src/mcp_commands.rs",
+      "spawns": 3,
+      "trust": "operator",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-app/src/process_kill.rs",
+      "spawns": 5,
+      "trust": "host-probe",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-app/src/process_recovery.rs",
+      "spawns": 3,
+      "trust": "host-probe",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-cli/src/bin/fleet.rs",
+      "spawns": 1,
+      "trust": "host-probe",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-core/src/config/ops/sandbox.rs",
+      "spawns": 2,
+      "trust": "host-probe",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-core/src/cron/scheduler/shell_job.rs",
+      "spawns": 1,
+      "trust": "untrusted",
+      "plan": "agent-authored cron shell job -> SandboxPlan (tinysecurity Plan) -> tinybox BoxSpec",
+      "executor": "direct",
+      "test": "pending",
+      "note": "migration backlog: route through the tinybox jail (issue 7328 phase 5)"
+    },
+    {
+      "file": "crates/openhuman-core/src/hooks/shell.rs",
+      "spawns": 2,
+      "trust": "untrusted",
+      "plan": "hook commands from config and skills -> SandboxPlan (tinysecurity Plan) -> tinybox BoxSpec",
+      "executor": "direct",
+      "test": "pending",
+      "note": "migration backlog: route through the tinybox jail (issue 7328 phase 5)"
+    },
+    {
+      "file": "crates/openhuman-core/src/inference/host_runtime/service/speech.rs",
+      "spawns": 1,
+      "trust": "host-probe",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-core/src/platform/doctor/core/daemon_env_checks.rs",
+      "spawns": 1,
+      "trust": "host-probe",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-core/src/platform/doctor/core/memory_agent_checks.rs",
+      "spawns": 1,
+      "trust": "host-probe",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-core/src/platform/doctor/core/workspace_checks.rs",
+      "spawns": 2,
+      "trust": "host-probe",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-core/src/platform/service/linux.rs",
+      "spawns": 8,
+      "trust": "operator",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-core/src/platform/service/macos.rs",
+      "spawns": 21,
+      "trust": "operator",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-core/src/platform/service/restart.rs",
+      "spawns": 1,
+      "trust": "operator",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-core/src/platform/service/windows.rs",
+      "spawns": 6,
+      "trust": "operator",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-core/src/sandbox/ops.rs",
+      "spawns": 1,
+      "trust": "untrusted",
+      "plan": "model shell tool, host fallback (sandbox off / Noop) -> SandboxPlan (tinysecurity Plan) -> tinybox BoxSpec",
+      "executor": "direct",
+      "test": "pending",
+      "note": "migration backlog: route through the tinybox jail (issue 7328 phase 5)"
+    },
+    {
+      "file": "crates/openhuman-core/src/security/secret_storage/encrypted_store.rs",
+      "spawns": 4,
+      "trust": "operator",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-core/src/skills/preflight.rs",
+      "spawns": 2,
+      "trust": "host-probe",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-core/src/skills/runtime/ops.rs",
+      "spawns": 1,
+      "trust": "untrusted",
+      "plan": "skill-declared runtime command probe -> SandboxPlan (tinysecurity Plan) -> tinybox BoxSpec",
+      "executor": "direct",
+      "test": "pending",
+      "note": "migration backlog: route through the tinybox jail (issue 7328 phase 5)"
+    },
+    {
+      "file": "crates/openhuman-core/src/tools/impl/system/install_tool.rs",
+      "spawns": 1,
+      "trust": "untrusted",
+      "plan": "model-chosen install_tool package commands -> SandboxPlan (tinysecurity Plan) -> tinybox BoxSpec",
+      "executor": "direct",
+      "test": "pending",
+      "note": "migration backlog: route through the tinybox jail (issue 7328 phase 5)"
+    },
+    {
+      "file": "crates/openhuman-core/src/voice/always_on/transcribe.rs",
+      "spawns": 1,
+      "trust": "host-probe",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-tui/src/app/artifacts.rs",
+      "spawns": 3,
+      "trust": "host-probe",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    },
+    {
+      "file": "crates/openhuman-tui/src/browser_login.rs",
+      "spawns": 3,
+      "trust": "operator",
+      "plan": "n/a",
+      "executor": "n/a",
+      "test": "n/a"
+    }
+  ]
+}

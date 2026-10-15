@@ -71,6 +71,19 @@ export interface ApprovalAuditEntry {
   /** RFC3339 timestamp the decision was recorded. */
   decided_at: string;
   decision: ApprovalDecision;
+  /** `auto:jev` / `auto:host-policy` for automatic decisions; absent for a human. */
+  decided_by?: string;
+  /** Jev verdict (scores in thousandths) when `decided_by` is `auto:jev`. */
+  judge?: ApprovalJudgeVerdict;
+}
+
+/** Nonsensitive Jev evidence: fixed outcome and scores, never provider text. */
+export interface ApprovalJudgeVerdict {
+  outcome: string;
+  intent_millis: number | null;
+  reversible_millis: number | null;
+  exfiltrate_millis: number | null;
+  cached: boolean;
 }
 
 /**

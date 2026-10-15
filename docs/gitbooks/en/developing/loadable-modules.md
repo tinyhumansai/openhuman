@@ -33,7 +33,10 @@ in [the module-boundary inventory](../../../module-boundary-inventory.md).
 
 ## The registry
 
-`crates/openhuman-core/src/modules/registry/` compiles eleven records. Only this registry may select an artifact. Nothing reads a module name from config and goes looking for it.
+`crates/openhuman-core/src/modules/registry/` compiles in eleven released
+records, plus the TinySecurity admission record when `security-module` is
+enabled. Only this registry may select an artifact. Nothing reads a module name
+from config and goes looking for it.
 
 | Module | Provides |
 | --- | --- |
@@ -52,6 +55,29 @@ in [the module-boundary inventory](../../../module-boundary-inventory.md).
 Each record carries a version, the release it came from, and one `PlatformAsset` per supported build. Seven records publish eleven builds: `ubuntu-24.04` and `ubuntu-22.04` on `x86_64` and `arm64`, `macos-26` and `macos-15` on `arm64` and `x86_64`, `windows-2025-x86_64`, `windows-2022-x86_64` and `windows-11-arm64`. TinyComputer publishes sixteen assets; TinyBox, TinyMCP and TinyWallet each publish seventeen, adding Arch Linux and Fedora builds. Asset availability is module-specific, so a release's count should not be inferred from another module's matrix.
 
 Every asset carries a SHA-256 copied verbatim from the published release's own checksum file. Do not compute a replacement pin from a local build. The digest must describe the artifact the release workflow signed, not the one on your machine.
+
+### TinySecurity migration
+
+`vendor/tinysecurity` owns the native security engine. The `security-module`
+feature links its transport-free `tinysecurity-bus` contract and forwards through
+the host library chain. Asynchronous filesystem checks use immutable scopes
+containing host-authorized roots and internal-state reservations. The client
+requires artifact attestation and fails closed if loading or validation fails.
+
+The production registry pins TinySecurity v0.7.0 and its 11 supported host
+archives using digests copied from the published checksum manifest. Native CI
+loads these released archives through digest admission. Explicit local fixtures
+remain available for module development and never replace production pins.
+Today the module owns asynchronous filesystem authorization, shell command
+classification and gating, the network and write tier gates, and password crypt
+(`modules/security_crypto.rs`). The host no longer classifies a command: it
+registers an immutable `CommandPolicy` derived from its configuration and asks
+`CheckCommand` / `ClassifyCommand` (`modules/security_command.rs`), and a module
+that is missing, untrusted or slow refuses the command. The flow nodes' tier
+table, the approval engine, the Jev judge, sandbox planning, redaction and the
+keyring and pairing crypto paths still run through their existing host
+implementations. Tracker issue
+#7328 lists the remaining phases; this page describes only what has landed.
 
 ## Resolution order
 

@@ -53,6 +53,7 @@ impl Default for Config {
             hooks: HooksConfig::default(),
             privacy: PrivacyConfig::default(),
             sandbox: SandboxConfig::default(),
+            security: SecurityConfig::default(),
             runtime: RuntimeConfig::default(),
             shell: ShellConfig::default(),
             web_chat: WebChatConfig::default(),

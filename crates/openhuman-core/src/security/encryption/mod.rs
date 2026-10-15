@@ -1,14 +1,10 @@
-//! AES-256-GCM encryption layer for AI memory storage.
-//!
-//! All memory data (SQLite content, embeddings, session transcripts) is
-//! encrypted at rest using AES-256-GCM. Keys are derived from a user
-//! password via Argon2id.
+//! `encryption.*` controller surface. Argon2id/AES-256-GCM password crypt is
+//! owned by the tinysecurity module (`PasswordCrypt2`, see
+//! `modules/security_crypto.rs`); the former host `EncryptionKey` is gone.
 
-mod core;
 pub mod ops;
 mod schemas;
 
-pub use core::*;
 pub use ops as rpc;
 pub use ops::*;
 pub use schemas::{

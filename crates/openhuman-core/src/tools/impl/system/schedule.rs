@@ -371,12 +371,9 @@ impl ScheduleTool {
 
         // ── Shell job (command provided) ─────────────────────────────
         let command = command.unwrap();
-        if let Err(reason) = crate::cron::scheduler::shell_job::authorize_shell_command(
-            &self.config,
-            &self.security,
-            command,
-        )
-        .await
+        if let Err(reason) =
+            crate::cron::scheduler::shell_job::authorize_shell_command(&self.security, command)
+                .await
         {
             return Ok(ToolResult::error(reason));
         }

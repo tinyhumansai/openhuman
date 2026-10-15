@@ -4,8 +4,63 @@ The trust boundary of the core. This folder decides whether an agent may run a
 command or touch a path, parks tool calls that need a human yes or no, stores
 credentials and secrets, scrubs secrets and PII out of anything persisted, and
 guards the RPC listener when it binds beyond loopback. `security/mod.rs` calls
-it the kernel security family. None of its submodules is feature-gated: every
-build carries all of it.
+it the kernel security family. The `security-module` feature moves asynchronous
+filesystem authorization into the separately loaded TinySecurity native module.
+
+## Native filesystem policy
+
+`security-module` is a default feature of the core, embed, CLI and TUI. Unit
+tests (`cfg(test)`) keep `validate_path` on the in-process evaluator so they
+need no downloaded module; the native route is covered by
+`path_checks_native_tests.rs` and the released-archive fixtures
+(`OPENHUMAN_TEST_SECURITY_RELEASE_HOST`). The scoped decision cache is flushed
+by the module generation on every response and by the `PolicyChanged` signal
+(`modules/security_watch.rs`).
+
+With `security-module`, `SecurityPolicy::validate_path` and
+`validate_parent_path` use the typed host client in `modules/security.rs`.
+`policy/native_paths.rs` translates trusted roots, the acting directory,
+internal-state reservations into an immutable scope. Scope registration deduplicates the whole policy; one agent
+cannot replace another agent's settings through global module reinitialization.
+
+The host links only `tinysecurity-bus`. The engine canonicalizes paths and
+checks read/write grants in the native module. A missing module, an untrusted
+recipient, a timeout, or a malformed response denies access without a local
+fallback. Synchronous lexical checks remain host preflights during this phase;
+they do not substitute for the asynchronous I/O authorization.
+
+Production admission pins TinySecurity v0.7.0 and its published archive checksums
+in the module registry. `scripts/ci/security-native-fixture.sh` loads those
+released archives and invokes their admission, path, and latency tests. Explicit
+local fixtures remain available for development; their digests never become
+production release pins. Shell policy,
+approvals, redaction, and crypto continue to use their existing host engines
+until their own migration phases are implemented and verified.
+
+Host latency budget (committed). The host path-policy gate runs
+`OPENHUMAN_SECURITY_PERF_BUDGET=1 scripts/ci/security-native-fixture.sh` (a
+`--release` build against the released v0.7.0 archive, warmed scope
+registration, 200 turns of 5 checks: 3 reads, 1 parent-create, 1 denied probe).
+Measured on Linux 7.0 x86_64, Rust 1.99.0, 2026-10-15, three release runs:
+per call p50 81-90 us, p99 116-185 us; per turn (5 calls) p50 376-423 us, p99
+493-1568 us (p99 varies run to run). The enforced budget is the owner's p50 <=
+1 ms / p99 <= 10 ms per call (`security_native_tests.rs`), at least 11x and 54x
+headroom over the worst run, for noisy hosted runners. It is deliberately not
+tightened to the measurement; the numbers are committed here as the reference. The
+`latency-budget` job in `.github/workflows/security-native.yml` records each
+run's JSON as an artifact; tighten the constants if a controlled runner is added.
+
+Crypto (contract 1.14): `modules/security_crypto.rs` calls the confidential
+`PasswordCrypt2`, `KeyringAccess2` and `PairingControl2` members, and
+`modules/security_host.rs` serves the `KeyringConsent2` callback from the
+existing keychain consent policy (`keyring_consent::policy::check_secret_access`;
+the prompt UX stays host-side). `modules/fixtures/legacy_password_payload.json`
+pins the legacy Argon2id/AES-GCM payload the module must keep opening. The host
+`encryption/core.rs` is deleted (password crypt is module-owned, production
+`CryptoConfig2` enables it with keyring and pairing unset); `secret_storage/*`,
+`devices/crypto.rs` and `pairing.rs` still serve production callers until the
+sync-to-async seam lands and the module gains a Secret Service backend and
+pairing Begin/Verify (see issue #7328 phase 8).
 
 Callers are spread across the core. Every acting tool consults
 `SecurityPolicy` before it runs, the agent harness asks the approval gate
@@ -40,17 +95,15 @@ answer when it is off:
 | Function | File | Disabled result |
 | --- | --- | --- |
 | `gate_decision` | [`policy/command_checks.rs`](./policy/command_checks.rs) | `GateDecision::Allow` |
-| `check_gated_command` | `policy/command_checks.rs` | `Ok(class)`, no structural guard |
-| `validate_command_execution` | `policy/command_checks.rs` | `Ok(risk)`, no allowlist |
-| `is_command_allowed` | `policy/command_checks.rs` | `true` |
+| `check_command` | [`policy/native_commands.rs`](./policy/native_commands.rs) | the module answers with the policy disabled: `Allow`, no structural guard, no allowlist; the protected-path floor still refuses |
 | `can_act` | `policy/enforcement.rs` | `true` |
 | `record_action`, `is_rate_limited` | `policy/enforcement.rs` | never limited |
 | `is_path_string_allowed` | [`policy/path_checks.rs`](./policy/path_checks.rs) | `true` after the floor checks |
 | `is_resolved_path_allowed_for` | `policy/path_checks.rs` | `true` after the floor check |
 | `check_resolved_against_forbidden` | `policy/path_checks.rs` | `Ok(())` after the floor check |
 
-So with the policy disabled, command classification still runs (callers get a
-`CommandClass` back) but nothing is gated on it: no approval prompt, no
+So with the policy disabled, command classification still runs in the security
+module (callers get a `CommandClass` back) but nothing is gated on it: no approval prompt, no
 command allowlist, no hourly action budget, and no `workspace_only`,
 `forbidden_paths`, trusted-root or workspace-internal containment.
 
@@ -84,25 +137,38 @@ classified, then gated by tier:
  shell command string
         |
         v
- strip_quoted_heredoc_bodies      quoted heredoc body is data, blanked
-        |
+ SecurityPolicy::check_command    one CheckCommand bus call to the TinySecurity
+        |                         module, which blanks quoted heredoc bodies,
+        |                         classifies (highest class across ; | && ||
+        |                         segments, redirect or tee lifts to >= Write),
+        |                         raises the class with the model's declared
+        |                         category (never lowers it), and applies the
+        |                         autonomy tier, hidden-execution defence and
+        |                         protected-path floor
         v
- classify_command                 highest class across ; | && || segments,
-        |                         redirect or tee lifts to >= Write
-        v
- class.max(declared)              model may raise the class, never lower it
-        |
-        v
- gate_decision(class)
+ CommandGate
         |
    +----+--------------+-------------------+
    v                   v                   v
- Allow               Prompt              Block
- run the tool        ApprovalGate park   refused with
-                     (10 min TTL)        POLICY_BLOCKED_MARKER
+ Allow               Prompt              Refusal
+ run the tool        ApprovalGate park   POLICY_BLOCKED_MARKER message
+                     (10 min TTL)        (or "Rate limit exceeded")
 ```
 
-The tier matrix in `gate_decision`: `ReadOnly` allows only `Read` and blocks
+The host asks twice and the module counts once. The harness gate asks before
+the approval prompt (`CommandStage::Authorize`, an unbudgeted scope), and the
+tool asks again immediately before it spawns (`CommandStage::Execute`, the
+scope that carries `max_actions_per_hour`), so an allowed run spends one action
+of the module's hourly budget and a prompt that is declined spends none. The
+scheduler asks under the legacy rule (`CommandFlow::Scheduled`: the curated
+allowlist plus the configured risk restrictions) when a job is created or
+edited, and again when it runs. A module that is missing, untrusted, faulted
+or slow refuses the command (`Refusal::Unavailable`); there is no host
+classifier to fall back on. Embedders that cannot load the native module install
+their own fail-closed `CommandGateway` on the policy.
+
+The tier matrix (the module's, which `gate_decision` still mirrors for the flow
+nodes until they move; a module-backed test pins the two together): `ReadOnly` allows only `Read` and blocks
 everything else; `Supervised` allows `Read` and prompts on every acting class;
 `Full` runs `Read` and `Write` silently and prompts on `Network`, `Install` and
 `Destructive`.
@@ -121,21 +187,24 @@ The invariants that hold with the policy enabled:
   prefixes, per-artifact directories under `artifacts/` (but not
   `artifacts/tool-results/`), and the account `config.toml` beside the
   workspace. A trusted-root grant does not weaken this.
-- Unknown commands classify as writes. `classify_command` is fail-closed: a
-  command that is not provably read-only is at least `CommandClass::Write`.
-  The body of a quoted heredoc (`<< 'EOF' ... EOF`) is blanked first by
-  `strip_quoted_heredoc_bodies`, since the shell expands nothing there. An
-  unquoted delimiter (`<< EOF`) is expanded and is still scanned.
-- Outside `Full`, `check_gated_command` rejects hidden execution (command or
-  process substitution, backticks, background `&`) that could smuggle a
-  command past the approval the human read.
+- Unknown commands classify as writes. The module's classifier is fail-closed:
+  a command that is not provably read-only is at least `CommandClass::Write`.
+  The body of a quoted heredoc (`<< 'EOF' ... EOF`) is blanked first, since the
+  shell expands nothing there. An unquoted delimiter (`<< EOF`) is expanded
+  and is still scanned.
+- Outside `Full`, the module rejects hidden execution (command or process
+  substitution, backticks, background `&`) that could smuggle a command past
+  the approval the human read (`Refusal::Hidden`).
 - Interactive approval requests expire as denied after ten minutes
   (`DEFAULT_APPROVAL_TTL` in [`approval/gate.rs`](./approval/gate.rs); the Flow Canvas copilot path
   uses a three-minute window).
 
-The TinyBox module owns shell-string scanning and returns `CommandAnalysis`
-facts over the `tinybox-bus` contract. [`policy/command_checks.rs`](./policy/command_checks.rs)
-applies the host's autonomy tier and protected-path policy to those facts.
+The TinySecurity module owns shell-string scanning, classification, the
+allowlist, the risk score and the protected-path floor. [`policy/native_commands.rs`](./policy/native_commands.rs)
+translates the host's settings into the module's immutable `CommandPolicy` and
+projects its content-free answer back into `GateDecision`, `CommandClass` and
+the existing policy-blocked messages. Refusal text is fixed per reason; it
+never repeats the command, whose arguments can carry secrets.
 
 ### Hot-swapping the policy
 
@@ -242,9 +311,11 @@ The subfolders register their own namespaces: `approval.*` ([`approval/`](./appr
 - Sandbox backends do not live here. `crates/openhuman-core/src/sandbox/`
   picks a backend per session and delegates native confinement and process
   ownership to the loaded TinyBox module (`vendor/tinybox`).
-- Shell parsing and command classification run inside the loaded TinyBox module;
-  its `CommandAnalysis` response is the bus boundary. Policy over those facts
-  stays here.
+- Shell parsing, command classification and gating run inside the loaded
+  TinySecurity module (`tinysecurity-bus` `CheckCommand` / `ClassifyCommand`).
+  TinyBox still reports generic structural facts (`analyze_command`), but the
+  host no longer applies policy to them. Which settings the module is given,
+  and what a refusal looks like to the agent, stay here.
 - Secret and PII scrubbers are TinyMemory's
   (`tinymemory_integrations::safety`, `vendor/tinymemory`); this folder only
   pins the policy.
@@ -285,3 +356,36 @@ Each file has a sibling `<module>_tests.rs`; the policy suites live in
 - [Privacy and security](../../../../docs/gitbooks/en/features/privacy-and-security.md)
 - [Approval gate](../../../../docs/gitbooks/en/features/approval-gate.md)
 - [OS keyring and secret storage](../../../../docs/gitbooks/en/features/os-keyring-and-secret-storage.md)
+
+## Audit ownership
+
+- `security/audit.rs` is the host's JSONL logger (`[audit]` config: enabled,
+  path, max size). Its file is created owner-only (0600) on Unix. The module's
+  single ordered stream (`Audit2`, `EvaluateAudited2`, `CheckAudited2` in
+  tinysecurity v0.6.x) is the target for policy, approval, judge, shell and
+  sandbox rows; routing those through a host `AuditSink` callback lands with
+  the phase 2/4/5/6 migrations. The legacy plain `Audit` method is not served
+  by the module (pinned by a tinysecurity test); use `Audit2`.
+- The approval gate writes a `policy_decision` row (`policy_decision` =
+  `auto_approve_all`, `approvals_disabled` or `auto_approve_allowlist`) for every
+  call it lets through without a prompt, so a bypass is never silent.
+- MCP protocol telemetry (`mcp/audit`, the `mcp_audit` stream and `AuditStore`)
+  stays tinymcp-owned: see `vendor/tinymcp/docs/adr/0002-mcp-audit-ownership.md`.
+  Host policy events go through tinysecurity and are joined with MCP rows at
+  read time. `mcp/audit` is not made a facade.
+- `pii::scan` and the `security/secrets.rs` alias no longer exist; the former
+  `security/core.rs` (only `redact`) is now `security/redact.rs`.
+- Tinycomputer consequence/payment gates: tinycomputer v0.14.0 (contract 2.19)
+  asks the host via `ConsequenceHost.Review`; the host adapter serving it
+  through the tinysecurity approval path is pending the phase 4 approval
+  migration. Tinyskills `ScanReport::verdict()` (`Block`/`Warn`/`Pass`) is
+  likewise to be mapped by a host adapter then; no tinyskills change is needed.
+
+Production-path coverage: `modules/security_production_tests.rs` (ignored; run by
+`security-native-fixture.sh`) drives `register_path_policy` / `validate_path`
+through the real module runtime and `ensure_loaded`, so the trusted-host
+binding comes from `module_config` itself. `proxy` builds that configuration
+only after the runtime is started and refuses to refresh without it.
+`web_chat/event_bus_tests.rs` tests of the debug-only
+`fresh_approval_surface_subscription` are `cfg(debug_assertions)` and therefore
+not run by release lib-test profiles.
