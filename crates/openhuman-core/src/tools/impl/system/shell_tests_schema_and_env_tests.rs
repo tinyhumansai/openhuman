@@ -372,3 +372,22 @@ fn shell_safe_env_vars_includes_essentials() {
         );
     }
 }
+
+#[tokio::test]
+async fn shell_tool_blocks_unbounded_system_scans_before_execution() {
+    let tool = ShellTool::new(
+        test_security(AutonomyLevel::Full),
+        test_runtime(),
+        test_audit(),
+    );
+    let result = tool
+        .execute(json!({"command": "find / -name 'secret'"}))
+        .await
+        .unwrap();
+    assert!(result.is_error);
+    let err = result.output();
+    assert!(
+        err.contains("Unbounded system scan"),
+        "expected unbounded scan error, got: {err}"
+    );
+}
