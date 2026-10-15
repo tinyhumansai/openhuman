@@ -366,6 +366,17 @@ impl ApprovalGate {
                 );
             }
             AgentTurnOrigin::TrustedAutomation {
+                source: TrustedAutomationSource::AutonomousWork,
+                job_id,
+            } => {
+                tracing::debug!(
+                    tool = tool_name,
+                    job_id = %job_id,
+                    "[approval::gate] autonomous work slice — allowing within policy bounds"
+                );
+                return (GateOutcome::Allow, None);
+            }
+            AgentTurnOrigin::TrustedAutomation {
                 source: TrustedAutomationSource::Background,
                 job_id,
             } => {

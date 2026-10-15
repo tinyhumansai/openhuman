@@ -710,3 +710,11 @@ mod tests;
 #[cfg(test)]
 #[path = "background_completions_release_tests.rs"]
 mod release_tests;
+
+pub fn has_pending_for_thread(thread_id: &str) -> bool {
+    if let Some(ws) = workspace_for_thread(&DispatchCtx::ambient(), thread_id) {
+        !pending_for(&ws, thread_id).is_empty()
+    } else {
+        false
+    }
+}

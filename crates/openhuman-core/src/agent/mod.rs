@@ -19,6 +19,7 @@
 //!   adapters for sub-agents driven by the neutral TinyAgents lifecycle.
 //!   within a parent agent's tool loop, enabling hierarchical delegation.
 pub mod artifacts;
+pub mod autonomous;
 pub(crate) mod attachments;
 pub use attachments::host::HostAttachment;
 pub mod bus;

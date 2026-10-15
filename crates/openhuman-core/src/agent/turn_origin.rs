@@ -98,6 +98,8 @@ pub enum AgentTurnOrigin {
 pub enum TrustedAutomationSource {
     /// Cron job created and authorized by the user.
     Cron,
+    /// Durable autonomous work execution.
+    AutonomousWork,
     /// Internal background job over locally-stored data (e.g. goals
     /// enrichment). No external content reaches its prompt.
     Background,
@@ -361,6 +363,10 @@ where
 /// other origin (channel / cron / CLI / sub-agent) and outside any scope —
 /// those turns are not request-scoped, so their transcript lines carry no
 /// turn-boundary marker.
+pub fn current_is_user_authored() -> bool {
+    current().as_ref().is_some_and(|o| o.is_user_authored())
+}
+
 pub fn current_request_id() -> Option<String> {
     match current() {
         Some(AgentTurnOrigin::WebChat { request_id, .. }) => request_id,

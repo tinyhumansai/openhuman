@@ -103,6 +103,7 @@ deferred_tools = [
 
 [subagents]
 allowlist = [
+    "coding_worker",
     # Task-source/workflow/artifact specialist. Route any request to add,
     # preview, fetch, update, remove, or summarize proactive task sources,
     # workflow bundles, or artifacts here instead of letting the generic

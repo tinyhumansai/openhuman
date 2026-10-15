@@ -171,13 +171,30 @@ impl Middleware<(), crate::agent::tinyagents::host::OpenHumanRunContext>
                 ),
             );
         }
+        let content_text = crate::agent::tinyagents::middleware::tool_result_text(result);
+        let autonomous_job_id = match &_ctx.data.origin {
+            Some(crate::agent::turn_origin::AgentTurnOrigin::TrustedAutomation { job_id, source: crate::agent::turn_origin::TrustedAutomationSource::AutonomousWork }) => Some(job_id.clone()),
+            _ => match crate::agent::turn_origin::current() {
+                Some(crate::agent::turn_origin::AgentTurnOrigin::TrustedAutomation { job_id, source: crate::agent::turn_origin::TrustedAutomationSource::AutonomousWork }) => Some(job_id),
+                _ => None,
+            },
+        };
+        if let Some(job_id) = autonomous_job_id {
+            crate::agent::autonomous::observation::record(
+                &job_id,
+                tool_name,
+                success,
+                &Some(arguments.clone()),
+                &content_text,
+            );
+        }
         if let Ok(mut sink) = self.sink.lock() {
             sink.push(tinyagents_harness::turn_outcome::ToolCallOutcome {
                 call_id,
                 name: tool_name.to_string(),
                 arguments,
                 success,
-                content: crate::agent::tinyagents::middleware::tool_result_text(result),
+                content: content_text,
                 duration_ms,
             });
         }

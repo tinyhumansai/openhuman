@@ -440,7 +440,9 @@ impl Middleware<(), crate::agent::tinyagents::host::OpenHumanRunContext>
                         // The harness wording for `missing_app` is the
                         // desktop-target one; a shell command names this
                         // host's OS and shell instead.
-                        let instruction = if class == "missing_app" && tool_name == "shell" {
+                        let instruction = if class == "scan_scope" {
+                            "The system-wide scan did not run. Do not repeat it or bypass the policy. Continue with a permitted project-local inspection or a targeted compiler/package query. A rejected scan does not mean dependencies are absent or all shell commands are forbidden. Preserve the original deliverable and its requirements.".to_owned()
+                        } else if class == "missing_app" && tool_name == "shell" {
                             missing_program_nudge(tool_name, &first_error_line(&failure_text))
                         } else {
                             generic

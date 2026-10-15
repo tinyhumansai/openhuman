@@ -79,3 +79,11 @@ pub use steering::{steer, SteerError};
 pub(crate) use task_ledger::task_records;
 pub(crate) use task_ledger::{reconcile_orphaned_tasks_on_boot, task_record_for_task_in_workspace};
 pub(crate) use wait::wait_in_workspace;
+
+pub fn has_running_for_thread(thread_id: &str) -> bool {
+    registry::registry()
+        .snapshots(None)
+        .unwrap_or_default()
+        .iter()
+        .any(|e| e.metadata.parent_thread_id.as_deref() == Some(thread_id))
+}
