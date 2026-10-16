@@ -1,13 +1,15 @@
 //! The process-local index from chat thread and session ids to the workspace
 //! and thread their completions belong to, keyed per profile (the SaaS tenant of
-//! the dispatch context the caller acts under).
+//! the dispatch context the caller acts under) and, for the thread index, per
+//! storage scope: the records live in one scope's store, so the index says
+//! which (#7687).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tinyagents_tasks::CompletionRouter;
 
-use super::{router_for_workspace, state, SESSION_THREADS_CAP};
+use super::{entry_for_key, scope_now, state, SESSION_THREADS_CAP};
 use crate::core::runtime::DispatchCtx;
 
 /// The key of a thread or session id in `HostState`'s maps: per profile of
@@ -20,29 +22,50 @@ pub(super) fn key(ctx: &DispatchCtx, id: &str) -> String {
     )
 }
 
-/// Remember which workspace holds `thread_id`'s completions.
+/// Remember which workspace, under which storage scope, holds `thread_id`'s
+/// completions.
+///
+/// A call with no scope records nothing durable, so there is nothing to point
+/// the index at.
 pub(super) fn note_thread_workspace(ctx: &DispatchCtx, thread_id: &str, workspace_dir: &Path) {
+    let Ok(scope) = scope_now() else {
+        log::warn!("[background_completions] no storage scope; not indexing thread_id={thread_id}");
+        return;
+    };
     state()
         .thread_workspaces
-        .insert(key(ctx, thread_id), workspace_dir.to_path_buf());
+        .insert((key(ctx, thread_id), scope), workspace_dir.to_path_buf());
 }
 
 /// The router that holds `thread_id`'s completions, if any child of that thread
-/// was spawned or recorded in this process.
+/// was spawned or recorded in this process **under this call's scope**.
+///
+/// The scope is part of the lookup, so a thread-scoped Stop or delete reaches
+/// the store that holds the records instead of reopening another scope's
+/// workspace entry (#7687).
 pub(crate) fn router_for_thread(
     ctx: &DispatchCtx,
     thread_id: &str,
 ) -> Option<Arc<CompletionRouter>> {
-    let workspace = state()
-        .thread_workspaces
-        .get(&key(ctx, thread_id))
-        .cloned()?;
-    Some(router_for_workspace(&workspace))
+    let key = thread_key(ctx, thread_id)?;
+    let workspace = state().thread_workspaces.get(&key).cloned()?;
+    Some(entry_for_key(&(workspace, key.1)).router.clone())
 }
 
-/// The workspace holding `thread_id`'s completions, if known to this process.
+/// The workspace holding `thread_id`'s completions under this call's scope, if
+/// known to this process.
 pub(crate) fn workspace_for_thread(ctx: &DispatchCtx, thread_id: &str) -> Option<PathBuf> {
-    state().thread_workspaces.get(&key(ctx, thread_id)).cloned()
+    state()
+        .thread_workspaces
+        .get(&thread_key(ctx, thread_id)?)
+        .cloned()
+}
+
+/// `thread_id`'s index key for this call: the per-profile thread key and the
+/// storage scope. `None` when the call has no scope, which is also when it has
+/// no records of its own to find.
+fn thread_key(ctx: &DispatchCtx, thread_id: &str) -> Option<super::ThreadKey> {
+    Some((key(ctx, thread_id), scope_now().ok()?))
 }
 
 /// Remember that `session_id` is a turn on `thread_id`.

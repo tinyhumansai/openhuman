@@ -10,9 +10,9 @@ use std::sync::Arc;
 #[cfg(test)]
 use tinyagents_tasks::CompletionStore;
 
-use super::background_completions::state;
 #[cfg(test)]
 use super::background_completions::{new_router, Entry};
+use super::background_completions::{router_key, state};
 
 use super::background_completions::{record_awaiting_input, record_completion, record_failure};
 
@@ -116,15 +116,16 @@ impl Drop for TestWorkspace {
     }
 }
 
-/// Register `store` as `workspace_dir`'s completion store, so a test can inject
-/// one that fails.
+/// Register `store` as `workspace_dir`'s completion store under this call's
+/// storage scope, so a test can inject one that fails.
 #[cfg(test)]
 pub(crate) fn install_store_for_test(workspace_dir: &Path, store: Arc<dyn CompletionStore>) {
     let entry = Arc::new(Entry {
         router: Arc::new(new_router(store.clone())),
         store,
     });
-    state().routers.insert(workspace_dir.to_path_buf(), entry);
+    let key = router_key(workspace_dir).expect("a test call resolves a storage scope");
+    state().routers.insert(key, entry);
 }
 
 /// Forget everything this process knows about `workspace_dir`, as a restart
@@ -133,30 +134,37 @@ pub(crate) fn install_store_for_test(workspace_dir: &Path, store: Arc<dyn Comple
 #[cfg(test)]
 pub(crate) fn forget_workspace_for_test(workspace_dir: &Path) {
     let mut st = state();
-    st.routers.remove(workspace_dir);
-    let gone: Vec<String> = st
+    // Every scope's router for this workspace: a restart forgets them all.
+    st.routers
+        .retain(|(ws, _), _| ws.as_path() != workspace_dir);
+    let gone: Vec<super::background_completions::ThreadKey> = st
         .thread_workspaces
         .iter()
         .filter(|(_, ws)| ws.as_path() == workspace_dir)
-        .map(|(thread, _)| thread.clone())
+        .map(|(key, _)| key.clone())
         .collect();
-    for thread in gone {
-        st.thread_workspaces.remove(&thread);
-        st.stopped_threads.remove(&thread);
-        st.deleted_threads.remove(&thread);
+    for key in gone {
+        st.thread_workspaces.remove(&key);
+        st.stopped_threads.remove(&key.0);
+        st.deleted_threads.remove(&key.0);
     }
-    st.recovered_workspaces.remove(workspace_dir);
+    st.recovered_workspaces
+        .retain(|(ws, _)| ws.as_path() != workspace_dir);
     st.session_threads.clear();
     st.session_order.clear();
 }
 
 /// Claim `workspace_dir`'s boot recovery for this process. `true` exactly once
-/// per workspace, so the host can scan every workspace it opens (the bootstrap
-/// one, then any other a spawn later opens) without rescanning.
+/// per workspace **and storage scope**, so the host can scan every workspace it
+/// opens (the bootstrap one, then any other a spawn later opens) without
+/// rescanning — and a second profile's records in one workspace are still
+/// scanned once for that profile (#7687). A call with no scope claims nothing:
+/// it has no store to scan.
 pub(crate) fn claim_recovery(workspace_dir: &Path) -> bool {
-    state()
-        .recovered_workspaces
-        .insert(workspace_dir.to_path_buf())
+    let Ok(key) = router_key(workspace_dir) else {
+        return false;
+    };
+    state().recovered_workspaces.insert(key)
 }
 
 /// Let `workspace_dir` be recovered again (a profile re-leased after release),
@@ -164,13 +172,16 @@ pub(crate) fn claim_recovery(workspace_dir: &Path) -> bool {
 /// the log another holder may have appended to. A router still in use stays,
 /// so a log never has two writers.
 pub(crate) fn forget_recovery(workspace_dir: &Path) {
+    let Ok(key) = router_key(workspace_dir) else {
+        return;
+    };
     let mut st = state();
-    st.recovered_workspaces.remove(workspace_dir);
+    st.recovered_workspaces.remove(&key);
     let idle = st
         .routers
-        .get(workspace_dir)
+        .get(&key)
         .is_some_and(|e| Arc::strong_count(e) == 1 && Arc::strong_count(&e.router) == 1);
     if idle {
-        st.routers.remove(workspace_dir);
+        st.routers.remove(&key);
     }
 }
