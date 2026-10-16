@@ -1,6 +1,10 @@
 //! Background completions keep SaaS profiles apart: thread ids are only
 //! unique per user, so one user's Stop or delete on `t1` must never gate,
 //! drop or reach another user's `t1`.
+//!
+//! They also keep storage *scopes* apart within one workspace: the router
+//! cache is keyed by both, so two scopes over one directory are two queues
+//! (#7687).
 
 use crate::core::runtime::DispatchCtx;
 use std::sync::Arc;
@@ -18,6 +22,18 @@ fn profile(name: &str, workspace: &std::path::Path) -> Arc<CoreContext> {
         ContextOverlay::new(config, DomainSet::kernel(), ToolGroups::none())
             .profile(name)
             .session_agent(name),
+    )
+}
+
+/// A context with an agent but no profile: the desktop and embedded shape,
+/// where thread keys are bare ids but each agent has its own storage scope.
+fn agent(name: &str, workspace: &std::path::Path) -> Arc<CoreContext> {
+    let config = crate::config::Config {
+        workspace_dir: workspace.to_path_buf(),
+        ..crate::config::Config::default()
+    };
+    CoreContext::for_test(DomainSet::full(), None).derive_with(
+        ContextOverlay::new(config, DomainSet::kernel(), ToolGroups::none()).session_agent(name),
     )
 }
 
@@ -173,4 +189,61 @@ async fn the_explicit_context_keys_completions_without_any_ambient_scope() {
     );
     resume_stopped_thread(&alice, "t-x");
     discard_for_thread(&bob, ws_b.path(), "t-x");
+}
+
+/// One workspace, two storage scopes: each scope's queue is its own, even
+/// though both resolve to the same directory and the same thread id (#7687).
+/// Keyed by workspace alone, the second scope reused the first scope's store
+/// and both profiles' results piled into one queue.
+#[tokio::test]
+async fn two_scopes_over_one_workspace_keep_their_own_queue() {
+    let _guard = crate::config::TEST_ENV_LOCK.lock().await;
+    let ws = TestWorkspace::new();
+    let (alice, bob) = (profile("s-alice", ws.path()), profile("s-bob", ws.path()));
+
+    CoreContext::scope(Arc::clone(&alice), record(&alice, ws.path(), "alice-1")).await;
+    CoreContext::scope(Arc::clone(&bob), record(&bob, ws.path(), "bob-1")).await;
+
+    let queue =
+        |ctx: &Arc<CoreContext>| CoreContext::sync_scope(Arc::clone(ctx), || pending(ws.path()));
+    assert_eq!(
+        queue(&alice),
+        ["alice-1"],
+        "alice reads her own scope's store"
+    );
+    assert_eq!(
+        queue(&bob),
+        ["bob-1"],
+        "bob's record did not land in alice's store"
+    );
+}
+
+/// Agents with no profile share the desktop's bare thread keys but not their
+/// storage scope, so the thread index has to carry the scope: without it, the
+/// one `t1` entry handed whichever agent asked the other agent's store (#7687).
+#[tokio::test]
+async fn agents_sharing_a_thread_id_resolve_their_own_router() {
+    let _guard = crate::config::TEST_ENV_LOCK.lock().await;
+    let ws = TestWorkspace::new();
+    let (a, b) = (agent("ag-a", ws.path()), agent("ag-b", ws.path()));
+
+    CoreContext::scope(Arc::clone(&a), record(&a, ws.path(), "a-1")).await;
+    CoreContext::scope(Arc::clone(&b), record(&b, ws.path(), "b-1")).await;
+
+    let resolved = |ctx: &Arc<CoreContext>| {
+        CoreContext::sync_scope(Arc::clone(ctx), || {
+            router_for_thread(&DispatchCtx::new(Arc::clone(ctx)), "t1")
+                .expect("the thread is indexed for this scope")
+                .pending_for("t1")
+                .into_iter()
+                .map(|r| r.task_id)
+                .collect::<Vec<_>>()
+        })
+    };
+    assert_eq!(resolved(&a), ["a-1"]);
+    assert_eq!(
+        resolved(&b),
+        ["b-1"],
+        "the index did not hand b's thread a's store"
+    );
 }
