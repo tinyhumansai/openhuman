@@ -152,7 +152,7 @@ Published from `ops/` via `crate::core::bus::BUS.publish` (`crate::core::events:
 
 ## Dependencies
 
-- `crate::integrations`: shared `IntegrationClient` (Bearer JWT, timeouts, envelope parsing, proxy) backing backend-mode calls.
+- Backend mode is a route a host registers (`register_composio_route_builder` plus `modules::connectors::register_proxy_target`); the shared `IntegrationClient` that backs it lives in `openhuman-tinyhumans`.
 - `crate::config`: `Config` / `ComposioConfig` (`mode`, `entity_id`), `config::rpc` config loading.
 - `crate::modules`: loads the `tinyconnectors` native module that `module_client.rs` calls into (behind the `modules` feature).
 - `tinyconnectors_bus`: the wire contract (member names, payload types) for the `tinyconnectors` module call surface; a plain dependency, not feature-gated.

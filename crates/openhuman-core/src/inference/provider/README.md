@@ -22,8 +22,9 @@ previously `providers/` (pre-consolidation single-crate layout); see
   gates before building a model. See
   [docs/gitbooks/en/features/model-routing/local-and-byok-models.md](../../../../../docs/gitbooks/en/features/model-routing/local-and-byok-models.md)
   for the user-facing side of local and BYOK routing.
-- **Models**: `OpenHumanBackendModel` + `PROVIDER_LABEL`
-  ([`openhuman_backend_model.rs`](./openhuman_backend_model.rs)); OpenAI-compatible and Anthropic builders live
+- **Models**: the managed provider is a registered chat model
+  (`inference::registry`, built in `openhuman-tinyhumans`); the core keeps `PROVIDER_LABEL` and
+  `without_reasoning` ([`openhuman_backend_model.rs`](./openhuman_backend_model.rs)); OpenAI-compatible and Anthropic builders live
   in `tinyinference_llm::providers` and are called directly.
 - **DTOs** ([`types.rs`](./types.rs)): `ChatResponse`, `ProviderDelta`,
   `ToolCall`, `UsageInfo`, `AGENT_TURN_MAX_OUTPUT_TOKENS`.
@@ -34,7 +35,7 @@ previously `providers/` (pre-consolidation single-crate layout); see
 
 | Transport | File | Provider-string prefix |
 | --- | --- | --- |
-| Managed OpenHuman backend | `openhuman_backend_model.rs` | `openhuman` / `cloud` (session JWT + billing metadata) |
+| Managed OpenHuman backend | registered chat model (`openhuman-tinyhumans`, `src/inference/`) | `openhuman` / `cloud` (session JWT + billing metadata) |
 | OpenAI-compatible (BYOK cloud slugs, local runtimes) | `tinyinference_llm::providers::openai` | `<slug>:<model>`, `ollama:<model>`, `lmstudio:<model>`, `mlx:<model>`, `omlx:<model>`, `local-openai:<model>` |
 | Anthropic Messages API (prompt caching) | `tinyinference_llm::providers::anthropic` | `<slug>:<model>` whose endpoint is the first-party Messages API and native tool calling is on |
 | Codex OAuth / Responses API | [`openai_codex.rs`](./openai_codex.rs) host OAuth selection plus `tinyinference_llm::providers::openai::codex` metadata | the `openai` cloud slug once Codex OAuth tokens exist |
@@ -60,7 +61,7 @@ previously `providers/` (pre-consolidation single-crate layout); see
   back to the UI.
 - `crate::core::bus` (`BUS.publish`) / `crate::core::events::DomainEvent`:
   `ops/http_error.rs::publish_backend_session_expired` and
-  `openhuman_backend_model.rs` publish `DomainEvent::SessionExpired` when the
+  the registered managed model (`openhuman-tinyhumans`) publish `DomainEvent::SessionExpired` when the
   managed backend reports an auth failure, so the credentials layer can
   clear/refresh the session; [`ops/http_error.rs`](./ops/http_error.rs) also publishes
   `DomainEvent::ProviderApiKeyRejected` the first time a BYO key is rejected.

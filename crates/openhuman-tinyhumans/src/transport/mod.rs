@@ -7,16 +7,18 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use openhuman_embed::__host::security::credentials::session_support::BackendCredential;
-use openhuman_embed::{
-    BackendRequest, BackendTransport, BackendTransportError, BaseUrlPurpose, TransportProfile,
-};
 use reqwest::Method;
 use serde_json::Value;
 use tinyhumans_sdk::TinyHumansClient;
 
 mod error;
+mod port;
 
 pub use error::map_sdk_error;
+pub use port::{
+    BackendRequest, BackendTransport, BackendTransportError, BaseUrlPurpose, QueryParam,
+    TransportProfile,
+};
 
 /// One `reqwest::Client` per [`TransportProfile`], each built from
 /// [`backend_client_builder`](crate::backend::headers::backend_client_builder)
@@ -41,7 +43,7 @@ impl SdkBackendTransport {
     }
 
     /// [`Self::new`] as a shared handle ready for
-    /// [`install_backend_transport`](openhuman_embed::install_backend_transport).
+    /// the process-wide transport (see [`crate::client::shared_transport`]).
     pub fn shared() -> anyhow::Result<Arc<dyn BackendTransport>> {
         Ok(Arc::new(Self::new()?))
     }

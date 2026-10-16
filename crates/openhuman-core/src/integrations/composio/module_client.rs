@@ -314,6 +314,9 @@ pub(crate) static MODULE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::cons
 /// Take the module lock for the rest of the test.
 #[cfg(test)]
 pub(crate) async fn module_guard() -> tokio::sync::MutexGuard<'static, ()> {
+    // Tests that take the module drive its backend mode against a local mock;
+    // give this thread the stand-in route a host would register.
+    super::test_backend_route::register();
     MODULE_LOCK.lock().await
 }
 

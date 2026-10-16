@@ -73,11 +73,11 @@ async fn voice_status_detects_stub_binaries() {
     assert!(result.value.piper_binary.is_some());
 }
 
-/// STT is hosted, so status must report it available on a default config
-/// with no local binaries or models anywhere — the state that used to mean
-/// "STT unavailable" back when a whisper.cpp install was required.
+/// The core ships no hosted STT provider: with the hosted-backend layer not
+/// installed, the default `cloud` engine does not resolve, and status says so
+/// instead of claiming a provider that is not there.
 #[tokio::test]
-async fn voice_status_reports_backend_stt_available_without_any_local_install() {
+async fn voice_status_reports_the_hosted_engine_unavailable_until_it_is_registered() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut config = Config::default();
     config.workspace_dir = tmp.path().join("workspace");
@@ -85,11 +85,11 @@ async fn voice_status_reports_backend_stt_available_without_any_local_install() 
 
     let result = voice_status(&config).await.unwrap();
     assert!(
-        result.value.stt_available,
-        "backend engine is always routable"
+        !result.value.stt_available,
+        "no hosted provider is registered in the bare core"
     );
     assert_eq!(result.value.stt_engine, "cloud");
-    assert!(result.value.stt_error.is_none());
+    assert!(result.value.stt_error.is_some());
 }
 
 /// Selecting a third-party engine with no matching `voice_providers` entry

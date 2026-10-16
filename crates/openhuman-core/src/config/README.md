@@ -210,7 +210,7 @@ The `workspace` namespace (`file_read`, `file_write`, `file_reset`) is registere
   are secrets and when to encrypt or decrypt them.
 - The autonomy policy is defined here as data (`AutonomyConfig`, `[autonomy] enabled = false` by
   default) but enforced by [`crates/openhuman-core/src/security/`](../security/) (`SecurityPolicy::from_config`).
-- Hosted backend URLs and their environment overrides belong to the installed backend transport
+- Hosted backend URLs and their environment overrides belong to the host crate that registers the config enricher
   ([`crates/openhuman-tinyhumans/src/backend/url.rs`](../../../openhuman-tinyhumans/src/backend/url.rs)). `config.api_url` is only the user's stored value.
 - Credentials and sign-in are not config. The core receives a credential through `auth.set_credential`;
   login and `/auth/me` live in the host's session owner (`openhuman_tinyhumans::session`).

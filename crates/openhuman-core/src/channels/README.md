@@ -49,7 +49,7 @@ or shell-based substitute.
 | --- | --- |
 | [`mod.rs`](./mod.rs) | Feature gates and the public channel contract exports. Concrete provider exports are test-only. |
 | [`traits.rs`](./traits.rs) | Portable message and send contracts re-exported from `tinychannels-bus`. |
-| [`controllers/`](./controllers/) | OpenHuman `channels.*` operations and host-side backend transport adaptation. |
+| [`controllers/`](./controllers/) | OpenHuman `channels.*` operations and host-side adaptation of the registered channel callback. |
 | [`host/`](./host/) | Typed module callbacks, event subscribers, and remote-control host operations. |
 | [`runtime/`](./runtime/README.md) | Module lease startup, account lifetime, and the OpenHuman dispatch pipeline. |
 | [`bus/`](./bus/) | Hosted-channel inbound and durable progressive delivery integration. |

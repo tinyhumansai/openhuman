@@ -8,7 +8,7 @@ mod common;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use common::{chat_completion, last_user_message, runtime_without_master_key, PointedTransport};
+use common::{chat_completion, last_user_message, runtime_without_master_key, PointedInference};
 use openhuman_core::cron::{self, AgentJobSpec, Schedule};
 use openhuman_embed::profiles::ProfileCredentialKind;
 use openhuman_embed::{ProfileRuntime, SaasConfig};
@@ -82,7 +82,7 @@ async fn scenario() {
         .with_priority(10)
         .mount(&inference)
         .await;
-    PointedTransport::install(&inference.uri());
+    PointedInference::install(&inference.uri());
     openhuman_core::storage::install(Arc::new(openhuman_core::storage::MemoryStorage::new()));
 
     let root = tempfile::tempdir().unwrap();

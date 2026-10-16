@@ -513,7 +513,8 @@ async fn conformant_custom_endpoint_verifies_and_sends_expected_request() {
 /// the missing session, not a local-only block). Also covers the rerouted
 /// `test_connection` construction line.
 #[tokio::test]
-async fn test_connection_managed_without_session_reports_no_backend_session() {
+async fn test_connection_managed_without_provider_reports_backend_unavailable() {
+    let _guard = crate::inference::inference_test_guard_async().await;
     let tmp = TempDir::new().unwrap();
     let mut config = Config::default();
     config.config_path = tmp.path().join("config.toml");
@@ -527,15 +528,16 @@ async fn test_connection_managed_without_session_reports_no_backend_session() {
     );
     let err = out.value["error"].as_str().unwrap_or_default();
     assert!(
-        err.contains("No backend session"),
-        "managed test with no session must report the backend-session error, got: {err}"
+        err.contains(crate::core::observability::BACKEND_UNAVAILABLE_PREFIX),
+        "managed test with no provider must report BACKEND_UNAVAILABLE, got: {err}"
     );
 }
 
 /// Live `embed` (RPC) for managed also routes through the config-aware
 /// factory; with no session it surfaces the same backend-session error.
 #[tokio::test]
-async fn embed_managed_without_session_errors_with_no_backend_session() {
+async fn embed_managed_without_provider_errors_with_backend_unavailable() {
+    let _guard = crate::inference::inference_test_guard_async().await;
     let tmp = TempDir::new().unwrap();
     let mut config = Config::default();
     config.config_path = tmp.path().join("config.toml");
@@ -545,8 +547,8 @@ async fn embed_managed_without_session_errors_with_no_backend_session() {
         .await
         .expect_err("managed embed with no session must error");
     assert!(
-        err.contains("No backend session"),
-        "expected backend-session error, got: {err}"
+        err.contains(crate::core::observability::BACKEND_UNAVAILABLE_PREFIX),
+        "expected BACKEND_UNAVAILABLE, got: {err}"
     );
 }
 

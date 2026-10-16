@@ -4,24 +4,21 @@ use crate::core::all::RegisteredController;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
 use super::handlers::{
-    handle_overlay_stt_notify, handle_voice_agent_signed_url, handle_voice_cloud_transcribe,
-    handle_voice_list_models, handle_voice_reply_synthesize, handle_voice_server_start,
-    handle_voice_server_status, handle_voice_server_stop, handle_voice_set_providers,
-    handle_voice_status, handle_voice_stt_dispatch, handle_voice_test_provider,
-    handle_voice_transcribe, handle_voice_transcribe_bytes, handle_voice_tts,
-    handle_voice_tts_dispatch, handle_voice_update_provider_settings,
+    handle_overlay_stt_notify, handle_voice_list_models, handle_voice_reply_synthesize,
+    handle_voice_server_start, handle_voice_server_status, handle_voice_server_stop,
+    handle_voice_set_providers, handle_voice_status, handle_voice_stt_dispatch,
+    handle_voice_test_provider, handle_voice_transcribe, handle_voice_transcribe_bytes,
+    handle_voice_tts, handle_voice_tts_dispatch, handle_voice_update_provider_settings,
 };
 use super::helpers::{json_output, optional_bool, optional_string, required_string};
 
 pub fn all_voice_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         voice_schemas("voice_status"),
-        voice_schemas("voice_agent_signed_url"),
         voice_schemas("voice_transcribe"),
         voice_schemas("voice_transcribe_bytes"),
         voice_schemas("voice_tts"),
         voice_schemas("voice_reply_synthesize"),
-        voice_schemas("voice_cloud_transcribe"),
         voice_schemas("voice_stt_dispatch"),
         voice_schemas("voice_tts_dispatch"),
         voice_schemas("voice_set_providers"),
@@ -45,10 +42,6 @@ pub fn all_voice_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_voice_status,
         },
         RegisteredController {
-            schema: voice_schemas("voice_agent_signed_url"),
-            handler: handle_voice_agent_signed_url,
-        },
-        RegisteredController {
             schema: voice_schemas("voice_transcribe"),
             handler: handle_voice_transcribe,
         },
@@ -63,10 +56,6 @@ pub fn all_voice_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: voice_schemas("voice_reply_synthesize"),
             handler: handle_voice_reply_synthesize,
-        },
-        RegisteredController {
-            schema: voice_schemas("voice_cloud_transcribe"),
-            handler: handle_voice_cloud_transcribe,
         },
         RegisteredController {
             schema: voice_schemas("voice_stt_dispatch"),
@@ -122,16 +111,6 @@ pub fn voice_schemas(function: &str) -> ControllerSchema {
             description: "Check whether the configured STT engine resolves and whether the local TTS binary/voice are installed.",
             inputs: vec![],
             outputs: vec![json_output("status", "Voice availability status.")],
-        },
-        "voice_agent_signed_url" => ControllerSchema {
-            namespace: "voice",
-            function: "agent_signed_url",
-            description: "Mint a short-lived signed URL for a realtime voice-agent session.",
-            inputs: vec![],
-            outputs: vec![
-                json_output("signed_url", "Signed WebSocket URL for the voice-agent session."),
-                json_output("agent_id", "The voice agent the URL was minted for."),
-            ],
         },
         "voice_transcribe" => ControllerSchema {
             namespace: "voice",
@@ -353,24 +332,6 @@ pub fn voice_schemas(function: &str) -> ControllerSchema {
                 "result",
                 "{ ok: bool, detail: string, latency_ms?: number }",
             )],
-        },
-        "voice_cloud_transcribe" => ControllerSchema {
-            namespace: "voice",
-            function: "cloud_transcribe",
-            description:
-                "Transcribe audio bytes via the hosted backend's STT endpoint. Used by the \
-                 mascot's mic-only composer so we don't ship a provider API key in the desktop app.",
-            inputs: vec![
-                required_string(
-                    "audio_base64",
-                    "Base64-encoded audio bytes (e.g. webm/opus from MediaRecorder).",
-                ),
-                optional_string("mime_type", "Audio MIME type (default: audio/webm)."),
-                optional_string("file_name", "Original filename hint (default: audio.webm)."),
-                optional_string("model", "Backend STT model id (default: whisper-v1)."),
-                optional_string("language", "BCP-47 language hint, e.g. 'en'."),
-            ],
-            outputs: vec![json_output("result", "CloudTranscribeResult: { text }.")],
         },
         "voice_server_start" => ControllerSchema {
             namespace: "voice",

@@ -39,9 +39,10 @@ pub mod core {
         pub use openhuman_core::core::observability::{
             contains_transient_transport_phrase, expected_error_kind, is_api_key_rejected_message,
             is_session_expired_message, is_suppressed_usage_probe_backoff,
-            is_transient_http_status_code, is_transient_message_failure, report_error_or_expected,
-            report_warning_message, ExpectedErrorKind, API_KEY_REJECTED_PREFIX,
-            BACKEND_UNAVAILABLE_PREFIX, REPORT_ERROR_TRACING_TARGET,
+            is_transient_http_status_code, is_transient_message_failure, report_error,
+            report_error_or_expected, report_warning_message, ExpectedErrorKind,
+            API_KEY_REJECTED_PREFIX, BACKEND_UNAVAILABLE_PREFIX, REPORT_ERROR_TRACING_TARGET,
+            USAGE_PROBE_BACKOFF_PREFIX,
         };
     }
 
@@ -95,22 +96,13 @@ pub mod core {
     pub mod shutdown {
         pub use openhuman_core::core::shutdown::{register, signal};
     }
+    /// The generic extension slots every `register_*` below is built on;
+    /// `CoreBuilder::extensions` takes an [`Extensions`](slots::Extensions).
+    pub mod slots {
+        pub use openhuman_core::core::slots::{Extensions, HookSlot, Registry};
+    }
     pub mod types {
         pub use openhuman_core::core::types::AppState;
-    }
-}
-
-/// tinyhumans (backend transport, hosted client, team ops) and rpc (`/health`).
-pub mod backend {
-    pub use openhuman_core::backend::{
-        base_url, flatten_authed_error, BackendApiError, BackendClient,
-    };
-
-    pub mod transport {
-        pub use openhuman_core::backend::transport::{
-            clear_backend_transport, resolve_backend_transport, BackendTransport,
-            BackendTransportError, TransportProfile,
-        };
     }
 }
 
@@ -118,7 +110,8 @@ pub mod backend {
 pub mod config {
     pub use openhuman_core::config::{
         active_workspace_dir, active_workspace_dir_cached, active_workspace_snapshot,
-        load_config_with_timeout, workspace_handle, Config,
+        build_runtime_proxy_client_with_timeouts, load_config_with_timeout, workspace_handle,
+        Config, PrivacyMode, MODEL_MANAGED_DEFAULT,
     };
 
     pub mod app_env {
@@ -134,11 +127,22 @@ pub mod config {
         pub use openhuman_core::config::rpc::load_config_with_timeout;
     }
     pub mod schema {
+        // tinyhumans integrations: the Composio routing-mode strings.
+        pub use openhuman_core::config::schema::{
+            COMPOSIO_MODE_BACKEND, COMPOSIO_MODE_DIRECT, COMPOSIO_MODE_DISABLED,
+        };
         pub mod cloud_providers {
             pub use openhuman_core::config::schema::cloud_providers::{
                 endpoint_host, host_is_builtin_cloud_provider,
             };
         }
+    }
+}
+
+/// tinyhumans (managed inference): the signed-out gate.
+pub mod cron {
+    pub mod scheduler_gate {
+        pub use openhuman_core::cron::scheduler_gate::is_signed_out;
     }
 }
 
@@ -150,6 +154,12 @@ pub mod agent {
                 embedding_provider_is_usable, embedding_tool_ranker, embedding_tool_ranker_in,
                 install_tool_ranker, installed_tool_ranker,
             };
+        }
+        // tinyhumans integrations: the turn's approval context for a tool call.
+        pub mod host {
+            pub mod run_context {
+                pub use openhuman_core::agent::tinyagents::host::run_context::approval_for_tool;
+            }
         }
         // rpc: Socket.IO run-mode toggles.
         pub mod run_mode {
@@ -201,13 +211,6 @@ pub mod inference {
     }
 }
 
-/// tinyhumans: the team ops budget gate.
-pub mod integrations {
-    pub mod client {
-        pub use openhuman_core::integrations::client::budget_gate;
-    }
-}
-
 /// tinyhumans (credentials for the hosted client) and rpc (server auth,
 /// Socket.IO approvals, bind policy).
 pub mod security {
@@ -232,13 +235,29 @@ pub mod security {
         }
         pub mod session_support {
             pub use openhuman_core::security::credentials::session_support::{
-                build_session_state, current_session_is_local, resolve_backend_credential,
-                BackendCredential, LOCAL_SESSION_BACKEND_UNAVAILABLE,
+                build_session_state, classify_session_token, current_session_is_local,
+                get_session_token, is_local_session_token, load_app_session_profile,
+                publish_local_session_expiry, resolve_backend_credential, BackendCredential,
+                SessionTokenCheck, LOCAL_SESSION_BACKEND_UNAVAILABLE,
+                LOCAL_SESSION_MANAGED_INFERENCE_UNAVAILABLE, SESSION_EXPIRES_AT_META,
+            };
+        }
+        pub mod api_key {
+            pub use openhuman_core::security::credentials::api_key::{
+                get_api_key_in, store_api_key, store_api_key_in,
             };
         }
     }
     pub mod approval {
-        pub use openhuman_core::security::approval::{ApprovalChatContext, ApprovalGate};
+        pub use openhuman_core::security::approval::{
+            ApprovalChatContext, ApprovalGate, ApprovalTurnContext,
+        };
+    }
+    // tinyhumans integrations: the autonomy policy the file-storage tools check,
+    // and the live policy its local-only egress tests install.
+    pub use openhuman_core::security::{AutonomyLevel, SecurityPolicy};
+    pub mod live_policy {
+        pub use openhuman_core::security::live_policy::install;
     }
     pub mod pairing {
         pub use openhuman_core::security::pairing::is_public_bind;
@@ -247,7 +266,7 @@ pub mod security {
 
 /// tinyhumans: TLS, URL and redaction helpers for the backend client.
 pub mod util {
-    pub use openhuman_core::util::redact_url_for_log;
+    pub use openhuman_core::util::{redact_url_for_log, truncate_at_byte_boundary};
 
     pub mod redact {
         pub use openhuman_core::util::redact::redact_url_for_log;
@@ -260,6 +279,140 @@ pub mod util {
             host_is_local, join_url, normalize_api_base_url, normalize_backend_api_base_url,
         };
     }
+}
+
+// ---------------------------------------------------------------------------
+// Extension points (tinyhumans). Generic, id-keyed registries the hosted layer
+// fills at install time; the core knows nothing about what it is handed. Each
+// `register_*` has an `_in` variant that binds to a `CoreBuilder::extensions`
+// set instead of the process.
+// ---------------------------------------------------------------------------
+
+/// Tool sources: tools an outside crate appends to the agent catalogue.
+pub mod tool_sources {
+    pub use openhuman_core::tools::sources::{
+        register_tool_source, register_tool_source_at, register_tool_source_in,
+        registered_tool_source_placements, unregister_tool_source, ToolSourceCtx,
+        ToolSourceFactory, ToolSourcePlacement, ANCHOR_AFTER_DELEGATE, ANCHOR_AFTER_SEARCH,
+    };
+}
+
+/// The artifact publisher slot: the service that shares an artifact version.
+pub mod artifact_publisher {
+    pub use openhuman_core::agent::artifacts::{
+        register_artifact_publisher, register_artifact_publisher_in, unregister_artifact_publisher,
+        ArtifactPublisherFactory,
+    };
+    // tinyhumans file-storage publisher: the protected-path guard it re-checks
+    // before upload, and the store its tests save artifacts into.
+    pub use openhuman_core::agent::artifacts::tiny_store::{refused_path, versioned_store};
+}
+
+/// Egress disclosure, for hosted calls that leave the machine.
+pub mod egress {
+    pub use openhuman_core::security::egress::{
+        emit_external_transfer, emit_external_transfer_in, enforce_egress, local_only_blocks,
+        DataKind, EgressDescriptor, EgressLedger, EgressReason, IdentificationRisk,
+    };
+}
+
+/// Config enrichers and the resolved fields they fill.
+pub mod config_enrichers {
+    pub use openhuman_core::config::schema::resolved_endpoints::ResolvedEndpoints;
+    pub use openhuman_core::config::{
+        register_enricher, register_enricher_in, run_enrichers, unregister_enricher, ConfigEnricher,
+    };
+}
+
+/// Composio route builders (`composio.mode` -> route).
+pub mod composio {
+    pub use openhuman_core::integrations::composio::client::{
+        register_composio_route_builder, unregister_composio_route_builder, ComposioRoute,
+        ComposioRouteBuilder,
+    };
+    // The proxy route's target (origin + bearer) for `composio.mode = backend`.
+    #[cfg(feature = "modules")]
+    pub use openhuman_core::modules::connectors::{
+        register_proxy_target, unregister_proxy_target, ProxyTarget, ProxyTargetResolver,
+    };
+}
+
+/// Media-generation tool building over host-supplied generators (tinyhumans).
+#[cfg(feature = "media")]
+pub mod media {
+    pub mod generation {
+        pub use openhuman_core::media::generation::{
+            media_tools_for_config, GeneratorRouter, MediaGenerators, MediaReferenceAllowlist,
+        };
+    }
+}
+
+/// The wallet module's authenticated backend hook (tinyhumans web3).
+#[cfg(feature = "web3")]
+pub mod wallet_backend {
+    pub use openhuman_core::modules::wallet_backend::{
+        register_wallet_backend, register_wallet_backend_in, unregister_wallet_backend,
+        WalletBackendCall, WalletBackendFuture, WalletBackendHandler,
+    };
+}
+
+/// Model-provider registries: chat models, embeddings, catalogs.
+pub mod inference_registry {
+    pub use openhuman_core::inference::provider::factory::PROVIDER_OPENHUMAN;
+    pub use openhuman_core::inference::provider::openhuman_backend_model::REASONING_OFF_METADATA_KEY;
+    pub use openhuman_core::inference::registry::{
+        register_catalog, register_catalog_in, register_chat_model, register_chat_model_in,
+        register_embedding, register_embedding_in, unregister_catalog, unregister_chat_model,
+        unregister_embedding, BoxFuture, CatalogEntry, CatalogLimits, CatalogListing,
+        CatalogRequest, ChatModelEntry, ChatModelFactory, ChatModelRequest, EmbeddingFactory,
+        EmbeddingRequest, ReadinessProbe,
+    };
+}
+
+/// Memory engines by id, and the free-background-work predicate.
+pub mod memory_engines {
+    pub use openhuman_core::memory::engine::{
+        build_cached, rooted, BearerSource, Binding, BoundEngine, EngineCredential, EngineSettings,
+        TINYHUMANS_ENGINE,
+    };
+    pub use openhuman_core::memory::engine_registry::{
+        bound_engine, register_memory_engine, register_memory_engine_in, unregister_memory_engine,
+        EngineBuilder, EngineEntry, EngineFuture, EngineRequest, FreeBackground,
+    };
+}
+
+/// The channel callback slot.
+#[cfg(feature = "channels")]
+pub mod channel_callback {
+    pub use openhuman_core::channels::callback_slot::{
+        register_channel_callback, register_channel_callback_in, unregister_channel_callback,
+        CallbackFuture, ChannelCallback, ChannelCallbackCtx,
+    };
+}
+
+/// Voice provider registries: STT, TTS and live sessions by slug.
+#[cfg(feature = "voice")]
+pub mod voice_registry {
+    pub use openhuman_core::config::schema::voice_live::{
+        LIVE_PROVIDER_ELEVENLABS_HOSTED, LIVE_PROVIDER_GEMINI_HOSTED,
+    };
+    pub use openhuman_core::voice::factory::registry::{
+        register_stt_provider, register_stt_provider_in, register_tts_provider,
+        register_tts_provider_in, unregister_stt_provider, unregister_tts_provider,
+        SttProviderFactory, TtsProviderFactory,
+    };
+    pub use openhuman_core::voice::factory::{
+        create_stt_provider, create_tts_provider, SttProvider, SttResult, TtsProvider,
+    };
+    pub use openhuman_core::voice::live::ops::live_providers;
+    pub use openhuman_core::voice::live::registry::{
+        register_live_provider, register_live_provider_in, unregister_live_provider, ConfigureFn,
+        ConfiguredFn, LiveFuture, LiveProviderEntry, LiveProviderPlacement, PrepareFn,
+    };
+    pub use openhuman_core::voice::live::types::{LiveProviderInfo, LiveProviderKind};
+    pub use openhuman_core::voice::live::{
+        LiveVoiceError, PreparedProvider, GEMINI_LANGUAGES, GEMINI_VOICES,
+    };
 }
 
 // The rest is the rpc server alone.

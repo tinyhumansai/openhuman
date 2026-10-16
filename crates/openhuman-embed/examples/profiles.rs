@@ -12,7 +12,7 @@ fn main() -> anyhow::Result<()> {
 }
 async fn run(config: openhuman_embed::SaasConfig) -> anyhow::Result<()> {
     let provider = support::echo_inference().await;
-    support::PointedTransport::install(&provider.uri());
+    support::PointedInference::install(&provider.uri());
     // ANCHOR: profiles
     let profiles = openhuman_embed::ProfileRuntime::build(config).await?;
     let mut handles = Vec::new();

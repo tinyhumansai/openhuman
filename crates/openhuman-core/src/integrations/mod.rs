@@ -1,23 +1,12 @@
-//! Agent integration tools.
+//! Agent integrations that run through the core itself.
 //!
-//! Most integrations proxy through backend endpoints authenticated with the
-//! user's session token, so billing, rate limiting, and provider markup stay
-//! server-side. Some integrations, such as SearXNG, call user-configured
-//! endpoints directly when enabled; those callers must keep configured base URLs
-//! trusted because requests leave the local core process.
+//! Composio connectors ([`composio`]) and task sources ([`task_sources`]) live
+//! here. The hosted integrations client, its managed tools (Google
+//! Places, stock data, file storage, media generation) and the web3 crypto
+//! client are not part of the core: a host that has such a service plugs them
+//! in through the generic registries (tool sources, the Composio route
+//! builders, the wallet-backend hook). With none registered the core runs
+//! without them.
 
-pub mod client;
 pub mod composio;
-pub mod file_storage;
 pub mod task_sources;
-pub mod tools;
-pub mod types;
-
-pub use client::{build_client, pricing_for_config, IntegrationClient};
-pub use types::{
-    BackendResponse, IntegrationPricing, IntegrationPricingEntry, PricingIntegrations,
-};
-
-#[cfg(test)]
-#[path = "mod_tests.rs"]
-mod tests;

@@ -12,16 +12,10 @@ fn off_reason(binding: Binding) -> String {
 }
 
 #[test]
-fn tinyhumans_without_a_credential_is_off() {
+fn tinyhumans_with_nothing_registered_is_unavailable() {
     let tmp = tempfile::tempdir().unwrap();
     let mut config = config_in(&tmp);
     config.memory.engine = TINYHUMANS_ENGINE.to_string();
-    config
-        .memory
-        .engines
-        .entry(TINYHUMANS_ENGINE.to_string())
-        .or_default()
-        .endpoint = Some("https://memory.example.test".to_string());
     let binding = resolve(&config);
     assert!(!binding.is_on());
     assert!(!is_on(&config));
@@ -30,7 +24,7 @@ fn tinyhumans_without_a_credential_is_off() {
             engine, endpoint, ..
         } => {
             assert_eq!(engine.as_deref(), Some(TINYHUMANS_ENGINE));
-            assert_eq!(endpoint.as_deref(), Some("https://memory.example.test"));
+            assert_eq!(endpoint, None);
         }
         Binding::On(_) => unreachable!(),
     }
@@ -39,16 +33,9 @@ fn tinyhumans_without_a_credential_is_off() {
 }
 
 #[test]
-fn tinyhumans_with_a_local_session_token_is_off() {
+fn a_local_session_token_is_not_a_tinyhumans_credential() {
     let tmp = tempfile::tempdir().unwrap();
-    let mut config = config_in(&tmp);
-    config.memory.engine = TINYHUMANS_ENGINE.to_string();
-    config
-        .memory
-        .engines
-        .entry(TINYHUMANS_ENGINE.to_string())
-        .or_default()
-        .endpoint = Some("https://memory.example.test".to_string());
+    let config = config_in(&tmp);
     AuthService::from_config(&config)
         .store_provider_token(
             APP_SESSION_PROVIDER,
@@ -58,38 +45,7 @@ fn tinyhumans_with_a_local_session_token_is_off() {
             true,
         )
         .unwrap();
-
-    let binding = resolve(&config);
-
-    assert!(!binding.is_on());
     assert!(!has_key(&config, TINYHUMANS_ENGINE));
-    assert!(off_reason(binding).contains("sign in"));
-}
-
-#[test]
-fn tinyhumans_with_the_host_credential_binds_and_caches() {
-    let _stable = CACHE_STABLE
-        .write()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let tmp = tempfile::tempdir().unwrap();
-    let mut config = config_in(&tmp);
-    config
-        .memory
-        .engines
-        .entry(TINYHUMANS_ENGINE.to_string())
-        .or_default()
-        .endpoint = Some("https://memory.example.test".to_string());
-    store_api_key(&config, "test-api-key-not-real").unwrap();
-    assert!(has_key(&config, TINYHUMANS_ENGINE));
-
-    let first = resolve(&config).engine().expect("bound");
-    assert_eq!(first.id, TINYHUMANS_ENGINE);
-    assert_eq!(first.endpoint, "https://memory.example.test");
-    let second = resolve(&config).engine().expect("bound again");
-    assert!(
-        Arc::ptr_eq(&first.engine, &second.engine),
-        "cached engine reused"
-    );
 }
 
 #[test]
@@ -177,42 +133,6 @@ fn the_cache_fingerprint_never_contains_the_key() {
     assert!(!digest.contains("secret"));
     assert_eq!(digest, key_digest("super-secret-key"));
     assert_ne!(digest, key_digest("another-key"));
-}
-
-#[tokio::test]
-async fn host_bearer_reads_the_credential_per_request() {
-    let tmp = tempfile::tempdir().unwrap();
-    let config = config_in(&tmp);
-    let source = HostBearer {
-        config: Arc::new(config.clone()),
-    };
-    let error = source.bearer().await.unwrap_err();
-    assert!(matches!(error, tinymemory_api::Error::Unauthorized(_)));
-
-    store_api_key(&config, "test-api-key-not-real").unwrap();
-    assert_eq!(source.bearer().await.unwrap(), "test-api-key-not-real");
-}
-
-#[tokio::test]
-async fn host_bearer_rejects_a_local_session_token() {
-    let tmp = tempfile::tempdir().unwrap();
-    let config = config_in(&tmp);
-    AuthService::from_config(&config)
-        .store_provider_token(
-            APP_SESSION_PROVIDER,
-            DEFAULT_AUTH_PROFILE_NAME,
-            "desktop.test.local",
-            std::collections::HashMap::new(),
-            true,
-        )
-        .unwrap();
-    let source = HostBearer {
-        config: Arc::new(config),
-    };
-
-    let error = source.bearer().await.unwrap_err();
-
-    assert!(matches!(error, tinymemory_api::Error::Unauthorized(_)));
 }
 
 #[test]

@@ -155,7 +155,7 @@ pub(crate) fn sandbox_mode_for_tool(
 /// Reads the run's approval context from the explicit tool carrier. Direct tool
 /// dispatch (CLI, JSON-RPC, tests) has none, so a tool called that way sees the
 /// non-interactive default.
-pub(crate) fn approval_for_tool(
+pub fn approval_for_tool(
     context: Option<&dyn tinytools::ToolRunContext>,
 ) -> crate::security::approval::ApprovalTurnContext {
     context

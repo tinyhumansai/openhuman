@@ -145,11 +145,11 @@ contracts.
   has no typed method, a domain uses the SDK's raw request primitive
   (`billing`, and `oauth`'s `POST /auth/integrations/{id}/client-key`).
   `team`'s `POST /teams` and `DELETE /teams/{id}` are not in the SDK's route
-  registry at all, so they stay on the core's `BackendClient::authed_json`
+  registry at all, so they stay on this crate's `BackendClient::authed_json`
   until the SDK carries them.
 - These domains do not go through `BackendTransport::send_json`; they build a
-  typed `TinyHumansClient` directly. They still depend on a transport being
-  installed, for the gate and for its HTTP client.
+  typed `TinyHumansClient` directly. They still depend on this crate's shared transport, for the gate and for its
+  HTTP client.
 
 ## Gotchas
 

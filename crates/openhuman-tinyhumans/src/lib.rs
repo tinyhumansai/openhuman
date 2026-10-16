@@ -75,21 +75,26 @@ pub mod embed {
 pub use openhuman_embed::__host;
 
 pub mod backend;
+pub(crate) mod channels;
+pub mod client;
 pub mod hosted;
+pub(crate) mod inference;
 mod install;
+pub mod integrations;
 #[cfg(feature = "jev")]
 pub mod jev;
 pub mod jwt;
+pub(crate) mod memory;
+mod register;
 mod runtime;
 pub mod session;
 pub mod transport;
+#[cfg(feature = "voice")]
+pub mod voice;
 
 pub use backend::{product_identity, set_product_identity, ProductIdentity};
 pub use hosted::extension as hosted_controllers;
-pub use install::{install, is_installed, InstallError, InstallOptions};
-pub use openhuman_embed::{
-    BackendRequest, BackendTransport, BackendTransportError, TransportProfile,
-};
+pub use install::{install, is_installed, register_hooks, InstallError, InstallOptions};
 pub use runtime::{RuntimeBuilder, RuntimeError};
 pub use session::{
     cache::{CachedUser, CurrentUserCache},
@@ -103,3 +108,26 @@ pub use session::{
     manager::{SessionError, SessionEvent, SessionManager, SessionState},
 };
 pub use transport::{map_sdk_error, SdkBackendTransport};
+pub use transport::{
+    BackendRequest, BackendTransport, BackendTransportError, BaseUrlPurpose, TransportProfile,
+};
+
+/// Serialises the tests that register into, or unregister from, the core's
+/// process-global hook registries. When the core is a dependency its
+/// `cfg(test)` thread-local registries are not active, so every test in this
+/// crate shares one registry per slot; a test that unregisters an id would
+/// otherwise race another that lists or re-registers it.
+#[cfg(test)]
+static REGISTRY_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Hold this for the whole of a sync test that touches the registries.
+#[cfg(test)]
+pub(crate) fn registry_test_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    REGISTRY_TEST_LOCK.blocking_lock()
+}
+
+/// Hold this for the whole of an async test that touches the registries.
+#[cfg(test)]
+pub(crate) async fn registry_test_lock_async() -> tokio::sync::MutexGuard<'static, ()> {
+    REGISTRY_TEST_LOCK.lock().await
+}

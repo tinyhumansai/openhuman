@@ -25,7 +25,7 @@ mod serve;
 pub(crate) mod shims;
 mod socketio;
 #[cfg(test)]
-mod testing;
+pub(crate) mod testing;
 
 pub use http::{build_core_http_router, rpc_handler};
 pub use serve::{serve, EmbeddedReadySignal};

@@ -13,7 +13,7 @@ use anyhow::{Context, Result};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use std::time::Duration;
 
-use openhuman_embed::TransportProfile;
+use crate::transport::TransportProfile;
 
 /// Upper bound on the `x-core-version` / `x-tauri-version` header values. A
 /// version string is short; anything longer is a misconfigured environment and

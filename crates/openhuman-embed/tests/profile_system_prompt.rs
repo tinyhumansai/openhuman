@@ -5,7 +5,7 @@
 
 mod common;
 
-use common::{chat_completion, chat_requests, runtime_without_master_key, PointedTransport};
+use common::{chat_completion, chat_requests, runtime_without_master_key, PointedInference};
 use openhuman_embed::profiles::ProfileCredentialKind;
 use openhuman_embed::{DirectProfileProvider, ProfileRuntime, SaasConfig};
 use serde_json::Value;
@@ -32,7 +32,7 @@ async fn scenario() {
         .respond_with(ResponseTemplate::new(500))
         .mount(&managed)
         .await;
-    PointedTransport::install(&managed.uri());
+    PointedInference::install(&managed.uri());
 
     let root = tempfile::tempdir().unwrap();
     let mut saas = SaasConfig::new(root.path());

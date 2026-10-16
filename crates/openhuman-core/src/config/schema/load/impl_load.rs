@@ -318,6 +318,12 @@ async fn describe_config_ownership(_path: &Path) -> String {
 
 impl Config {
     pub async fn load_or_init() -> Result<Self> {
+        Self::load_or_init_unenriched()
+            .await
+            .map(crate::config::enrichers::enriched)
+    }
+
+    async fn load_or_init_unenriched() -> Result<Self> {
         if let Some(scoped) = super::saas_scope::saas_scoped_config() {
             return scoped;
         }
@@ -407,6 +413,12 @@ impl Config {
     /// for auth token resolution when the dump script overrides
     /// `OPENHUMAN_WORKSPACE` to a throwaway temp directory.
     pub async fn load_from_default_paths() -> Result<Self> {
+        Self::load_from_default_paths_unenriched()
+            .await
+            .map(crate::config::enrichers::enriched)
+    }
+
+    async fn load_from_default_paths_unenriched() -> Result<Self> {
         let (default_openhuman_dir, default_workspace_dir) = default_config_and_workspace_dirs()?;
         let (openhuman_dir, workspace_dir, _source) =
             resolve_config_dirs_ignoring_env(&default_openhuman_dir, &default_workspace_dir)
@@ -455,6 +467,15 @@ impl Config {
     /// streams with unrelated tests or runtime tasks that temporarily
     /// repoint it. Other process env overrides still apply.
     pub async fn load_from_config_path(config_path: &Path, workspace_dir: &Path) -> Result<Self> {
+        Self::load_from_config_path_unenriched(config_path, workspace_dir)
+            .await
+            .map(crate::config::enrichers::enriched)
+    }
+
+    async fn load_from_config_path_unenriched(
+        config_path: &Path,
+        workspace_dir: &Path,
+    ) -> Result<Self> {
         let config_path = config_path.to_path_buf();
         let workspace_dir = workspace_dir.to_path_buf();
 

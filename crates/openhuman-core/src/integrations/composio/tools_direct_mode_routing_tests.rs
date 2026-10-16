@@ -48,6 +48,7 @@ fn execute_tool_resolves_to_backend_kind_when_mode_is_backend() {
     // the user is on default (mode = "backend") and a session token is
     // present. Without the token, `resolve_composio_route` returns
     // Err("no backend session"); store one to get past that gate.
+    crate::integrations::composio::test_backend_route::register();
     let tmp = tempfile::tempdir().unwrap();
     let mut config = crate::config::Config::default();
     config.config_path = tmp.path().join("config.toml");

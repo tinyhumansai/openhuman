@@ -2,9 +2,6 @@
 //! code relies on, pinned against a mock backend.
 
 use super::*;
-use openhuman_embed::__host::backend::transport::{
-    clear_backend_transport, resolve_backend_transport,
-};
 use serde_json::json;
 use wiremock::matchers::{header, header_exists, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -203,26 +200,21 @@ async fn sdk_route_policy_refuses_unexposed_routes_before_sending() {
 }
 
 #[tokio::test]
-async fn install_makes_the_core_resolve_this_transport() {
+async fn install_shares_one_transport_with_the_hosted_client() {
+    let _registry = crate::registry_test_lock_async().await;
+
     let _guard = global_lock().lock().await;
-    let _t = crate::install(crate::InstallOptions::default()).unwrap();
+    let installed = crate::install(crate::InstallOptions::default()).unwrap();
     assert!(crate::is_installed());
-    assert_eq!(
-        resolve_backend_transport().unwrap().name(),
-        "tinyhumans-sdk"
-    );
-    clear_backend_transport();
-    assert!(!crate::is_installed());
-    // Re-install after a clear restores the same transport.
-    let _t = crate::install(crate::InstallOptions::default()).unwrap();
-    assert_eq!(
-        resolve_backend_transport().unwrap().name(),
-        "tinyhumans-sdk"
-    );
+    assert_eq!(installed.name(), "tinyhumans-sdk");
+    let shared = crate::client::shared_transport().unwrap();
+    assert!(std::sync::Arc::ptr_eq(&installed, &shared));
 }
 
 #[tokio::test]
 async fn backend_client_round_trips_through_the_installed_transport() {
+    let _registry = crate::registry_test_lock_async().await;
+
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/announcements/latest"))
@@ -236,7 +228,7 @@ async fn backend_client_round_trips_through_the_installed_transport() {
 
     let _guard = global_lock().lock().await;
     let _t = crate::install(crate::InstallOptions::default()).unwrap();
-    let client = openhuman_embed::__host::backend::BackendClient::new(&server.uri()).unwrap();
+    let client = crate::client::BackendClient::new(&server.uri()).unwrap();
     let value = client
         .authed_json("jwt", reqwest::Method::GET, "/announcements/latest", None)
         .await
@@ -249,6 +241,8 @@ async fn backend_client_round_trips_through_the_installed_transport() {
 /// the backend through the SDK transport.
 #[tokio::test]
 async fn install_registers_hosted_controllers_that_dispatch_through_the_transport() {
+    let _registry = crate::registry_test_lock_async().await;
+
     use openhuman_embed::__host::core::all::{
         namespace_description, rpc_method_from_parts, schema_for_rpc_method,
     };
@@ -331,7 +325,9 @@ fn product_identity_and_attribution_come_from_this_crate() {
 
 #[tokio::test]
 async fn core_channel_routes_recover_from_the_transports_typed_404s() {
-    use openhuman_embed::__host::backend::BackendApiError;
+    let _registry = crate::registry_test_lock_async().await;
+
+    use crate::client::HostedApiError as BackendApiError;
     // POST + DELETE only, mirroring the deployed router: PATCH falls through
     // to Express's HTML 404 (#5230); DELETE answers a handler-level 404.
     let server = MockServer::start().await;
@@ -353,7 +349,7 @@ async fn core_channel_routes_recover_from_the_transports_typed_404s() {
 
     let _guard = global_lock().lock().await;
     let _t = crate::install(crate::InstallOptions::default()).unwrap();
-    let client = openhuman_embed::__host::backend::BackendClient::new(&server.uri()).unwrap();
+    let client = crate::client::BackendClient::new(&server.uri()).unwrap();
 
     let err = client
         .send_channel_edit("telegram", "1103", "jwt", json!({}))

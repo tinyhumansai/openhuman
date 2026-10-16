@@ -75,7 +75,8 @@ fn find_span<'a>(batch: &'a [Value], id: &str) -> Option<&'a Value> {
 #[test]
 fn ingestion_url_targets_backend_proxy_route() {
     let mut config = Config::default();
-    config.api_url = Some("https://staging-api.tinyhumans.ai/api/v1".to_string());
+    config.resolved_endpoints.tracing_ingest_url =
+        Some("https://staging-api.tinyhumans.ai/telemetry/langfuse/ingestion".to_string());
     assert_eq!(
         ingestion_url(&config),
         "https://staging-api.tinyhumans.ai/telemetry/langfuse/ingestion"
@@ -85,7 +86,8 @@ fn ingestion_url_targets_backend_proxy_route() {
 #[test]
 fn flow_export_targets_the_v4_otlp_proxy_route() {
     let mut config = Config::default();
-    config.api_url = Some("https://staging-api.tinyhumans.ai/api/v1".to_string());
+    config.resolved_endpoints.tracing_ingest_url =
+        Some("https://staging-api.tinyhumans.ai/telemetry/langfuse/ingestion".to_string());
     let client = LangfuseClient::new(
         ingestion_url(&config),
         LangfuseAuth::Bearer {

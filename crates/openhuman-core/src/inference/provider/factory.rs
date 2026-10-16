@@ -6,7 +6,7 @@
 //! ## Provider-string grammar
 //!
 //! ```text
-//! "openhuman"                    → OpenHumanBackendModel; model = config.default_model
+//! "openhuman"                    → the registered managed chat model; model = config.default_model
 //! "cloud" / missing              → primary_cloud; legacy custom inference_url wins when
 //!                                  primary still points at OpenHuman after migration
 //! "ollama:<model>[@<temp>]"      → local Ollama at config.local_ai.base_url
@@ -30,7 +30,7 @@
 //! - [`primary_cloud`] — `primary_cloud` / legacy `inference_url` resolution.
 //! - [`access_gates`] — privacy-mode, session, and egress chokepoints.
 //! - [`credentials`] — auth-profile key lookup for cloud slugs.
-//! - [`managed_backend`] — the managed OpenHuman backend model.
+//! - [`managed_backend`] — the managed provider resolution (tier pinning, privacy gate, egress) in front of the registered chat model.
 //! - [`local_runtime`] — Ollama / LM Studio / MLX / OMLX / local-openai.
 //! - [`cloud_slug`] — `<slug>:<model>` BYOK cloud providers.
 //! - [`cloud_spec`] — `CloudProviderCreds` → `ProviderSpec` → `ProviderRegistry`.
@@ -89,8 +89,10 @@ use local_runtime::{
     try_create_local_runtime_chat_model, try_create_local_runtime_chat_model_from_string,
     OptionalChatModelResult,
 };
-pub(crate) use managed_backend::make_openhuman_backend_model_for_thread;
-use managed_backend::{resolve_managed_backend, resolve_managed_backend_with_model_override};
+pub(crate) use managed_backend::{
+    make_openhuman_backend_model_for_options, make_openhuman_backend_model_for_thread,
+};
+use managed_backend::{managed_chat_model, resolve_managed_model};
 use primary_cloud::{legacy_inference_slug, resolve_primary_cloud_provider_string};
 use subprocess_providers::{
     prepare_claude_agent_sdk_chat_model, try_create_claude_agent_sdk_chat_model,
@@ -122,8 +124,6 @@ mod factory_tests;
 use crate::config::schema::cloud_providers::AuthStyle;
 use crate::config::Config;
 use crate::inference::provider::openai_codex::resolve_openai_codex_routing;
-use crate::inference::provider::openhuman_backend_model::OpenHumanBackendModel;
-use crate::inference::provider::ProviderRuntimeOptions;
 use crate::security::credentials::AuthService;
 use crate::security::egress::EgressLedger;
 use std::sync::Arc;

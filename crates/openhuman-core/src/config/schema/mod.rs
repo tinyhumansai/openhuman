@@ -6,6 +6,8 @@ pub mod cloud_providers;
 pub use cloud_providers::{generate_provider_id, is_slug_reserved, AuthStyle, CloudProviderCreds};
 pub mod ephemeral_route;
 pub use ephemeral_route::{EphemeralRoute, EPHEMERAL_ROUTE_SLUG};
+pub mod resolved_endpoints;
+pub use resolved_endpoints::ResolvedEndpoints;
 mod agent;
 mod autonomy;
 mod capability_providers;

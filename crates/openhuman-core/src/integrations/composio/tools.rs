@@ -1,5 +1,5 @@
-//! Agent-facing tools that proxy through the openhuman backend's
-//! `/agent-integrations/composio/*` routes.
+//! Agent-facing tools that proxy through the managed backend's
+//! composio routes.
 //!
 //! These expose Composio capabilities to the autonomous agent loop
 //! (discovery + execution) and to the CLI/RPC surface via the normal

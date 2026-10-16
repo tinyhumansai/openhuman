@@ -138,9 +138,8 @@ fn missing_credential_fails_before_any_request() {
 }
 
 #[test]
-fn missing_backend_transport_has_unavailable_sentinel() {
-    let err = require_transport(Err(BackendTransportError::Unavailable)).unwrap_err();
-    assert!(err.starts_with("BACKEND_UNAVAILABLE:"), "{err}");
+fn require_transport_builds_the_shared_transport_offline() {
+    assert!(require_transport().is_ok());
 }
 
 #[tokio::test]

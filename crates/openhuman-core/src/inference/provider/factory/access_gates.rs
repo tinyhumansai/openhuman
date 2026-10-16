@@ -99,7 +99,7 @@ pub(super) fn emit_inference_egress(role: &str, provider: &str, egress: &EgressL
         return;
     }
     if p == PROVIDER_OPENHUMAN {
-        // Managed backend is emitted centrally in `resolve_managed_backend`,
+        // Managed backend is emitted centrally in `managed_chat_model`,
         // the universal managed ChatModel funnel. Skipping here avoids a
         // duplicate descriptor.
         return;

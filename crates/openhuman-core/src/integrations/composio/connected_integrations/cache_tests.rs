@@ -31,7 +31,8 @@ fn cache_key_changes_when_backend_url_changes() {
     };
     crate::security::credentials::api_key::store_api_key(&config, "tiny_test_key").unwrap();
     let first = cache_key(&config);
-    config.api_url = Some("https://other.example".to_string());
+    // The control-plane origin a host's config enricher resolved.
+    config.resolved_endpoints.control_plane_url = Some("https://other.example".to_string());
     assert_ne!(first, cache_key(&config));
 }
 

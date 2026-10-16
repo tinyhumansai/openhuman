@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use common::{
     chat_completion, chat_requests, runtime_without_master_key, tool_call_completion, tool_names,
-    PointedTransport,
+    PointedInference,
 };
 use openhuman_embed::memory::api::conformance::ReferenceEngine;
 use openhuman_embed::memory::api::{LearningKind, MemoryEngine, MemoryMeta, StoreItem};
@@ -188,7 +188,7 @@ async fn scenario() {
         .with_priority(10)
         .mount(&inference)
         .await;
-    PointedTransport::install(&inference.uri());
+    PointedInference::install(&inference.uri());
     let root = tempfile::tempdir().unwrap();
     let calls = Arc::new(Mutex::new(Vec::new()));
     let factory_calls = calls.clone();

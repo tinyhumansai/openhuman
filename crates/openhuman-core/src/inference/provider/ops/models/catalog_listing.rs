@@ -33,6 +33,51 @@ pub(super) fn resolve_local_runtime_key(
     looked_up
 }
 
+/// The key and HTTP client a registered catalog listing is handed for `entry`
+/// (when the provider id matched a configured entry).
+fn catalog_request(
+    config: &crate::config::Config,
+    entry: Option<&crate::config::schema::cloud_providers::CloudProviderCreds>,
+) -> Result<crate::inference::registry::CatalogRequest, String> {
+    let service_key = "providers.list_models";
+    let slug = entry.map(|e| e.slug.trim()).unwrap_or_default();
+    let provider_key = match entry {
+        Some(entry) => {
+            let looked_up =
+                crate::inference::provider::factory::lookup_key_for_slug(&entry.slug, config)
+                    .unwrap_or_default();
+            resolve_local_runtime_key(&entry.slug, looked_up, config)
+        }
+        None => String::new(),
+    };
+    let client = match config
+        .cloud_provider_ca_certs
+        .get(slug)
+        .filter(|pem| !pem.is_empty())
+    {
+        Some(pem) => {
+            crate::util::tls::client_with_ca_bundle_with_timeouts(pem, service_key, 30, 10)?
+        }
+        None => crate::config::build_runtime_proxy_client_with_timeouts(service_key, 30, 10),
+    };
+    Ok(crate::inference::registry::CatalogRequest {
+        provider_key,
+        client,
+    })
+}
+
+/// The empty listing the managed provider answers with when no hosted catalog
+/// is registered.
+fn no_managed_catalog() -> crate::core::Outcome<serde_json::Value> {
+    log::info!(
+        "[providers][list_models] managed catalog unavailable: no catalog provider registered; returning an empty list"
+    );
+    crate::core::Outcome::new(
+        serde_json::json!({ "models": Vec::<ModelInfo>::new() }),
+        vec!["no hosted backend; managed catalog is empty".to_string()],
+    )
+}
+
 pub async fn list_configured_models(
     provider_id: &str,
 ) -> Result<crate::core::Outcome<serde_json::Value>, String> {
@@ -54,6 +99,23 @@ pub async fn list_configured_models_from_config(
 
     log::debug!("[providers][list_models] provider_id={}", provider_id);
 
+    // A registered catalog (`inference::registry`) answers before any entry
+    // resolution; nothing registered => the built-in listing below.
+    if let Some(catalog) = crate::inference::registry::catalog(&provider_id) {
+        log::debug!(
+            "[providers][list_models] provider_id={provider_id} served by a registered catalog"
+        );
+        let entry = config
+            .cloud_providers
+            .iter()
+            .find(|e| e.id == provider_id || e.slug == provider_id);
+        let request = catalog_request(config, entry)?;
+        return (catalog.list)(config.clone(), request).await;
+    }
+    if provider_id == crate::inference::provider::factory::PROVIDER_OPENHUMAN {
+        return Ok(no_managed_catalog());
+    }
+
     // Explicit `cloud_providers` entry wins (e.g. a user-pointed remote
     // ollama box at https://ollama.example.com/v1). Falling back to the
     // local-runtime synthesis below only happens when no entry matches.
@@ -63,8 +125,22 @@ pub async fn list_configured_models_from_config(
         .find(|e| e.id == provider_id || e.slug == provider_id)
         .cloned()
         .or_else(|| synthesize_local_runtime_entry(&provider_id, config))
-        .or_else(|| synthesize_managed_entry(&provider_id))
         .ok_or_else(|| format!("no cloud provider with id or slug '{}' found", provider_id))?;
+
+    // An entry that authenticates with the managed session is the managed
+    // catalog: the registered provider lists it, and with none registered
+    // there is nothing to list.
+    if entry.auth_style == crate::config::schema::cloud_providers::AuthStyle::OpenhumanJwt {
+        return match crate::inference::registry::catalog(
+            crate::inference::provider::factory::PROVIDER_OPENHUMAN,
+        ) {
+            Some(catalog) => {
+                let request = catalog_request(config, Some(&entry))?;
+                (catalog.list)(config.clone(), request).await
+            }
+            None => Ok(no_managed_catalog()),
+        };
+    }
 
     // Sentry TAURI-RUST-114C/114D: the app stores Claude Code with the cosmetic
     // endpoint `cli://claude-code`. It runs as a local CLI and has no `/models`
@@ -126,107 +202,10 @@ pub async fn list_configured_models_from_config(
         crate::config::build_runtime_proxy_client_with_timeouts(service_key, 30, 10)
     };
 
-    // Managed backend (`openhuman`) needs a different URL *and* a different
-    // credential than every BYOK provider above, so neither `entry.endpoint`
-    // nor `lookup_key_for_slug` is usable here:
-    //
-    //   * the seeded entry's endpoint is the *chat* base
-    //     (`https://api.openhuman.ai/v1`), so `{endpoint}/models` would probe
-    //     the wrong host entirely — the hosted API is resolved by
-    //     `effective_backend_api_url`, which also ignores an `api_url`
-    //     override pointing at a local/third-party inference host.
-    //   * the session JWT lives in the `app-session` auth profile, not
-    //     `provider:openhuman`, so `lookup_key_for_slug` returns "" and the
-    //     request would go out unauthenticated (401).
-    //
-    // `?catalog=openrouter` is required: without it the backend returns only
-    // the curated legacy list, which is deliberately
-    // byte-identical to the legacy payload. The catalog listing is gated
-    // server-side by OPENROUTER_PASSTHROUGH_ENABLED and returns an empty set
-    // when the passthrough is off, so this degrades to "no models" rather than
-    // an error on a backend that has not enabled it.
-    let mut managed_token = String::new();
-    if entry.auth_style == AuthStyle::OpenhumanJwt {
-        // Do NOT propagate a missing session: a self-hosted entry may carry a
-        // provider-scoped key instead, and the auth arm below documents that
-        // fallback. Only fail when neither credential exists, so the error the
-        // caller sees names the real problem.
-        //
-        // Classify the session directly rather than going through
-        // `require_live_session_token`, which flattens "signed out" and "could
-        // not read the credential store" into one opaque Err. A lock timeout or
-        // filesystem error is a recoverable fault the picker should surface —
-        // swallowing it into a successful empty catalog hides it (review, #6206).
-        // A store error still propagates; only a genuinely absent/expired
-        // session degrades to an empty list.
-        use crate::security::credentials::session_support::{
-            classify_session_token, load_app_session_profile, publish_local_session_expiry,
-            SessionTokenCheck,
-        };
-        let profile = load_app_session_profile(config)?;
-        match classify_session_token(profile.as_ref(), chrono::Utc::now()) {
-            SessionTokenCheck::Live(token) => managed_token = token,
-            // Signed out is not a provider failure. The managed catalog has
-            // nothing to offer until there is a session, and managed stays
-            // selectable on its automatic routing — so return an empty list
-            // rather than surfacing "could not load models".
-            check if api_key.is_empty() => {
-                let reason = match check {
-                    SessionTokenCheck::Expired => {
-                        // Still announce the expiry: `require_live_session_token`
-                        // did this for us before, and without it an expired token
-                        // stays in the store with nothing prompting a re-auth.
-                        publish_local_session_expiry("list_configured_models");
-                        "session expired"
-                    }
-                    _ => "no session",
-                };
-                log::info!(
-                    "[providers][list_models] managed catalog unavailable — {reason}; returning an empty list"
-                );
-                return Ok(crate::core::Outcome::new(
-                    serde_json::json!({ "models": Vec::<ModelInfo>::new() }),
-                    vec![format!("{reason}; managed catalog is empty")],
-                ));
-            }
-            check => {
-                if matches!(check, SessionTokenCheck::Expired) {
-                    publish_local_session_expiry("list_configured_models");
-                }
-                log::debug!(
-                    "[providers][list_models] no live session; falling back to the provider-scoped key"
-                );
-            }
-        }
-        let Ok(base) = crate::backend::base_url(&config.api_url) else {
-            log::info!(
-                "[providers][list_models] managed catalog unavailable — no backend transport; returning an empty list"
-            );
-            return Ok(crate::core::Outcome::new(
-                serde_json::json!({ "models": Vec::<ModelInfo>::new() }),
-                vec!["no hosted backend; managed catalog is empty".to_string()],
-            ));
-        };
-        models_url = append_query_param(
-            &crate::util::url::join_url(&base, "/openai/v1/models"),
-            "catalog",
-            "openrouter",
-        );
-        log::debug!(
-            "[providers][list_models] managed catalog url={}",
-            models_url
-        );
-    }
-
     if is_openrouter_provider(&entry.slug, &entry.endpoint) {
         validate_openrouter_api_key(&client, &routing.endpoint, &api_key).await?;
     }
 
-    // Whether the app session token actually made it onto the wire. It is not
-    // the same question as "is `managed_token` non-empty": the credential-safety
-    // guard below can decline to attach it, and a 401 on an unauthenticated
-    // request must not be read as a stale session (review, #6206).
-    let mut managed_session_attached = false;
     let mut request = client.get(&models_url);
     if routing.using_oauth {
         request = request
@@ -256,35 +235,8 @@ pub async fn list_configured_models_from_config(
             }
             r
         }
-        AuthStyle::OpenhumanJwt => {
-            // Prefer the live session JWT resolved above; fall back to a
-            // provider-scoped key so a self-hosted entry that stores one still
-            // authenticates.
-            let token = if !managed_token.is_empty() {
-                managed_token.as_str()
-            } else {
-                api_key.as_str()
-            };
-            managed_session_attached = managed_session_attaches(&managed_token, &models_url);
-            // Never put a bearer credential on the wire in clear text. `https`
-            // or a loopback host only — loopback stays allowed so a local
-            // backend (BACKEND_URL=http://127.0.0.1:...) still works in dev.
-            if !token.is_empty() && url_is_credential_safe(&models_url) {
-                // Managed traffic is attributed per embedding product
-                // (OpenCompany / desktop); the generic provider client
-                // does not carry it, so attach it explicitly.
-                request
-                    .header("Authorization", format!("Bearer {}", token))
-                    .headers(crate::backend::attribution_headers())
-            } else if !token.is_empty() {
-                log::warn!(
-                    "[providers][list_models] refusing to send a bearer token to a non-https, non-loopback URL"
-                );
-                request
-            } else {
-                request
-            }
-        }
+        // Handled above: the managed catalog is served by the registered provider.
+        AuthStyle::OpenhumanJwt => request,
         AuthStyle::None => request,
     };
 
@@ -295,29 +247,6 @@ pub async fn list_configured_models_from_config(
 
     let status = response.status();
     if !status.is_success() {
-        // A 401 from the MANAGED catalog means the caller is not signed in —
-        // the stored session was rejected server-side even though its local
-        // `exp` was still valid, so `require_live_session_token` handed us a
-        // token the backend no longer honours. That is a signed-out state, not
-        // a provider failure, and rendering it as "could not load models" put a
-        // red error under managed for a user whose only problem is a stale
-        // session. Managed stays selectable on its automatic routing, so return
-        // an empty catalog and let the app's normal auth surfaces prompt for
-        // re-authentication.
-        //
-        // Scoped to the managed provider on purpose: for a BYOK provider a 401
-        // IS the actionable error (a wrong or revoked API key), and hiding it
-        // would strand the user with a silently empty dropdown.
-        if managed_401_means_signed_out(status.as_u16(), entry.auth_style, managed_session_attached)
-        {
-            log::info!(
-                "[providers][list_models] managed catalog unavailable — backend rejected the session token (401); returning an empty list"
-            );
-            return Ok(crate::core::Outcome::new(
-                serde_json::json!({ "models": Vec::<ModelInfo>::new() }),
-                vec!["session not accepted; managed catalog is empty".to_string()],
-            ));
-        }
         let body = response.text().await.unwrap_or_default();
         let sanitized = sanitize_api_error(&body);
         let truncated = crate::util::truncate_with_ellipsis(&sanitized, 300);

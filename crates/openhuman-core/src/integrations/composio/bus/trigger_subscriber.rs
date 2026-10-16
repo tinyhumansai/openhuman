@@ -67,7 +67,7 @@ impl EventHandler<DomainEvent> for ComposioTriggerSubscriber {
         // [composio-direct] Direct-mode trigger gate.
         //
         // Inbound `composio:trigger` events ride the backend socket
-        // (`wss://api.tinyhumans.ai`) which only fans out events from
+        // (the managed backend socket) which only fans out events from
         // the tinyhumans Composio tenant. When the user has switched
         // to direct mode, that tenant is no longer their active source
         // of truth — connections live on `backend.composio.dev` under

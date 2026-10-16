@@ -51,7 +51,7 @@ pub struct ComposioActionTool {
     /// the backend-bound handle at sub-agent spawn time. Toggling
     /// `composio.mode = "direct"` mid-session invalidated other caches
     /// but left these per-action tools still routing through
-    /// `staging-api.tinyhumans.ai/agent-integrations/composio/execute`
+    /// the managed backend's composio execute route
     /// — silently bypassing the direct-mode user's personal Composio
     /// tenant. Resolving the client per call via
     /// [`resolve_composio_route`] keeps dispatch in lockstep with the

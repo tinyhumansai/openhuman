@@ -81,8 +81,28 @@ impl Drop for DirectAuthFailureGuard {
     }
 }
 
+/// A host-registered backend route (the core ships none of its own).
+fn register_fake_backend_route() {
+    crate::integrations::composio::test_backend_route::register();
+}
+
+#[test]
+fn resolve_composio_route_backend_is_unavailable_without_a_registered_route() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let config = config_with_session_token(&tmp);
+    let err = resolve_composio_route(&config)
+        .err()
+        .expect("a core with no backend route builder has no backend route");
+    assert!(
+        err.to_string()
+            .starts_with(crate::core::observability::BACKEND_UNAVAILABLE_PREFIX),
+        "got: {err}"
+    );
+}
+
 #[test]
 fn resolve_composio_route_backend_variant_when_mode_default() {
+    register_fake_backend_route();
     let tmp = tempfile::tempdir().expect("tempdir");
     let config = config_with_session_token(&tmp);
     let route = resolve_composio_route(&config).expect("backend mode should build");
@@ -94,6 +114,7 @@ fn resolve_composio_route_backend_variant_when_mode_default() {
 fn resolve_composio_route_backend_empty_mode_falls_back_to_backend() {
     // A literal empty string in TOML should be treated as the default
     // (`"backend"`) rather than an unknown mode error.
+    register_fake_backend_route();
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut config = config_with_session_token(&tmp);
     config.composio.mode = String::new();
@@ -131,6 +152,7 @@ async fn disabled_mode_reports_no_integrations_without_a_backend_call() {
 fn resolve_composio_route_backend_errors_without_session() {
     // Backend mode requires the app-session JWT — without it the
     // factory must return an explicit error (not silently downgrade).
+    register_fake_backend_route();
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut config = crate::config::Config::default();
     config.config_path = tmp.path().join("config.toml");
@@ -457,23 +479,6 @@ async fn direct_connected_integrations_fetches_schemas_without_backend_composio_
     assert_eq!(gmail.tools.len(), 1);
     assert_eq!(gmail.tools[0].name, "GMAIL_SEND_EMAIL");
     assert_eq!(backend_tool_requests.load(Ordering::SeqCst), 0);
-}
-
-#[tokio::test]
-async fn pricing_for_config_short_circuits_in_direct_mode() {
-    // Build a client pointed at an unreachable backend — if the
-    // short-circuit fires, we never actually attempt the network call
-    // and the empty default struct comes back immediately.
-    let client =
-        crate::integrations::IntegrationClient::new("http://127.0.0.1:0".into(), "test".into());
-    let mut config = crate::config::Config::default();
-    config.composio.mode = "direct".into();
-
-    let pricing = crate::integrations::pricing_for_config(&client, &config).await;
-    // The default struct has every per-integration entry as `None`.
-    assert!(pricing.integrations.google_places.is_none());
-    assert!(pricing.integrations.parallel.is_none());
-    assert!(pricing.integrations.tinyfish.is_none());
 }
 
 // ── failure messages stay byte-identical to the pre-module client ─────────

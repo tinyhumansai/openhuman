@@ -15,7 +15,7 @@
 //! is gated behind the default-ON `voice` Cargo feature. When the feature is
 //! off, [`stub`] takes its place and exposes the same public surface that
 //! always-on / other-gated callers depend on (`server`, `dictation_listener`,
-//! `streaming`, `reply_speech`, `cloud_transcribe`, `create_stt_provider`,
+//! `streaming`, `create_stt_provider`,
 //! `effective_stt_provider`, `publish_ptt_transcript_committed`) with
 //! no-op / disabled-error bodies. Keeping the two surfaces in lockstep is
 //! enforced by the disabled-build check
@@ -49,11 +49,7 @@ pub mod live;
 #[cfg(feature = "voice")]
 mod ops;
 #[cfg(feature = "voice")]
-pub mod realtime;
-#[cfg(feature = "voice")]
 pub mod realtime_harness;
-#[cfg(feature = "voice")]
-pub mod reply_speech;
 #[cfg(feature = "voice")]
 mod schemas;
 #[cfg(feature = "voice")]
@@ -61,8 +57,6 @@ pub mod server;
 #[cfg(feature = "voice")]
 mod types;
 
-#[cfg(feature = "voice")]
-pub mod cloud_transcribe;
 #[cfg(feature = "voice")]
 pub mod local_speech;
 #[cfg(feature = "voice")]
@@ -76,9 +70,9 @@ pub mod streaming;
 
 #[cfg(feature = "voice")]
 pub use factory::{
-    create_stt_provider, create_tts_provider, default_stt_provider, default_tts_provider,
-    effective_stt_provider, effective_tts_provider, ExternalSttProvider, ExternalTtsProvider,
-    SttProvider, SttResult, TtsProvider, DEFAULT_PIPER_VOICE, DEFAULT_STT_MODEL,
+    create_stt_provider, create_tts_provider, effective_stt_provider, effective_tts_provider,
+    ExternalSttProvider, ExternalTtsProvider, SttProvider, SttResult, TtsProvider,
+    DEFAULT_PIPER_VOICE, DEFAULT_STT_MODEL,
 };
 #[cfg(feature = "voice")]
 pub use ops::*;
@@ -86,15 +80,6 @@ pub use ops::*;
 pub use schemas::{all_voice_controller_schemas, all_voice_registered_controllers, voice_schemas};
 #[cfg(feature = "voice")]
 pub use types::{VoiceSpeechResult, VoiceStatus, VoiceTtsResult};
-
-/// Default model id sent to the backend cloud STT proxy. Kept
-/// here (rather than in `cloud_transcribe.rs`) so the factory module can
-/// reach it via the public `voice::` surface without re-exporting an
-/// internal constant.
-#[cfg(feature = "voice")]
-pub(crate) fn cloud_transcribe_default_model() -> &'static str {
-    "whisper-v1"
-}
 
 // ---------------------------------------------------------------------------
 // Disabled facade — compiled only when the `voice` feature is OFF.

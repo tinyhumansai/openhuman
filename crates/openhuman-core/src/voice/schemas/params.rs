@@ -33,19 +33,6 @@ pub(super) struct TtsParams {
     pub(super) output_path: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-pub(super) struct CloudTranscribeParams {
-    pub(super) audio_base64: String,
-    #[serde(default)]
-    pub(super) mime_type: Option<String>,
-    #[serde(default)]
-    pub(super) file_name: Option<String>,
-    #[serde(default)]
-    pub(super) model: Option<String>,
-    #[serde(default)]
-    pub(super) language: Option<String>,
-}
-
 /// Factory-dispatched STT request. The caller can either pin a provider
 /// explicitly (`"cloud"` / `"<slug>[:<model>]"`) or let the controller resolve the
 /// effective provider from `config.local_ai.stt_provider`. Keeps the

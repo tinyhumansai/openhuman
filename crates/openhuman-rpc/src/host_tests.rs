@@ -99,7 +99,6 @@ fn desktop_connected_builder_binds_the_transport_and_hosted_controllers() {
         .connect()
         .expect("SDK transport builds offline")
         .summary();
-    assert!(summary.has_backend_transport);
     assert!(summary.controller_extensions.contains(&DomainGroup::Hosted));
     assert!(summary
         .controller_extensions
@@ -175,4 +174,62 @@ fn embed_info_is_versioned_and_rejects_unknown_flags() {
     assert!(info.compiled_features.contains_key("voice"));
     assert!(embed_info(&["embed".into(), "info".into(), "--secret".into()]).is_err());
     assert!(embed_info(&["serve".into()]).unwrap().is_none());
+}
+
+/// A legacy config whose `api_url` is the managed chat-completions URL must
+/// load as managed (URL derived, not moved to `inference_url`) when the host
+/// opens its session store before connecting. The load-time migrations know
+/// the managed hosts only through the TinyHumans config enricher, which the
+/// boot path must register ahead of the first config read.
+#[cfg(feature = "session-store")]
+#[tokio::test]
+async fn boot_session_store_keeps_a_legacy_managed_config_managed() {
+    let _turn = crate::STORAGE_SLOT_TEST_LOCK.lock().await;
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(
+        tmp.path().join("config.toml"),
+        "api_url = \"https://api.tinyhumans.ai/openai/v1/chat/completions\"\n",
+    )
+    .unwrap();
+    let _env = crate::server::testing::EnvVarGuard::set_many(vec![
+        ("OPENHUMAN_WORKSPACE", tmp.path().into()),
+        ("OPENHUMAN_STORAGE_URL", "".into()),
+    ]);
+    openhuman_tinyhumans::__host::config_enrichers::unregister_enricher(
+        openhuman_tinyhumans::client::enricher::ENRICHER_ID,
+    );
+
+    let previous = crate::core_host::agent::session_store::installed();
+    let previous_backend = crate::core_host::storage::installed();
+    let result = session_store_for_boot().await;
+    let config = crate::core_host::config::ops::load_config_in(
+        &crate::core_host::core::runtime::DispatchCtx::host_default(),
+    )
+    .await;
+    // Put the process-wide slots back before asserting.
+    match previous_backend {
+        Some(backend) => {
+            crate::core_host::storage::install(backend);
+        }
+        None => {
+            crate::core_host::storage::clear();
+        }
+    }
+    drop(previous);
+    result.expect("the boot session store opens");
+    let config = config.expect("the legacy config loads");
+    assert!(
+        config.inference_url.is_none(),
+        "a managed api_url must not be moved to a custom inference_url"
+    );
+    assert!(
+        config.cloud_providers.iter().all(|p| p.slug != "custom"),
+        "no Custom provider may be seeded from a managed endpoint: {:?}",
+        config.cloud_providers
+    );
+    let on_disk = std::fs::read_to_string(tmp.path().join("config.toml")).unwrap();
+    assert!(
+        !on_disk.contains("slug = \"custom\""),
+        "boot must not persist a managed config as Custom:\n{on_disk}"
+    );
 }

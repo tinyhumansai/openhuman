@@ -31,6 +31,8 @@ pub use loader::{
 // expose internal helpers needed by tests (ops_tests.rs uses super::*)
 #[cfg(test)]
 pub(crate) use crate::config::Config;
+#[cfg(test)]
+pub(crate) use loader::normalize_loaded_config;
 #[cfg(all(test, windows))]
 pub(crate) use loader::reset_local_data_remove_error;
 #[cfg(test)]

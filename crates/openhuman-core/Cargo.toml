@@ -44,10 +44,10 @@ path = "src/lib.rs"
 crate-type = ["rlib"]
 
 [dependencies]
-# The TinyHumans SDK is deliberately NOT a dependency of the core. The core
-# reaches the hosted backend only through `backend::transport::BackendTransport`;
-# the SDK-backed implementation is `crates/openhuman-tinyhumans`, which hosts
-# install at boot. `scripts/assert-shed.sh` / `cargo tree -i tinyhumans-sdk`
+# The TinyHumans SDK is deliberately NOT a dependency of the core, which has no
+# backend module at all. Everything hosted lives in `crates/openhuman-tinyhumans`,
+# which hosts connect at boot and which plugs in through the core's generic
+# registries. `scripts/assert-shed.sh` / `cargo tree -i tinyhumans-sdk`
 # must stay empty for this package.
 # tinyflows — host-agnostic workflow engine (typed node graph → validate → compile →
 # run on tinyagents). Powers the "Workflows" feature via the seam in

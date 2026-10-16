@@ -1,7 +1,6 @@
 use crate::config::DelegateAgentConfig;
-use crate::inference::provider::{
-    OpenHumanBackendModel, ProviderRuntimeOptions, INFERENCE_BACKEND_ID,
-};
+use crate::inference::provider::factory::make_openhuman_backend_model_for_options;
+use crate::inference::provider::{ProviderRuntimeOptions, INFERENCE_BACKEND_ID};
 use crate::security::policy::ToolOperation;
 use crate::security::SecurityPolicy;
 use crate::tools::timeout::tool_execution_timeout_secs;
@@ -13,7 +12,7 @@ use std::time::Duration;
 use tinyagents_harness::context::RunContext;
 use tinyagents_harness::tool::{ToolDispatch, ToolExecutionContext};
 use tinyinference_llm::message::Message;
-use tinyinference_llm::model::{ChatModel, ModelRequest};
+use tinyinference_llm::model::ModelRequest;
 use tinytools::{Tool, ToolCallOptions, ToolResult, ToolRunContext};
 
 /// Tool that delegates a subtask to a named agent with a different
@@ -243,15 +242,22 @@ impl DelegateTool {
             return Ok(ToolResult::error(error));
         }
 
-        let model = OpenHumanBackendModel::new(
-            None,
-            &self.provider_runtime_options,
-            agent_config.model.clone(),
-        )
         // `metadata` below is diagnostic only; the managed model owns the
         // actual backend wire extension so configured delegates cannot lose
         // their parent's thread between typed dispatch and provider invoke.
-        .with_thread_id(tool_context.and_then(ToolRunContext::thread_id));
+        let thread_id = tool_context.and_then(ToolRunContext::thread_id);
+        let model = match make_openhuman_backend_model_for_options(
+            &self.provider_runtime_options,
+            &agent_config.model,
+            thread_id,
+        ) {
+            Ok((model, _resolved)) => model,
+            Err(error) => {
+                return Ok(ToolResult::error(format!(
+                    "Agent '{agent_name}' failed: {error}"
+                )));
+            }
+        };
 
         // Build the message
         let full_prompt = if context.is_empty() {

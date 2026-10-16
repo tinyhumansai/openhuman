@@ -363,7 +363,7 @@ pub(crate) async fn resolve_composio_account(
 /// - **connection_ref**: `conn` (`"composio:<toolkit>:<connection_id>"`) is
 ///   parsed and forwarded in both modes: Direct passes it to Composio's
 ///   execute endpoint, while Backend includes it as `connectionId` in the
-///   authenticated `/agent-integrations/composio/execute` request. Omitting a
+///   authenticated composio execute request. Omitting a
 ///   ref deliberately keeps the ambient-account behavior. A supplied but
 ///   stale/foreign id is still forwarded exactly so the provider rejects it;
 ///   it must never degrade to the ambient account (fixes #5751 / E-m3).

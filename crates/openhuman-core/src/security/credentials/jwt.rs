@@ -7,7 +7,7 @@
 //! request with a token already known to be dead.
 //!
 //! Parsing is pure and has no backend dependency, which is why it lives in the
-//! core rather than behind the backend transport: `security::credentials`
+//! core rather than behind a host crate: `security::credentials`
 //! needs it on a core that has no TinyHumans connection at all.
 //!
 //! What stays OpenHuman-specific is *where the token lives*: the credentials
@@ -61,7 +61,7 @@ pub use crate::security::credentials::{APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFIL
 /// The backend app-session token is a JWT but is stored bare — the client
 /// historically recorded `expires_at: None` and so blindly sent requests with a
 /// token it could have known was dead, generating doomed 401s (Sentry
-/// TAURI-RUST-8WY `/teams/me/usage`, 8WZ `/payments/stripe/currentPlan`; #3297).
+/// TAURI-RUST-8WY (team usage), 8WZ (current plan); #3297).
 /// Decoding `exp` at store time lets `require_live_session_token` reject an
 /// expired token locally instead of round-tripping to a guaranteed 401.
 ///

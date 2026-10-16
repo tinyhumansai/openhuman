@@ -24,7 +24,8 @@ fn config_in(dir: &std::path::Path) -> Config {
 #[test]
 fn backend_key_is_selected_ahead_of_direct_openrouter_and_rotates_privately() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let config = config_in(dir.path());
+    let mut config = config_in(dir.path());
+    config.resolved_endpoints.product_identity = Some("openhuman-test".into());
     AuthService::from_config(&config)
         .store_provider_token(
             "provider:openrouter",

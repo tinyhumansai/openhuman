@@ -171,8 +171,8 @@ async fn http_request_log_middleware(req: Request, next: Next) -> Response {
 /// Handler for the root endpoint, returning server information and available endpoints.
 async fn root_handler() -> impl IntoResponse {
     let api_server = match crate::core_host::config::Config::load_or_init().await {
-        Ok(cfg) => crate::core_host::backend::base_url(&cfg.api_url).ok(),
-        Err(_) => crate::core_host::backend::base_url(&None).ok(),
+        Ok(cfg) => cfg.resolved_endpoints.control_plane_url.clone(),
+        Err(_) => None,
     };
 
     (

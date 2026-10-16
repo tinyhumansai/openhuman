@@ -34,6 +34,7 @@ const SUPPORTED_PROXY_SERVICE_KEYS: &[&str] = &[
     "tool.pushover",
     "memory.embeddings",
     "tunnel.custom",
+    "telemetry.otlp",
 ];
 
 const SUPPORTED_PROXY_SERVICE_SELECTORS: &[&str] =

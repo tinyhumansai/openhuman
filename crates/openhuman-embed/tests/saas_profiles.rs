@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use common::{
     chat_requests, echo_inference, last_user_message, runtime_without_master_key as runtime,
-    PointedTransport,
+    PointedInference,
 };
 use openhuman_embed::profiles::ProfileCredentialKind;
 use openhuman_embed::{
@@ -33,7 +33,7 @@ fn profiles_are_isolated_held_and_relayed() {
 
 async fn scenario() {
     let inference = echo_inference().await;
-    PointedTransport::install(&inference.uri());
+    PointedInference::install(&inference.uri());
 
     let root = tempfile::tempdir().expect("root");
     let mut config = SaasConfig::new(root.path());

@@ -56,7 +56,7 @@ pub(super) fn create_chat_model_with_model_id_inner(
         return Ok((model, "mock-model".to_string()));
     }
     // Managed OpenHuman backend → crate-native host `ChatModel`
-    // ([`OpenHumanBackendModel`], issue #4727 Motion B) instead of a
+    // (issue #4727 Motion B) instead of a
     // adapted provider. A native test-model override must still win, so only
     // take this path when no
     // override is installed. The public wrapper supplies the construction-time
@@ -133,7 +133,7 @@ pub(crate) fn resolves_to_managed_backend(role: &str, config: &Config) -> bool {
 ///    unknown provider slug, local-only privacy-mode block, …) reused
 ///    verbatim so this probe never re-implements it.
 /// 2. **Managed-backend readiness** — when `role` resolves to the managed
-///    OpenHuman backend, [`OpenHumanBackendModel::probe_readiness`] makes one
+///    OpenHuman backend, the registered provider's readiness probe makes one
 ///    cheap real completion attempt to catch the "account has no provider API
 ///    key configured" class of failure that construction alone cannot see
 ///    (construction only builds the client; it never calls the backend).
@@ -177,9 +177,16 @@ pub async fn probe_inference_readiness(
         "[flows][inference-probe] role={role} resolves to the managed OpenHuman backend — \
          probing readiness"
     );
-    let (managed_model, model_id) =
-        resolve_managed_backend(role, config, &EgressLedger::none()).map_err(|e| e.to_string())?;
-    let result = managed_model.probe_readiness().await;
+    let Some(probe) =
+        crate::inference::registry::chat_model(PROVIDER_OPENHUMAN).and_then(|entry| entry.probe)
+    else {
+        // The registered provider has no readiness probe: construction above
+        // succeeded, and there is nothing further to ask it.
+        log::debug!("[flows][inference-probe] role={role} managed provider registered no probe");
+        return Ok(());
+    };
+    let model_id = resolve_managed_model(role, config, None);
+    let result = probe(role.to_string(), model_id.clone(), config.clone()).await;
     log::debug!(
         "[flows][inference-probe] role={role} model={model_id} probe result: {}",
         if result.is_ok() { "ready" } else { "not ready" }

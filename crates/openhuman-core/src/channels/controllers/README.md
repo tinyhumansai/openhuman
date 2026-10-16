@@ -6,10 +6,10 @@ TinyChannels module through its minimal bus contract.
 
 | Path | Purpose |
 | --- | --- |
-| [backend.rs](./backend.rs) | OpenHuman product callbacks for persisted configuration, hosted reactions and threads; sends prepared messages through the confidential module member. |
+| [backend.rs](./backend.rs) | OpenHuman product callbacks for persisted configuration, reactions and threads, served through the registered channel callback (`callback_slot`); sends prepared messages through the confidential module member. |
 | [definitions.rs](./definitions.rs) | Provider identifiers, capabilities and field declarations from tinychannels-bus. |
 | [schemas.rs](./schemas.rs) | Existing RPC names, contract schemas, parameter decoding and thin host handlers. |
-| ops/ | Credential custody, configuration persistence, disconnect cleanup and TinyHumans product API adapters. |
+| ops/ | Credential custody, configuration persistence, disconnect cleanup and product adapters. |
 
 Provider descriptions are contract vocabulary and need no running module.
 Connection preparation and testing use confidential ChannelController requests;

@@ -17,7 +17,8 @@ fn without_a_backend_credential_managed_jev_is_unavailable() {
 #[test]
 fn an_api_key_reaches_managed_jev() {
     let dir = tempfile::tempdir().unwrap();
-    let config = config_in(dir.path());
+    let mut config = config_in(dir.path());
+    config.resolved_endpoints.control_plane_url = Some("https://api.example.test".into());
     crate::security::credentials::api_key::store_api_key(&config, "th_live_test").unwrap();
     assert!(managed(&config).is_some());
 }

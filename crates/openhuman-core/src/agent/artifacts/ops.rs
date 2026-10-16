@@ -313,7 +313,7 @@ pub async fn ai_share_artifact(
     version: Option<u32>,
     public: bool,
 ) -> Result<Outcome<Value>, String> {
-    let publisher = crate::integrations::file_storage::artifact_publisher(config)
+    let publisher = super::artifact_publisher(config)
         .ok_or_else(|| "sign in to share artifacts".to_string())?;
     let artifacts = super::tiny_store::artifacts_service(
         &config.workspace_dir,

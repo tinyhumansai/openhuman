@@ -145,7 +145,7 @@ Capability {
         category: CapabilityCategory::Workflows,
         description:
             "Composio real-time trigger webhooks (Gmail new-message, Slack new-message, …) \
-             currently arrive over wss://api.tinyhumans.ai/socket.io and require backend mode. \
+             currently arrive over the managed backend socket and require backend mode. \
              Direct-mode users get synchronous tool execution but not async trigger push in \
              this release.",
         how_to: "Switch to Backend mode to receive triggers, or wait for the direct trigger sink follow-up",

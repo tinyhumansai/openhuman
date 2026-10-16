@@ -347,7 +347,7 @@ count, rolling recent-transcript buffer) behind a `OnceCell` singleton.
   the handlers here.
 - Backend credentials come from
   `security::credentials::session_support::resolve_backend_credential` (session
-  JWT or TinyHumans API key) and backend URLs from `BackendClient`. The core
+  JWT or TinyHumans API key) and backend URLs from `Config.resolved_endpoints`. The core
   does not hold hosted URLs itself.
 - Config shape lives under `config/schema/` (`voice_server.rs`,
   `voice_providers.rs`); migrations live in `config/migrations/`.

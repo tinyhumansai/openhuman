@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// `"backend"` (default) — every Composio call (toolkits, connections,
 /// authorize, tools, execute, triggers, …) is proxied through the
-/// OpenHuman backend (`api.tinyhumans.ai/agent-integrations/composio/*`).
+/// OpenHuman backend (its composio routes).
 /// The backend owns the Composio API key, allowlist, billing/margin, and
 /// HMAC-verified trigger webhooks fanned out over socket.io.
 ///

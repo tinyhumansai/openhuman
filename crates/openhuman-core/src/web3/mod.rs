@@ -5,8 +5,9 @@
 //! Quote preparation, signing, calldata encoding, provider algorithms, and the
 //! confirm-then-execute quote store run inside the compiled TinyWallet module.
 //! This host layer keeps product RPC controllers and schemas (their namespace
-//! strings are wire contracts), the [`client`] for the backend deBridge proxy
-//! (`/agent-integrations/crypto/*`), and adapters for configuration, custody,
+//! strings are wire contracts), the wallet-backend hook
+//! (`modules::wallet_backend`, answered by a host that has a swap/bridge
+//! service), and adapters for configuration, custody,
 //! approval, and generic network transport.
 //! Three sub-modules expose distinct RPC namespaces:
 //! - [`swap`] (`web3_swap`) — single-chain swaps (cross-chain → `web3_bridge`).
@@ -25,8 +26,6 @@
 
 #[cfg(feature = "web3")]
 pub mod bridge;
-#[cfg(feature = "web3")]
-pub mod client;
 #[cfg(feature = "web3")]
 pub mod dapp;
 #[cfg(feature = "web3")]

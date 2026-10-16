@@ -59,6 +59,22 @@ impl OpenHumanChannelBackend {
     ) -> anyhow::Result<tinychannels_bus::ChannelBackendResult> {
         use tinychannels_bus::{ChannelBackendRequest as Request, ChannelBackendResult as Result};
 
+        // A registered callback (`channels::callback_slot`) serves the
+        // progressive transport ahead of the "separate adapter" refusal below.
+        if matches!(request, Request::ProgressiveTransport(_)) {
+            if let Some(callback) = crate::channels::callback_slot::current() {
+                return callback(
+                    crate::channels::callback_slot::ChannelCallbackCtx {
+                        config: self.config.clone(),
+                        channel: None,
+                        session: tokio_util::sync::CancellationToken::new(),
+                    },
+                    request,
+                )
+                .await;
+            }
+        }
+
         match request {
             Request::RemoteControl(_) | Request::ProgressiveTransport(_) => {
                 anyhow::bail!("request is served by a separate callback adapter")
@@ -108,86 +124,6 @@ fn into_anyhow<T>(result: Result<Outcome<T>, String>) -> anyhow::Result<T> {
     result
         .map(|outcome| outcome.value)
         .map_err(anyhow::Error::msg)
-}
-
-fn parse_or_raw<T>(value: Value) -> T
-where
-    T: Default + serde::de::DeserializeOwned,
-    T: RawFallback,
-{
-    serde_json::from_value::<T>(value.clone())
-        .map(|parsed| parsed.with_raw_if_absent(value.clone()))
-        .unwrap_or_else(|_| T::with_raw(value))
-}
-
-trait RawFallback {
-    fn with_raw(value: Value) -> Self;
-    fn with_raw_if_absent(self, value: Value) -> Self;
-}
-
-impl RawFallback for ChannelSendMessageResult {
-    fn with_raw(value: Value) -> Self {
-        Self {
-            raw: Some(value),
-            ..Default::default()
-        }
-    }
-
-    fn with_raw_if_absent(mut self, value: Value) -> Self {
-        if self.raw.is_none() {
-            self.raw = Some(value);
-        }
-        self
-    }
-}
-
-impl RawFallback for ChannelReactionResult {
-    fn with_raw(value: Value) -> Self {
-        Self {
-            success: true,
-            raw: Some(value),
-            ..Default::default()
-        }
-    }
-
-    fn with_raw_if_absent(mut self, value: Value) -> Self {
-        if self.raw.is_none() {
-            self.raw = Some(value);
-        }
-        self
-    }
-}
-
-impl RawFallback for ChannelThreadResult {
-    fn with_raw(value: Value) -> Self {
-        Self {
-            raw: Some(value),
-            ..Default::default()
-        }
-    }
-
-    fn with_raw_if_absent(mut self, value: Value) -> Self {
-        if self.raw.is_none() {
-            self.raw = Some(value);
-        }
-        self
-    }
-}
-
-impl RawFallback for ChannelThreadListResult {
-    fn with_raw(value: Value) -> Self {
-        Self {
-            raw: Some(value),
-            ..Default::default()
-        }
-    }
-
-    fn with_raw_if_absent(mut self, value: Value) -> Self {
-        if self.raw.is_none() {
-            self.raw = Some(value);
-        }
-        self
-    }
 }
 
 #[cfg(test)]
@@ -253,15 +189,52 @@ impl OpenHumanChannelBackend {
         into_anyhow(ops::channel_status(&config, channel).await)
     }
 
+    /// Runs `request` through the registered channel callback
+    /// (`channels::callback_slot`), which serves the managed-channel requests
+    /// (reactions, threads). With none registered the call answers the
+    /// `BACKEND_UNAVAILABLE:` sentinel.
+    async fn via_callback(
+        &self,
+        channels_config: &ChannelsConfig,
+        channel: &str,
+        request: tinychannels_bus::ChannelBackendRequest,
+    ) -> anyhow::Result<tinychannels_bus::ChannelBackendResult> {
+        let Some(callback) = crate::channels::callback_slot::current() else {
+            tracing::debug!(
+                channel,
+                "[channels][backend] no channel callback registered"
+            );
+            anyhow::bail!(
+                "{} no channel transport registered",
+                crate::core::observability::BACKEND_UNAVAILABLE_PREFIX
+            );
+        };
+        callback(
+            crate::channels::callback_slot::ChannelCallbackCtx {
+                config: self.config_with_channels(channels_config),
+                channel: Some(channel.to_string()),
+                session: tokio_util::sync::CancellationToken::new(),
+            },
+            request,
+        )
+        .await
+    }
+
     pub(crate) async fn send_reaction(
         &self,
         channels_config: &ChannelsConfig,
         channel: &str,
         reaction: Value,
     ) -> anyhow::Result<ChannelReactionResult> {
-        let config = self.config_with_channels(channels_config);
-        let value = into_anyhow(ops::channel_send_reaction(&config, channel, reaction).await)?;
-        Ok(parse_or_raw(value))
+        use tinychannels_bus::{ChannelBackendRequest as Request, ChannelBackendResult as Result};
+        let request = Request::SendReaction {
+            channel: channel.to_string(),
+            reaction,
+        };
+        match self.via_callback(channels_config, channel, request).await? {
+            Result::SendReaction(result) => Ok(result),
+            _ => anyhow::bail!("channel callback answered a different request"),
+        }
     }
 
     pub(crate) async fn create_thread(
@@ -270,9 +243,15 @@ impl OpenHumanChannelBackend {
         channel: &str,
         title: &str,
     ) -> anyhow::Result<ChannelThreadResult> {
-        let config = self.config_with_channels(channels_config);
-        let value = into_anyhow(ops::channel_create_thread(&config, channel, title).await)?;
-        Ok(parse_or_raw(value))
+        use tinychannels_bus::{ChannelBackendRequest as Request, ChannelBackendResult as Result};
+        let request = Request::CreateThread {
+            channel: channel.to_string(),
+            title: title.to_string(),
+        };
+        match self.via_callback(channels_config, channel, request).await? {
+            Result::Thread(result) => Ok(result),
+            _ => anyhow::bail!("channel callback answered a different request"),
+        }
     }
 
     pub(crate) async fn update_thread(
@@ -282,10 +261,16 @@ impl OpenHumanChannelBackend {
         thread_id: &str,
         action: &str,
     ) -> anyhow::Result<ChannelThreadResult> {
-        let config = self.config_with_channels(channels_config);
-        let value =
-            into_anyhow(ops::channel_update_thread(&config, channel, thread_id, action).await)?;
-        Ok(parse_or_raw(value))
+        use tinychannels_bus::{ChannelBackendRequest as Request, ChannelBackendResult as Result};
+        let request = Request::UpdateThread {
+            channel: channel.to_string(),
+            thread_id: thread_id.to_string(),
+            action: action.to_string(),
+        };
+        match self.via_callback(channels_config, channel, request).await? {
+            Result::Thread(result) => Ok(result),
+            _ => anyhow::bail!("channel callback answered a different request"),
+        }
     }
 
     pub(crate) async fn list_threads(
@@ -294,9 +279,15 @@ impl OpenHumanChannelBackend {
         channel: &str,
         active: Option<bool>,
     ) -> anyhow::Result<ChannelThreadListResult> {
-        let config = self.config_with_channels(channels_config);
-        let value = into_anyhow(ops::channel_list_threads(&config, channel, active).await)?;
-        Ok(parse_or_raw(value))
+        use tinychannels_bus::{ChannelBackendRequest as Request, ChannelBackendResult as Result};
+        let request = Request::ListThreads {
+            channel: channel.to_string(),
+            active,
+        };
+        match self.via_callback(channels_config, channel, request).await? {
+            Result::Threads(result) => Ok(result),
+            _ => anyhow::bail!("channel callback answered a different request"),
+        }
     }
 }
 

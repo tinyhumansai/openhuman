@@ -1,10 +1,6 @@
-//! Captured managed transport for module-owned progressive replies.
-use crate::backend::{BackendApiError, BackendClient};
+//! Transport for module-owned progressive replies: delivery goes through the
+//! registered channel callback (`channels::callback_slot`).
 use crate::modules::channel_runtime::ChannelRuntimeLease;
-use crate::security::credentials::session_support::{
-    get_session_token, is_local_session_token, BackendCredential,
-};
-use serde_json::json;
 #[cfg(test)]
 use serde_json::Value;
 use tinybus::module::ModuleCallError;
@@ -13,102 +9,6 @@ use tinychannels_bus::module_progressive::{
     ProgressiveTransportResult,
 };
 use tinychannels_bus::{methods, ChannelBackendRequest, ChannelBackendResult};
-
-/// Transport refusals are typed facts; recovery and retry budgets belong to the module.
-pub(super) fn map_backend_error(error: anyhow::Error) -> ProgressiveTransportResult {
-    match error.downcast_ref::<BackendApiError>() {
-        Some(BackendApiError::ChannelEditUnsupported { .. }) => {
-            ProgressiveTransportResult::EditUnsupported
-        }
-        Some(BackendApiError::MessageNotFound { .. }) => ProgressiveTransportResult::MessageGone,
-        _ => ProgressiveTransportResult::Failed,
-    }
-}
-
-#[derive(Clone)]
-struct ManagedTransport {
-    client: BackendClient,
-    credential: BackendCredential,
-    channel: String,
-    session: tokio_util::sync::CancellationToken,
-}
-
-impl ManagedTransport {
-    fn capture(
-        config: &crate::config::Config,
-        channel: String,
-        session: tokio_util::sync::CancellationToken,
-    ) -> anyhow::Result<Self> {
-        anyhow::ensure!(!session.is_cancelled(), "Channel session closed");
-        let credential = match get_session_token(config)
-            .map_err(|_| anyhow::anyhow!("Hosted channel credential unavailable"))?
-        {
-            Some(token) if !is_local_session_token(&token) => BackendCredential::Session(token),
-            _ => anyhow::bail!("Hosted channel credential unavailable"),
-        };
-        Ok(Self {
-            client: BackendClient::from_config(config)?,
-            credential,
-            channel,
-            session,
-        })
-    }
-
-    async fn execute(&self, request: ProgressiveTransportRequest) -> ProgressiveTransportResult {
-        if request_channel(&request) != self.channel {
-            return ProgressiveTransportResult::Failed;
-        }
-        tokio::select! {
-            biased;
-            _ = self.session.cancelled() => ProgressiveTransportResult::Unavailable,
-            result = self.execute_transport(request) => result,
-        }
-    }
-
-    async fn execute_transport(
-        &self,
-        request: ProgressiveTransportRequest,
-    ) -> ProgressiveTransportResult {
-        let result = match request {
-            ProgressiveTransportRequest::Send { channel, message } => {
-                self.client
-                    .send_channel_message(&channel, &self.credential, message)
-                    .await
-            }
-            ProgressiveTransportRequest::Edit {
-                channel,
-                message_id,
-                text,
-            } => {
-                self.client
-                    .send_channel_edit(
-                        &channel,
-                        &message_id,
-                        &self.credential,
-                        json!({"text":text}),
-                    )
-                    .await
-            }
-            ProgressiveTransportRequest::Delete {
-                channel,
-                message_id,
-            } => {
-                self.client
-                    .send_channel_delete(&channel, &message_id, &self.credential)
-                    .await
-            }
-            ProgressiveTransportRequest::Typing { channel } => {
-                self.client
-                    .send_channel_typing(&channel, &self.credential)
-                    .await
-            }
-        };
-        match result {
-            Ok(value) => ProgressiveTransportResult::Success(value),
-            Err(error) => map_backend_error(error),
-        }
-    }
-}
 
 fn request_channel(request: &ProgressiveTransportRequest) -> &str {
     match request {
@@ -119,8 +19,20 @@ fn request_channel(request: &ProgressiveTransportRequest) -> &str {
     }
 }
 
+/// The transport progressive delivery runs through: a registered channel
+/// callback ([`crate::channels::callback_slot`]). Transport refusals are typed
+/// facts the callback maps itself; recovery and retry budgets belong to the
+/// module.
+#[derive(Clone)]
+struct SlotTransport {
+    callback: crate::channels::callback_slot::ChannelCallback,
+    config: crate::config::Config,
+    channel: String,
+    session: tokio_util::sync::CancellationToken,
+}
+
 #[tinybus::interface(name = "ai.tinyhumans.tinychannels.ChannelsHost")]
-impl ManagedTransport {
+impl SlotTransport {
     async fn dispatch_controller_backend(
         &self,
         request: ChannelBackendRequest,
@@ -128,9 +40,32 @@ impl ManagedTransport {
         let ChannelBackendRequest::ProgressiveTransport(request) = request else {
             return Err(tinybus::Error::failed("callback capability unavailable"));
         };
-        Ok(ChannelBackendResult::ProgressiveTransport(
-            self.execute(request).await,
-        ))
+        if request_channel(&request) != self.channel {
+            return Ok(ChannelBackendResult::ProgressiveTransport(
+                ProgressiveTransportResult::Failed,
+            ));
+        }
+        let ctx = crate::channels::callback_slot::ChannelCallbackCtx {
+            config: self.config.clone(),
+            channel: Some(self.channel.clone()),
+            session: self.session.clone(),
+        };
+        let call = (self.callback)(ctx, ChannelBackendRequest::ProgressiveTransport(request));
+        tokio::select! {
+            biased;
+            _ = self.session.cancelled() => Ok(ChannelBackendResult::ProgressiveTransport(
+                ProgressiveTransportResult::Unavailable,
+            )),
+            result = call => match result {
+                Ok(result) => Ok(result),
+                Err(error) => {
+                    tracing::debug!(%error, "[channels][delivery] registered callback failed");
+                    Ok(ChannelBackendResult::ProgressiveTransport(
+                        ProgressiveTransportResult::Failed,
+                    ))
+                }
+            },
+        }
     }
 }
 
@@ -146,7 +81,29 @@ impl ModuleProgressiveReply {
         channel: String,
         session: tokio_util::sync::CancellationToken,
     ) -> anyhow::Result<Self> {
-        let callback = ManagedTransport::capture(&config, channel.clone(), session)?;
+        let Some(callback) = crate::channels::callback_slot::current() else {
+            tracing::debug!("[channels][delivery] no channel callback registered");
+            anyhow::bail!(
+                "{} no channel transport registered",
+                crate::core::observability::BACKEND_UNAVAILABLE_PREFIX
+            );
+        };
+        tracing::debug!("[channels][delivery] progressive delivery via the registered callback");
+        anyhow::ensure!(!session.is_cancelled(), "Channel session closed");
+        let transport = SlotTransport {
+            callback,
+            config: config.clone(),
+            channel: channel.clone(),
+            session,
+        };
+        Self::open_with(config, channel, transport).await
+    }
+
+    async fn open_with(
+        config: crate::config::Config,
+        channel: String,
+        callback: impl tinybus::service::Interface + 'static,
+    ) -> anyhow::Result<Self> {
         let runtime = ChannelRuntimeLease::open(crate::modules::client(config), callback).await?;
         let result: ProgressiveResult = runtime
             .object()

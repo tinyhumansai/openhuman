@@ -69,8 +69,9 @@ async fn the_profile_client_stamps_versions_and_identity_on_raw_requests() {
 
 #[tokio::test]
 async fn the_shell_version_rides_along_when_exported() {
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // The crate-wide env lock, so tests that fingerprint the attribution
+    // headers cannot observe this test's temporary variable.
+    let _env = crate::backend::url::backend_env_test_lock();
     std::env::set_var(TAURI_VERSION_ENV_VAR, "9.8.7-shell+test");
     let headers = attribution_headers();
     std::env::remove_var(TAURI_VERSION_ENV_VAR);

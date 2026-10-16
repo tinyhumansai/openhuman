@@ -4,13 +4,13 @@ use tinyagents_live::tinyliveagents::Error as LiveError;
 
 /// A failure with a stable, content-free `code` the UI can switch on.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct LiveVoiceError {
-    pub(crate) code: &'static str,
-    pub(crate) message: String,
+pub struct LiveVoiceError {
+    pub code: &'static str,
+    pub message: String,
 }
 
 impl LiveVoiceError {
-    pub(crate) fn new(code: &'static str, message: impl Into<String>) -> Self {
+    pub fn new(code: &'static str, message: impl Into<String>) -> Self {
         Self {
             code,
             message: message.into(),
@@ -18,22 +18,22 @@ impl LiveVoiceError {
     }
 
     /// The provider needs a key or sign-in it does not have.
-    pub(crate) fn not_configured(message: impl Into<String>) -> Self {
+    pub fn not_configured(message: impl Into<String>) -> Self {
         Self::new("not_configured", message)
     }
 
     /// The request named something that does not exist.
-    pub(crate) fn invalid(message: impl Into<String>) -> Self {
+    pub fn invalid(message: impl Into<String>) -> Self {
         Self::new("invalid_request", message)
     }
 
     /// The TinyHumans backend refused or failed.
-    pub(crate) fn backend(message: impl Into<String>) -> Self {
+    pub fn backend(message: impl Into<String>) -> Self {
         Self::new("backend", message)
     }
 
     /// Something inside the core failed (agent build, config).
-    pub(crate) fn internal(message: impl Into<String>) -> Self {
+    pub fn internal(message: impl Into<String>) -> Self {
         Self::new("internal", message)
     }
 }

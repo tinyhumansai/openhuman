@@ -8,9 +8,6 @@ use tempfile::TempDir;
 use tinytools::ToolContent;
 use tinytools::ToolResult;
 
-#[path = "../integrations/test_support.rs"]
-mod integration_test_support;
-
 fn test_config(tmp: &TempDir) -> Config {
     Config {
         workspace_dir: tmp.path().join("workspace"),

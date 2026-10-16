@@ -292,15 +292,22 @@ pub(crate) async fn run_chat_task(
         let speak_reply = matches!(metadata.speak_reply, Some(true));
         let trimmed_response = task_result.full_response.trim();
         if speak_reply && !trimmed_response.is_empty() {
-            let opts = crate::voice::reply_speech::ReplySpeechOptions::default();
-            match crate::voice::reply_speech::synthesize_reply(
-                &config,
-                &task_result.full_response,
-                &opts,
-            )
-            .await
-            {
-                Ok(_) => log::debug!(
+            // Resolved through the voice registry by the hosted slug: the
+            // provider is registered by the hosted-backend layer, so a core
+            // with none registered logs the error and skips the spoken reply.
+            #[cfg(feature = "voice")]
+            let speech = match crate::voice::create_tts_provider("cloud", "", &config) {
+                Ok(provider) => provider
+                    .synthesize(&config, &task_result.full_response, None)
+                    .await
+                    .map(|_| ()),
+                Err(err) => Err(err.to_string()),
+            };
+            #[cfg(not(feature = "voice"))]
+            let speech: Result<(), String> =
+                Err("voice feature disabled at compile time".to_string());
+            match speech {
+                Ok(()) => log::debug!(
                     "[web_channel] reply_speech dispatched chars={} client_id={} thread_id={} request_id={}",
                     task_result.full_response.len(),
                     client_id,

@@ -509,7 +509,7 @@ Capability {
         category: CapabilityCategory::Intelligence,
         description:
             "Pick which embedding provider drives semantic search across your memory: \
-             managed cloud (default, Voyage-backed via api.tinyhumans.ai), OpenAI, \
+             managed cloud (default, Voyage-backed), OpenAI, \
              Cohere, local Ollama, or a custom OpenAI-compatible endpoint. API keys \
              are stored encrypted via the local keyring under `embeddings:<slug>`; \
              model name and embedding dimensions are tunable per provider. A \

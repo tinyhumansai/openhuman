@@ -19,10 +19,6 @@
     "ApprovalsError",
     "Auth",
     "AuthState",
-    "BackendRequest",
-    "BackendTransport",
-    "BackendTransportError",
-    "BaseUrlPurpose",
     "CancellationToken",
     "ChannelError",
     "ChannelListener",
@@ -134,7 +130,6 @@
     "ToolPolicy",
     "ToolResult",
     "ToolScopeSpec",
-    "TransportProfile",
     "TrustedAccess",
     "TrustedAutomationSource",
     "Turn",
@@ -163,8 +158,6 @@
     "events",
     "fanout",
     "identity",
-    "install_backend_transport",
-    "installed_backend_transport",
     "memory",
     "modules",
     "observe",
@@ -186,55 +179,49 @@
       "name": "access",
       "signature": "pub fn access(mut self, access: Access) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 368
+      "line": 351
     },
     {
       "name": "action_dir",
       "signature": "pub fn action_dir(mut self, dir: impl Into<PathBuf>) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 325
+      "line": 308
     },
     {
       "name": "agent_defaults",
       "signature": "pub fn agent_defaults(mut self, defaults: super::AgentDefaults) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 158
+      "line": 155
     },
     {
       "name": "api_key",
       "signature": "pub fn api_key(mut self, key: impl Into<ApiKey>) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 345
+      "line": 328
     },
     {
       "name": "autonomy",
       "signature": "pub fn autonomy(mut self, value: openhuman_core::config::schema::AutonomyConfig) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 193
-    },
-    {
-      "name": "backend_transport",
-      "signature": "pub fn backend_transport(mut self, transport: Arc<dyn BackendTransport>) -> Self",
-      "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 232
+      "line": 190
     },
     {
       "name": "backend_url",
       "signature": "pub fn backend_url(mut self, url: impl Into<String>) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 355
+      "line": 338
     },
     {
       "name": "config",
       "signature": "pub fn config(mut self, config: Config) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 485
+      "line": 468
     },
     {
       "name": "config_source",
       "signature": "pub fn config_source(mut self, source: ConfigSource) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 333
+      "line": 316
     },
     {
       "name": "controller_extension",
@@ -246,61 +233,61 @@
       "name": "cron",
       "signature": "pub fn cron(mut self, value: openhuman_core::config::schema::CronConfig) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 218
+      "line": 215
     },
     {
       "name": "cron_delivery",
       "signature": "pub fn cron_delivery( mut self, delivery: Arc<dyn openhuman_core::cron::host_delivery::CronDelivery>, ) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 276
+      "line": 259
     },
     {
       "name": "defer_services",
       "signature": "pub fn defer_services(mut self) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 403
+      "line": 386
     },
     {
       "name": "definition_base",
       "signature": "pub fn definition_base(mut self, definition: crate::AgentDefinitionSpec) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 177
+      "line": 174
     },
     {
       "name": "domains",
       "signature": "pub fn domains(mut self, domains: DomainSet) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 415
+      "line": 398
     },
     {
       "name": "host_kind",
       "signature": "pub fn host_kind(mut self, host_kind: HostKind) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 432
+      "line": 415
     },
     {
       "name": "learning",
       "signature": "pub fn learning(mut self, value: super::LearningSettings) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 213
+      "line": 210
     },
     {
       "name": "listen",
       "signature": "pub fn listen(self, host: impl Into<String>, port: u16) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 454
+      "line": 437
     },
     {
       "name": "listen_host",
       "signature": "pub fn listen_host(mut self, host: impl Into<String>) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 459
+      "line": 442
     },
     {
       "name": "listen_port",
       "signature": "pub fn listen_port(mut self, port: u16) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 465
+      "line": 448
     },
     {
       "name": "live_policy",
@@ -312,25 +299,25 @@
       "name": "max_agents",
       "signature": "pub fn max_agents(mut self, limit: usize) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 288
+      "line": 271
     },
     {
       "name": "mcp_baseline",
       "signature": "pub fn mcp_baseline(mut self, servers: impl IntoIterator<Item = crate::McpServer>) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 188
+      "line": 185
     },
     {
       "name": "memory_engine",
       "signature": "pub fn memory_engine(mut self, engine: Arc<dyn tinymemory_api::MemoryEngine>) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 246
+      "line": 229
     },
     {
       "name": "model_defaults",
       "signature": "pub fn model_defaults(mut self, model: super::ModelDefaults) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 167
+      "line": 164
     },
     {
       "name": "modules",
@@ -348,25 +335,25 @@
       "name": "privacy",
       "signature": "pub fn privacy(mut self, value: openhuman_core::config::schema::PrivacyConfig) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 203
+      "line": 200
     },
     {
       "name": "provider",
       "signature": "pub fn provider(mut self, provider: Provider) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 361
+      "line": 344
     },
     {
       "name": "sandbox",
       "signature": "pub fn sandbox(mut self, mode: crate::SandboxModeSpec) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 172
+      "line": 169
     },
     {
       "name": "secrets",
       "signature": "pub fn secrets(mut self, value: openhuman_core::config::schema::SecretsConfig) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 208
+      "line": 205
     },
     {
       "name": "server_launcher",
@@ -378,25 +365,25 @@
       "name": "services",
       "signature": "pub fn services(mut self, services: ServiceSet) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 387
+      "line": 370
     },
     {
       "name": "session",
       "signature": "pub fn session(mut self, session: Session) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 475
+      "line": 458
     },
     {
       "name": "session_store",
       "signature": "pub fn session_store(mut self, provider: Arc<dyn SessionStoreProvider>) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 261
+      "line": 244
     },
     {
       "name": "skills",
       "signature": "pub fn skills(mut self, policy: super::SkillsPolicy) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 182
+      "line": 179
     },
     {
       "name": "storage",
@@ -408,13 +395,13 @@
       "name": "token",
       "signature": "pub fn token(mut self, token: TokenSource) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 442
+      "line": 425
     },
     {
       "name": "tool_groups",
       "signature": "pub fn tool_groups(mut self, tool_groups: ToolGroups) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 424
+      "line": 407
     },
     {
       "name": "tool_hook",
@@ -432,19 +419,19 @@
       "name": "tool_rules",
       "signature": "pub fn tool_rules(mut self, value: tinytools::ToolRules) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 198
+      "line": 195
     },
     {
       "name": "workspace",
       "signature": "pub fn workspace(mut self, workspace: Workspace) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 298
+      "line": 281
     },
     {
       "name": "workspace_dir",
       "signature": "pub fn workspace_dir(mut self, dir: impl Into<PathBuf>) -> Self",
       "source": "crates/openhuman-embed/src/runtime/builder.rs",
-      "line": 312
+      "line": 295
     }
   ],
   "capabilities": {

@@ -14,7 +14,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use openhuman_core::backend::BackendTransport;
 use openhuman_core::config::Config;
 use openhuman_core::core::runtime::{DomainSet, ServiceSet, TokenSource};
 use openhuman_core::core::types::HostKind;
@@ -96,7 +95,6 @@ pub struct RuntimeBuilder {
     pub(super) session: Option<Session>,
     pub(super) backend_url: Option<String>,
     pub(super) api_key: Option<ApiKey>,
-    pub(super) backend_transport: Option<Arc<dyn BackendTransport>>,
     pub(super) memory_engine: Option<Arc<dyn tinymemory_api::MemoryEngine>>,
     pub(super) session_store: Option<Arc<dyn SessionStoreProvider>>,
     pub(super) cron_delivery: Option<Arc<dyn openhuman_core::cron::host_delivery::CronDelivery>>,
@@ -142,7 +140,6 @@ impl RuntimeBuilder {
             session: None,
             backend_url: None,
             api_key: None,
-            backend_transport: None,
             memory_engine: None,
             session_store: None,
             cron_delivery: None,
@@ -217,20 +214,6 @@ impl RuntimeBuilder {
     /// Cron scheduler configuration; `services` separately controls its lifecycle.
     pub fn cron(mut self, value: openhuman_core::config::schema::CronConfig) -> Self {
         self.config_knobs.cron = Some(value);
-        self
-    }
-
-    /// The transport the runtime reaches the hosted TinyHumans backend
-    /// through (see [`BackendTransport`]).
-    ///
-    /// The core carries no backend client of its own: without a transport
-    /// every hosted-backend surface (billing, integrations tools, channel
-    /// relay, cloud voice) answers with a typed "backend unavailable" error
-    /// while agents, memory, skills and RPC work as normal. The
-    /// `openhuman-tinyhumans` crate supplies the SDK-backed implementation
-    /// and a builder that installs it for you.
-    pub fn backend_transport(mut self, transport: Arc<dyn BackendTransport>) -> Self {
-        self.backend_transport = Some(transport);
         self
     }
 

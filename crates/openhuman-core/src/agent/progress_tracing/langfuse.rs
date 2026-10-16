@@ -2,16 +2,12 @@
 //! (issue #4249 follow-up).
 //!
 //! When `observability.share_usage_data` is enabled, a completed run's spans
-//! are POSTed as OTLP/HTTP JSON (see [`super::otlp`]) to the OpenHuman
-//! backend's Langfuse **proxy**, `/telemetry/langfuse/otel/v1/traces`, which
-//! sits beside the legacy `/telemetry/langfuse/ingestion` route
-//! [`ingestion_url`] resolves from the **current backend hostname**
-//! (`effective_backend_api_url`). The request reuses the OpenHuman **session
-//! bearer**; the backend authenticates that JWT, stamps the user on every span,
-//! injects the Langfuse project keys server-side, and forwards to Langfuse
-//! v4's `/api/public/otel/v1/traces` (backend `src/services/langfuseProxy.ts`).
-//! Clients never hold Langfuse keys. The legacy batch route is no longer used
-//! for traces: Langfuse Cloud removes it on 2026-11-16.
+//! are POSTed as OTLP/HTTP JSON (see [`super::otlp`]) to the tracing proxy of
+//! the host's backend, at the URL the host resolved onto the config
+//! (`resolved_endpoints.tracing_otlp_url`, see [`otlp_url`]) so it always
+//! follows the current backend hostname. The request reuses the session
+//! bearer; the backend authenticates that JWT, stamps the user on every span
+//! and holds the tracing project keys itself, so clients never hold them.
 //!
 //! Best-effort: any failure is logged and swallowed by the caller so tracing
 //! never breaks a turn. Spans always carry metadata (names, kinds, timings,
@@ -23,7 +19,7 @@
 mod environment;
 mod journal_export;
 
-pub(crate) use environment::{environment_for_base, ingestion_url, skip_push};
+pub(crate) use environment::{environment_for_base, otlp_url, skip_push};
 pub(crate) use journal_export::journal_push_ready;
 
 #[cfg(test)]

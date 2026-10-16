@@ -162,7 +162,7 @@ const LEGACY_ALIASES: &[(&str, &str)] = &[
     ("health.status", "openhuman.health_snapshot"),
     // `openhuman.system_info` was used by older clients / SDK callers before
     // the method was namespaced under `health` as `openhuman.health_system_info`.
-    // Sentry CORE-RUST-G0 — https://sentry.tinyhumans.ai/organizations/tinyhumans/issues/6340/
+    // Sentry CORE-RUST-G0 (issue 6340)
     ("openhuman.system_info", "openhuman.health_system_info"),
     (
         "openhuman.local_ai_test_connection",

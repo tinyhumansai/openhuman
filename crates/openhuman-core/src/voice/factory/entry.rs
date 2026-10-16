@@ -1,18 +1,16 @@
 //! Factory entry points: `create_stt_provider`, `create_tts_provider`, defaults, and constants.
 
-use std::sync::Arc;
-
 use log::debug;
 
 use super::helpers::{
     create_stt_provider_by_slug, create_tts_provider_by_slug, split_slug_model, LOG_PREFIX,
 };
-use super::stt_providers::CloudSttProvider;
+use super::registry::{stt_factory, tts_factory};
 use super::traits::{SttProvider, TtsProvider};
-use super::tts_providers::{CloudTtsProvider, PiperTtsProvider};
+use super::tts_providers::PiperTtsProvider;
 use crate::config::Config;
 
-/// Default STT model id for the OpenHuman backend proxy.
+/// Default STT model id for a hosted transcription proxy.
 /// Third-party providers use the `default_stt_model` configured in their
 /// registry entry when callers leave the model empty.
 pub const DEFAULT_STT_MODEL: &str = "whisper-v1";
@@ -24,8 +22,10 @@ pub const DEFAULT_PIPER_VOICE: &str = "en_US-lessac-medium";
 /// Creates a speech-to-text provider from a routing string.
 ///
 /// Supported provider names:
-/// - `"cloud"` / `"openhuman"` / `"backend"` → the OpenHuman backend
-///   transcription proxy. The default, and the only one that needs no user key.
+/// - A slug registered with the voice registry (see [`super::registry`]) wins.
+///   The hosted `"cloud"` / `"openhuman"` / `"backend"` slugs are registered by
+///   the hosted-backend layer, not built into the core; with none registered
+///   they answer the `BACKEND_UNAVAILABLE:` sentinel.
 /// - `"<slug>"` / `"<slug>:<model>"` → a third-party STT API resolved against
 ///   `config.voice_providers` (e.g. `"elevenlabs"`, `"openai:whisper-1"`,
 ///   `"deepgram:nova-2"`).
@@ -45,26 +45,31 @@ pub fn create_stt_provider(
     config: &Config,
 ) -> anyhow::Result<Box<dyn SttProvider>> {
     debug!("{LOG_PREFIX} create_stt_provider provider={provider} model={model}");
-    match provider.trim() {
-        "cloud" | "openhuman" | "backend" => Ok(Box::new(CloudSttProvider::new(
-            super::super::cloud_transcribe_default_model(),
-        ))),
-        other => {
-            let (slug, slug_model) = split_slug_model(other);
-            let effective_model = if slug_model.is_empty() {
-                model.trim()
-            } else {
-                slug_model
-            };
-            create_stt_provider_by_slug(slug, effective_model, config)
-        }
+    // A registered provider (see `registry`) wins over the slug lookup.
+    let (registered_slug, registered_model) = split_slug_model(provider.trim());
+    if let Some(factory) = stt_factory(registered_slug) {
+        let effective_model = if registered_model.is_empty() {
+            model.trim()
+        } else {
+            registered_model
+        };
+        debug!("{LOG_PREFIX} create_stt_provider using registered provider slug={registered_slug}");
+        return factory(effective_model, config);
     }
+    let (slug, slug_model) = split_slug_model(provider.trim());
+    let effective_model = if slug_model.is_empty() {
+        model.trim()
+    } else {
+        slug_model
+    };
+    create_stt_provider_by_slug(slug, effective_model, config)
 }
 
 /// Creates a text-to-speech provider based on the specified name and voice.
 ///
 /// Supported provider names:
-/// - `"cloud"` → backend ElevenLabs proxy with viseme alignment
+/// - `"cloud"` / `"openhuman"` → a registered hosted provider (see
+///   [`super::registry`]); the core has no built-in one
 /// - `"piper"` → local Piper subprocess via `PIPER_BIN`
 ///
 /// Kokoro is **not** implemented in this cut — the integration shipped with
@@ -78,7 +83,7 @@ pub fn create_stt_provider(
 /// Piper branch. This function previously coerced an empty `voice` to that
 /// constant before the match, which handed `en_US-lessac-medium` to every
 /// provider: the cloud branch forwarded it as `voice_id` to the backend
-/// ElevenLabs proxy (`POST /openai/v1/audio/speech`), which rejects it with
+/// ElevenLabs speech proxy, which rejects it with
 /// **400 Bad Request** — breaking the Settings → Voice "Test" button and every
 /// cloud TTS reply (#5355). It also pre-empted each external provider's
 /// configured `default_tts_voice`, since the Piper id was never empty by the
@@ -101,10 +106,13 @@ pub fn create_tts_provider(
         "{LOG_PREFIX} create_tts_provider resolved provider={provider} voice={}",
         resolved.unwrap_or("<provider default>")
     );
+    // A registered provider (see `registry`) wins over the built-in routes.
+    let (registered_slug, _) = split_slug_model(provider);
+    if let Some(factory) = tts_factory(registered_slug) {
+        debug!("{LOG_PREFIX} create_tts_provider using registered provider slug={registered_slug}");
+        return factory(resolved, config);
+    }
     match provider {
-        "cloud" | "openhuman" => Ok(Box::new(CloudTtsProvider::new(
-            resolved.map(str::to_string),
-        ))),
         "piper" => Ok(Box::new(PiperTtsProvider::new(
             // `resolve_tts_voice` guarantees `Some` for piper.
             resolved.unwrap_or(DEFAULT_PIPER_VOICE),
@@ -131,13 +139,6 @@ pub fn create_tts_provider(
 pub(super) fn resolve_tts_voice<'a>(provider: &'a str, voice: &'a str) -> Option<&'a str> {
     let voice = voice.trim();
     match provider.trim() {
-        "cloud" | "openhuman" => {
-            if voice.is_empty() {
-                None
-            } else {
-                Some(voice)
-            }
-        }
         // `DEFAULT_PIPER_VOICE` is a Piper model id and is meaningful to this
         // branch only — never let it escape to another provider.
         "piper" => Some(if voice.is_empty() {
@@ -156,17 +157,4 @@ pub(super) fn resolve_tts_voice<'a>(provider: &'a str, voice: &'a str) -> Option
             }
         }
     }
-}
-
-/// Returns a thread-safe default STT provider (cloud). Used by callers that
-/// can't easily plumb a `Config` reference but still need a sensible default.
-pub fn default_stt_provider() -> Arc<dyn SttProvider> {
-    Arc::new(CloudSttProvider::new(
-        super::super::cloud_transcribe_default_model(),
-    ))
-}
-
-/// Returns a thread-safe default TTS provider (cloud).
-pub fn default_tts_provider() -> Arc<dyn TtsProvider> {
-    Arc::new(CloudTtsProvider::new(None))
 }

@@ -24,10 +24,10 @@ pub(crate) fn managed(config: &Config) -> Option<Arc<Client>> {
         BackendCredential::Session(token) if is_local_session_token(&token) => return None,
         BackendCredential::Session(token) | BackendCredential::ApiKey(token) => token,
     };
-    let base = crate::backend::base_url(&config.api_url).ok()?;
+    let base = config.resolved_endpoints.control_plane_url.clone()?;
     let mut client = ClientConfig::tinyhumans_openrouter(secret);
     client.base_url = base;
-    if let Some(identity) = crate::backend::product_identity() {
+    if let Some(identity) = config.resolved_endpoints.product_identity.clone() {
         client = client.with_sdk_name(&identity);
     }
     match Client::new(client) {

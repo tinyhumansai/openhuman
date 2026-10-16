@@ -61,7 +61,7 @@ ranker when a decision-model credential is present. `discovery_policy` reads
 that installed ranker together with `agent.tool_search`
 (`ToolSearchConfig` in `crate::config::schema`) and builds the
 `ToolDiscoveryPolicy` the harness runs with for that turn. The slot is
-process-wide, like the backend transport, because the credential a
+process-wide, like the other host registrations, because the credential a
 decision-model ranker needs belongs to the process's signed-in user rather
 than to any one agent config. See
 [the Jev page](../../../../../docs/gitbooks/en/developing/jev.md) for the ranking

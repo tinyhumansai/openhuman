@@ -27,6 +27,7 @@ async fn offline_local_session_never_fetches_hosted_integrations() {
 
 #[tokio::test]
 async fn fetch_connected_integrations_via_mock_aggregates_tools() {
+    crate::integrations::composio::test_backend_route::register();
     let _guard = cache_guard_async().await;
     // Connections: gmail + notion. Tools: filtered to those toolkits
     // and prefixed with the uppercased slug. The toolkits route
@@ -90,6 +91,7 @@ async fn fetch_connected_integrations_via_mock_aggregates_tools() {
 
 #[tokio::test]
 async fn fetch_connected_integrations_treats_slack_and_telegram_status_like_ui() {
+    crate::integrations::composio::test_backend_route::register();
     let _guard = cache_guard_async().await;
     let app = Router::new()
         .route(

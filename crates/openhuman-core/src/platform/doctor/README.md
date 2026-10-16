@@ -68,7 +68,7 @@ None of its own (no `store.rs`). It only **reads** existing state owned by other
 - `crate::memory::status`: the memory engine's status (`ok`/`degraded`/`down`/`off`), taken by `ops` before the blocking hop and passed to `run` as a `MemoryEngineCheck`.
 - `crate::inference::embedding_host::effective_embedding_settings`: resolves the intended embedding provider/model.
 - `crate::inference::{provider, local}`: `provider::list_providers` (model targets) and `local::ollama_base_url` (embedding probe).
-- `crate::backend::inference_base_url`: asks the installed transport for the inference base URL; `crate::security::credentials::jwt::get_session_token` for sign-in state.
+- `config.resolved_endpoints` (filled by the host's config enricher) for the inference base URL; `crate::security::credentials::jwt::get_session_token` for sign-in state.
 - `crate::core::all::{ControllerFuture, RegisteredController}`, `crate::core::{ControllerSchema, FieldSchema, TypeSchema}`: controller/schema plumbing.
 - `crate::rpc::RpcOutcome`: handler return contract.
 - External: `reqwest` (blocking client + URL parse), `serde`/`serde_json`, `chrono`, `anyhow`.

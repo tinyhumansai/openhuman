@@ -6,7 +6,7 @@
 //! [`server_launcher`](RuntimeBuilder::server_launcher). So the entry is two
 //! steps:
 //!
-//! 1. the builder's process-global pieces (backend transport, memory engine,
+//! 1. the builder's process-global pieces (memory engine,
 //!    session store, controller extensions, launcher, hooks) are installed for
 //!    the life of the process, which every subcommand needs;
 //! 2. what is left of the builder (host kind, domains, services, token,
@@ -20,7 +20,6 @@
 
 use std::sync::Arc;
 
-use openhuman_core::backend::BackendTransport;
 use openhuman_core::core::server_launcher::HostBoot;
 use tinyagents_session::port::SessionStoreProvider;
 
@@ -30,7 +29,6 @@ use super::{RuntimeBuilder, RuntimeError};
 /// The pieces of a builder that are installed process-wide before the CLI
 /// dispatches, split from the rest, which becomes the [`HostBoot`].
 pub(super) struct CliGlobals {
-    pub(super) transport: Option<Arc<dyn BackendTransport>>,
     pub(super) memory_engine: Option<Arc<dyn tinymemory_api::MemoryEngine>>,
     pub(super) session_store: Option<Arc<dyn SessionStoreProvider>>,
     pub(super) seams: HostSeams,
@@ -40,9 +38,7 @@ impl RuntimeBuilder {
     /// Install this builder's process-global pieces, then run the core's
     /// command-line dispatcher on `args` (without the binary name).
     ///
-    /// Installed for the rest of the process, never restored: the backend
-    /// transport (as the process global; the builder keeps it too so the
-    /// server's runtime binds it), the memory engine, the session store,
+    /// Installed for the rest of the process, never restored: the memory engine, the session store,
     /// controller extensions, the server launcher, the tool ranker and the
     /// embedder hooks.
     ///
@@ -105,9 +101,8 @@ impl RuntimeBuilder {
     }
 
     /// Separate the process-global pieces from the builder that boots the
-    /// server. The transport, memory engine and session store stay on the
-    /// builder as well: the server's runtime binds the transport, and
-    /// `build()` validates a `Workspace::Stateless` workspace against the
+    /// server. The memory engine and session store stay on the
+    /// builder as well: `build()` validates a `Workspace::Stateless` workspace against the
     /// session store and installs the custom engine/store over the
     /// launcher's defaults.
     pub(super) fn split_for_cli(mut self) -> (RuntimeBuilder, CliGlobals) {
@@ -124,7 +119,6 @@ impl RuntimeBuilder {
         seams.storage = storage.clone();
         self.seams.storage = storage;
         let globals = CliGlobals {
-            transport: self.backend_transport.clone(),
             memory_engine: self.memory_engine.clone(),
             session_store: self.session_store.clone(),
             seams,
@@ -147,10 +141,6 @@ impl CliGlobals {
     fn install(
         mut self,
     ) -> Result<Option<Arc<dyn openhuman_core::storage::StorageBackend>>, String> {
-        if let Some(transport) = self.transport {
-            openhuman_core::backend::install_backend_transport(transport);
-            log::debug!("[embed][cli] backend transport installed (process global)");
-        }
         if let Some(engine) = self.memory_engine {
             openhuman_core::memory::engine::install_host_engine(engine);
         }
@@ -170,8 +160,8 @@ impl CliGlobals {
 }
 
 /// Run the core's command-line dispatcher with the [`RuntimeBuilder::cli`]
-/// preset — no backend transport, extensions or launcher. Hosts that need
-/// those (the TinyHumans transport, the JSON-RPC server) configure a builder
+/// preset — no extensions or launcher. Hosts that need
+/// those (the TinyHumans layer, the JSON-RPC server) configure a builder
 /// and call [`RuntimeBuilder::run_from_args`] instead.
 pub fn run_from_args(args: &[String]) -> anyhow::Result<()> {
     RuntimeBuilder::cli().run_from_args(args)

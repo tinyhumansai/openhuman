@@ -1,15 +1,15 @@
 ---
-description: "Install the host backend transport before using managed inference and hosted services."
+description: "Connect the TinyHumans layer before using managed inference and hosted services."
 icon: code
 ---
 
 # TinyHumans managed inference
 
-Embed wraps the core; it does not contain a TinyHumans SDK backend client. A managed host must supply a `BackendTransport` through `RuntimeBuilder::backend_transport`, or boot through the SDK-backed builder in `openhuman-tinyhumans`. The connected host layer owns transport and session login. `RuntimeBuilder::backend_url` selects a URL; it does not install a transport.
+Embed wraps the core; neither contains a TinyHumans backend client. A managed host boots through the builder in `openhuman-tinyhumans` (`openhuman_tinyhumans::RuntimeBuilder`), or calls `openhuman_tinyhumans::install`. That layer owns the transport, the authenticated client, the hosted routes and the hosted providers, and it plugs them into the core through the core's generic registries (chat models, voice, tool sources, the channel callback and memory engines). A host can register its own provider in the same registries. The connected host layer also owns session login. `RuntimeBuilder::backend_url` selects a URL; it does not connect anything.
 
-Supply a library backend key with `RuntimeBuilder::api_key` and initialize the process master key before credential storage. Library mode does not perform user login. Managed inference uses the key as a bearer; backend REST calls resolve it through the backend credential seam. Without an installed transport, hosted backend calls return a typed backend-unavailable error.
+Supply a library backend key with `RuntimeBuilder::api_key` and initialize the process master key before credential storage. Library mode does not perform user login. Managed inference uses the key as a bearer; backend REST calls resolve it through the backend credential seam. Without the TinyHumans layer connected, hosted backend calls return a typed backend-unavailable error.
 
-The SaaS example uses a deterministic implementation of that transport boundary and installs separate profile credentials. It verifies managed turns without a live service.
+The SaaS example registers a deterministic managed chat-model provider in the core's chat-model registry and installs separate profile credentials. It verifies managed turns without a live service.
 
 <!-- BEGIN EMBED: crates/openhuman-embed/examples/profiles.rs#profiles -->
 

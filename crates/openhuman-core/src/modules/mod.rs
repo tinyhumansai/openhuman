@@ -135,6 +135,8 @@ pub mod voice;
 #[cfg(feature = "modules")]
 pub mod wallet;
 #[cfg(feature = "web3")]
+pub mod wallet_backend;
+#[cfg(feature = "web3")]
 mod wallet_host;
 #[cfg(feature = "web3")]
 pub(crate) mod wallet_service;
@@ -170,7 +172,10 @@ pub use types::{LoadPolicy, ModuleRecord, ModuleSource, ModuleState, ModuleStatu
 /// Imports tinymcp's legacy SQLite files under `data_dir` into the module's
 /// storage, once per directory. Never fails the caller: an error is logged and
 /// the import is retried at the next open.
-pub async fn import_legacy_mcp(ctx: &crate::core::runtime::DispatchCtx, data_dir: &std::path::Path) {
+pub async fn import_legacy_mcp(
+    ctx: &crate::core::runtime::DispatchCtx,
+    data_dir: &std::path::Path,
+) {
     #[cfg(feature = "modules")]
     match storage_import_tinymcp::import_legacy(ctx, data_dir).await {
         Ok(outcome) => log::debug!("[mcp] legacy storage import: {outcome:?}"),

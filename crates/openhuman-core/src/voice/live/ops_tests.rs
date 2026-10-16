@@ -9,7 +9,8 @@ fn providers_and_settings_reflect_the_config() {
         providers.default_provider,
         config.voice_live.default_provider
     );
-    assert_eq!(providers.providers.len(), 4);
+    // Only the bring-your-own-key providers are built in; hosted ones register.
+    assert_eq!(providers.providers.len(), 2);
     assert_eq!(live_settings_get(&config).value, config.voice_live);
 }
 

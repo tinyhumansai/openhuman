@@ -98,14 +98,11 @@ pub struct CoreContext {
     /// [`CoreContext::derive_with`] can turn it off so an embedded agent sees
     /// only the skills its host installed for it, never the operator's.
     user_skill_roots: bool,
-    /// The backend transport this context's handlers reach the hosted
-    /// TinyHumans backend through, when the host supplied one via
-    /// [`CoreBuilder::backend_transport`](crate::core::runtime::CoreBuilder::backend_transport).
-    /// `None` means "fall back to the process-global transport" — see
-    /// [`crate::backend::transport::resolve_backend_transport`] for the order.
-    /// Inherited unchanged by every context derived through
-    /// [`CoreContext::derive_with`].
-    backend_transport: Option<Arc<dyn crate::backend::transport::BackendTransport>>,
+    /// Hook registrations bound to this context (see [`crate::core::slots`]).
+    /// Empty unless the host supplied some through
+    /// [`CoreBuilder::extensions`](crate::core::runtime::CoreBuilder::extensions);
+    /// inherited by every context derived through [`CoreContext::derive_with`].
+    extensions: crate::core::slots::Extensions,
     /// Explicit authority on this derived turn context.
     turn_origin: Option<crate::agent::turn_origin::AgentTurnOrigin>,
     /// Durable relay conversation carried by the immutable turn context.
@@ -149,7 +146,7 @@ impl CoreContext {
         token: &TokenSource,
         domains: crate::core::runtime::DomainSet,
     ) -> anyhow::Result<(Arc<CoreContext>, bool, Option<crate::config::Config>)> {
-        Self::init_with_config(host_kind, token, domains, Default::default(), None, None).await
+        Self::init_with_config(host_kind, token, domains, Default::default(), None).await
     }
 
     /// [`init`](Self::init) with an optional caller-supplied configuration.
@@ -169,15 +166,10 @@ impl CoreContext {
         mut domains: crate::core::runtime::DomainSet,
         mut tool_groups: crate::tools::toolpacks::ToolGroups,
         preloaded_config: Option<crate::config::Config>,
-        backend_transport: Option<Arc<dyn crate::backend::transport::BackendTransport>>,
     ) -> anyhow::Result<(Arc<CoreContext>, bool, Option<crate::config::Config>)> {
         log::debug!(
             "[core-context] init: host_kind={host_kind:?} domains={domains:?} \
-             tool_groups={tool_groups:?} backend_transport={}",
-            backend_transport
-                .as_ref()
-                .map(|t| t.name())
-                .unwrap_or("<process-global>")
+             tool_groups={tool_groups:?}"
         );
         crate::core::runtime::mode::admit_core(host_kind, DEFAULT_CONTEXT.get().is_some())
             .map_err(|e| anyhow::anyhow!("[core-context] {e}"))?;
@@ -289,7 +281,7 @@ impl CoreContext {
             components,
             embedder_config,
             user_skill_roots: true,
-            backend_transport,
+            extensions: Default::default(),
             turn_origin: None,
             channel_thread: None,
             session_agent: None,
@@ -421,7 +413,7 @@ impl CoreContext {
             components: self.components,
             embedder_config: Some(overlay.config),
             user_skill_roots: overlay.user_skill_roots,
-            backend_transport: self.backend_transport.clone(),
+            extensions: self.extensions.clone(),
             turn_origin: self.turn_origin.clone(),
             channel_thread: self.channel_thread.clone(),
             session_agent: overlay.session_agent.or_else(|| self.session_agent.clone()),
@@ -437,11 +429,25 @@ impl CoreContext {
         self.session_agent.as_deref()
     }
 
-    /// The backend transport bound to this context, if the host supplied one.
-    pub fn backend_transport(
-        &self,
-    ) -> Option<Arc<dyn crate::backend::transport::BackendTransport>> {
-        self.backend_transport.clone()
+    /// The hook registrations bound to this context. Shared (not copied) by
+    /// derived contexts.
+    pub fn extensions(&self) -> &crate::core::slots::Extensions {
+        &self.extensions
+    }
+
+    /// The hook registrations of the context this call runs under, for
+    /// [`HookSlot`](crate::core::slots::HookSlot) lookups.
+    ///
+    /// Outside SaaS that is the ambient context (the process default when the
+    /// task has no scope). In SaaS only the task's own scope counts: a task that
+    /// lost its scope must not read the operator's registrations.
+    pub fn current_extensions() -> Option<crate::core::slots::Extensions> {
+        let ctx = if crate::core::runtime::is_saas() {
+            Self::scoped()
+        } else {
+            Self::current()
+        };
+        ctx.map(|ctx| ctx.extensions.clone())
     }
 
     /// The resolved per-user workspace directory this context is bound to.

@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use super::DirectCredential;
 use crate::config::schema::{COMPOSIO_MODE_BACKEND, COMPOSIO_MODE_DIRECT};
+use crate::core::slots::HookSlot;
 
 // Re-declare the mode strings as local consts so they can be used as
 // pattern arms in the `match` below. `use` imports of `pub const &str`
@@ -48,6 +49,28 @@ impl ComposioRoute {
             ComposioRoute::Direct(_) => COMPOSIO_MODE_DIRECT,
         }
     }
+}
+
+/// A registered route builder: resolves the [`ComposioRoute`] for one
+/// `composio.mode` value (the empty mode counts as `"backend"`).
+pub type ComposioRouteBuilder =
+    Arc<dyn Fn(&crate::config::Config) -> anyhow::Result<ComposioRoute> + Send + Sync>;
+
+static ROUTE_BUILDERS: HookSlot<ComposioRouteBuilder> =
+    HookSlot::new("integrations::composio::route_builders");
+
+/// Registers `builder` as the route for `mode`, replacing the built-in
+/// resolution for that mode. Nothing registered => the built-in routes apply.
+pub fn register_composio_route_builder<F>(mode: impl Into<String>, builder: F)
+where
+    F: Fn(&crate::config::Config) -> anyhow::Result<ComposioRoute> + Send + Sync + 'static,
+{
+    ROUTE_BUILDERS.register(mode, Arc::new(builder));
+}
+
+/// Removes the process-wide route builder for `mode`.
+pub fn unregister_composio_route_builder(mode: &str) -> bool {
+    ROUTE_BUILDERS.unregister(mode)
 }
 
 pub(crate) fn create_direct_client_for_api_key(
@@ -92,7 +115,9 @@ fn direct_client(
 /// Supported `config.composio.mode` values:
 ///
 /// - `"backend"` (default) — backend-proxied through the connector module.
-///   Returns `Err("no backend session token")` when the user is not signed in.
+///   Resolved by the route builder a host registered for it; `Err` when none is
+///   registered (the `BACKEND_UNAVAILABLE:` sentinel) or when the user is not
+///   signed in.
 /// - `"direct"` — BYO key against `backend.composio.dev`. Requires a
 ///   stored Composio API key under the
 ///   [`crate::security::credentials::COMPOSIO_DIRECT_PROVIDER`]
@@ -117,20 +142,30 @@ pub fn resolve_composio_route(config: &crate::config::Config) -> anyhow::Result<
     let mode = config.composio.mode.trim();
     tracing::debug!(mode = %mode, "[composio-factory] resolving route");
 
+    let builder_key = if mode.is_empty() {
+        MODE_BACKEND_PAT
+    } else {
+        mode
+    };
+    if let Some(builder) = ROUTE_BUILDERS.get(builder_key) {
+        tracing::debug!(mode = %builder_key, "[composio-factory] using the registered route builder");
+        return builder(config);
+    }
+
     match mode {
         // Empty string is treated as the default for forward compatibility
         // with hand-edited configs that omit the field — `serde(default)`
         // already gives us "backend" for missing fields, but a literal
         // empty string in TOML would otherwise be rejected.
         "" | MODE_BACKEND_PAT => {
-            if crate::integrations::build_client(config).is_none() {
-                anyhow::bail!(
-                    "composio backend mode unavailable: no backend session token. \
-                     Sign in or set a TinyHumans API key."
-                );
-            }
-            tracing::debug!("[composio-factory] resolved backend variant");
-            Ok(ComposioRoute::Backend)
+            // The backend-proxied route is served by a host that registered a
+            // route builder for it (`register_composio_route_builder`); a core
+            // with none has no such route.
+            tracing::debug!("[composio-factory] no backend route builder registered");
+            anyhow::bail!(
+                "{}composio backend mode is not available in this build",
+                crate::core::observability::BACKEND_UNAVAILABLE_PREFIX
+            );
         }
         MODE_DIRECT_PAT => {
             // Prefer keychain-stored key; fall back to `config.toml`.
@@ -173,3 +208,7 @@ pub fn resolve_composio_route(config: &crate::config::Config) -> anyhow::Result<
         }
     }
 }
+
+#[cfg(test)]
+#[path = "factory_tests.rs"]
+mod tests;

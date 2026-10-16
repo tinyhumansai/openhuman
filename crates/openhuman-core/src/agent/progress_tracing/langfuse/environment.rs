@@ -1,73 +1,49 @@
 //! Backend-host resolution and the deployment-environment push gate for the
-//! Langfuse exporter: where the ingestion proxy lives, which environment the
+//! Langfuse exporter: where the OTLP proxy lives, which environment the
 //! resolved host belongs to, and whether that environment may push at all.
 
 use crate::config::Config;
 
 use super::LOG_TARGET;
 
-/// Backend proxy route for Langfuse ingestion (relative to the backend origin).
-/// The backend authenticates the caller's session JWT, injects the Langfuse
-/// project keys, and forwards to Langfuse's real `/api/public/ingestion` — so
-/// clients POST here, NOT to `/api/public/ingestion` (which is unexposed and
-/// carries no keys).
-const INGESTION_PATH: &str = "/telemetry/langfuse/ingestion";
-
-/// Resolve the Langfuse ingestion URL from the current backend host. Joins the
-/// proxy path onto [`crate::backend::base_url`] — the exact base-server
-/// resolution every other backend call uses — via the canonical
-/// [`crate::util::url::join_url`] helper, which replaces any path the base
-/// carried with the given absolute path. So the host always matches wherever the
-/// app's domain calls go (staging, prod, or a custom `api_url` override).
-pub(crate) fn ingestion_url(config: &Config) -> String {
-    // Empty without a backend transport; callers treat a non-`http` URL as
-    // "proxy unavailable" and skip the push.
-    crate::backend::base_url(&config.api_url)
-        .map(|base| crate::util::url::join_url(&base, INGESTION_PATH))
+/// The OTLP/HTTP traces URL the host resolved
+/// (`config.resolved_endpoints.tracing_otlp_url`). Empty when no host resolved
+/// one; callers treat a non-`http` URL as "proxy unavailable".
+pub(crate) fn otlp_url(config: &Config) -> String {
+    config
+        .resolved_endpoints
+        .tracing_otlp_url
+        .clone()
         .unwrap_or_default()
 }
 
-/// The domain the deployed backends live under. A host outside it cannot be
-/// one of ours, so it cannot be staging however it is spelled.
-const DEPLOYMENT_DOMAIN: &str = "tinyhumans.ai";
-
-/// Derive the Langfuse `environment` for a backend base URL. Chosen signal:
+/// Derive the Langfuse `environment` for a tracing base URL. Chosen signal:
 /// the resolved backend host is the single existing config-driven fact that
 /// distinguishes deployments (there is no NODE_ENV-style flag in the core
-/// config) — loopback/local → development, a staging host under
-/// [`DEPLOYMENT_DOMAIN`] → staging, the canonical API host → production,
-/// anything else → external.
+/// config) — loopback/local → development; a non-local HTTPS host takes the
+/// bucket the installed host resolved for its control plane
+/// (`config.resolved_endpoints.deployment_environment`: production, staging);
+/// anything else → external. With no host registered nothing is resolved, so
+/// every non-local host is external and does not push.
 ///
 /// # Why the host is parsed rather than substring-matched
 ///
-/// This used to test `base.contains("staging")` and
-/// `base.contains("localhost" | "127.0.0.1" | "0.0.0.0")` against the whole
-/// URL, which was tolerable while the answer only labelled a payload. It is
-/// not tolerable now that [`skip_push`] decides whether to push at all, so
-/// both directions of the sloppiness became load-bearing:
+/// The answer decides whether a push happens at all ([`skip_push`]), so a
+/// sloppy match is load-bearing in both directions. A substring test on
+/// `staging` let `https://staging-attacker.invalid` through, and missed an
+/// IPv6 loopback backend (`http://[::1]:7788`). Local classification is
+/// delegated to [`crate::util::url::host_is_local`], which parses the URL and
+/// handles IPv4 loopback/unspecified/private, IPv6 loopback/unspecified and
+/// `localhost` / `*.localhost`; one local-host predicate keeps the gates in
+/// agreement. The hosted bucket is classified by the host that owns the
+/// domain, anchored to its own deployment domain so the classifier fails
+/// *closed*.
 ///
-/// - **Too broad on staging.** `https://staging-attacker.invalid` contains
-///   `staging`, so it classified as staging and passed the push gate — a host
-///   nothing in this tree owns, reached with a live session token. Anchoring
-///   to [`DEPLOYMENT_DOMAIN`] is what makes the classifier fail *closed*: a
-///   host that is not ours is external, and external does not push.
-/// - **Too narrow on local.** An IPv6 loopback backend (`http://[::1]:7788`)
-///   or a private LAN address matched none of the three literals and
-///   classified as external, so a working development setup would have
-///   silently stopped exporting the moment the gate landed.
-///
-/// Host classification is delegated to [`crate::util::url::host_is_local`],
-/// which already parses the URL and handles IPv4 loopback/unspecified/private,
-/// IPv6 loopback/unspecified, and `localhost` / `*.localhost`. Keeping one
-/// definition matters more than the few lines it saves: two local-host
-/// predicates that disagree is how a gate lets through exactly the case the
-/// other one blocks.
-///
-/// An unparseable URL is external — the fail-closed default. `ingestion_url`
+/// An unparseable URL is external — the fail-closed default. `otlp_url`
 /// can return a non-URL placeholder when no backend host resolves, and the
 /// caller checks `starts_with("http")` separately; classifying that as
 /// anything pushable would defeat the gate.
-pub(crate) fn environment_for_base(base: &str) -> &'static str {
+pub(crate) fn environment_for_base(config: &Config, base: &str) -> &'static str {
     let Ok(parsed) = url::Url::parse(base) else {
         return "external";
     };
@@ -77,26 +53,13 @@ pub(crate) fn environment_for_base(base: &str) -> &'static str {
     if parsed.scheme() != "https" {
         return "external";
     }
-    let Some(url::Host::Domain(host)) = parsed.host() else {
-        // A public IP literal is not a deployment of ours.
-        return "external";
-    };
-    let host = host.to_ascii_lowercase();
-    let under_deployment_domain =
-        host == DEPLOYMENT_DOMAIN || host.ends_with(&format!(".{DEPLOYMENT_DOMAIN}"));
-    // The label test is on the leftmost label only, so `staging-api…` and
-    // `staging…` match while `api-staging-mirror…` does not sneak in on a
-    // substring.
-    let leftmost_is_staging = host
-        .split('.')
-        .next()
-        .is_some_and(|label| label == "staging" || label.starts_with("staging-"));
-    if host == "api.tinyhumans.ai" {
-        "production"
-    } else if under_deployment_domain && leftmost_is_staging {
-        "staging"
-    } else {
-        "external"
+    // Only the known buckets are honoured, so a host cannot invent a
+    // pushable one; the allowlist in [`push_allowed`] still has the final say.
+    match config.resolved_endpoints.deployment_environment.as_deref() {
+        Some("production") => "production",
+        Some("staging") => "staging",
+        Some("development") => "development",
+        _ => "external",
     }
 }
 

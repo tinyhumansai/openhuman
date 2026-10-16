@@ -11,7 +11,7 @@ use crate::core::runtime::DispatchCtx;
 /// [`TurnModelSource`](crate::agent::tinyagents::TurnModelSource) to construct
 /// the primary + each workload-tier route directly.
 ///
-/// - **Managed** → [`OpenHumanBackendModel`](super::openhuman_backend_model::OpenHumanBackendModel)
+/// - **Managed** → the registered managed chat model
 ///   pinned to `model`; the backend resolves the tier from `request.model`, so a
 ///   tier alias / agent-model pin dispatches directly.
 /// - **Local / cloud** → the crate builders; the model rides the role's resolved
@@ -111,16 +111,16 @@ pub(super) fn create_turn_chat_model_with_native_tools_and_route_inner(
     };
     if !test_override_active {
         if resolves_to_managed_backend(role, config) {
-            let (backend, _resolved_model) = resolve_managed_backend(role, config, egress)?;
-            return Ok((
-                Arc::new(
-                    backend
-                        .with_default_model(model)
-                        .with_native_tool_calling(native_tool_calling),
-                ),
-                PROVIDER_OPENHUMAN.to_string(),
-                model.to_string(),
-            ));
+            let (chat, _resolved_model) = managed_chat_model(
+                role,
+                config,
+                None,
+                Some(model),
+                native_tool_calling,
+                None,
+                egress,
+            )?;
+            return Ok((chat, PROVIDER_OPENHUMAN.to_string(), model.to_string()));
         }
         let resolved_provider = provider_for_role(role, config);
         let provider_name = resolved_provider
@@ -185,7 +185,7 @@ pub(super) fn create_turn_chat_model_with_native_tools_and_route_inner(
 /// would violate by building the local model.
 ///
 /// - `provider_string` empty / `"cloud"` / [`PROVIDER_OPENHUMAN`] → managed
-///   [`OpenHumanBackendModel`] pinned to `model` (the force-managed case).
+///   the registered managed chat model pinned to `model` (the force-managed case).
 /// - Otherwise the string equals what the role resolves to (a BYOK cloud slug), so
 ///   this delegates to [`create_turn_chat_model`] for `role`.
 ///
@@ -269,16 +269,17 @@ pub(crate) fn create_turn_chat_model_from_string_with_native_tools_and_route(
     let p = provider_string.trim();
     let is_managed = p.is_empty() || p == "cloud" || p == PROVIDER_OPENHUMAN;
     if is_managed && !test_override_active {
-        let (backend, _resolved_model) = resolve_managed_backend(role, config, egress)?;
+        let (chat, _resolved_model) = managed_chat_model(
+            role,
+            config,
+            None,
+            Some(model),
+            native_tool_calling,
+            None,
+            egress,
+        )?;
         return Ok((
-            with_default_temperature(
-                Arc::new(
-                    backend
-                        .with_default_model(model)
-                        .with_native_tool_calling(native_tool_calling),
-                ),
-                temperature,
-            ),
+            with_default_temperature(chat, temperature),
             PROVIDER_OPENHUMAN.to_string(),
             model.to_string(),
         ));

@@ -18,17 +18,11 @@ fn is_session_expired_error_matches_backend_path_401() {
 #[test]
 fn is_session_expired_error_matches_flattened_backend_unauthorized() {
     // #3297: after #2781 the backend 401 is a typed `BackendApiError::Unauthorized`
-    // that team/billing ops flatten via `backend::flatten_authed_error`. The dispatcher
+    // that team/billing ops flatten in the hosted layer. The dispatcher
     // classifier MUST recognise that flattened string as session expiry, so the
-    // 401 is suppressed from Sentry (TAURI-RUST-8WY on `/teams/me/usage`,
-    // TAURI-RUST-8WZ on `/payments/stripe/currentPlan`) AND triggers the
-    // `SessionExpired` publish. End-to-end: build the typed error → flatten → classify.
-    let flat = crate::backend::flatten_authed_error(anyhow::Error::new(
-        crate::backend::BackendApiError::Unauthorized {
-            method: "GET".to_string(),
-            path: "/teams/me/usage".to_string(),
-        },
-    ));
+    // 401 is suppressed from Sentry (TAURI-RUST-8WY, TAURI-RUST-8WZ) AND triggers the
+    // `SessionExpired` publish. End-to-end: classify the flattened sentinel.
+    let flat = "SESSION_EXPIRED: backend rejected session token on GET /some/route".to_string();
     assert!(
         is_session_expired_error(&flat),
         "flattened backend Unauthorized must classify as session expiry: {flat}"

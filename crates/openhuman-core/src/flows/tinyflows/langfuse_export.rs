@@ -4,8 +4,8 @@
 //! this module the run's durable [`GraphObservation`] slice (captured by the
 //! per-run in-memory journal that `tinyflows`' journaled entry points fill)
 //! and it exports the run as one Langfuse trace via the backend's Langfuse
-//! OTLP proxy route, `/telemetry/langfuse/otel/v1/traces` (Langfuse v4; the
-//! legacy `/telemetry/langfuse/ingestion` batch path is not used for traces).
+//! OTLP proxy route (Langfuse v4; the legacy batch ingestion path is not used
+//! for traces).
 //!
 //! The trace is built by `tinyagents`' [`GraphLangfuseExporter`], which turns
 //! each superstep and node into a timed span and stamps the Langfuse **Agent
@@ -40,11 +40,10 @@ use tinyflows_catalog::FlowRunTrigger;
 const LOG_TARGET: &str = "flows::langfuse";
 /// Backend proxy route for legacy Langfuse ingestion (relative to the backend
 /// origin). Only the client's base: [`LangfuseClient::otlp_endpoint`] derives
-/// the OTLP route `/telemetry/langfuse/otel/v1/traces` beside it, which is
+/// the OTLP route beside it, which is
 /// where flow traces go. The backend authenticates the session JWT, injects
 /// the Langfuse project keys, and forwards to Langfuse's
 /// `/api/public/otel/v1/traces`.
-const INGESTION_PATH: &str = "/telemetry/langfuse/ingestion";
 /// Cap the push so a slow/hung Langfuse never stalls run teardown (same
 /// posture as the agent-turn exporter).
 const PUSH_TIMEOUT: Duration = Duration::from_secs(10);
@@ -54,10 +53,12 @@ const PUSH_TIMEOUT: Duration = Duration::from_secs(10);
 /// always matches wherever the app's domain calls go (staging, prod, or a
 /// custom `api_url` override).
 fn ingestion_url(config: &Config) -> String {
-    // Empty without a backend transport; callers treat a non-`http` URL as
-    // "proxy unavailable" and skip the push.
-    crate::backend::base_url(&config.api_url)
-        .map(|base| crate::util::url::join_url(&base, INGESTION_PATH))
+    // Empty without a resolved ingestion URL; callers treat a non-`http` URL
+    // as "proxy unavailable" and skip the push.
+    config
+        .resolved_endpoints
+        .tracing_ingest_url
+        .clone()
         .unwrap_or_default()
 }
 

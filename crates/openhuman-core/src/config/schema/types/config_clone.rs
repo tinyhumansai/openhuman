@@ -81,6 +81,7 @@ impl Clone for Config {
             cloud_provider_ca_certs: self.cloud_provider_ca_certs.clone(),
             primary_cloud: self.primary_cloud.clone(),
             ephemeral_route: self.ephemeral_route.clone(),
+            resolved_endpoints: self.resolved_endpoints.clone(),
             chat_provider: self.chat_provider.clone(),
             reasoning_provider: self.reasoning_provider.clone(),
             agentic_provider: self.agentic_provider.clone(),

@@ -7,7 +7,7 @@
 mod common;
 
 use common::{
-    chat_completion, chat_requests, runtime_without_master_key, tool_names, PointedTransport,
+    chat_completion, chat_requests, runtime_without_master_key, tool_names, PointedInference,
 };
 use openhuman_embed::config::{
     PresentationMode, SearchConfig, SearchEngineCredentials, SearchProviderSettings, SearchRole,
@@ -119,7 +119,7 @@ async fn scenario() {
         .respond_with(ResponseTemplate::new(500))
         .mount(&managed)
         .await;
-    PointedTransport::install(&managed.uri());
+    PointedInference::install(&managed.uri());
 
     let search = SearchConfig {
         presentation: PresentationMode::Roles,

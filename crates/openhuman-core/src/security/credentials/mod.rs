@@ -16,7 +16,6 @@ pub mod sentry_scope;
 pub mod session_support;
 pub mod tools;
 
-pub use crate::backend::BackendClient;
 pub use core::*;
 pub use credential_ref::{CredentialRef, CredentialRefError, CredentialRefScheme, ResolvedSecret};
 pub use http_creds::{

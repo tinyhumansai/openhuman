@@ -8,6 +8,8 @@ use openhuman_embed::seams::DomainGroup;
 
 #[test]
 fn default_wiring_carries_hosted_controllers_and_the_jev_ranker() {
+    let _registry = crate::registry_test_lock();
+
     let wired = wiring(&InstallOptions::default()).expect("wiring");
     assert_eq!(
         wired.controllers.as_ref().map(|ext| ext.group),
@@ -17,13 +19,15 @@ fn default_wiring_carries_hosted_controllers_and_the_jev_ranker() {
     assert!(wired.ranker.is_some());
     #[cfg(not(feature = "jev"))]
     assert!(wired.ranker.is_none());
-    assert!(installed_backend_transport().is_some());
+    assert!(is_installed());
     let shown = format!("{wired:?}");
     assert!(shown.contains("Hosted"), "{shown}");
 }
 
 #[test]
 fn options_turn_controllers_and_ranker_off() {
+    let _registry = crate::registry_test_lock();
+
     let wired = wiring(
         &InstallOptions::default()
             .hosted_controllers(false)
@@ -36,6 +40,8 @@ fn options_turn_controllers_and_ranker_off() {
 
 #[test]
 fn wiring_reuses_the_process_transport() {
+    let _registry = crate::registry_test_lock();
+
     // A product-identity change drops the cached transport; hold its lock.
     let _guard = crate::backend::product::product_identity_test_lock();
     let first = wiring(&InstallOptions::default()).expect("first");
@@ -45,6 +51,8 @@ fn wiring_reuses_the_process_transport() {
 
 #[test]
 fn install_registers_hosted_controllers_and_installs_the_ranker() {
+    let _registry = crate::registry_test_lock();
+
     // A product-identity change drops the cached transport; hold its lock.
     let _guard = crate::backend::product::product_identity_test_lock();
     let transport = install(InstallOptions::default()).expect("install");

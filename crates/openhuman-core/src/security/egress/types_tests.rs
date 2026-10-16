@@ -41,6 +41,8 @@ fn integration_shape_targets_backend() {
     assert!(d.is_external);
     assert_eq!(d.reason, EgressReason::Integration);
     assert_eq!(d.data_kinds, vec![DataKind::Metadata]);
+    assert!(!d.control_plane, "unclassified integration is fail-closed");
+    assert!(d.with_control_plane(true).control_plane);
 }
 
 #[test]

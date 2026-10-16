@@ -27,6 +27,7 @@ fn store(config: &Config, slug: &str, key: &str) {
 fn signed_in_host_routes_jev_and_planner_through_tinyhumans() {
     let dir = tempfile::tempdir().unwrap();
     let mut config = config_in(dir.path());
+    config.resolved_endpoints.product_identity = Some("openhuman-test".into());
     config.computer.rescue_model = Some("openai/gpt-6-luna-pro".into());
     config.computer.planner_model = Some("anthropic/claude-sonnet-5".into());
     api_key::store_api_key(&config, "th_test_backend").unwrap();

@@ -9,8 +9,8 @@ use crate::voice::schemas::helpers::{
     deserialize_params, effective_stt_provider, effective_tts_provider, to_json,
 };
 use crate::voice::schemas::params::{
-    CloudTranscribeParams, ReplySynthesizeParams, SttDispatchParams, TranscribeBytesParams,
-    TranscribeParams, TtsDispatchParams, TtsParams,
+    ReplySynthesizeParams, SttDispatchParams, TranscribeBytesParams, TranscribeParams,
+    TtsDispatchParams, TtsParams,
 };
 
 pub(crate) fn handle_voice_status(
@@ -20,18 +20,6 @@ pub(crate) fn handle_voice_status(
     Box::pin(async move {
         let config = ctx.load_config().await?;
         to_json(crate::voice::voice_status(&config).await?)
-    })
-}
-
-/// Mint a realtime voice-agent signed WebSocket URL (#5399). Takes no params —
-/// the agent is server-configured; the desktop only asks for a fresh signed URL.
-pub(crate) fn handle_voice_agent_signed_url(
-    ctx: DispatchCtx,
-    _params: Map<String, Value>,
-) -> ControllerFuture {
-    Box::pin(async move {
-        let config = ctx.load_config().await?;
-        to_json(crate::voice::realtime::mint_voice_agent_signed_url(&config).await?)
     })
 }
 
@@ -125,26 +113,6 @@ pub(crate) fn handle_voice_reply_synthesize(
         to_json(
             provider
                 .synthesize(&config, &p.text, effective_voice)
-                .await?,
-        )
-    })
-}
-
-pub(crate) fn handle_voice_cloud_transcribe(
-    ctx: DispatchCtx,
-    params: Map<String, Value>,
-) -> ControllerFuture {
-    Box::pin(async move {
-        let config = ctx.load_config().await?;
-        let p = deserialize_params::<CloudTranscribeParams>(params)?;
-        let opts = tinyinference_voice::cloud::CloudTranscribeOptions {
-            model: p.model,
-            language: p.language,
-            mime_type: p.mime_type,
-            file_name: p.file_name,
-        };
-        to_json(
-            crate::voice::cloud_transcribe::transcribe_cloud(&config, &p.audio_base64, &opts)
                 .await?,
         )
     })

@@ -140,7 +140,7 @@ pub fn endpoint_host(endpoint: &str) -> Option<String> {
 /// OpenHuman **backend** base for team/billing/auth calls. A BYO user who
 /// points `api_url` at a provider's canonical base (`https://openrouter.ai/api/v1`)
 /// would otherwise have every backend domain call routed to the inference host
-/// → 400/404 (TAURI-RUST-HW1: 4932 `GET /teams/me/usage` 400s from `openrouter.ai`).
+/// → 400/404 (TAURI-RUST-HW1: 4932 team-usage 400s from `openrouter.ai`).
 /// The backend-URL resolver uses this to treat such hosts as non-backend and
 /// fall back to the default backend chain — the cloud analogue of the local-AI
 /// guard that fixed the Ollama case (OPENHUMAN-TAURI-51/-80/-7Z).

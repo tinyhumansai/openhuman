@@ -39,6 +39,7 @@ impl Default for Config {
             api_key: None,
             inference_url: None,
             ephemeral_route: None,
+            resolved_endpoints: Default::default(),
             default_model: Some(DEFAULT_MODEL.to_string()),
             default_temperature: DEFAULT_TEMPERATURE,
             output_language: None,

@@ -20,10 +20,13 @@ mod error;
 pub mod ops;
 mod persist;
 mod providers;
+pub mod registry;
 pub mod schemas;
 mod session;
 pub mod types;
 #[cfg(feature = "http-server")]
 pub mod ws;
 
+pub use error::LiveVoiceError;
+pub use providers::{PreparedProvider, GEMINI_LANGUAGES, GEMINI_VOICES};
 pub use schemas::{live_controller_schemas, live_registered_controllers, live_schemas};

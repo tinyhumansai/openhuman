@@ -41,8 +41,6 @@ pub struct BuilderSummary {
     pub listen_port: Option<u16>,
     /// Whether a backend API key was supplied, without exposing it.
     pub has_api_key: bool,
-    /// Whether a backend transport was supplied.
-    pub has_backend_transport: bool,
     /// Whether a host memory engine was supplied.
     pub has_memory_engine: bool,
     /// Whether a host session store was supplied.
@@ -78,7 +76,6 @@ impl RuntimeBuilder {
             listen_host: self.listen_host.clone(),
             listen_port: self.listen_port,
             has_api_key: self.api_key.is_some(),
-            has_backend_transport: self.backend_transport.is_some(),
             has_memory_engine: self.memory_engine.is_some(),
             has_session_store: self.session_store.is_some(),
             controller_extensions: self

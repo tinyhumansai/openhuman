@@ -240,11 +240,18 @@ async fn load_and_resolve_api_url_returns_api_url_in_response() {
 }
 
 #[test]
-fn resolve_api_url_comes_from_the_backend_transport() {
-    // The override guard itself lives with the transport
-    // (`openhuman-tinyhumans`); the core only forwards the configured value.
+fn resolve_api_url_is_the_control_plane_the_host_resolved() {
+    // The override guard itself lives with the host's enricher
+    // (`openhuman-tinyhumans`); the core only forwards the resolved value, and
+    // reports none when no host resolved a control plane.
     let mut config = Config::default();
     config.api_url = Some("http://127.0.0.1:4010".to_string());
+    assert_eq!(
+        resolve_backend_api_url(&config),
+        None,
+        "a configured api_url alone is not a resolved control plane"
+    );
+    config.resolved_endpoints.control_plane_url = Some("http://127.0.0.1:4010".to_string());
     assert_eq!(
         resolve_backend_api_url(&config).as_deref(),
         Some("http://127.0.0.1:4010")

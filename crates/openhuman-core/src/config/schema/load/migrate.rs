@@ -11,8 +11,11 @@ pub(crate) fn migrate_legacy_inference_url(config: &mut Config) {
     if !trimmed.ends_with("/chat/completions") {
         return;
     }
-    let is_openhuman_backend = trimmed.starts_with("https://api.tinyhumans.ai/")
-        || trimmed.starts_with("https://staging-api.tinyhumans.ai/");
+    // The managed backend's own chat-completions URL is derived, not moved: it
+    // is recognised by the managed hosts the installed host resolved.
+    let hosts = crate::config::enrichers::managed_hosts_for(config);
+    let is_openhuman_backend = trimmed.starts_with("https://")
+        && crate::config::schema::resolved_endpoints::host_matches_any(trimmed, &hosts);
     let moved = if is_openhuman_backend {
         None
     } else {
@@ -79,6 +82,18 @@ pub(crate) fn migrate_cloud_provider_slugs(config: &mut Config) {
         .iter()
         .map(|e| (e.slug.clone(), e.id.clone()))
         .collect();
+
+    let managed_hosts = crate::config::enrichers::managed_hosts_for(config);
+    let looks_like_openhuman_provider_endpoint = |url: &str| {
+        crate::config::schema::resolved_endpoints::host_matches_any(url, &managed_hosts)
+    };
+
+    let is_openhuman_provider_entry =
+        |entry: &super::super::cloud_providers::CloudProviderCreds| {
+            entry.slug == "openhuman"
+                || matches!(entry.auth_style, AuthStyle::OpenhumanJwt)
+                || looks_like_openhuman_provider_endpoint(&entry.endpoint)
+        };
 
     let legacy_custom_slug = config
         .inference_url
@@ -181,27 +196,6 @@ pub(crate) fn migrate_cloud_provider_slugs(config: &mut Config) {
 
     fn normalize_provider_endpoint(url: &str) -> String {
         url.trim().trim_end_matches('/').to_ascii_lowercase()
-    }
-
-    fn looks_like_openhuman_provider_endpoint(url: &str) -> bool {
-        let lower = url.trim().to_ascii_lowercase();
-        let without_scheme = lower.split("://").nth(1).unwrap_or(&lower);
-        let authority = without_scheme.split('/').next().unwrap_or("");
-        let host = authority.split('@').next_back().unwrap_or(authority);
-        let host_no_port = host.split(':').next().unwrap_or(host);
-        matches!(
-            host_no_port,
-            "api.openhuman.ai" | "api.tinyhumans.ai" | "staging-api.tinyhumans.ai" | "openhuman"
-        ) || host_no_port.ends_with(".openhuman.ai")
-            || host_no_port.ends_with(".tinyhumans.ai")
-    }
-
-    fn is_openhuman_provider_entry(
-        entry: &super::super::cloud_providers::CloudProviderCreds,
-    ) -> bool {
-        entry.slug == "openhuman"
-            || matches!(entry.auth_style, AuthStyle::OpenhumanJwt)
-            || looks_like_openhuman_provider_endpoint(&entry.endpoint)
     }
 }
 

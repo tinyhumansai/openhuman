@@ -3,8 +3,9 @@
 //! identity, and forward every preset and knob unchanged.
 
 use super::*;
+use crate::transport::BackendTransport;
 use openhuman_embed::seams::DomainGroup;
-use openhuman_embed::{BackendTransport, BuilderSummary};
+use openhuman_embed::BuilderSummary;
 
 fn connected(builder: RuntimeBuilder) -> BuilderSummary {
     builder.connect().expect("connect").summary()
@@ -12,8 +13,9 @@ fn connected(builder: RuntimeBuilder) -> BuilderSummary {
 
 #[test]
 fn connect_wires_transport_hosted_controllers_and_ranker() {
+    let _registry = crate::registry_test_lock();
+
     let summary = connected(RuntimeBuilder::new());
-    assert!(summary.has_backend_transport);
     assert_eq!(summary.controller_extensions, vec![DomainGroup::Hosted]);
     #[cfg(feature = "jev")]
     assert_eq!(
@@ -22,38 +24,45 @@ fn connect_wires_transport_hosted_controllers_and_ranker() {
     );
     #[cfg(not(feature = "jev"))]
     assert!(summary.tool_ranker.is_none());
-    // The transport is also the process global, as `install` leaves it.
-    assert!(openhuman_embed::installed_backend_transport().is_some());
+    // The shared transport is built, as `install` leaves it.
+    assert!(crate::is_installed());
 }
 
 #[test]
 fn into_embed_stays_unconnected() {
     let summary = RuntimeBuilder::new().into_embed().summary();
-    assert!(!summary.has_backend_transport);
     assert!(summary.controller_extensions.is_empty());
     assert!(summary.tool_ranker.is_none());
 }
 
 #[test]
 fn deferred_builder_connects_through_tinyhumans_wrapper() {
+    let _registry = crate::registry_test_lock();
+
     let summary = connected(RuntimeBuilder::new().defer_services());
-    assert!(summary.has_backend_transport);
+    assert!(
+        !summary.controller_extensions.is_empty(),
+        "deferring services still connects the hosted controllers"
+    );
 }
 
 #[test]
 fn hosted_controllers_and_jev_can_be_turned_off() {
+    let _registry = crate::registry_test_lock();
+
     let summary = connected(
         RuntimeBuilder::new()
             .hosted_controllers(false)
             .jev_ranker(false),
     );
-    assert!(summary.has_backend_transport);
     assert!(summary.controller_extensions.is_empty());
     assert!(summary.tool_ranker.is_none());
 }
 
 #[test]
 fn product_identity_is_set_on_connect() {
+    let _registry = crate::registry_test_lock();
+
     let _guard = crate::backend::product::product_identity_test_lock();
     let identity = crate::ProductIdentity::new("opencompany").unwrap();
     let builder = RuntimeBuilder::new().product_identity(identity.clone());
@@ -112,6 +121,8 @@ fn presets_forward_to_the_embed_presets() {
 
 #[test]
 fn knobs_and_seams_forward_unchanged() {
+    let _registry = crate::registry_test_lock();
+
     struct Ranker;
     #[async_trait::async_trait]
     impl ToolRanker for Ranker {
@@ -169,6 +180,8 @@ impl ToolRanker for HostRanker {
 
 #[test]
 fn a_ranker_on_a_wrapped_embed_builder_is_kept() {
+    let _registry = crate::registry_test_lock();
+
     let embed = openhuman_embed::RuntimeBuilder::new().tool_ranker(Arc::new(HostRanker));
     let summary = connected(RuntimeBuilder::from_embed(embed));
     assert_eq!(summary.tool_ranker.as_deref(), Some("host-ranker"));
@@ -176,6 +189,8 @@ fn a_ranker_on_a_wrapped_embed_builder_is_kept() {
 
 #[test]
 fn turning_jev_back_on_does_not_replace_a_host_ranker() {
+    let _registry = crate::registry_test_lock();
+
     let summary = connected(
         RuntimeBuilder::new()
             .tool_ranker(Arc::new(HostRanker))
@@ -186,6 +201,8 @@ fn turning_jev_back_on_does_not_replace_a_host_ranker() {
 
 #[test]
 fn connect_keeps_cli_knobs_for_the_host_boot() {
+    let _registry = crate::registry_test_lock();
+
     use openhuman_embed::seams::HostBoot;
     use openhuman_embed::{DomainSet, ServiceSet, TokenSource};
 
@@ -211,9 +228,5 @@ fn connect_keeps_cli_knobs_for_the_host_boot() {
     assert!(summary.fixed_token);
     assert_eq!(summary.listen_host.as_deref(), Some("0.0.0.0"));
     assert_eq!(summary.listen_port, Some(7812));
-    assert!(
-        summary.has_backend_transport,
-        "the server binds the transport"
-    );
     assert_eq!(summary.controller_extensions, vec![DomainGroup::Hosted]);
 }

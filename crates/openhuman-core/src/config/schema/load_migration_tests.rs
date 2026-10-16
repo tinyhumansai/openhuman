@@ -295,15 +295,31 @@ fn migrate_legacy_inference_url_moves_external_chat_completions() {
 }
 
 #[test]
-fn migrate_legacy_inference_url_clears_openhuman_backend_form() {
+fn migrate_legacy_inference_url_clears_managed_backend_form() {
     let mut cfg = Config::default();
-    cfg.api_url = Some("https://api.tinyhumans.ai/openai/v1/chat/completions".to_string());
+    cfg.resolved_endpoints.managed_hosts = vec!["api.managed.test".to_string()];
+    cfg.api_url = Some("https://api.managed.test/openai/v1/chat/completions".to_string());
     cfg.inference_url = None;
     migrate_legacy_inference_url(&mut cfg);
-    // The OpenHuman host is the default backend — both fields end up None so
-    // inference flows through the derived default `{backend}/openai/v1/...`.
+    // The managed host is the default backend — both fields end up None so
+    // inference flows through the derived default.
     assert_eq!(cfg.api_url, None);
     assert_eq!(cfg.inference_url, None);
+}
+
+#[test]
+fn migrate_legacy_inference_url_keeps_a_managed_looking_url_without_managed_hosts() {
+    // With no host registered nothing is managed, so the URL is moved as an
+    // external one rather than silently dropped.
+    let mut cfg = Config::default();
+    cfg.api_url = Some("https://api.managed.test/openai/v1/chat/completions".to_string());
+    cfg.inference_url = None;
+    migrate_legacy_inference_url(&mut cfg);
+    assert_eq!(cfg.api_url, None);
+    assert_eq!(
+        cfg.inference_url.as_deref(),
+        Some("https://api.managed.test/openai/v1/chat/completions")
+    );
 }
 
 #[test]
@@ -368,7 +384,7 @@ fn migrate_cloud_provider_slugs_keeps_cloud_on_openhuman_without_legacy_custom()
         id: "p_oh".into(),
         slug: "openhuman".into(),
         label: "OpenHuman".into(),
-        endpoint: "https://api.tinyhumans.ai/v1".into(),
+        endpoint: "https://api.managed.test/v1".into(),
         auth_style: crate::config::schema::AuthStyle::OpenhumanJwt,
         ..Default::default()
     }];

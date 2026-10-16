@@ -34,7 +34,7 @@ pub struct ComposioExecuteTool {
     /// `composio.mode = "direct"` mid-session the
     /// `ComposioConfigChanged` event invalidated caches, but this tool's
     /// pre-baked client kept routing executions through
-    /// `staging-api.tinyhumans.ai/agent-integrations/composio/execute`
+    /// the managed backend's composio execute route
     /// — silently bypassing the direct-mode user's personal Composio
     /// tenant. Resolving the route per call in
     /// the connector module keeps dispatch in lockstep with the

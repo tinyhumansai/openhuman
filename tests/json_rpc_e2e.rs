@@ -11972,6 +11972,9 @@ fn json_rpc_channel_web_chat_with_speak_reply_invokes_reply_speech() {
 
 async fn json_rpc_channel_web_chat_with_speak_reply_invokes_reply_speech_inner() {
     let _env_lock = json_rpc_e2e_env_lock_async().await;
+    // The hosted `cloud` TTS provider (and its test seam) is registered by the
+    // TinyHumans layer, not built into the core.
+    tinyhumans_boot::boot();
     let tmp = tempdir().expect("tempdir");
     let home = tmp.path();
     let openhuman_home = home.join(".openhuman");
@@ -11982,9 +11985,12 @@ async fn json_rpc_channel_web_chat_with_speak_reply_invokes_reply_speech_inner()
     let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
     // Activate the reply_speech test seam so synthesize_reply records and
     // short-circuits instead of calling the hosted backend.
-    let _seam_guard = EnvVarGuard::set(openhuman_core::voice::reply_speech::TEST_SEAM_ENV, "1");
+    let _seam_guard = EnvVarGuard::set(
+        openhuman_tinyhumans::voice::reply_speech::TEST_SEAM_ENV,
+        "1",
+    );
 
-    openhuman_core::voice::reply_speech::test_seam::clear();
+    openhuman_tinyhumans::voice::reply_speech::test_seam::clear();
 
     let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
     let mock_origin = format!("http://{}", mock_addr);
@@ -12054,7 +12060,7 @@ async fn json_rpc_channel_web_chat_with_speak_reply_invokes_reply_speech_inner()
     // because the bridge task may finish slightly after chat_done.
     let mut observed: Vec<String> = Vec::new();
     for _ in 0..50 {
-        observed = openhuman_core::voice::reply_speech::test_seam::observed();
+        observed = openhuman_tinyhumans::voice::reply_speech::test_seam::observed();
         if !observed.is_empty() {
             break;
         }

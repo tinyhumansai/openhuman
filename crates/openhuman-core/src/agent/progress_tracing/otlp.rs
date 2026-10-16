@@ -8,18 +8,27 @@ use serde_json::Value;
 use tinyagents_harness::observability::trace_export::otlp::otlp_requests;
 use tinyagents_harness::observability::trace_export::TraceSpan;
 
-use super::langfuse::{environment_for_base, ingestion_url, skip_push};
+use super::langfuse::{environment_for_base, otlp_url, skip_push};
 use crate::config::Config;
 use crate::security::credentials::jwt::bearer_authorization_value;
 use crate::security::credentials::session_support::direct_backend_credential;
+
+/// Service key the push is proxied under (`ProxyConfig::services`).
+pub(super) const OTLP_SERVICE_KEY: &str = "telemetry.otlp";
+
+/// The push's HTTP client: the runtime proxy and platform TLS roots apply, and
+/// the underlying client is cached per service key, so every push reuses one
+/// connection pool.
+pub(super) fn otlp_client() -> reqwest::Client {
+    crate::config::build_runtime_proxy_client_with_timeouts(OTLP_SERVICE_KEY, 10, 10)
+}
 
 pub(super) async fn push_spans(config: &Config, spans: &[TraceSpan]) -> Result<(), String> {
     if spans.is_empty() {
         return Ok(());
     }
-    let legacy_url = ingestion_url(config);
-    let url = legacy_url.replace("/langfuse/ingestion", "/langfuse/otel/v1/traces");
-    let environment = environment_for_base(&url);
+    let url = otlp_url(config);
+    let environment = environment_for_base(config, &url);
     if skip_push(environment) {
         return Ok(());
     }
@@ -35,14 +44,14 @@ pub(super) async fn push_spans(config: &Config, spans: &[TraceSpan]) -> Result<(
         }
         _ => return Ok(()),
     };
-    // Backend traffic: the transport's client carries the host's attribution
-    // headers (product identity, versions).
-    let client = crate::backend::resolve_backend_transport()
-        .map_err(|err| format!("Langfuse OTLP push has no backend transport: {err}"))?
-        .http_client(crate::backend::TransportProfile::Api);
+    // Backend traffic: stamp the host's attribution headers (product
+    // identity, versions) resolved onto the config.
+    let attribution = config.resolved_endpoints.attribution_header_map();
+    let client = otlp_client();
     for payload in otlp_requests(spans, environment, &super::export_brand()) {
         let response = client
             .post(&url)
+            .headers(attribution.clone())
             .header(
                 reqwest::header::AUTHORIZATION,
                 bearer_authorization_value(&token),

@@ -12,8 +12,8 @@
 //! stops needing them at all.
 //!
 //! **Their serde form is a wire contract**, not an implementation detail: it
-//! mirrors the backend's response envelopes under
-//! `/agent-integrations/composio/*`, and a field renamed on one side fails at
+//! mirrors the backend's response envelopes for
+//! its composio routes, and a field renamed on one side fails at
 //! runtime with a decode error rather than at compile time. The contract crate
 //! pins every one of them in a test for that reason.
 

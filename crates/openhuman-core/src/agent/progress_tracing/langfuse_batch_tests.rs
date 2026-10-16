@@ -23,82 +23,86 @@ fn an_unrecognised_environment_fails_closed() {
     }
 }
 
+/// A config as the installed host's enricher resolves it for a hosted
+/// control plane in `environment`.
+fn config_resolved_as(environment: &str) -> Config {
+    let mut config = Config::default();
+    config.resolved_endpoints.deployment_environment = Some(environment.to_string());
+    config
+}
+
 #[test]
 fn every_environment_for_base_bucket_is_classified_deliberately() {
     // Ties the two functions together: if `environment_for_base` grows a
     // bucket, this fails until someone decides which side it belongs on.
+    for (resolved, base) in [
+        ("staging", "https://staging.example.test"),
+        ("production", "https://api.example.test"),
+    ] {
+        let config = config_resolved_as(resolved);
+        assert!(push_allowed(environment_for_base(&config, base)));
+    }
     assert!(push_allowed(environment_for_base(
-        "https://staging-api.tinyhumans.ai"
-    )));
-    assert!(push_allowed(environment_for_base("http://localhost:7788")));
-    assert!(push_allowed(environment_for_base(
-        "https://api.tinyhumans.ai"
+        &Config::default(),
+        "http://localhost:7788"
     )));
 }
 
 #[test]
-fn ingestion_url_uses_backend_origin_and_ingestion_path() {
+fn otlp_url_is_the_host_resolved_tracing_endpoint() {
     let mut config = Config::default();
-    config.api_url = Some("https://staging-api.tinyhumans.ai/api/v1".to_string());
+    assert_eq!(otlp_url(&config), "", "nothing resolved means no push");
+    config.resolved_endpoints.tracing_otlp_url =
+        Some("https://api.example.test/traces/otel/v1/traces".to_string());
     assert_eq!(
-        ingestion_url(&config),
-        "https://staging-api.tinyhumans.ai/telemetry/langfuse/ingestion",
-        "endpoint is the backend's Langfuse proxy route on the base server \
-         host, replacing any inference path the base carried"
-    );
-
-    // A base carrying an inference path resolves to the proxy route on the
-    // SAME host — the ingestion host tracks the base server URL, not a fixed
-    // literal.
-    let mut with_inference_path = Config::default();
-    with_inference_path.api_url =
-        Some("https://api.tinyhumans.ai/openai/v1/chat/completions".to_string());
-    assert_eq!(
-        ingestion_url(&with_inference_path),
-        "https://api.tinyhumans.ai/telemetry/langfuse/ingestion"
+        otlp_url(&config),
+        "https://api.example.test/traces/otel/v1/traces"
     );
 }
 
 #[test]
-fn environment_derivation_from_backend_base() {
+fn environment_derivation_follows_the_resolved_bucket() {
+    let staging = config_resolved_as("staging");
+    let prod = config_resolved_as("production");
     assert_eq!(
-        environment_for_base("https://staging-api.tinyhumans.ai"),
+        environment_for_base(&staging, "https://staging.example.test"),
         "staging"
     );
-    assert_eq!(environment_for_base("http://localhost:5000"), "development");
-    assert_eq!(environment_for_base("http://127.0.0.1:5000"), "development");
     assert_eq!(
-        environment_for_base("https://api.tinyhumans.ai"),
+        environment_for_base(&prod, "https://api.example.test"),
         "production"
     );
+    for local in ["http://localhost:5000", "http://127.0.0.1:5000"] {
+        assert_eq!(
+            environment_for_base(&Config::default(), local),
+            "development"
+        );
+    }
 }
 
-/// A hostname that merely *contains* `staging` is not ours. The classifier
-/// gates whether a live session token leaves the process, so anything it
-/// cannot positively recognise has to land on `external` — which does
-/// not push.
+/// With no host registered nothing resolves a hosted bucket, so every
+/// non-local origin is external and does not push.
 #[test]
-fn a_lookalike_staging_host_is_external_not_staging() {
-    for base in [
-        // The substring match this replaced classified all of these as
-        // staging, and `push_allowed` would then have let them through.
-        "https://staging-attacker.invalid",
-        "https://staging.evil.example",
-        "http://staging-api.tinyhumans.ai.evil.example",
-        // Right domain, wrong label position.
-        "https://api-staging-mirror.tinyhumans.ai",
-        // A public IP literal is never a deployment of ours.
-        "https://93.184.216.34",
-        // Never send a session bearer to a public backend over plaintext.
-        "http://api.tinyhumans.ai",
-    ] {
-        let environment = environment_for_base(base);
-        assert_eq!(
-            environment, "external",
-            "{base} must classify as external, got {environment}"
-        );
-        assert!(!push_allowed(environment), "{base} must not be pushable");
+fn without_a_registered_host_every_remote_origin_is_external() {
+    let config = Config::default();
+    for base in ["https://api.example.test", "https://staging.example.test"] {
+        assert_eq!(environment_for_base(&config, base), "external");
     }
+}
+
+/// A plaintext or unrecognised bucket never pushes, even when the host
+/// resolved a hosted bucket for its own control plane.
+#[test]
+fn a_resolved_bucket_does_not_unlock_plaintext_or_unknown_buckets() {
+    let prod = config_resolved_as("production");
+    assert_eq!(
+        environment_for_base(&prod, "http://api.example.test"),
+        "external"
+    );
+    assert_eq!(
+        environment_for_base(&config_resolved_as("preview"), "https://api.example.test"),
+        "external"
+    );
 }
 
 /// The local buckets the substring form missed. An IPv6 loopback backend
@@ -116,7 +120,7 @@ fn local_backends_are_development_including_ipv6_and_private_ranges() {
         "http://api.localhost:5000",
         "http://0.0.0.0:5000",
     ] {
-        let environment = environment_for_base(base);
+        let environment = environment_for_base(&Config::default(), base);
         assert_eq!(
             environment, "development",
             "{base} must classify as development, got {environment}"

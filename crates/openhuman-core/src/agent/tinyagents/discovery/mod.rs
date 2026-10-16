@@ -9,7 +9,7 @@
 //! to use it. [`discovery_policy`] turns the two into the
 //! [`ToolDiscoveryPolicy`] every turn harness runs with.
 //!
-//! Process-wide, like the backend transport, because the credential a
+//! Process-wide, like the other host registrations, because the credential a
 //! decision-model ranker needs is a property of the process's signed-in
 //! user, and the harness is assembled per turn without a config in hand.
 

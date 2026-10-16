@@ -110,7 +110,7 @@ pub enum ExpectedErrorKind {
     SessionExpired,
     /// Boot-window failure where the in-process core HTTP listener
     /// (`127.0.0.1:<port>`) is not yet accepting connections, so a sibling
-    /// component (frontend RPC relay, agent-integrations client) sees a TCP
+    /// component (frontend RPC relay, integrations client) sees a TCP
     /// connect refused. The condition self-resolves once the core finishes
     /// binding — typically within a few seconds of app launch — and no retry
     /// on the calling side can do better than waiting it out.
@@ -194,7 +194,7 @@ pub enum ExpectedErrorKind {
     /// returned an empty response"` is also demoted — no per-channel typed
     /// suppression needed.
     EmptyProviderResponse,
-    /// The core has no backend transport installed (built and run without
+    /// The core has no hosted backend registered (built and run without
     /// `openhuman-tinyhumans`), so a hosted-backend call could not be sent
     /// at all. Expected build state, not a defect: the core runs agents,
     /// memory and tools without any TinyHumans connection, and every
@@ -702,7 +702,7 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
 /// (codex CR on #3911). Both arms anchor on local-emit fragments rather than a
 /// bare `contains("database or disk is full")` so the silencer does not match a
 /// non-2xx backend response body whose payload happens to mention the phrase
-/// (e.g. an `api.tinyhumans.ai` 5xx whose server-side SQLite is full). Non-2xx
+/// (e.g. a managed-backend 5xx whose server-side SQLite is full). Non-2xx
 /// backend bodies are framed by
 /// `integrations::client::post` / `composio::client` as `"Backend returned
 /// <status> <reason> for <METHOD> <url>: <detail>"` — an operator-actionable
@@ -1077,7 +1077,7 @@ pub fn is_local_provider_unreachable_message(text: &str) -> bool {
 }
 
 /// Detect the in-process-core boot-window shape: a sibling component
-/// (frontend RPC relay, agent-integrations / composio HTTP clients) tried to
+/// (frontend RPC relay, integrations / composio HTTP clients) tried to
 /// reach the embedded core's `127.0.0.1:<port>` listener before it finished
 /// binding, so the kernel returned `Connection refused`. The condition
 /// self-resolves once startup completes — Sentry has no remediation path.
@@ -1116,7 +1116,7 @@ pub fn is_local_provider_unreachable_message(text: &str) -> bool {
 /// and the canonical body shape:
 ///
 /// ```text
-/// error sending request for url (http://127.0.0.1:18474/agent-integrations/composio/connections)
+/// error sending request for url (http://127.0.0.1:18474/integrations/composio/connections)
 ///   → client error (Connect) → tcp connect error → Connection refused (os error 61)
 /// ```
 ///
@@ -1263,7 +1263,7 @@ fn is_ollama_user_config_rejection(lower: &str) -> bool {
 /// can't reach the server at all.
 ///
 /// These are user-environment problems — VPN drop, captive portal, ISP-level
-/// block (OPENHUMAN-TAURI-32: user in RU couldn't reach `api.tinyhumans.ai`),
+/// block (OPENHUMAN-TAURI-32: user in RU couldn't reach the managed backend),
 /// firewall — that no amount of retry / fallback on our side can resolve.
 /// Sentry has no signal to act on (no status, no trace, no payload), so each
 /// occurrence is pure noise. Classify them as expected so the report site
@@ -1477,7 +1477,7 @@ fn is_upstream_edge_block_message(lower: &str) -> bool {
 /// [`crate::integrations::client::IntegrationClient::post`] / `get`
 /// and [`crate::integrations::composio::client::ComposioClient`] is:
 /// `"Backend returned <status> <reason> for <METHOD> <url>: <detail>"` — e.g.
-/// `"Backend returned 400 Bad Request for POST https://api.tinyhumans.ai/agent-integrations/composio/authorize: Composio authorization failed: 400 …"`
+/// `"Backend returned 400 Bad Request for POST https://api.example.com/integrations/composio/authorize: Composio authorization failed: 400 …"`
 /// (OPENHUMAN-TAURI-BC: user submitted SharePoint authorize without filling in
 /// the required Tenant Name field). The backend correctly returned a 4xx; the
 /// UI already surfaces the structured error to the user via toast — Sentry has
@@ -1682,7 +1682,7 @@ fn is_provider_user_state_message(lower: &str) -> bool {
     }
 
     // TAURI-RUST-34H — composio backend endpoint (e.g.
-    // `/agent-integrations/composio/connections`) wraps an upstream
+    // `/integrations/composio/connections`) wraps an upstream
     // Cloudflare anti-bot challenge as `Backend returned 500 Internal
     // Server Error … 403 <!DOCTYPE html>…<title>Just a moment...</title>…`.
     // The CF interstitial is keyed by the user's network reputation /
@@ -2077,7 +2077,7 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
         }
         ExpectedErrorKind::ModuleUnavailable => log_module_unavailable(domain, operation, message),
         ExpectedErrorKind::BackendUnavailable => {
-            // Build-state condition: no backend transport is installed, so
+            // Build-state condition: no hosted backend is registered, so
             // the hosted backend is unreachable by construction. Nothing to
             // fix in Sentry — the host chose a backend-less core.
             tracing::debug!(
@@ -2975,7 +2975,7 @@ pub fn is_transient_message_failure(msg: &str) -> bool {
         || contains_transient_transport_phrase(&lower)
 }
 
-/// Sentinel prefix stamped on a `/teams/me/usage` probe error that the
+/// Sentinel prefix stamped on a team-usage probe error that the
 /// failure-backoff in `crate::integrations::client::budget_gate` short-circuited — i.e. an
 /// already-reported repeat within the backoff window. The FIRST failure of a
 /// streak propagates its real error string and reports normally; only the

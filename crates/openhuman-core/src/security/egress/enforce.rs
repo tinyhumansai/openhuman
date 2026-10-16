@@ -32,8 +32,8 @@
 //! `LocalOnly` blocks the user's *data* from leaving the device — it must not
 //! block the backend **control-plane** the app needs to stay usable (session /
 //! auth / team / billing round-trips, plus the integration connection-management
-//! and catalog reads that carry no user content). See [`is_control_plane`] for
-//! the exact boundary and why it is drawn where it is.
+//! and catalog reads that carry no user content). The descriptor's builder
+//! classifies its own routes; see [`is_control_plane`].
 
 use super::types::{EgressDescriptor, EgressReason};
 use crate::config::PrivacyMode;
@@ -62,73 +62,16 @@ pub fn local_only_blocks(mode: PrivacyMode, desc: &EgressDescriptor) -> bool {
 /// ids, and routing metadata)?
 ///
 /// Only [`EgressReason::Integration`] descriptors are ever eligible: inference,
-/// composio tool calls, cloud embeddings, and agent network fetches all ship the
-/// user's data and are never control-plane.
+/// tool calls, cloud embeddings, and agent network fetches all ship the user's
+/// data and are never control-plane.
 ///
-/// For an integration transfer, the descriptor's `service` is the backend
-/// endpoint path (query stripped by
-/// [`emit_backend_egress`](crate::integrations)). Two shapes are
-/// exempt:
-///
-/// 1. **Any path outside the user-data tool namespace** — i.e. it is *not* under
-///    `/agent-integrations/`. Today every user-data integration call (composio
-///    execute, parallel / tinyfish / financial-apis / google-places research +
-///    actions, file-storage uploads) routes through
-///    `IntegrationClient` under `/agent-integrations/…`, while session / team /
-///    billing / auth round-trips (`/teams/me/usage`, `/payments/…`, `/auth/…`)
-///    go through `backend::client` and never build an egress descriptor at all. Any
-///    such path only reaches here if a future caller re-homes a control-plane
-///    call onto this descriptor — exempt it defensively so a re-home can never
-///    brick login (per the epic's "do not block control-plane" directive).
-///
-/// 2. **A narrow allow-list of read-only composio connection-management /
-///    catalog / OAuth sub-routes** that set up or *describe* an integration
-///    without shipping or mutating user content: `connections` (list +
-///    per-connection delete), `authorize` (OAuth handoff), `tools` and
-///    `toolkits` (catalog), plus `pricing` (billing metadata). These are the
-///    routes the Connections UI needs to stay usable under `LocalOnly`.
-///
-/// Everything else under `composio/` is **blocked**, including:
-///   - `execute` — ships the tool arguments (the original user-data path);
-///   - `triggers` / `triggers/available` — `create_trigger` / `enable_trigger`
-///     POST user-supplied `slug` / `connectionId` / `triggerConfig` (a
-///     user-data *write*); the descriptor carries only the path, not the HTTP
-///     method, so the read variants on the same path are blocked with them
-///     (fail-closed — trigger setup is an integration write surface, not
-///     sign-in, so blocking it under `LocalOnly` breaks nothing that matters);
-///   - `github/repos` and any future sub-route — reveals user-adjacent data,
-///     and an *unknown* composio sub-route is treated as user-data, never
-///     exempt.
-///
-/// The boundary is deliberately **fail-closed** for user data: only the named
-/// read-only routes are exempt; anything else under `/agent-integrations/`
-/// (composio or otherwise) ships user data and stays blocked. Genuine
-/// non-composio control-plane (session / auth / team / billing) is handled by
-/// rule (1) so sign-in never breaks.
+/// The core does not know any host's routes. The party that builds the
+/// descriptor classifies its own path and sets
+/// [`EgressDescriptor::control_plane`]; this predicate honours that flag and is
+/// otherwise **fail-closed**: an integration descriptor nobody classified is
+/// treated as shipping user data and stays blocked.
 pub(crate) fn is_control_plane(desc: &EgressDescriptor) -> bool {
-    if desc.reason != EgressReason::Integration {
-        return false;
-    }
-    let path = desc.service.trim_start_matches('/');
-    // (1) Not under the user-data tool namespace → control-plane (session /
-    //     auth / team / billing, or a defensively re-homed control-plane call).
-    let Some(subroute) = path.strip_prefix("agent-integrations/") else {
-        return true;
-    };
-    // (2) Pricing metadata carries no user content.
-    if subroute == "pricing" {
-        return true;
-    }
-    // (3) Composio: exempt ONLY the read-only connection-management / catalog /
-    //     OAuth allow-list. `execute` (tool arguments), `triggers[/available]`
-    //     (user-data writes), `github/repos`, and any unknown sub-route stay
-    //     blocked — fail-closed for user data.
-    if let Some(rest) = subroute.strip_prefix("composio/") {
-        let head = rest.split(['/', '?']).next().unwrap_or(rest);
-        return matches!(head, "connections" | "authorize" | "tools" | "toolkits");
-    }
-    // Everything else under /agent-integrations/ ships user data → not exempt.
-    false
+    desc.reason == EgressReason::Integration && desc.control_plane
 }
 
 /// Human-readable, non-sensitive reason the transfer was blocked. Names only the

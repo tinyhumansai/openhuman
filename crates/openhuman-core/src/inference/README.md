@@ -33,7 +33,7 @@ Every caller starts with a role (`chat`, `reasoning`, `agentic`, `coding`, `visi
      |                        egress descriptor
      v
   constructor by prefix:
-     +-- managed_backend.rs       "openhuman" / "cloud" -> OpenHumanBackendModel
+     +-- managed_backend.rs       "openhuman" / "cloud" -> tier pinning, gate, egress, then the registered chat model
      +-- local_runtime.rs         ollama / lmstudio / mlx / local-openai
      +-- cloud_slug.rs            "<slug>:<model>" BYOK: host gates, headers, TLS client
      +-- cloud_spec.rs            CloudProviderCreds -> ProviderSpec -> tinyinference ProviderRegistry
@@ -80,12 +80,12 @@ through the same gates and constructors.
 
 ### The managed backend model
 
-[`provider/openhuman_backend_model.rs`](./provider/openhuman_backend_model.rs) is a host `ChatModel` for the OpenHuman backend. It cannot be
+The managed backend model (`crates/openhuman-tinyhumans/src/inference/managed_model.rs`, registered with `inference::registry` under `PROVIDER_OPENHUMAN`) is a host `ChatModel` for the OpenHuman backend. It cannot be
 a plain `tinyinference` OpenAI preset for three reasons: the session bearer is resolved fresh per
 call, the request carries a top-level `thread_id` so the backend can group logs and align cache
 keys, and the response carries an `openhuman.{billing,usage}` envelope with the charged USD that
 the generic parser drops. The model re-projects that envelope
-(`openhuman_backend_model_usage.rs`) so usage meters see real costs. When the bearer's `exp` has
+(`managed_usage.rs` in `openhuman-tinyhumans`) so usage meters see real costs. When the bearer's `exp` has
 already passed, or the backend rejects it, it publishes `DomainEvent::SessionExpired`.
 
 [`provider/openai_codex.rs`](./provider/openai_codex.rs) is related but is not a model. When ChatGPT/Codex OAuth tokens exist
@@ -200,7 +200,7 @@ picks the provider the same way a provider string does.
 | `failure_copy/` | `table.rs` maps a failure class to the wire `error_type`, source, retry verdict and user copy. `halt.rs` has loop-guard halt summaries. |
 | `provider/` | Model construction and provider policy. See [`provider/README.md`](provider/README.md). |
 | `provider/factory.rs`, [`provider/factory/`](./provider/factory/) | Provider-string grammar and model construction: `routing`, `tiers`, `primary_cloud`, `access_gates`, `credentials`, `managed_backend`, `local_runtime`, `cloud_slug`, `cloud_spec`, `subprocess_providers`, `discovery`, `chat_model`, `turn_model`. |
-| `provider/openhuman_backend_model*.rs` | Managed backend `ChatModel`, its call path and its usage/billing projection. |
+| `provider/openhuman_backend_model.rs` | Provider-neutral managed pieces kept in the core (`PROVIDER_LABEL`, `without_reasoning`). The managed `ChatModel`, catalog and embeddings live in `openhuman-tinyhumans` and register through `registry.rs`. |
 | `provider/openai_codex.rs` | Codex routing metadata for the `openai` slug when Codex OAuth is connected. |
 | [`provider/error_code.rs`](./provider/error_code.rs), [`provider/error_classify.rs`](./provider/error_classify.rs) | Managed `errorCode` extraction and Sentry ownership; OpenHuman policy over TinyInference's classifier. |
 | `provider/fallback_diagnostics.rs` | Explains background-role fallback when it hits a provider with no credentials. |
@@ -224,7 +224,7 @@ picks the provider the same way a provider string does.
 - `probe_inference_readiness` (`provider/factory/chat_model.rs`) checks that a role can actually
   run: it builds the model and, for the managed backend, makes one cheap completion.
 - `BYOK_INCOMPLETE_SENTINEL` (`provider/factory.rs`) marks a BYOK route with missing pieces.
-- `OpenHumanBackendModel` (`provider/openhuman_backend_model.rs`) is the managed backend model.
+- `OpenHumanBackendModel` (`openhuman-tinyhumans`, `src/inference/managed_model.rs`) is the managed backend model, registered through `registry.rs`.
 - `host_runtime::global` ([`host_runtime/core.rs`](./host_runtime/core.rs)) returns the `LocalAiService` singleton.
 - `agent_chat_for` and `agent_chat_reply_for` (`host_runtime/ops/agent_chat.rs`) run an agent turn
   natively. `INFERENCE_AGENT_CHAT` (`schemas.rs`) is the wire method name hosts reference.
@@ -270,7 +270,7 @@ Outside JSON-RPC, `http::router()` serves `/v1/chat/completions` and `/v1/models
 ## Events and persistence
 
 This domain publishes but does not subscribe; there is no `bus.rs`. `SessionExpired` comes from
-[`provider/ops/http_error/auth_failure.rs`](./provider/ops/http_error/auth_failure.rs) and `provider/openhuman_backend_model.rs`.
+[`provider/ops/http_error/auth_failure.rs`](./provider/ops/http_error/auth_failure.rs) and `provider/openhuman_backend_model.rs` (the managed model itself is in `openhuman-tinyhumans`).
 `ProviderApiKeyRejected` comes from `auth_failure.rs`, gated by `auth_error_registry`.
 
 There is no `store.rs`. Routing, provider and local settings persist through `config` (`config/ops/

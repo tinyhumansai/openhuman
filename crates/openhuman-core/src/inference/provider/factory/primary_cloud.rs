@@ -9,7 +9,7 @@ pub(super) fn resolve_primary_cloud_provider_string(config: &Config) -> String {
         .as_deref()
         .and_then(|id| config.cloud_providers.iter().find(|entry| entry.id == id));
 
-    if primary.is_some_and(is_openhuman_cloud_entry) {
+    if primary.is_some_and(|entry| is_openhuman_cloud_entry(config, entry)) {
         if let Some(legacy) = legacy_custom_inference_provider_string(config) {
             return legacy;
         }
@@ -86,7 +86,7 @@ pub(super) fn has_custom_inference_intent(config: &Config) -> bool {
         .as_deref()
         .map(str::trim)
         .filter(|url| !url.is_empty())
-        .is_some_and(|url| !looks_like_openhuman_backend(url))
+        .is_some_and(|url| !looks_like_openhuman_backend(config, url))
 }
 
 pub(super) fn legacy_custom_inference_provider_string(config: &Config) -> Option<String> {
@@ -96,7 +96,7 @@ pub(super) fn legacy_custom_inference_provider_string(config: &Config) -> Option
         .map(str::trim)
         .filter(|url| !url.is_empty())?;
 
-    if looks_like_openhuman_backend(inference_url) {
+    if looks_like_openhuman_backend(config, inference_url) {
         return None;
     }
 
@@ -105,7 +105,7 @@ pub(super) fn legacy_custom_inference_provider_string(config: &Config) -> Option
         .cloud_providers
         .iter()
         .find(|entry| {
-            !is_openhuman_cloud_entry(entry)
+            !is_openhuman_cloud_entry(config, entry)
                 && normalize_endpoint_for_compare(&entry.endpoint) == normalized_inference
         })
         .map(|entry| cloud_entry_provider_string(entry, config))
@@ -126,7 +126,7 @@ pub(super) fn legacy_inference_slug(config: &Config) -> Option<&str> {
         .map(str::trim)
         .filter(|url| !url.is_empty())?;
 
-    if looks_like_openhuman_backend(inference_url) {
+    if looks_like_openhuman_backend(config, inference_url) {
         return None;
     }
 
@@ -135,7 +135,7 @@ pub(super) fn legacy_inference_slug(config: &Config) -> Option<&str> {
         .cloud_providers
         .iter()
         .find(|entry| {
-            !is_openhuman_cloud_entry(entry)
+            !is_openhuman_cloud_entry(config, entry)
                 && normalize_endpoint_for_compare(&entry.endpoint) == normalized_inference
         })
         .map(|entry| entry.slug.as_str())
@@ -145,7 +145,7 @@ pub(super) fn cloud_entry_provider_string(
     entry: &crate::config::schema::cloud_providers::CloudProviderCreds,
     config: &Config,
 ) -> String {
-    if is_openhuman_cloud_entry(entry) {
+    if is_openhuman_cloud_entry(config, entry) {
         return PROVIDER_OPENHUMAN.to_string();
     }
 
@@ -167,26 +167,21 @@ pub(super) fn cloud_entry_provider_string(
 }
 
 pub(super) fn is_openhuman_cloud_entry(
+    config: &Config,
     entry: &crate::config::schema::cloud_providers::CloudProviderCreds,
 ) -> bool {
     entry.slug == PROVIDER_OPENHUMAN
         || matches!(entry.auth_style, AuthStyle::OpenhumanJwt)
-        || looks_like_openhuman_backend(&entry.endpoint)
+        || looks_like_openhuman_backend(config, &entry.endpoint)
 }
 
 pub(super) fn normalize_endpoint_for_compare(url: &str) -> String {
     url.trim().trim_end_matches('/').to_ascii_lowercase()
 }
 
-pub(super) fn looks_like_openhuman_backend(url: &str) -> bool {
-    let lower = url.trim().to_ascii_lowercase();
-    let without_scheme = lower.split("://").nth(1).unwrap_or(&lower);
-    let authority = without_scheme.split('/').next().unwrap_or("");
-    let host = authority.split('@').next_back().unwrap_or(authority);
-    let host_no_port = host.split(':').next().unwrap_or(host);
-    matches!(
-        host_no_port,
-        "api.openhuman.ai" | "api.tinyhumans.ai" | "staging-api.tinyhumans.ai" | "openhuman"
-    ) || host_no_port.ends_with(".openhuman.ai")
-        || host_no_port.ends_with(".tinyhumans.ai")
+/// Whether `url` names one of the managed hosts the installed host resolved
+/// onto the config (`resolved_endpoints.managed_hosts`). With no host
+/// registered nothing is managed, so every endpoint is a custom one.
+pub(super) fn looks_like_openhuman_backend(config: &Config, url: &str) -> bool {
+    config.resolved_endpoints.is_managed_host(url)
 }

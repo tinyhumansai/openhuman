@@ -112,9 +112,9 @@ lifecycle mutators ship off by default through the user tool filter.
 - The JSON-RPC server, `/health` route, and Socket.IO server the frontend
   connects to belong to `crates/openhuman-rpc`. `platform::socket` is the
   core's outbound client to the backend, not that server.
-- The backend URL and transport belong to the installed backend transport
-  (`crates/openhuman-tinyhumans`). `socket` asks for them; with no transport
-  installed it does not auto-connect.
+- The backend URL belongs to the host crate that registers the config enricher
+  (`crates/openhuman-tinyhumans`). `socket` reads `Config.resolved_endpoints`;
+  with none resolved it does not auto-connect.
 - The session credential belongs to the host's session owner. `socket` reads
   whatever token the core was given through `auth.set_credential`.
 - How the desktop shell supervises the core belongs to

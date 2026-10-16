@@ -270,9 +270,6 @@ impl RuntimeBuilder {
         if let Some(port) = self.listen_port {
             builder = builder.port(port);
         }
-        if let Some(transport) = self.backend_transport.take() {
-            builder = builder.backend_transport(transport);
-        }
         let runtime = builder.build().await.map_err(|error| {
             log::warn!("[embed][runtime] core build failed: {error:#}");
             RuntimeError::Build(error)

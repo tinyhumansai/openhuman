@@ -22,17 +22,19 @@ the `[memory]` config into either `Binding::On(BoundEngine)` or
 
 | Engine | Endpoint | Credential | Off when |
 | --- | --- | --- | --- |
-| `tinyhumans` | `[memory.engines.tinyhumans] endpoint`, else `backend::base_url` | the host's backend credential, resolved per request | signed out, or no backend transport installed |
+| `tinyhumans` | registered by `openhuman-tinyhumans` through `engine_registry` (`[memory.engines.tinyhumans] endpoint`, else its control-plane origin) | the host's backend credential, resolved per request | not registered, or signed out |
 | `cortexdb` | `[memory.engines.cortexdb] endpoint`, else CortexDB's managed API | the API key stored in the keyring as `memory-cortexdb` | no key stored |
 
 The core never keeps a TinyHumans credential of its own. The bearer is
 fetched from the host's credential seam (`resolve_backend_credential`) on
 every request, so a refreshed session takes effect at once and signing out
-turns memory off. The hosted engine does not go through the core's
-`BackendTransport`: [`engine.rs`](./engine.rs) hands TinyMemory's CortexDB client an
-`EngineSettings` with the endpoint, the attribution headers from
-`backend::attribution_headers` and an `EngineCredential::Dynamic(HostBearer)`,
-and TinyMemory's own HTTP client calls the backend's `/memory/*` routes. The
+turns memory off. The hosted engine lives in `openhuman-tinyhumans`
+(`memory/engine.rs`): it hands TinyMemory's CortexDB client an
+`EngineSettings` with the endpoint, the attribution headers and an
+`EngineCredential::Dynamic(HostBearer)` through the core's generic
+`engine::build_cached`, and TinyMemory's own HTTP client calls the backend's
+`/memory/*` routes. With nothing registered, `tinyhumans` answers off
+("no TinyHumans backend is available"). The
 `cortexdb` engine calls CortexDB directly with the stored key
 (`EngineCredential::Static`). Built engines are cached per config fingerprint (engine
 id, endpoint, credential identity, layout), so a config change, a sign-in or

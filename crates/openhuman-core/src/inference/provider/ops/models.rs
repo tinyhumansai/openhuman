@@ -22,7 +22,6 @@ use tinyinference_llm::providers::openai::codex::{
 
 mod catalog_listing;
 mod local_runtime;
-mod managed_provider;
 mod openrouter;
 use tinyinference_llm::catalog::{
     append_query_param, endpoint_hosts_models_listing, is_openrouter_provider,
@@ -37,10 +36,6 @@ pub use local_runtime::synthesize_local_runtime_entry;
 
 // Cross-submodule wiring: each submodule reaches these through `use super::*;`
 // (mirrors the pre-split `include!`-shared scope).
-use managed_provider::{
-    managed_401_means_signed_out, managed_session_attaches, synthesize_managed_entry,
-    url_is_credential_safe,
-};
 use openrouter::validate_openrouter_api_key;
 
 #[cfg(test)]

@@ -24,7 +24,7 @@ The host callbacks are narrow:
 | --- | --- |
 | Wallet accounts | Return stored public account addresses. |
 | Chain transport | Apply endpoint configuration and generic HTTP/RPC safety, then return the response. |
-| Backend transport | Make authenticated requests to the TinyHumans integration proxy. |
+| Wallet backend | Answer authenticated wallet-backend requests through the registered handler (`modules::wallet_backend`). |
 | Web3/native/x402 authorization | Apply OpenHuman's explicit user approval policy to the exact module-provided intent. |
 
 Secrets are decrypted from host custody only for a confidential call to the
@@ -41,8 +41,10 @@ response values, without deriving chains, rebuilding transactions, or signing
 on the host. Execution requires `confirmed: true`; the module validates quote
 ownership and gives the host the exact intent for approval at the signer seam.
 
-The backend deBridge proxy remains a generic authenticated host transport at
-`/agent-integrations/crypto/*`. Provider response parsing, chain-family
+The backend deBridge proxy is reached through the wallet-backend hook
+(`modules::wallet_backend`); `openhuman-tinyhumans` answers it over
+`/agent-integrations/crypto/*`, and a core with none registered answers
+`BACKEND_UNAVAILABLE:`. Provider response parsing, chain-family
 selection, quote construction, transaction encoding, and quote storage are
 module-owned. Provider-specific URLs and defaults stay in the module; the host
 passes only approved endpoint overrides through opaque endpoint references.

@@ -34,7 +34,7 @@ fn local_only_blocks_each_external_surface() {
         EgressDescriptor::composio("SLACK_SEND_MESSAGE"),
         EgressDescriptor::embedding("cloud", "text-embedding-3-small"),
         EgressDescriptor::network_fetch("api.example.com"),
-        EgressDescriptor::integration("/agent-integrations/parallel/research"),
+        EgressDescriptor::integration("/tools/research"),
     ];
     for desc in &surfaces {
         assert!(
@@ -77,80 +77,27 @@ fn local_only_allows_local_runtime() {
 #[test]
 fn local_only_allows_control_plane_integration() {
     // LocalOnly + an exempt control-plane integration path → allowed.
-    let pricing = EgressDescriptor::integration("/agent-integrations/pricing");
+    let pricing = EgressDescriptor::integration("/pricing").with_control_plane(true);
     assert!(!local_only_blocks(PrivacyMode::LocalOnly, &pricing));
 }
 
 #[test]
 fn local_only_blocks_user_data_integration() {
     // LocalOnly + a user-data integration path → blocked.
-    let execute = EgressDescriptor::integration("/agent-integrations/composio/execute");
+    let execute = EgressDescriptor::integration("/tools/execute");
     assert!(local_only_blocks(PrivacyMode::LocalOnly, &execute));
 }
 
-// ── Pure decision: is_control_plane boundary ──────────────────────────────
+// ── Pure decision: is_control_plane honours the builder's classification ──
 
 #[test]
-fn control_plane_exempts_non_tool_namespace() {
-    // A control-plane call re-homed onto an integration descriptor (defensive
-    // path (1)): anything not under /agent-integrations/ is exempt.
-    for path in [
-        "/teams/me/usage",
-        "/payments/stripe/currentPlan",
-        "/auth/refresh",
-    ] {
-        assert!(
-            is_control_plane(&EgressDescriptor::integration(path)),
-            "{path} must be treated as control-plane"
-        );
-    }
-}
-
-#[test]
-fn control_plane_exempts_composio_management_and_pricing() {
-    // Connection-management / catalog / OAuth / pricing carry no user content —
-    // the read-only allow-list the Connections UI needs under LocalOnly.
-    for path in [
-        "/agent-integrations/pricing",
-        "/agent-integrations/composio/connections",
-        // Per-connection delete rides the same `connections` head → exempt.
-        "/agent-integrations/composio/connections/conn_123",
-        "/agent-integrations/composio/authorize",
-        "/agent-integrations/composio/tools",
-        "/agent-integrations/composio/toolkits",
-    ] {
-        assert!(
-            is_control_plane(&EgressDescriptor::integration(path)),
-            "{path} must be exempt (control-plane)"
-        );
-    }
-}
-
-#[test]
-fn control_plane_does_not_exempt_user_data_paths() {
-    // composio/execute ships tool arguments; composio/triggers[/available]
-    // POST user-supplied slug/connectionId/triggerConfig (user-data writes);
-    // github/repos reveals user-adjacent data; the non-composio tool namespaces
-    // ship queries / content — none are exempt (fail-closed).
-    for path in [
-        "/agent-integrations/composio/execute",
-        // Trigger writes: create_trigger / enable_trigger POST here. The
-        // descriptor carries no HTTP method, so the same-path reads block too.
-        "/agent-integrations/composio/triggers",
-        "/agent-integrations/composio/triggers/available",
-        "/agent-integrations/composio/github/repos",
-        // An unknown composio sub-route defaults to blocked (fail-closed).
-        "/agent-integrations/composio/some-future-write",
-        "/agent-integrations/parallel/research",
-        "/agent-integrations/tinyfish/fetch",
-        "/agent-integrations/file-storage/files",
-        "/agent-integrations/google-places/search",
-    ] {
-        assert!(
-            !is_control_plane(&EgressDescriptor::integration(path)),
-            "{path} must NOT be exempt (ships user data)"
-        );
-    }
+fn control_plane_honours_the_flag_and_defaults_to_blocked() {
+    // The core knows no host's routes: an unclassified integration descriptor
+    // is treated as shipping user data (fail-closed), and only the one the
+    // builder marked as control-plane is exempt.
+    let unclassified = EgressDescriptor::integration("/teams/me/usage");
+    assert!(!is_control_plane(&unclassified));
+    assert!(is_control_plane(&unclassified.with_control_plane(true)));
 }
 
 #[test]
@@ -183,10 +130,8 @@ fn enforce_egress_blocks_under_local_only_and_allows_otherwise() {
             "names the service: {msg}"
         );
         // A control-plane integration round-trip still flows.
-        enforce_egress(&EgressDescriptor::integration(
-            "/agent-integrations/composio/connections",
-        ))
-        .expect("control-plane must be allowed under LocalOnly");
+        enforce_egress(&EgressDescriptor::integration("/connections").with_control_plane(true))
+            .expect("control-plane must be allowed under LocalOnly");
     }
 
     // Standard mode permits the same user-data transfer.

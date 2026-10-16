@@ -9,10 +9,9 @@ use tinyinference_llm::model::discover::DiscoveryRequest;
 /// The discovery request for `provider` (a role's resolved provider string)
 /// serving `model`, or `None` when the route has no listing to ask:
 ///
-/// - `openhuman` / an `OpenhumanJwt` entry: the managed backend's catalog
-///   listing (`/openai/v1/models?catalog=openrouter`), keyed by the managed
-///   inference base so overflow corrections from the managed chat model land
-///   on the same entry.
+/// - `openhuman` / an `OpenhumanJwt` entry: the registered managed catalog's
+///   limits request, keyed by the managed inference base so overflow
+///   corrections from the managed chat model land on the same entry.
 /// - `<slug>:<model>`: the cloud entry's OpenAI-compatible `{endpoint}/models`
 ///   with its stored key (Bearer, or `x-api-key` for Anthropic).
 /// - Local runtimes, subprocess providers, ChatGPT-OAuth (Codex) routing and
@@ -83,55 +82,18 @@ pub(crate) fn model_limits_request(
     })
 }
 
-/// The managed backend's catalogue listing, authenticated with the backend
-/// credential when the URL is safe to carry it.
+/// The managed backend's catalogue listing request, from the registered
+/// catalog's limits function (`inference::registry`). With none registered the
+/// managed route has no listing to ask.
 fn managed_limits_request(model: &str, config: &Config) -> Option<DiscoveryRequest> {
-    use crate::inference::provider::openhuman_backend_model::{
-        is_managed_endpoint_for_api_key, is_safe_endpoint_for_managed_bearer,
-    };
-    use crate::security::credentials::session_support::{
-        resolve_backend_credential, BackendCredential,
-    };
-
-    let model = model.trim();
-    if model.is_empty() {
+    let Some(limits) =
+        crate::inference::registry::catalog(PROVIDER_OPENHUMAN).and_then(|entry| entry.limits)
+    else {
+        log::debug!("[model_limits] no managed catalog registered");
         return None;
-    }
-    let inference_base = crate::backend::inference_base_url(&config.api_url).ok()?;
-    let endpoint = format!("{}/openai/v1", inference_base.trim_end_matches('/'));
-    let api_base = crate::backend::base_url(&config.api_url).ok()?;
-    let listing_url = tinyinference_llm::catalog::append_query_param(
-        &crate::util::url::join_url(&api_base, "/openai/v1/models"),
-        "catalog",
-        "openrouter",
-    );
-    let mut request = DiscoveryRequest::new(endpoint, model)
-        .with_listing_url(listing_url.clone())
-        .with_single_model_probe(false);
-    match resolve_backend_credential(config) {
-        Ok(BackendCredential::ApiKey(key)) if is_managed_endpoint_for_api_key(&listing_url) => {
-            request = request.with_header("Authorization", format!("Bearer {key}"));
-        }
-        Ok(BackendCredential::Session(token))
-            if is_safe_endpoint_for_managed_bearer(&listing_url) =>
-        {
-            request = request.with_header("Authorization", format!("Bearer {token}"));
-        }
-        Ok(_) => {
-            log::warn!(
-                "[model_limits] refusing to send the backend credential to an unsafe listing url"
-            );
-        }
-        Err(_) => {
-            log::debug!("[model_limits] no backend credential; managed listing probed anonymously");
-        }
-    }
-    for (name, value) in crate::backend::attribution_headers().iter() {
-        if let Ok(value) = value.to_str() {
-            request = request.with_header(name.as_str(), value);
-        }
-    }
-    Some(request)
+    };
+    log::debug!("[model_limits] managed limits served by a registered catalog");
+    limits(model, config)
 }
 
 #[cfg(test)]

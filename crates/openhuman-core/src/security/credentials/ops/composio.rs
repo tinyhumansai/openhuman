@@ -11,7 +11,7 @@ use crate::security::credentials::{AuthService, DEFAULT_AUTH_PROFILE_NAME};
 ///
 /// Parallel to [`crate::security::credentials::APP_SESSION_PROVIDER`] but
 /// completely independent — the app-session JWT authenticates the user
-/// against `api.tinyhumans.ai`, while this slot authenticates the user
+/// against the managed backend, while this slot authenticates the user
 /// against `backend.composio.dev`. Stored via the same
 /// [`super::super::profiles::AuthProfilesStore`] backend (encrypted on disk
 /// when `secrets.encrypt = true`).

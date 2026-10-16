@@ -338,6 +338,7 @@ fn agent_tools_are_all_removed_when_composio_is_disabled_even_if_signed_in() {
 
 #[test]
 fn agent_tools_register_when_backend_signed_in() {
+    crate::integrations::composio::test_backend_route::register();
     let tmp = tempfile::tempdir().unwrap();
     let mut config = crate::config::Config::default();
     config.config_path = tmp.path().join("config.toml");

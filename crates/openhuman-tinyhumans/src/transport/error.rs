@@ -3,7 +3,7 @@
 //! the integrations client see exactly the shapes they saw when they called
 //! the SDK directly.
 
-use openhuman_embed::BackendTransportError;
+use super::port::BackendTransportError;
 use reqwest::Method;
 use tinyhumans_sdk::Error as SdkError;
 

@@ -9,6 +9,7 @@
 
 pub mod app_env;
 pub mod daemon;
+pub mod enrichers;
 pub mod migrations;
 pub mod ops;
 pub mod schema;
@@ -19,6 +20,9 @@ pub mod workspace_handle;
 
 #[allow(unused_imports)]
 pub use daemon::DaemonConfig;
+pub use enrichers::{
+    register_enricher, register_enricher_in, run_enrichers, unregister_enricher, ConfigEnricher,
+};
 
 /// RPC operations for configuration.
 pub use ops as rpc;

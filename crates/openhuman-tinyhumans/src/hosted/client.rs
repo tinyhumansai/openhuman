@@ -30,9 +30,7 @@
 //! phrases, budget exhaustion) keep matching them.
 
 use crate::backend::url::effective_backend_api_url;
-use openhuman_embed::__host::backend::transport::{
-    resolve_backend_transport, BackendTransport, BackendTransportError, TransportProfile,
-};
+use crate::transport::{BackendTransport, TransportProfile};
 use openhuman_embed::__host::config::Config;
 use openhuman_embed::__host::core::observability::{
     contains_transient_transport_phrase, is_transient_http_status_code, API_KEY_REJECTED_PREFIX,
@@ -42,7 +40,6 @@ use openhuman_embed::__host::security::credentials::session_support::{
     resolve_backend_credential, BackendCredential,
 };
 use serde_json::Value;
-use std::sync::Arc;
 use tinyhumans_sdk::{Error as SdkError, TinyHumansClient};
 
 const LOG_PREFIX: &str = "[hosted][client]";
@@ -70,7 +67,7 @@ impl HostedClient {
         let credential = resolve_backend_credential(config).inspect_err(|err| {
             log::debug!("{LOG_PREFIX} no usable backend credential; skipping request: {err}");
         })?;
-        require_transport(resolve_backend_transport())?;
+        require_transport()?;
         let base_url = backend_origin(&effective_backend_api_url(&config.api_url))?;
         Ok(Self::with_credential(&base_url, credential))
     }
@@ -121,14 +118,14 @@ impl HostedClient {
     }
 }
 
-/// Reject hosted calls when the runtime has no backend transport.
-fn require_transport(
-    result: Result<Arc<dyn BackendTransport>, BackendTransportError>,
-) -> Result<(), String> {
-    result.map(|_| ()).map_err(|_| {
-        log::debug!("{LOG_PREFIX} no backend transport installed; skipping request");
-        format!("{BACKEND_UNAVAILABLE_PREFIX} no backend transport installed")
-    })
+/// Reject hosted calls when this crate's transport cannot be built.
+fn require_transport() -> Result<(), String> {
+    crate::client::shared_transport()
+        .map(|_| ())
+        .map_err(|err| {
+            log::debug!("{LOG_PREFIX} backend transport unavailable; skipping request: {err:#}");
+            format!("{BACKEND_UNAVAILABLE_PREFIX} no backend transport installed")
+        })
 }
 
 /// The backend origin with any path, query and fragment stripped — the same
@@ -146,11 +143,11 @@ fn backend_origin(api_url: &str) -> Result<String, String> {
     Ok(url.as_str().trim_end_matches('/').to_string())
 }
 
-/// The `reqwest::Client` hosted calls ride: the active backend transport's
-/// (TLS backend, timeouts and attribution headers the core specifies), or a
-/// freshly built one with the same settings when none resolves.
+/// The `reqwest::Client` hosted calls ride: the shared transport's (TLS
+/// backend, timeouts and attribution headers), or a freshly built one with
+/// the same settings when it cannot be built.
 fn http_client() -> reqwest::Client {
-    if let Ok(transport) = resolve_backend_transport() {
+    if let Ok(transport) = crate::client::shared_transport() {
         return transport.http_client(TransportProfile::Api);
     }
     crate::backend::headers::build_backend_client(TransportProfile::Api).unwrap_or_else(|err| {

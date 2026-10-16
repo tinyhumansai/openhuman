@@ -20,6 +20,7 @@ static BOOT: Once = Once::new();
 /// Install the SDK-backed backend transport once per test process.
 pub fn boot() {
     BOOT.call_once(|| {
+        openhuman_tinyhumans::register_hooks();
         openhuman_tinyhumans::install(openhuman_tinyhumans::InstallOptions::default())
             .expect("install the TinyHumans backend transport for tests");
     });

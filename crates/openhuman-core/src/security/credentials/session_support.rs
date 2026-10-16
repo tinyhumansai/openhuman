@@ -277,8 +277,10 @@ fn check_session_backend(config: &Config, profile: Option<&AuthProfile>) -> Resu
     let Some(issuing) = profile.metadata.get(SESSION_ISSUING_BACKEND_META) else {
         return Ok(());
     };
-    let matches = crate::backend::base_url(&config.api_url)
-        .ok()
+    let matches = config
+        .resolved_endpoints
+        .control_plane_url
+        .clone()
         .and_then(|base| normalize_session_backend(&base).ok())
         .zip(normalize_session_backend(issuing).ok())
         .is_some_and(|(current, issuing)| current == issuing);
@@ -310,7 +312,7 @@ fn session_expires_at_from_profile(
 /// Liveness verdict for the stored app-session token. Pure + `now`-injected so
 /// the expiry decision is unit-testable without a credential store.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum SessionTokenCheck {
+pub enum SessionTokenCheck {
     /// No token stored (signed out / never authed).
     Absent,
     /// Token present but its recorded `exp` is in the past (− skew).
@@ -319,7 +321,7 @@ pub(crate) enum SessionTokenCheck {
     Live(String),
 }
 
-pub(crate) fn classify_session_token(
+pub fn classify_session_token(
     profile: Option<&AuthProfile>,
     now: chrono::DateTime<chrono::Utc>,
 ) -> SessionTokenCheck {
@@ -344,7 +346,7 @@ pub(crate) fn classify_session_token(
 ///   **once** (so the credentials subscriber clears state and the UI re-auths,
 ///   exactly as on a real network 401) and returns the `SESSION_EXPIRED`
 ///   sentinel. The doomed 401 is never sent — this is the #3297 RCA that stops
-///   the TAURI-RUST-8WY (`/teams/me/usage`) / 8WZ (`/payments/stripe/currentPlan`)
+///   the TAURI-RUST-8WY (team usage) / 8WZ (current plan)
 ///   flood at its source instead of demoting it after the fact.
 /// - token with no recorded expiry (local offline session / `exp`-less JWT) →
 ///   presence-only check; the `flatten_authed_error` 401 net still covers a
@@ -464,8 +466,8 @@ pub fn resolve_backend_credential(config: &Config) -> Result<BackendCredential, 
 /// Resolve a credential for a direct call to the configured backend.
 /// A missing transport or unusable credential is an expected offline state.
 pub fn direct_backend_credential(config: &Config, op: &str) -> Option<BackendCredential> {
-    if !crate::backend::transport::is_installed() {
-        log::debug!("[backend-direct] {op} skipped: no backend transport installed");
+    if config.resolved_endpoints.control_plane_url.is_none() {
+        log::debug!("[backend-direct] {op} skipped: no control plane resolved");
         return None;
     }
     match resolve_backend_credential(config) {

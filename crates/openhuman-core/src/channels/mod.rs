@@ -15,6 +15,8 @@ pub use tinychannels_bus::{Channel, ChannelSendExt, SendMessage};
 #[cfg(feature = "channels")]
 pub mod bus;
 #[cfg(feature = "channels")]
+pub mod callback_slot;
+#[cfg(feature = "channels")]
 mod commands;
 #[cfg(feature = "channels")]
 pub(crate) use commands::{configured_providers, has_listener_configuration};

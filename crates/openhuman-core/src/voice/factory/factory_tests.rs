@@ -1,8 +1,7 @@
 //! Unit tests for the voice factory.
 
 use super::entry::{
-    create_stt_provider, create_tts_provider, default_stt_provider, default_tts_provider,
-    resolve_tts_voice, DEFAULT_PIPER_VOICE,
+    create_stt_provider, create_tts_provider, resolve_tts_voice, DEFAULT_PIPER_VOICE,
 };
 use super::helpers::{effective_stt_provider, effective_tts_provider, split_slug_model};
 use crate::config::schema::voice_providers::VoiceCapability;
@@ -12,18 +11,6 @@ use tinyinference_voice::external_stt::SttApiStyle;
 
 fn cfg() -> Config {
     Config::default()
-}
-
-#[test]
-fn stt_factory_cloud_branch() {
-    let p = create_stt_provider("cloud", "ignored", &cfg()).unwrap();
-    assert_eq!(p.name(), "cloud");
-}
-
-#[test]
-fn stt_factory_backend_alias() {
-    let p = create_stt_provider("backend", "ignored", &cfg()).unwrap();
-    assert_eq!(p.name(), "cloud");
 }
 
 /// The bundled whisper.cpp engine is gone, so `"whisper"` is no longer a
@@ -42,12 +29,6 @@ fn stt_factory_removed_local_engine_errors_rather_than_falling_back() {
             "should fall through to the slug lookup: {err}"
         );
     }
-}
-
-#[test]
-fn stt_factory_openhuman_sentinel() {
-    let p = create_stt_provider("openhuman", "ignored", &cfg()).unwrap();
-    assert_eq!(p.name(), "cloud");
 }
 
 #[test]
@@ -119,12 +100,6 @@ fn stt_factory_empty_string_errors() {
         .err()
         .expect("empty provider must error");
     assert!(err.to_string().contains("no voice provider"));
-}
-
-#[test]
-fn tts_factory_cloud_branch() {
-    let p = create_tts_provider("cloud", "Rachel", &cfg()).unwrap();
-    assert_eq!(p.name(), "cloud");
 }
 
 #[test]
@@ -252,28 +227,6 @@ fn tts_factory_slug_empty_voice_uses_registry_default() {
 }
 
 #[test]
-fn tts_factory_cloud_empty_voice_carries_no_voice() {
-    // The #5355 regression, asserted end-to-end through the boxed provider:
-    // nothing but `None` may reach `CloudTtsProvider`, or `synthesize_reply`
-    // puts a Piper id in `voice_id` and the backend answers 400.
-    for provider in ["cloud", "openhuman"] {
-        let p = create_tts_provider(provider, "", &cfg()).unwrap();
-        assert_eq!(p.name(), "cloud");
-        assert_eq!(
-            p.configured_voice(),
-            None,
-            "{provider} must carry no voice so the backend default applies"
-        );
-    }
-}
-
-#[test]
-fn tts_factory_cloud_preserves_explicit_voice() {
-    let p = create_tts_provider("cloud", "JBFqnCBsd6RMkjVDRZzb", &cfg()).unwrap();
-    assert_eq!(p.configured_voice(), Some("JBFqnCBsd6RMkjVDRZzb"));
-}
-
-#[test]
 fn tts_factory_piper_empty_voice_carries_bundled_voice() {
     // The other half of the guarantee: Piper — and only Piper — still gets the
     // bundled voice id when the caller supplies none.
@@ -297,12 +250,6 @@ fn tts_factory_slug_colon_voice_reaches_provider() {
         });
     let p = create_tts_provider("openai:shimmer", "", &config).unwrap();
     assert_eq!(p.configured_voice(), Some("shimmer"));
-}
-
-#[test]
-fn tts_factory_openhuman_sentinel() {
-    let p = create_tts_provider("openhuman", "alloy", &cfg()).unwrap();
-    assert_eq!(p.name(), "cloud");
 }
 
 #[test]
@@ -349,12 +296,6 @@ fn tts_factory_stt_only_provider_rejects() {
         .err()
         .expect("STT-only provider must reject TTS");
     assert!(err.to_string().contains("does not support TTS"));
-}
-
-#[test]
-fn default_providers_return_cloud() {
-    assert_eq!(default_stt_provider().name(), "cloud");
-    assert_eq!(default_tts_provider().name(), "cloud");
 }
 
 // ── slug:model parsing ──────────────────────────────────────────────
@@ -457,4 +398,26 @@ fn effective_tts_falls_back_to_legacy() {
 fn effective_tts_defaults_to_cloud() {
     let config = cfg();
     assert_eq!(effective_tts_provider(&config), "cloud");
+}
+
+/// With no hosted speech provider registered, the default routing strings are
+/// an expected "unavailable" state (filtered from Sentry), not a bad slug.
+#[test]
+fn default_speech_slugs_without_a_registered_provider_are_backend_unavailable() {
+    use crate::core::observability::is_backend_unavailable_message;
+    for slug in ["cloud", "openhuman", "backend"] {
+        let stt = create_stt_provider(slug, "", &cfg())
+            .err()
+            .unwrap_or_else(|| panic!("`{slug}` has no provider registered"));
+        assert!(is_backend_unavailable_message(&stt.to_string()), "{stt}");
+    }
+    for slug in ["cloud", "openhuman"] {
+        let tts = create_tts_provider(slug, "", &cfg())
+            .err()
+            .unwrap_or_else(|| panic!("`{slug}` has no provider registered"));
+        assert!(is_backend_unavailable_message(&tts.to_string()), "{tts}");
+    }
+    // A genuinely unknown slug keeps the misconfiguration wording.
+    let unknown = create_stt_provider("nonesuch", "", &cfg()).err().unwrap();
+    assert!(!is_backend_unavailable_message(&unknown.to_string()));
 }

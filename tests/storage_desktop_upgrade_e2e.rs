@@ -430,7 +430,11 @@ async fn a_desktop_upgrade_is_lossless_and_leaves_the_legacy_files_untouched(cas
     // TinyAgents' run ledger imports `sessions.db` (and appends to it) with
     // checked batches, which a driver without `ValidatedBatch` refuses.
     let local = case.backend().for_scope(&Scope::local()).unwrap();
-    if !local.documents().capabilities().contains(Capability::ValidatedBatch) {
+    if !local
+        .documents()
+        .capabilities()
+        .contains(Capability::ValidatedBatch)
+    {
         // Written to the stderr handle, not with `eprintln!`, which the test
         // harness captures for a passing test: the skip must show in the log.
         use std::io::Write;

@@ -117,6 +117,16 @@ pub struct EgressDescriptor {
     /// `"credential"`). Empty until the S5 detector populates it.
     #[serde(default)]
     pub risk_categories: Vec<String>,
+
+    /// Whether this is a control-plane round-trip (session / auth / team /
+    /// billing, or connection-management and catalog reads) that carries no
+    /// user content and so stays permitted under `LocalOnly`. Only meaningful
+    /// for [`EgressReason::Integration`] descriptors. The party that knows its
+    /// own routes classifies and sets it ([`EgressDescriptor::with_control_plane`]);
+    /// it defaults to `false`, so an unclassified integration transfer is
+    /// treated as shipping user data (fail-closed).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub control_plane: bool,
 }
 
 impl EgressDescriptor {
@@ -137,6 +147,7 @@ impl EgressDescriptor {
             data_kinds,
             risk_level: IdentificationRisk::Unknown,
             risk_categories: Vec::new(),
+            control_plane: false,
         }
     }
 
@@ -168,8 +179,10 @@ impl EgressDescriptor {
         )
     }
 
-    /// OpenHuman managed-backend / integrations round-trip (always external —
-    /// the backend is off-device). `service` is the request path.
+    /// Managed-backend / integrations round-trip (always external — the
+    /// backend is off-device). `service` is the request path. Unclassified: use
+    /// [`with_control_plane`](Self::with_control_plane) to exempt a
+    /// control-plane route.
     pub fn integration(service: impl Into<String>) -> Self {
         Self::new(
             "openhuman_backend",
@@ -211,6 +224,13 @@ impl EgressDescriptor {
         if !self.data_kinds.contains(&kind) {
             self.data_kinds.push(kind);
         }
+        self
+    }
+
+    /// Mark an integration transfer as a control-plane round-trip (or not). The
+    /// caller that owns the route decides; the core only honours the flag.
+    pub fn with_control_plane(mut self, control_plane: bool) -> Self {
+        self.control_plane = control_plane;
         self
     }
 

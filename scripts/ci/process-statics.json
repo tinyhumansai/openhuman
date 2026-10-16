@@ -40,6 +40,16 @@
     "verification": "tinymemes/service_tests.rs: foreground_remixes_share_a_lock_per_workspace_and_never_across_workspaces"
   },
   {
+    "file": "crates/openhuman-core/src/modules/wallet_backend.rs",
+    "scope": "",
+    "name": "HANDLERS",
+    "type": "HookSlot<WalletBackendHandler>",
+    "count": 1,
+    "category": "A",
+    "reason": "Host wiring: an id-keyed table of handlers the embedding host registers at startup (core::slots::HookSlot). It holds code, never tenant data; a per-context override table lives on the CoreContext, not here.",
+    "verification": "modules/wallet_backend_tests.rs: a_registered_handler_answers_the_call"
+  },
+  {
     "file": "crates/openhuman-core/src/modules/runtime.rs",
     "scope": "",
     "name": "RUNTIME",
@@ -128,6 +138,146 @@
     "category": "A",
     "reason": "The process's registry of weak handles to the rebindable session-store providers a host installed, so a workspace switch (storage::rebind) can point each at the new backend. It holds no records and no tenant state, only Weak references; the stores' data lives in the storage backend. A test builds its own StoreRegistry, so rebinding one never moves another's stores.",
     "verification": "agent/session_store/rebound_tests.rs: a_registry_rebind_leaves_other_registries_alone"
+  },
+  {
+    "file": "crates/openhuman-core/src/agent/artifacts/publisher_slot.rs",
+    "scope": "",
+    "name": "PUBLISHERS",
+    "type": "HookSlot<ArtifactPublisherFactory>",
+    "count": 1,
+    "category": "A",
+    "reason": "Host wiring: an id-keyed table of factories the embedding host registers at startup (core::slots::HookSlot). It holds code, never tenant data; a per-context override table lives on the CoreContext, not here.",
+    "verification": "agent/artifacts/publisher_slot_tests.rs: the_first_factory_that_answers_serves_sharing"
+  },
+  {
+    "file": "crates/openhuman-core/src/channels/callback_slot.rs",
+    "scope": "",
+    "name": "CALLBACKS",
+    "type": "HookSlot<ChannelCallback>",
+    "count": 1,
+    "category": "A",
+    "reason": "Host wiring: an id-keyed table of factories the embedding host registers at startup (core::slots::HookSlot). It holds code, never tenant data; a per-context override table lives on the CoreContext, not here.",
+    "verification": "channels/callback_slot_tests.rs: the_first_registered_callback_serves_requests"
+  },
+  {
+    "file": "crates/openhuman-core/src/config/enrichers.rs",
+    "scope": "",
+    "name": "ENRICHERS",
+    "type": "HookSlot<ConfigEnricher>",
+    "count": 1,
+    "category": "A",
+    "reason": "Host wiring: an id-keyed table of factories the embedding host registers at startup (core::slots::HookSlot). It holds code, never tenant data; a per-context override table lives on the CoreContext, not here.",
+    "verification": "config/enrichers_tests.rs: enrichers_run_in_registration_order"
+  },
+  {
+    "file": "crates/openhuman-core/src/inference/registry.rs",
+    "scope": "",
+    "name": "CHAT_MODELS",
+    "type": "HookSlot<ChatModelEntry>",
+    "count": 1,
+    "category": "A",
+    "reason": "Host wiring: an id-keyed table of factories the embedding host registers at startup (core::slots::HookSlot). It holds code, never tenant data; a per-context override table lives on the CoreContext, not here.",
+    "verification": "inference/registry_tests.rs: a_registered_chat_model_serves_the_managed_provider_for_a_thread"
+  },
+  {
+    "file": "crates/openhuman-core/src/inference/registry.rs",
+    "scope": "",
+    "name": "EMBEDDINGS",
+    "type": "HookSlot<EmbeddingFactory>",
+    "count": 1,
+    "category": "A",
+    "reason": "Host wiring: an id-keyed table of factories the embedding host registers at startup (core::slots::HookSlot). It holds code, never tenant data; a per-context override table lives on the CoreContext, not here.",
+    "verification": "inference/registry_tests.rs: a_registered_embedding_factory_builds_the_managed_embedding_model"
+  },
+  {
+    "file": "crates/openhuman-core/src/inference/registry.rs",
+    "scope": "",
+    "name": "CATALOGS",
+    "type": "HookSlot<CatalogEntry>",
+    "count": 1,
+    "category": "A",
+    "reason": "Host wiring: an id-keyed table of factories the embedding host registers at startup (core::slots::HookSlot). It holds code, never tenant data; a per-context override table lives on the CoreContext, not here.",
+    "verification": "inference/registry_tests.rs: a_registered_catalog_answers_the_model_listing_for_its_provider"
+  },
+  {
+    "file": "crates/openhuman-core/src/integrations/composio/client/factory.rs",
+    "scope": "",
+    "name": "ROUTE_BUILDERS",
+    "type": "HookSlot<ComposioRouteBuilder>",
+    "count": 1,
+    "category": "A",
+    "reason": "Host wiring: an id-keyed table of factories the embedding host registers at startup (core::slots::HookSlot). It holds code, never tenant data; a per-context override table lives on the CoreContext, not here.",
+    "verification": "integrations/composio/client/factory_tests.rs: a_registered_route_builder_resolves_the_backend_mode"
+  },
+  {
+    "file": "crates/openhuman-core/src/modules/connectors.rs",
+    "scope": "",
+    "name": "MODULE_PROXY_TARGETS",
+    "type": "HookSlot<ProxyTargetResolver>",
+    "count": 1,
+    "category": "A",
+    "reason": "Host wiring: an id-keyed table of handlers the embedding host registers at startup (core::slots::HookSlot). It holds code, never tenant data; a per-context override table lives on the CoreContext, not here.",
+    "verification": "modules/connectors_tests.rs: the_backend_route_is_unavailable_without_a_registered_target"
+  },
+  {
+    "file": "crates/openhuman-core/src/memory/engine_registry.rs",
+    "scope": "",
+    "name": "ENGINES",
+    "type": "HookSlot<EngineEntry>",
+    "count": 1,
+    "category": "A",
+    "reason": "Host wiring: an id-keyed table of factories the embedding host registers at startup (core::slots::HookSlot). It holds code, never tenant data; a per-context override table lives on the CoreContext, not here.",
+    "verification": "memory/engine_registry_tests.rs: the_layout_root_reaches_the_registered_builder"
+  },
+  {
+    "file": "crates/openhuman-core/src/tools/sources.rs",
+    "scope": "",
+    "name": "TOOL_SOURCES",
+    "type": "HookSlot<ToolSourceEntry>",
+    "count": 1,
+    "category": "A",
+    "reason": "Host wiring: an id-keyed table of factories the embedding host registers at startup (core::slots::HookSlot). It holds code, never tenant data; a per-context override table lives on the CoreContext, not here.",
+    "verification": "tools/sources_tests.rs: registered_sources_append_in_registration_order_after_built_ins"
+  },
+  {
+    "file": "crates/openhuman-core/src/voice/factory/registry.rs",
+    "scope": "",
+    "name": "STT_PROVIDERS",
+    "type": "HookSlot<SttProviderFactory>",
+    "count": 1,
+    "category": "A",
+    "reason": "Host wiring: an id-keyed table of factories the embedding host registers at startup (core::slots::HookSlot). It holds code, never tenant data; a per-context override table lives on the CoreContext, not here.",
+    "verification": "voice/factory/registry_tests.rs: a_registered_stt_slug_is_built_with_the_effective_model"
+  },
+  {
+    "file": "crates/openhuman-core/src/voice/factory/registry.rs",
+    "scope": "",
+    "name": "TTS_PROVIDERS",
+    "type": "HookSlot<TtsProviderFactory>",
+    "count": 1,
+    "category": "A",
+    "reason": "Host wiring: an id-keyed table of factories the embedding host registers at startup (core::slots::HookSlot). It holds code, never tenant data; a per-context override table lives on the CoreContext, not here.",
+    "verification": "voice/factory/registry_tests.rs: a_registered_tts_provider_gets_the_resolved_voice_and_returns_reply_speech"
+  },
+  {
+    "file": "crates/openhuman-core/src/voice/live/registry.rs",
+    "scope": "",
+    "name": "LIVE_PROVIDERS",
+    "type": "HookSlot<LiveProviderEntry>",
+    "count": 1,
+    "category": "A",
+    "reason": "Host wiring: an id-keyed table of factories the embedding host registers at startup (core::slots::HookSlot). It holds code, never tenant data; a per-context override table lives on the CoreContext, not here.",
+    "verification": "voice/live/registry_tests.rs: a_registered_provider_is_listed_after_the_built_in_ones"
+  },
+  {
+    "file": "crates/openhuman-core/src/core/slots.rs",
+    "scope": "",
+    "name": "TEST_GLOBALS",
+    "type": "std::cell::RefCell<HashMap<&'static str,Box<dyn Any>>>",
+    "count": 1,
+    "category": "A",
+    "reason": "cfg(test) only: replaces a slot's process table with a per-thread one so a test's fake registration cannot reach a test on another thread. Not compiled into any shipped build.",
+    "verification": "core/slots_tests.rs: entries_keep_registration_order_and_re_registering_keeps_position"
   },
   {
     "file": "crates/openhuman-core/src/threads/artifact_rows.rs",

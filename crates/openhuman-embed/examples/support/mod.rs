@@ -219,75 +219,46 @@ pub async fn eventually<T>(what: &str, mut check: impl FnMut() -> Option<T>) -> 
     panic!("timed out waiting for {what}");
 }
 
-/// A backend transport that sends managed inference to `base_url` (a mock)
-/// and answers every control-plane call as "no backend". For suites that run
-/// turns through the core's managed-inference path, such as SaaS profiles,
-/// whose configs name no inference endpoint of their own.
-pub struct PointedTransport {
-    base_url: String,
-    client: reqwest::Client,
-}
+/// Registers a managed chat-model provider that sends inference to `base_url`
+/// (a mock). For suites that run turns through the core's managed-inference
+/// path, such as SaaS profiles, whose configs name no inference endpoint of
+/// their own. The core carries no hosted provider, so the suite supplies one
+/// through the generic chat-model registry.
+pub struct PointedInference;
 
-impl PointedTransport {
+impl PointedInference {
     pub fn install(base_url: &str) {
-        openhuman_embed::install_backend_transport(std::sync::Arc::new(Self {
-            base_url: base_url.trim_end_matches('/').to_string(),
-            client: reqwest::Client::new(),
-        }));
-    }
-}
+        use openhuman_embed::__host::inference_registry::{
+            register_chat_model, ChatModelEntry, ChatModelRequest, PROVIDER_OPENHUMAN,
+        };
+        use tinyinference_llm::providers::openai::OpenAiModel;
 
-#[async_trait::async_trait]
-impl openhuman_embed::BackendTransport for PointedTransport {
-    async fn send_json(
-        &self,
-        req: openhuman_embed::BackendRequest<'_>,
-    ) -> Result<serde_json::Value, openhuman_embed::BackendTransportError> {
-        // Forward inference requests to the pointed mock endpoint.
-        // This uses the same HTTP client as a real transport would.
-        let url = format!("{}/{}", self.base_url, req.path.trim_start_matches('/'));
-        let resp = self
-            .client
-            .post(&url)
-            .json(&req.body)
-            .send()
-            .await
-            .map_err(|_| openhuman_embed::BackendTransportError::Unavailable)?;
-        resp.json()
-            .await
-            .map_err(|_| openhuman_embed::BackendTransportError::Unavailable)
-    }
-
-    async fn send_multipart(
-        &self,
-        _req: openhuman_embed::BackendRequest<'_>,
-        _form: reqwest::multipart::Form,
-    ) -> Result<serde_json::Value, openhuman_embed::BackendTransportError> {
-        Err(openhuman_embed::BackendTransportError::Unavailable)
-    }
-
-    fn http_client(&self, _profile: openhuman_embed::TransportProfile) -> reqwest::Client {
-        reqwest::Client::new()
-    }
-
-    fn base_url(
-        &self,
-        _configured: Option<&str>,
-        _purpose: openhuman_embed::BaseUrlPurpose,
-    ) -> String {
-        self.base_url.clone()
-    }
-
-    fn product_identity(&self) -> String {
-        "openhuman-embed-test".to_string()
-    }
-
-    fn attribution_headers(&self) -> reqwest::header::HeaderMap {
-        reqwest::header::HeaderMap::new()
-    }
-
-    fn name(&self) -> &'static str {
-        "embed-test-pointed"
+        let base_url = base_url.trim_end_matches('/').to_string();
+        let build = move |request: &ChatModelRequest<'_>| {
+            let model = request
+                .model_override
+                .or(request.default_model)
+                .unwrap_or("embed-test-model")
+                .to_string();
+            // Like the hosted provider: the acting profile's own credential
+            // rides as the bearer.
+            let token = openhuman_embed::__host::security::credentials::session_support::resolve_backend_credential(request.config)
+                .map(|credential| credential.secret().to_string())
+                .map_err(anyhow::Error::msg)?;
+            let wire =
+                OpenAiModel::compatible_provider("EmbedTest", token, base_url.clone(), &model)
+                    .with_native_tool_calling(request.native_tool_calling);
+            let wire: std::sync::Arc<dyn tinyinference_llm::model::ChatModel<()>> =
+                std::sync::Arc::new(wire);
+            Ok((wire, model))
+        };
+        register_chat_model(
+            PROVIDER_OPENHUMAN,
+            ChatModelEntry {
+                build: std::sync::Arc::new(build),
+                probe: None,
+            },
+        );
     }
 }
 

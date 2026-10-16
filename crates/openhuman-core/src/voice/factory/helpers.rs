@@ -88,6 +88,24 @@ pub fn effective_tts_provider(config: &Config) -> String {
 // Slug-keyed provider creation
 // ---------------------------------------------------------------------------
 
+/// The error for a slug that is neither registered nor in
+/// `config.voice_providers`.
+///
+/// The default routing strings (`"cloud"`, `"openhuman"`, `"backend"`; see
+/// [`defers_to_engine`]) are known provider names that an outside crate
+/// supplies. With none registered that is an expected configuration state, so
+/// it carries the shared unavailable sentinel the reporter filters on rather
+/// than reading as a misconfigured slug.
+fn missing_provider_error(slug: &str) -> anyhow::Error {
+    if !slug.trim().is_empty() && defers_to_engine(slug) {
+        return anyhow::anyhow!(
+            "{} no '{slug}' speech provider is registered in this build",
+            crate::core::observability::BACKEND_UNAVAILABLE_PREFIX
+        );
+    }
+    anyhow::anyhow!("no voice provider with slug '{slug}' found in voice_providers")
+}
+
 /// Create an STT provider by looking up a slug in `config.voice_providers`.
 pub(super) fn create_stt_provider_by_slug(
     slug: &str,
@@ -98,12 +116,7 @@ pub(super) fn create_stt_provider_by_slug(
         .voice_providers
         .iter()
         .find(|p| p.slug == slug)
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "no voice provider with slug '{}' found in voice_providers",
-                slug
-            )
-        })?;
+        .ok_or_else(|| missing_provider_error(slug))?;
 
     if !entry.capability.supports_stt() {
         return Err(anyhow::anyhow!(
@@ -148,12 +161,7 @@ pub(super) fn create_tts_provider_by_slug(
         .voice_providers
         .iter()
         .find(|p| p.slug == slug)
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "no voice provider with slug '{}' found in voice_providers",
-                slug
-            )
-        })?;
+        .ok_or_else(|| missing_provider_error(slug))?;
 
     if !entry.capability.supports_tts() {
         return Err(anyhow::anyhow!(

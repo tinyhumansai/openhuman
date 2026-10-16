@@ -1,10 +1,10 @@
-//! TTS provider implementations: cloud, local Piper, and external (slug-keyed).
+//! TTS provider implementations: local Piper and external (slug-keyed). The
+//! hosted provider is registered by the hosted-backend layer.
 
 use async_trait::async_trait;
 use log::debug;
 
 use super::super::local_speech::{synthesize_piper, PiperOptions};
-use super::super::reply_speech::{synthesize_reply, ReplySpeechOptions};
 use super::traits::TtsProvider;
 use crate::config::Config;
 use crate::core::Outcome;
@@ -12,57 +12,6 @@ use tinyinference_voice::external_tts::{ExternalTtsClient, TtsApiStyle};
 use tinyinference_voice::reply::ReplySpeech as ReplySpeechResult;
 
 const LOG_PREFIX: &str = "[voice-factory]";
-
-// ---------------------------------------------------------------------------
-// Cloud TTS
-// ---------------------------------------------------------------------------
-
-/// Cloud TTS — wraps [`synthesize_reply`] (backend ElevenLabs proxy).
-pub struct CloudTtsProvider {
-    voice: Option<String>,
-}
-
-impl CloudTtsProvider {
-    pub fn new(voice: Option<String>) -> Self {
-        Self { voice }
-    }
-}
-
-#[async_trait]
-impl TtsProvider for CloudTtsProvider {
-    fn name(&self) -> &'static str {
-        "cloud"
-    }
-
-    async fn synthesize(
-        &self,
-        config: &Config,
-        text: &str,
-        voice: Option<&str>,
-    ) -> Result<Outcome<ReplySpeechResult>, String> {
-        let resolved_voice = voice
-            .map(str::to_string)
-            .or_else(|| self.voice.clone())
-            .filter(|s| !s.trim().is_empty());
-        debug!(
-            "{LOG_PREFIX} cloud TTS dispatch voice={} chars={}",
-            resolved_voice.as_deref().unwrap_or("<default>"),
-            text.len()
-        );
-        let opts = ReplySpeechOptions {
-            voice_id: resolved_voice,
-            model_id: None,
-            output_format: None,
-            voice_settings: None,
-        };
-        synthesize_reply(config, text, &opts).await
-    }
-
-    #[cfg(test)]
-    fn configured_voice(&self) -> Option<&str> {
-        self.voice.as_deref()
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Local Piper TTS

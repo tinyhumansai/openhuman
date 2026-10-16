@@ -218,13 +218,6 @@
   },
   {
     "rule": "json-write",
-    "path": "crates/openhuman-core/src/integrations/file_storage/tools/download.rs",
-    "line": 84,
-    "text": "if let Err(e) = tokio::fs::write(&path, &body).await {",
-    "occurrence": 1
-  },
-  {
-    "rule": "json-write",
     "path": "crates/openhuman-core/src/memory/files.rs",
     "line": 61,
     "text": "let mut options = std::fs::OpenOptions::new();",

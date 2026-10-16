@@ -3,6 +3,7 @@ pub mod migrate;
 pub mod ops;
 pub mod preview;
 pub mod production;
+pub mod publisher_slot;
 pub mod schemas;
 pub mod store;
 mod store_documents;
@@ -13,6 +14,10 @@ pub mod version_documents;
 pub(crate) use files::resolve_ready_file_meta;
 pub use files::{resolve_ready_file, FileRoots};
 pub use migrate::{migrate_legacy_artifacts, MigrationReport};
+pub use publisher_slot::{
+    artifact_publisher, register_artifact_publisher, register_artifact_publisher_in,
+    unregister_artifact_publisher, ArtifactPublisherFactory,
+};
 pub use schemas::{
     all_controller_schemas as all_artifacts_controller_schemas,
     all_registered_controllers as all_artifacts_registered_controllers,

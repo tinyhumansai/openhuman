@@ -17,7 +17,7 @@ langfuse = ["openhuman-embed/langfuse"]
 # ranker (`tinytools-jev` over the TinyHumans System One proxy). On by
 # default and forwarded by every shipped host; without it the core ranks
 # `tool_search` with BM25 alone.
-default = ["openhuman-embed/default", "jev"]
+default = ["openhuman-embed/default", "jev", "media"]
 jev = ["dep:tinytools-jev", "dep:tinyjevclient"]
 http-server = ["openhuman-embed/http-server"]
 inference = ["openhuman-embed/inference"]
@@ -25,14 +25,14 @@ documents = ["openhuman-embed/documents"]
 hosting = ["openhuman-embed/hosting"]
 tinymemes = ["openhuman-embed/tinymemes"]
 modules = ["openhuman-embed/modules"]
-voice = ["openhuman-embed/voice"]
+voice = ["openhuman-embed/voice", "dep:tinyagents-live"]
 web3 = ["openhuman-embed/web3"]
 # Storage drivers for `[storage] url` (see the core `storage` domain).
 storage-sqlite = ["openhuman-embed/storage-sqlite"]
 storage-mongodb = ["openhuman-embed/storage-mongodb"]
 storage-s3 = ["openhuman-embed/storage-s3"]
 storage-file = ["openhuman-embed/storage-file"]
-media = ["openhuman-embed/media"]
+media = ["openhuman-embed/media", "dep:tinyinference-image", "dep:tinyinference-video"]
 flows = ["openhuman-embed/flows"]
 skills = ["openhuman-embed/skills"]
 mcp = ["openhuman-embed/mcp"]
@@ -67,10 +67,12 @@ tinyjevclient = { git = "https://github.com/tinyhumansai/tinyjevclient", rev = "
 # The channel controller contract (result types, credential-provider keys)
 # for the managed Telegram/Discord link flows in `hosted::channel_link`. Same
 # vendored path as the core's, so the types unify. Sync and I/O-free.
+tiny-artifacts = { path = "../../vendor/tiny-artifacts/crates/tiny-artifacts" }
 tinychannels-bus = { path = "../../vendor/tinychannels/crates/tinychannels-bus" }
 # AES-256-GCM decryption of the backend OAuth token handoff (hosted::oauth).
 aes-gcm = "0.10"
 anyhow = "1"
+bytes = "1"
 async-trait = "0.1"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
@@ -78,7 +80,24 @@ log = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 thiserror = "2"
+# Hosted speech (`voice` feature): the live-provider types the hosted Gemini /
+# ElevenLabs sessions build, and the transcription / reply-speech wire helpers.
+tinyagents-live = { path = "../../vendor/tinyagents/crates/tinyagents-live", optional = true }
+tinyinference-voice = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-voice", features = ["schemars"] }
+tinyinference-providers = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-providers" }
+# Managed inference: the crate wire model/embedding types and the error
+# sanitizer. Same vendored paths as the core's, so one copy resolves.
+tinyinference-llm = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-llm" }
+tinyinference-embeddings = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-embeddings" }
+tinyinference-core = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-core" }
+# Managed media generation (`integrations::media`): the OpenRouter image and
+# video generators, over the same vendored crates the core's harness uses.
+tinyinference-image = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-image", optional = true }
+tinyinference-video = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-video", optional = true }
+directories = "6"
+urlencoding = "2.1"
 tracing = "0.1"
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
 url = "2"
@@ -95,8 +114,15 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "mul
 # tower and tracing features and force a separate core build (see below).
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query", "ws", "macros"] }
 tempfile = "3"
+tinybus = { path = "../../vendor/tinybus/crates/tinybus", default-features = false }
+# The managed-model stream tests replay SSE through the real harness loop.
+tinyagents-harness = { path = "../../vendor/tinyagents/crates/tinyagents-harness", default-features = false }
+futures = "0.3"
 tokio = { version = "1", features = ["full", "test-util"] }
 wiremock = "0.6"
+# The fake integrations backend (`integrations::test_support`) records requests.
+parking_lot = "0.12"
+tokio-util = { version = "0.7", features = ["rt", "io"] }
 # Feature unification with openhuman-cli's dev-dependencies. Cargo builds the
 # core once per distinct feature set of its dependencies, and the tests of
 # openhuman-embed, openhuman-tinyhumans and openhuman-cli each pull in the core

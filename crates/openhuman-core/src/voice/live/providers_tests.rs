@@ -1,5 +1,7 @@
 use super::*;
-use crate::config::schema::voice_live::LIVE_PROVIDERS;
+use crate::config::schema::voice_live::{
+    LIVE_PROVIDERS, LIVE_PROVIDER_ELEVENLABS_HOSTED, LIVE_PROVIDER_GEMINI_HOSTED,
+};
 
 #[test]
 fn key_slugs_cover_only_byok_providers() {
@@ -10,22 +12,22 @@ fn key_slugs_cover_only_byok_providers() {
 }
 
 #[test]
-fn catalogue_lists_every_provider_in_order() {
+fn catalogue_lists_only_the_byok_providers_when_no_hosted_one_is_registered() {
     let config = Config::default();
     let infos = provider_infos(&config);
     let ids: Vec<_> = infos.iter().map(|i| i.id.as_str()).collect();
-    assert_eq!(ids, LIVE_PROVIDERS);
+    let byok: Vec<_> = LIVE_PROVIDERS
+        .iter()
+        .copied()
+        .filter(|id| key_slug(id).is_some())
+        .collect();
+    assert_eq!(ids, byok);
+    assert!(!ids.contains(&LIVE_PROVIDER_GEMINI_HOSTED));
     let sarvam = infos.iter().find(|i| i.id == LIVE_PROVIDER_SARVAM).unwrap();
     assert_eq!(sarvam.kind, LiveProviderKind::Byok);
     assert_eq!(sarvam.key_slug.as_deref(), Some("sarvam"));
     assert!(sarvam.languages.contains(&"hi-IN".to_string()));
     assert!(sarvam.voices.contains(&"shubh".to_string()));
-    let hosted = infos
-        .iter()
-        .find(|i| i.id == LIVE_PROVIDER_GEMINI_HOSTED)
-        .unwrap();
-    assert_eq!(hosted.kind, LiveProviderKind::Hosted);
-    assert!(hosted.voices.contains(&"Puck".to_string()));
 }
 
 #[test]
@@ -34,9 +36,8 @@ fn live_config_follows_the_settings_per_provider() {
     config.voice_live.gemini.voice = Some("Kore".into());
     config.voice_live.gemini.model = Some("gemini-x".into());
     config.voice_live.sarvam.speaker = Some("priya".into());
-    config.voice_live.elevenlabs.voice_id = Some("  ".into());
 
-    let gemini = live_config(&config, LIVE_PROVIDER_GEMINI_HOSTED, "prompt", 16_000);
+    let gemini = live_config(&config, LIVE_PROVIDER_GEMINI, "prompt", 16_000);
     assert_eq!(gemini.system_instruction.as_deref(), Some("prompt"));
     assert_eq!(gemini.voice.as_deref(), Some("Kore"));
     assert_eq!(gemini.model.as_deref(), Some("gemini-x"));
@@ -54,37 +55,8 @@ fn live_config_follows_the_settings_per_provider() {
     assert_eq!(auto.language, None);
     assert_eq!(auto.provider_options["auto_language"], true);
 
-    let eleven = live_config(&config, LIVE_PROVIDER_ELEVENLABS_HOSTED, "prompt", 16_000);
-    assert_eq!(
-        eleven.system_instruction, None,
-        "the hosted agent owns its prompt"
-    );
-    assert_eq!(eleven.voice, None, "blank voice ids are ignored");
-    config.voice_live.elevenlabs.voice_id = Some("v1".into());
-    let eleven = live_config(&config, LIVE_PROVIDER_ELEVENLABS_HOSTED, "prompt", 16_000);
-    assert_eq!(eleven.voice.as_deref(), Some("v1"));
-
     let unknown = live_config(&config, "nope", "prompt", 16_000);
     assert_eq!(unknown.system_instruction, None);
-}
-
-#[test]
-fn parses_wrapped_and_bare_tickets() {
-    let wrapped = json!({"data": {"wsUrl": "wss://x/ws?ticket=t", "sessionId": "s", "model": "m"}});
-    assert_eq!(
-        parse_ticket(&wrapped).unwrap(),
-        GeminiTicket {
-            ws_url: "wss://x/ws?ticket=t".into(),
-            session_id: "s".into(),
-            model: "m".into()
-        }
-    );
-    let bare = json!({"wsUrl": "wss://y"});
-    assert_eq!(parse_ticket(&bare).unwrap().session_id, "");
-    assert_eq!(
-        parse_ticket(&json!({"data": {}})).unwrap_err().code,
-        "backend"
-    );
 }
 
 #[tokio::test]
@@ -102,4 +74,13 @@ async fn byok_providers_need_a_stored_key() {
         .err()
         .unwrap();
     assert_eq!(err.code, "invalid_request");
+}
+
+#[tokio::test]
+async fn hosted_providers_are_unknown_until_the_hosted_layer_registers_them() {
+    let config = Config::default();
+    for id in [LIVE_PROVIDER_GEMINI_HOSTED, LIVE_PROVIDER_ELEVENLABS_HOSTED] {
+        let err = prepare(&config, id, LiveConfig::new()).await.err().unwrap();
+        assert_eq!(err.code, "invalid_request", "{id}");
+    }
 }

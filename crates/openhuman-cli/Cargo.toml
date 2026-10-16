@@ -181,8 +181,8 @@ path = "../../tests/memory_cortexdb_live.rs"
 [[test]]
 name = "json_rpc_e2e"
 path = "../../tests/json_rpc_e2e.rs"
-# `voice::reply_speech::{test_seam, TEST_SEAM_ENV}` — the reply-speech seam
-# only exists in the real voice module, not the stub.
+# `openhuman_tinyhumans::voice::reply_speech::{test_seam, TEST_SEAM_ENV}` — the
+# reply-speech seam only exists with the voice feature (hosted TTS provider).
 required-features = ["voice"]
 
 [[test]]

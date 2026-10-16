@@ -160,12 +160,11 @@ fn every_packed_tool_name_resolves_to_a_registered_tool() {
         // Registered only once the user is signed in: `composio`'s tools come
         // from `all_composio_agent_tools`, which returns an empty vec without
         // a session (`integrations/composio/tools/registry.rs`), and
-        // `storage` / `media` are built behind `integrations::build_client`,
-        // which needs a session token (`file_storage/tools/registry.rs`,
-        // `media/generation/tools.rs`). Runtime auth state no unit test can
-        // satisfy, in any feature configuration. Every name in those three is
-        // a real tool in the source it is built from, verified by hand at the
-        // time each pack was added — that is the check this skip replaces.
+        // `storage` / `media` are built by a host's registered tool source
+        // (a hosted service the core does not ship), so a bare core has none
+        // of their tools. Every name in those three is a real tool in the
+        // source it is built from, verified by hand at the time each pack was
+        // added — that is the check this skip replaces.
         if matches!(pack.id, "composio" | "storage" | "media") {
             continue;
         }
@@ -183,28 +182,11 @@ fn every_packed_tool_name_resolves_to_a_registered_tool() {
     );
 }
 
-// Compile-time `media` feature gate (#4804). The media-generation agent tools
-// (`media_generate_*`) are present only when the `media` feature is compiled
-// in AND an integration client is configured. The disabled build proves the
-// module + its single call site drop out entirely (leaf gate, no stub facade).
-#[cfg(feature = "media")]
+// Compile-time `media` feature gate (#4804). The `media_generate_*` agent tools
+// are built by a host's registered tool source, never by the core itself, so a
+// bare core registers none of them whether or not the `media` feature is on.
 #[test]
-fn media_tools_registered_when_feature_on() {
-    let tmp = TempDir::new().unwrap();
-    let cfg = integration_test_config(&tmp, "http://127.0.0.1:1");
-    store_test_session_token(&cfg);
-    let tools = integration_tools_for_config(&tmp, &cfg);
-    let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
-    assert!(
-        names.contains(&"media_generate_image"),
-        "media tools must register with the `media` feature on + an integration \
-         client; got: {names:?}"
-    );
-}
-
-#[cfg(not(feature = "media"))]
-#[test]
-fn media_tools_absent_when_feature_off() {
+fn media_tools_come_only_from_a_registered_tool_source() {
     let tmp = TempDir::new().unwrap();
     let cfg = integration_test_config(&tmp, "http://127.0.0.1:1");
     store_test_session_token(&cfg);
@@ -212,8 +194,7 @@ fn media_tools_absent_when_feature_off() {
     let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
     assert!(
         !names.iter().any(|n| n.starts_with("media_")),
-        "no `media_*` tools may be registered when the `media` feature is off; \
-         got: {names:?}"
+        "no `media_*` tools may come from the core itself; got: {names:?}"
     );
 }
 

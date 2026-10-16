@@ -7,12 +7,12 @@
 //! boot (`openhuman_rpc::host`) connects the backend on its own. Idempotent: calling it again re-installs an
 //! equivalent transport and is harmless.
 
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use openhuman_embed::__host::agent::tinyagents::discovery::install_tool_ranker;
 use openhuman_embed::__host::core::all::register_controller_extension;
 use openhuman_embed::seams::ControllerExtension;
-use openhuman_embed::{install_backend_transport, installed_backend_transport};
 use tinytools::ToolRanker;
 
 use crate::backend::{set_product_identity, ProductIdentity};
@@ -80,15 +80,18 @@ pub enum InstallError {
     Registry(String),
 }
 
-static INSTALLED: OnceLock<Mutex<Option<Arc<SdkBackendTransport>>>> = OnceLock::new();
+static INSTALLED: AtomicBool = AtomicBool::new(false);
 
 /// What a TinyHumans connection contributes to a core, resolved from
 /// [`InstallOptions`]. The one code path both entry points share:
 /// [`install`] applies it to the process globals, and
 /// [`RuntimeBuilder`](crate::RuntimeBuilder) hands it to the embed builder's
-/// seam options (`backend_transport`, `controller_extension`, `tool_ranker`).
+/// seam options (`controller_extension`, `tool_ranker`).
 pub(crate) struct Wiring {
-    /// The process-wide SDK transport, already installed as the core's global.
+    /// The process-wide SDK transport ([`crate::client::shared_transport`]).
+    /// Hosted callers fetch it themselves; kept so tests can pin that every
+    /// connect shares one instance.
+    #[cfg(test)]
     pub(crate) transport: Arc<SdkBackendTransport>,
     /// The hosted RPC proxies, unless [`InstallOptions::hosted_controllers`]
     /// is off.
@@ -122,11 +125,13 @@ fn prepare(options: &InstallOptions) -> (Option<ControllerExtension>, Option<Arc
             identity.as_str()
         );
         set_product_identity(identity);
-        // A new identity means new attribution headers; rebuild on connect.
-        *slot()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+        // A new identity means new attribution headers: the shared transport
+        // captured the old ones, so drop it and rebuild on connect.
+        crate::client::reset_shared_transport();
     }
+
+    // Plug every area into the core's generic registries (idempotent).
+    crate::register::register_all(options);
 
     let controllers = options.hosted_controllers.then(crate::hosted::extension);
 
@@ -147,28 +152,12 @@ fn prepare(options: &InstallOptions) -> (Option<ControllerExtension>, Option<Arc
     (controllers, ranker)
 }
 
-fn slot() -> &'static Mutex<Option<Arc<SdkBackendTransport>>> {
-    INSTALLED.get_or_init(|| Mutex::new(None))
-}
-
-/// The process's SDK transport, built once and installed as the core's
-/// global (re-installed if something cleared the slot, as tests do).
+/// The process's SDK transport, built once and shared by every hosted caller.
 fn connect_transport() -> Result<Arc<SdkBackendTransport>, InstallError> {
-    let mut guard = slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(existing) = guard.as_ref() {
-        if installed_backend_transport().is_none() {
-            install_backend_transport(existing.clone());
-        }
-        log::trace!("[tinyhumans] install: already installed");
-        return Ok(existing.clone());
+    let transport = crate::client::shared_transport().map_err(InstallError::Transport)?;
+    if !INSTALLED.swap(true, Ordering::SeqCst) {
+        log::info!("[tinyhumans] install: backend transport ready");
     }
-
-    let transport = Arc::new(SdkBackendTransport::new().map_err(InstallError::Transport)?);
-    install_backend_transport(transport.clone());
-    *guard = Some(transport.clone());
-    log::info!("[tinyhumans] install: backend transport installed");
     Ok(transport)
 }
 
@@ -177,26 +166,28 @@ fn connect_transport() -> Result<Arc<SdkBackendTransport>, InstallError> {
 /// the registry and ranker applied in between, in its historical order.
 pub(crate) fn wiring(options: &InstallOptions) -> Result<Wiring, InstallError> {
     let (controllers, ranker) = prepare(options);
+    // Connecting builds the process transport; only tests read it back.
+    #[cfg_attr(not(test), allow(unused_variables))]
     let transport = connect_transport()?;
     Ok(Wiring {
+        #[cfg(test)]
         transport,
         controllers,
         ranker,
     })
 }
 
-/// Install the SDK-backed backend transport as the process-global transport
-/// (and optionally set the product identity first).
+/// Connect the TinyHumans layer for this process: set the product identity
+/// (if any), plug every area into the core's generic registries and build the
+/// shared SDK transport.
 ///
 /// The compatibility entry point for hosts that boot the core themselves;
 /// [`RuntimeBuilder`](crate::RuntimeBuilder) wires the same pieces through
 /// the embed builder instead. Order: product identity, hosted controllers
 /// (process registry), Jev ranker (process slot), transport.
 ///
-/// Returns the transport so a host that also builds the core through
-/// `CoreBuilder` can bind it there explicitly with
-/// `CoreBuilder::backend_transport`; binding is optional because the core
-/// resolves the process global when a context carries none.
+/// The core holds no transport of its own; the returned handle is the one
+/// every hosted caller in this crate sends through.
 pub fn install(options: InstallOptions) -> Result<Arc<SdkBackendTransport>, InstallError> {
     let (controllers, ranker) = prepare(&options);
 
@@ -213,18 +204,22 @@ pub fn install(options: InstallOptions) -> Result<Arc<SdkBackendTransport>, Inst
     connect_transport()
 }
 
-/// Whether [`install`] has run in this process (and its transport is still
-/// the core's global one).
+/// Register the hooks a config *load* depends on, and nothing else.
+///
+/// A host that reads configuration before it connects (the CLI and TUI open
+/// their storage-backed session store first) must call this before any
+/// config read: the config enricher is what tells the load-time migrations
+/// which endpoints are managed, and with none registered a legacy managed
+/// config is mistaken for a custom one. Cheap and idempotent;
+/// [`install`] and the builder's connect register the same hook again.
+pub fn register_hooks() {
+    log::trace!("[tinyhumans] register_hooks: config enricher");
+    crate::client::register(&InstallOptions::default());
+}
+
+/// Whether [`install`] (or the builder's connect) has run in this process.
 pub fn is_installed() -> bool {
-    INSTALLED
-        .get()
-        .and_then(|slot| {
-            slot.lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .as_ref()
-                .map(|_| installed_backend_transport().is_some())
-        })
-        .unwrap_or(false)
+    INSTALLED.load(Ordering::SeqCst)
 }
 
 #[cfg(test)]

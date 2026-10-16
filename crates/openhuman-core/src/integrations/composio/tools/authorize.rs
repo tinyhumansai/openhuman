@@ -96,7 +96,7 @@ impl ComposioAuthorizeTool {
         // Resolve per call so a live mode toggle is honoured. In
         // direct mode the OAuth handoff is performed by the user's
         // personal Composio tenant via app.composio.dev rather than
-        // the backend's `/agent-integrations/composio/authorize`
+        // the backend's composio authorize
         // route, so we refuse this verb explicitly instead of
         // silently routing through the wrong tenant.
         let live_config = match live_composio_config(self.config.as_ref()).await {

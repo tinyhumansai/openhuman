@@ -8,7 +8,6 @@
 //!
 //! | Piece | Embed option |
 //! |---|---|
-//! | the SDK transport ([`SdkBackendTransport`](crate::SdkBackendTransport)) | `backend_transport` (also the process global) |
 //! | the hosted RPC proxies ([`hosted::extension`](crate::hosted::extension)) | `controller_extension` |
 //! | the Jev `tool_search` ranker (`jev` feature) | `tool_ranker` |
 //!
@@ -259,15 +258,13 @@ impl RuntimeBuilder {
     }
 
     /// The embed builder with the TinyHumans connection applied: product
-    /// identity set, the SDK transport installed as the process global and
-    /// bound with `backend_transport`, the hosted proxies added as a
+    /// identity set, the shared SDK transport built, the hosted proxies added as a
     /// controller extension and the Jev ranker as the tool ranker. For entry
     /// points that take an embed builder rather than this one.
     pub fn connect(self) -> Result<openhuman_embed::RuntimeBuilder, InstallError> {
         let wiring = wiring(&self.install)?;
         log::debug!("[tinyhumans] connecting embed builder: {wiring:?}");
-        let transport: Arc<dyn openhuman_embed::BackendTransport> = wiring.transport;
-        let mut inner = self.inner.backend_transport(transport);
+        let mut inner = self.inner;
         if let Some(extension) = wiring.controllers {
             inner = inner.controller_extension(extension);
         }

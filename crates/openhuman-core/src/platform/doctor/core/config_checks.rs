@@ -30,8 +30,10 @@ pub(super) fn check_config_semantics(config: &Config, items: &mut Vec<Diagnostic
     {
         items.push(DiagnosticItem::ok(cat, format!("api_url: {url}")));
     } else {
-        let resolved = crate::backend::inference_base_url(&config.api_url)
-            .unwrap_or_else(|_| "no hosted backend".to_string());
+        let resolved = config
+            .resolved_endpoints
+            .inference_or_configured(&config.api_url)
+            .unwrap_or_else(|| "no hosted backend".to_string());
         items.push(DiagnosticItem::ok(
             cat,
             format!("api_url: (unset) resolved to {resolved}"),

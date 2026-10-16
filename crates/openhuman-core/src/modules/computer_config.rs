@@ -46,7 +46,7 @@ fn jev(config: &Config, hosted: Option<&str>) -> Option<Value> {
             Some(api_key) => Some(json!({
                 "api_key": api_key,
                 "provider": "tiny_humans_open_router",
-                "sdk_name": crate::backend::product_identity()
+                "sdk_name": config.resolved_endpoints.product_identity.clone()
             })),
             // A headless or BYOK host may have no TinyHumans session. Direct
             // OpenRouter Jev remains usable with its own scoped credential.
@@ -78,7 +78,7 @@ fn planner(config: &Config, hosted: Option<&str>) -> Option<Value> {
         Some(api_key) => json!({
             "api_key": api_key,
             "provider": "tiny_humans",
-            "sdk_name": crate::backend::product_identity()
+            "sdk_name": config.resolved_endpoints.product_identity.clone()
         }),
         None => {
             let api_key = provider_key(config, "openrouter", "OPENROUTER_API_KEY")?;

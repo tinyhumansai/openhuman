@@ -14,7 +14,7 @@ with `--manifest-path crates/openhuman-app/Cargo.toml`.
 | [`openhuman-core`](openhuman-core/README.md) | package `openhuman`, lib `openhuman_core` | The core library: every business domain under `src/<domain>/`, the controller contract and registry, in-process dispatch, the event bus and the CLI dispatcher. No JSON-RPC server, no backend client, no binary targets. |
 | [`openhuman-embed`](openhuman-embed/README.md) | `openhuman-embed` | The typed library facade for running the core in-process in another product (`Runtime` then `Agent`), plus the host presets, `embed::process` lifecycle helpers and the curated facades the hosts use. |
 | [`openhuman-rpc`](openhuman-rpc/README.md) | `openhuman-rpc` | JSON-RPC 2.0 over the core: envelopes, the HTTP client (`http-client`), the server with Socket.IO and the `run_server*` entry points (`server`), the on-disk session store (`session-store`), and `host::{cli, desktop, tui}`, the shared host boot. Re-exports `embed` and `tinyhumans`: the one dependency a host needs. |
-| [`openhuman-tinyhumans`](openhuman-tinyhumans/README.md) | `openhuman-tinyhumans` | The hosted-backend layer: the SDK-backed `BackendTransport`, `install()`, a `RuntimeBuilder` that boots connected, the hosted RPC proxies, the login and session owner, and the Jev ranker. The only crate allowed to depend on `tinyhumans-sdk`. |
+| [`openhuman-tinyhumans`](openhuman-tinyhumans/README.md) | `openhuman-tinyhumans` | The hosted-backend layer, and the only owner of anything hosted: the backend transport port and its SDK implementation, the authenticated client, routes and hosted providers (plugged into the core's generic registries), `install()`, a `RuntimeBuilder` that boots connected, the hosted RPC proxies, the login and session owner, and the Jev ranker. The only crate allowed to depend on `tinyhumans-sdk`. |
 | [`openhuman-cli`](openhuman-cli/README.md) | `openhuman-cli` | The `openhuman-core` binary, the `openhuman-fleet` and `test-mcp-stub` ops binaries, and every root `tests/*.rs` and `examples/*.rs` target. |
 | [`openhuman-tui`](openhuman-tui/README.md) | `openhuman-tui` | The standalone terminal client, embedding the core in-process. |
 | [`openhuman-app`](openhuman-app/README.md) | `openhuman-app` (lib `openhuman`) | The thin Tauri v2 desktop host. Runs the core and its JSON-RPC server as a tokio task. Outside the root workspace. |
@@ -42,7 +42,7 @@ names only the layer directly below it.
                            |             process helpers, facades
                            v
                     openhuman-core       domains, controller registry,
-                                         BackendTransport port
+                                         generic registries
 ```
 
 The same edges as a list:
@@ -69,8 +69,9 @@ tinyhumans as dev-dependencies, which never reach the shipped binary.
 ## Why it is split this way
 
 The core runs agents, memory, tools and controllers without any hosted
-backend. It reaches the backend only through the `BackendTransport` port and
-knows nothing of JSON-RPC, so it can be embedded with neither. The layers
+backend. It has no backend module, no hosted route and no hosted hostname:
+the TinyHumans layer plugs in through the core's generic registries. The core
+also knows nothing of JSON-RPC, so it can be embedded with neither. The layers
 above add those pieces, and each host boots through one `openhuman_rpc::host`
 entry that connects them:
 

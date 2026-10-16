@@ -1,5 +1,4 @@
 use super::*;
-use tinychannels_bus::controllers::ChannelThreadListResult;
 
 #[test]
 fn send_message_payload_preserves_thread_and_subject() {
@@ -10,14 +9,6 @@ fn send_message_payload_preserves_thread_and_subject() {
     assert_eq!(payload["recipient"], "alice");
     assert_eq!(payload["subject"], "subject");
     assert_eq!(payload["thread_ts"], "thread-1");
-}
-
-#[test]
-fn parse_or_raw_keeps_backend_payload_when_shape_is_unknown() {
-    let payload = json!({"unexpected": true});
-    let result: ChannelThreadListResult = parse_or_raw(payload.clone());
-    assert_eq!(result.threads.len(), 0);
-    assert_eq!(result.raw, Some(payload));
 }
 
 #[test]

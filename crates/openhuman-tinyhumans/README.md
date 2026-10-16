@@ -1,12 +1,15 @@
 # openhuman-tinyhumans
 
-This crate connects an OpenHuman core to the hosted TinyHumans backend. The
-core runs agents, memory, tools and RPC without any backend connection and
-reaches the backend only through a port it defines. This crate implements that
-port with the vendored `tinyhumans-sdk`, installs it into a process, and adds
-the pieces that only make sense for a TinyHumans-connected product: the hosted
-RPC proxies (billing, team, referral and so on), the host-side login and
-session owner, and the Jev-backed `tool_search` ranker.
+This crate connects an OpenHuman core to the hosted TinyHumans backend and owns
+everything hosted. The core runs agents, memory, tools and RPC without any
+backend connection and has no backend module, hosted port, hosted route or
+hosted hostname. This crate holds the transport port and its implementation on
+the vendored `tinyhumans-sdk`, the authenticated client, the routes, and the
+hosted providers (integrations, voice, inference, channels, memory), and plugs
+them into the core's generic registries. It also adds the pieces that only make
+sense for a TinyHumans-connected product: the hosted RPC proxies (billing,
+team, referral and so on), the host-side login and session owner, and the
+Jev-backed `tool_search` ranker.
 
 Every host that boots a core and wants the backend calls into this crate first:
 the desktop shell ([`crates/openhuman-app`](../openhuman-app/)), the TUI ([`crates/openhuman-tui`](../openhuman-tui/)),
@@ -25,7 +28,8 @@ Library products build through its `RuntimeBuilder`.
                                  v
   +------------------------------------------------+
   |              openhuman-tinyhumans              |
-  |  transport/  backend/  hosted/  session/  jev/ |
+  | transport/ client/ backend/ hosted/ session/ jev/|
+  | integrations/ voice/ inference/ channels/ memory/|
   +------------------------------------------------+
            |                               |
            v                               v
@@ -34,22 +38,21 @@ Library products build through its `RuntimeBuilder`.
            |                       auth header shapes)
            v
     openhuman-core
-  (BackendTransport port, controller registry)
+  (generic registries, controller registry)
 ```
 
 The core has no `tinyhumans-sdk` dependency, and `cargo tree -p openhuman -i
 tinyhumans-sdk` must stay empty. This is the only crate in the tree allowed to
-depend on the SDK. A core with no transport installed still works; every
-backend-touching call (billing, `/agent-integrations/*` tools, channel relay,
-cloud voice) answers with `BackendApiError::BackendUnavailable`, which the RPC
-layer renders as a `BACKEND_UNAVAILABLE:` error that observability demotes.
+depend on the SDK. A core with this layer not connected still works; every
+backend-touching call (billing, integrations tools, channel relay, cloud
+voice) answers with `HostedApiError::BackendUnavailable`, which the RPC layer
+renders as a `BACKEND_UNAVAILABLE:` error that observability demotes.
 
 The crate's only openhuman dependency is `openhuman-embed`, per the chain
-core -> embed -> tinyhumans -> rpc -> hosts. The public embed API covers the transport port
-(`BackendTransport`, `install_backend_transport`, ...) and the seam types
+core -> embed -> tinyhumans -> rpc -> hosts. The public embed API covers the seam types
 (`embed::seams::{ControllerExtension, ...}`; the ranker trait is `tinytools::ToolRanker`, taken from the same vendored path); the deeper core
-internals the transport and hosted controllers need (`backend::BackendClient`,
-`core::all`'s registry types, `security::credentials`, `config`) come through
+internals the transport and hosted controllers need (the registration
+functions of the core's generic registries, `core::all`'s registry types, `security::credentials`, `config`) come through
 embed's `#[doc(hidden)] __host` module, an explicit list kept in embed.
 
 ### Installing into a process
@@ -57,29 +60,29 @@ embed's `#[doc(hidden)] __host` module, an explicit list kept in embed.
 `install(InstallOptions)` in [`src/install.rs`](src/install.rs) is the compatibility entry point
 for hosts that still boot the core themselves. It resolves the same `Wiring`
 (`install::wiring`) the builder uses and applies it to the process globals.
-It does four things, in this order:
+It does the following, in this order:
 
 1. If `InstallOptions::product_identity` is set, it stores the new
-   `ProductIdentity` (the `x-sdk-name` header value) and drops any transport it
-   built earlier, because the transport captures attribution headers when it
-   is constructed.
-2. If `hosted_controllers` is true (the default), it registers
+   `ProductIdentity` (the `x-sdk-name` header value) and drops the shared
+   transport it built earlier, because the transport captures attribution
+   headers when it is constructed.
+2. It plugs every area (`client`, `integrations`, `voice`, `inference`,
+   `channels`, `memory`) into the core's generic registries through
+   `register::register_all`.
+3. If `hosted_controllers` is true (the default), it registers
    `hosted::extension()` with the core through
    `core::all::register_controller_extension`. The core treats an identical
    re-registration as a no-op.
-3. With the `jev` feature and `tool_ranker` true (the default), it installs a
+4. With the `jev` feature and `tool_ranker` true (the default), it installs a
    `jev::TinyHumansJevRanker` as the process-wide `tool_search` ranker,
    replacing the previous one in place.
-4. It builds one `SdkBackendTransport` and installs it with
-   `openhuman_embed::install_backend_transport`. On a later
-   call it reuses the transport it already built, re-installing it into the
-   core slot if something cleared it (tests do this).
+5. It builds the one process-wide `SdkBackendTransport`
+   (`client::shared_transport`). The core has no transport slot; every hosted
+   caller in this crate sends through this instance. A later call reuses it.
 
-`install` returns the `Arc<SdkBackendTransport>` so a host that also uses
-`CoreBuilder` can bind it explicitly with `CoreBuilder::backend_transport`.
-Binding is optional: the core resolves the process-global transport when a
-context carries none. `is_installed()` reports whether this crate's transport
-is still the core's global one.
+It does five things, in this order. `install` returns the
+`Arc<SdkBackendTransport>`. `is_installed()` reports whether `install` (or the
+builder's connect) has run in this process.
 
 ```rust
 openhuman_tinyhumans::install(openhuman_tinyhumans::InstallOptions::default())?;
@@ -103,9 +106,8 @@ It starts from `new()`, a host preset (`library()`, `desktop()`, `cli()`,
 `InstallOptions`.
 
 `connect()` returns the embed builder with the TinyHumans connection applied
-through embed's own options: the product identity is set, the SDK transport
-is installed as the process global and bound with `backend_transport`, the
-hosted proxies go in with `controller_extension`, and the Jev ranker with
+through embed's own options: the product identity is set, the registries are filled, the shared SDK
+transport is built, the hosted proxies go in with `controller_extension`, and the Jev ranker with
 `tool_ranker` (restored when the runtime drops). A host `tool_ranker` replaces
 the Jev one, however it was set. `build()` is `connect()` then boot; `run_from_args()` is
 `connect()` then the embed CLI dispatcher. `into_embed()` drops back to the
@@ -127,12 +129,12 @@ media, integrations, voice and Jev.
 
 ### A backend request, end to end
 
-When a core domain calls the backend (for example through
-`BackendClient::authed_json` or the integrations client), the request reaches
-this crate as a `BackendRequest`:
+When a hosted caller in this crate (for example `BackendClient::authed_json` or
+the integrations client) calls the backend, it builds a `BackendRequest`
+(`src/transport/port.rs`):
 
 ```text
- core domain
+ hosted caller
    |  BackendRequest { method, path, base_url, credential, profile, ... }
    v
  SdkBackendTransport::send_json            (src/transport/mod.rs)
@@ -143,14 +145,15 @@ this crate as a `BackendRequest`:
    v
  tinyhumans_sdk raw().send(..)             (route policy, envelope unwrap)
    |
-   +-- Ok(Value) ------------------------------------------> core
+   +-- Ok(Value) ------------------------------------------> caller
    +-- Err(tinyhumans_sdk::Error) -> map_sdk_error -> BackendTransportError
 ```
 
-The transport also answers the core's non-request questions: `base_url`
-(control-plane or inference base, from `backend::url`), `product_identity`,
-`attribution_headers` and `http_client`. The core holds no hosted URL, header
-policy or product identity of its own; it asks the installed transport.
+The transport also answers `base_url` (control-plane or inference base, from
+`backend::url`), `product_identity`, `attribution_headers` and `http_client`.
+The core holds no hosted URL, header policy or product identity of its own; it
+reads `Config.resolved_endpoints`, which this crate's enricher
+(`client::enricher`, registered with `config::register_enricher`) fills.
 
 ## Layout
 
@@ -158,9 +161,12 @@ policy or product identity of its own; it asks the installed transport.
 | --- | --- |
 | [`src/lib.rs`](src/lib.rs) | Crate root: module declarations and the public re-exports (`install`, `RuntimeBuilder`, the session types, `SdkBackendTransport`, `ProductIdentity`). Its `embed` module is a curated `pub use` list of the embed items rpc, the hosts and library users take (not the crate); it forwards embed's `#[doc(hidden)] __host` to rpc only. |
 | [`src/install.rs`](src/install.rs) | `install`, `is_installed`, `InstallOptions`, `InstallError`. Process-global, idempotent. |
-| [`src/runtime.rs`](src/runtime.rs) | `RuntimeBuilder` and `RuntimeError`: an embed builder that installs the transport on `build()`. |
+| [`src/runtime.rs`](src/runtime.rs) | `RuntimeBuilder` and `RuntimeError`: an embed builder that connects this layer on `build()`. |
 | [`src/backend/`](src/backend/README.md) | Where the backend is (`url.rs`), how requests are attributed (`headers.rs`), and who they are attributed to (`product.rs`). |
-| [`src/transport/`](src/transport/README.md) | `SdkBackendTransport`, the `BackendTransport` implementation, and `map_sdk_error`. |
+| [`src/transport/`](src/transport/README.md) | The `BackendTransport` port types (`port.rs`), `SdkBackendTransport`, the implementation, and `map_sdk_error`. |
+| [`src/client/`](src/client/mod.rs) | `BackendClient`, `HostedApiError`, `flatten_authed_error`, `IntegrationsHttp`, the credential endpoint guards and the config enricher. |
+| `src/integrations/`, `src/voice/`, `src/inference/`, `src/channels/`, `src/memory/` | The hosted providers, each registered into a core registry by its `register` function. |
+| [`src/register.rs`](src/register.rs) | `register_all`: the one place this crate plugs into the core's registries. |
 | [`src/hosted/`](src/hosted/README.md) | The hosted-backend RPC proxies: `billing`, `team`, `referral`, `announcements`, `webhooks`, `channel_link`, `oauth`. |
 | [`src/session/`](src/session/README.md) | The host-side login and session owner: `SessionManager`, `SessionClient`, `CurrentUserCache`, `CoreLink`. |
 | [`src/jev/`](src/jev/README.md) | The Jev-backed `tool_search` ranker (behind the `jev` feature). |
@@ -214,27 +220,28 @@ chain core, embed, tinyhumans, cli.
 
 ## Boundaries
 
-- The core owns the port (`BackendTransport`, `BackendRequest`,
-  `BackendTransportError` in [`crates/openhuman-core/src/backend/transport/`](../openhuman-core/src/backend/transport/)),
-  the authenticated JSON client (`backend/client.rs`), credential resolution
-  (`security::credentials::session_support::resolve_backend_credential`) and
-  all recovery from errors. This crate decides what a backend response means;
-  the core decides what to do about it.
+- This crate owns the port (`BackendTransport`, `BackendRequest`,
+  `BackendTransportError` in [`src/transport/port.rs`](src/transport/port.rs)),
+  the authenticated JSON client ([`src/client/`](src/client/mod.rs)) and all
+  recovery from errors. The core owns only the generic credential type and
+  its resolution (`security::credentials::session_support::resolve_backend_credential`),
+  which this crate calls. `scripts/ci/check-core-hosted-free.mjs` keeps hosted
+  names out of the core.
 - Route implementations belong in the vendored SDK (`tinyhumansai/tinyhumans-sdk`,
   [`vendor/tinyhumans-sdk`](../../vendor/tinyhumans-sdk/)). Its unexposed-route registry is the route policy
   the transport enforces. The transport never adds a route the core does not
   already name. Two team routes the SDK does not carry (`POST /teams`,
-  `DELETE /teams/{id}`) stay on the core's `BackendClient::authed_json` until
+  `DELETE /teams/{id}`) stay on this crate's `BackendClient::authed_json` until
   the SDK gains them.
 - The core never obtains, validates, exchanges or refreshes a credential. It
   takes one through `auth.set_credential`. Login-token exchange, `GET
   /auth/me` and the current-user cache live in `session/` here.
-- Hosted memory does not ride this transport. The core's `memory/engine.rs`
-  hands TinyMemory's own HTTP client an endpoint from `backend::base_url`,
-  the attribution headers from `backend::attribution_headers` and a bearer
-  source, so memory needs the transport installed for its URL and headers,
-  but `/memory/*` requests never pass through `SdkBackendTransport` and the
-  SDK route registry does not apply to them.
+- Hosted memory does not ride this transport. `src/memory/` registers the
+  `tinyhumans` engine with `memory::engine_registry`; it hands TinyMemory's own
+  HTTP client an endpoint (`backend::url`), the attribution headers
+  (`backend::headers`) and a bearer source, but its `/memory/*` requests never
+  pass through `SdkBackendTransport` and the SDK route registry does not apply
+  to them.
 - Realtime Socket.IO stays on the core's own `platform::socket` transport; the
   SDK is built with `default-features = false`, which drops its socket client.
 - The generic Jev types (`JevRanker`, `JevEvaluator`, `JevStrategy`) live in
@@ -248,8 +255,8 @@ chain core, embed, tinyhumans, cli.
   `set_product_identity` after `install` updates `attribution_headers()` (built
   fresh per call) but not the default headers baked into the already-built
   `reqwest::Client`s.
-- `install` must run before the first backend-touching dispatch. A suite that
-  boots the core in-process and forgets it sees `BACKEND_UNAVAILABLE:` from
+- `install` must run before the first backend-touching dispatch (it fills the
+  core's registries). A suite that boots the core in-process and forgets it sees `BACKEND_UNAVAILABLE:` from
   every backend call. Suites that spawn the `openhuman-core` binary get it from
   `main.rs`.
 - `InstallOptions::hosted_controllers(false)` keeps the proxies out of the

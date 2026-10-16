@@ -28,7 +28,7 @@
 //! preference: two sources of truth for a permission is how one of them ends up
 //! stale and permissive.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -39,6 +39,7 @@ use super::types::ModuleState;
 use super::{ops, registry};
 use crate::config::schema::{COMPOSIO_MODE_BACKEND, COMPOSIO_MODE_DIRECT};
 use crate::config::Config;
+use crate::core::slots::HookSlot;
 
 /// The module's id in [`registry`].
 pub const MODULE_ID: &str = "tinyconnectors";
@@ -49,6 +50,37 @@ pub const MODULE_ID: &str = "tinyconnectors";
 /// as a string literal: a renamed member is then a compile error here instead
 /// of an "unknown method" at runtime on a user's machine.
 pub use names::methods;
+
+/// Where the connector module's proxy route sends its requests: the origin and
+/// the bearer secret it authenticates with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProxyTarget {
+    /// The origin the proxy route is joined onto.
+    pub base_url: String,
+    /// The bearer secret (a session token or an API key).
+    pub auth_token: String,
+}
+
+/// Resolves the [`ProxyTarget`] for one `composio.mode`, or the user-facing
+/// reason there is none (not signed in, no credential).
+pub type ProxyTargetResolver = Arc<dyn Fn(&Config) -> Result<ProxyTarget, String> + Send + Sync>;
+
+static MODULE_PROXY_TARGETS: HookSlot<ProxyTargetResolver> =
+    HookSlot::new("modules::connectors::proxy_targets");
+
+/// Registers `resolve` as the proxy target for `mode` (`"backend"` is the one
+/// mode the proxy route serves). Nothing registered => the mode has no route.
+pub fn register_proxy_target<F>(mode: impl Into<String>, resolve: F)
+where
+    F: Fn(&Config) -> Result<ProxyTarget, String> + Send + Sync + 'static,
+{
+    MODULE_PROXY_TARGETS.register(mode, Arc::new(resolve));
+}
+
+/// Removes the process-wide proxy target for `mode`.
+pub fn unregister_proxy_target(mode: &str) -> bool {
+    MODULE_PROXY_TARGETS.unregister(mode)
+}
 
 /// The configuration blob the module is loaded with.
 ///
@@ -122,10 +154,15 @@ fn route_config(
     match config.composio.mode.trim() {
         // Empty is the default, for hand-edited configs that omit the field.
         "" | COMPOSIO_MODE_BACKEND => {
-            let client = crate::integrations::build_client(config).ok_or_else(|| {
-                "composio backend mode is unavailable: no backend session token. Sign in or set a TinyHumans API key."
-                    .to_string()
-            })?;
+            let target = MODULE_PROXY_TARGETS
+                .get(COMPOSIO_MODE_BACKEND)
+                .ok_or_else(|| {
+                    format!(
+                        "{}composio backend mode is not available in this build",
+                        crate::core::observability::BACKEND_UNAVAILABLE_PREFIX
+                    )
+                })
+                .and_then(|resolve| resolve(config))?;
             // The backend renders Composio results (Gmail timestamps) for the
             // model; with the user's zone it prints local time beside UTC. A
             // module before contract 1.9 ignores the field. It is part of the
@@ -134,11 +171,11 @@ fn route_config(
                 crate::integrations::composio::googlecalendar_args::current_iana_timezone();
             Ok(serde_json::json!({
                 "route": "proxy",
-                "base_url": client.backend_url,
+                "base_url": target.base_url,
                 // The session JWT or the TinyHumans API key. The proxy route
                 // sends it as `Authorization: Bearer`; the backend recognises
                 // a key there by its `tiny_` prefix, so no scheme flag is needed.
-                "auth_token": client.auth_token,
+                "auth_token": target.auth_token,
                 "timezone": timezone,
                 "state_dir": state_dir,
             }))

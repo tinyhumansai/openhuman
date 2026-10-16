@@ -12,6 +12,7 @@ async fn create_chat_model_managed_emits_exactly_one_egress_realpath() {
     use crate::security::egress::{EgressDescriptor, EgressReason};
     use std::time::Duration;
 
+    let _guard = crate::inference::inference_test_guard_async().await;
     crate::core::bus::init().await.expect("bus init");
     let mut rx = crate::core::bus::BUS.get().unwrap().receiver();
 

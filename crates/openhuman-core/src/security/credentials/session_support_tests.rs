@@ -19,6 +19,7 @@ fn bound_session_token_release_requires_issuing_backend() {
     let tmp = TempDir::new().unwrap();
     let mut config = test_config(&tmp);
     config.api_url = Some("https://issuer.example/".into());
+    config.resolved_endpoints.control_plane_url = Some("https://issuer.example".into());
     let mut metadata = std::collections::HashMap::new();
     metadata.insert(
         SESSION_ISSUING_BACKEND_META.into(),
@@ -47,6 +48,7 @@ fn bound_session_token_release_requires_issuing_backend() {
         Some("https://issuer.example")
     );
     config.api_url = Some("https://different.example".into());
+    config.resolved_endpoints.control_plane_url = Some("https://different.example".into());
     assert!(get_session_token(&config)
         .unwrap_err()
         .starts_with("SESSION_BACKEND_MISMATCH"));
@@ -520,7 +522,7 @@ fn direct_backend_credential_skips_without_a_usable_credential() {
 #[test]
 fn direct_backend_credential_returns_a_live_session() {
     let tmp = TempDir::new().unwrap();
-    let config = test_config(&tmp);
+    let mut config = test_config(&tmp);
     AuthService::from_config(&config)
         .store_provider_token(
             APP_SESSION_PROVIDER,
@@ -530,8 +532,8 @@ fn direct_backend_credential_returns_a_live_session() {
             true,
         )
         .unwrap();
-    // Unit tests resolve the plain test transport, so the transport gate passes.
-    assert!(crate::backend::transport::is_installed());
+    // The gate is "a control plane was resolved onto the config".
+    config.resolved_endpoints.control_plane_url = Some("https://api.example.test".into());
     assert_eq!(
         direct_backend_credential(&config, "test"),
         Some(BackendCredential::Session("raw-session-token".into()))

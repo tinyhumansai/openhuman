@@ -1,44 +1,38 @@
 //! Live provider catalogue, configuration and connection preparation.
 //!
-//! Four providers, two of them hosted by the TinyHumans backend:
+//! Two built-in providers, both bring-your-own-key:
 //!
 //! | id | reached through | credential |
 //! | --- | --- | --- |
-//! | `gemini-hosted` | backend Gemini Live relay ticket | the backend credential |
-//! | `elevenlabs-hosted` | backend-signed ElevenLabs agent URL | the backend credential |
 //! | `gemini` | Google directly | `provider:google` |
 //! | `sarvam` | Sarvam directly | `provider:sarvam` |
 //!
-//! Minting tickets and signed URLs happens here, against the backend, because
-//! `tinyliveagents` deliberately holds no backend or credential code.
+//! Hosted providers (`gemini-hosted`, `elevenlabs-hosted`) are not built in:
+//! the hosted-backend layer registers them through [`super::registry`], where
+//! they mint tickets and signed URLs against the backend, because
+//! `tinyliveagents` deliberately holds no backend or credential code. With none
+//! registered those ids resolve to an "unknown live provider" error.
 
-use reqwest::Method;
-use serde_json::{json, Value};
-use tinyagents_live::tinyliveagents::elevenlabs::ElevenLabsConvai;
-use tinyagents_live::tinyliveagents::gemini::{self, GeminiLive, GeminiRelay};
+use serde_json::json;
+use tinyagents_live::tinyliveagents::gemini::GeminiLive;
 use tinyagents_live::tinyliveagents::sarvam::SarvamCascade;
 use tinyagents_live::tinyliveagents::{AudioFormat, LiveConfig, LiveProvider};
 
 use super::error::LiveVoiceError;
 use super::types::{LiveProviderInfo, LiveProviderKind};
-use crate::backend::BackendClient;
 use crate::config::schema::voice_live::{
-    LIVE_PROVIDERS, LIVE_PROVIDER_ELEVENLABS_HOSTED, LIVE_PROVIDER_GEMINI,
-    LIVE_PROVIDER_GEMINI_HOSTED, LIVE_PROVIDER_SARVAM,
+    LIVE_PROVIDERS, LIVE_PROVIDER_GEMINI, LIVE_PROVIDER_SARVAM,
 };
 use crate::config::Config;
 
 const LOG_PREFIX: &str = "[voice-live]";
 
-/// The backend route that mints a Gemini Live relay ticket.
-pub(crate) const GEMINI_LIVE_SESSIONS_PATH: &str = "/agent-integrations/gemini/live/sessions";
-
 /// Gemini Live prebuilt voices.
-const GEMINI_VOICES: &[&str] = &[
+pub const GEMINI_VOICES: &[&str] = &[
     "Puck", "Charon", "Kore", "Fenrir", "Aoede", "Leda", "Orus", "Zephyr",
 ];
 /// Languages Gemini Live speaks well (it understands more).
-const GEMINI_LANGUAGES: &[&str] = &[
+pub const GEMINI_LANGUAGES: &[&str] = &[
     "en-US", "en-IN", "en-GB", "hi-IN", "es-US", "es-ES", "fr-FR", "de-DE", "it-IT", "pt-BR",
     "ja-JP", "ko-KR", "cmn-CN", "ar-XA", "id-ID", "ru-RU", "pl-PL", "bn-IN",
 ];
@@ -69,35 +63,24 @@ pub(crate) fn stored_key(slug: &str, config: &Config) -> Option<String> {
         .filter(|key| !key.trim().is_empty())
 }
 
-/// Whether a backend credential is available for hosted providers.
-fn backend_ready(config: &Config) -> bool {
-    crate::security::credentials::session_support::resolve_backend_credential(config).is_ok()
-}
-
 fn strings(items: &[&str]) -> Vec<String> {
     items.iter().map(|s| (*s).to_string()).collect()
 }
 
 /// The provider catalogue with each provider's readiness.
 pub(crate) fn provider_infos(config: &Config) -> Vec<LiveProviderInfo> {
-    let hosted = backend_ready(config);
+    let mut infos = built_in_provider_infos(config);
+    super::registry::merge_provider_infos(&mut infos, config);
+    infos
+}
+
+fn built_in_provider_infos(config: &Config) -> Vec<LiveProviderInfo> {
     LIVE_PROVIDERS
         .iter()
+        .filter(|id| key_slug(id).is_some())
         .map(|id| {
             let slug = key_slug(id);
             let (label, kind, voices, languages) = match *id {
-                LIVE_PROVIDER_GEMINI_HOSTED => (
-                    "Gemini Live (TinyHumans)",
-                    LiveProviderKind::Hosted,
-                    strings(GEMINI_VOICES),
-                    strings(GEMINI_LANGUAGES),
-                ),
-                LIVE_PROVIDER_ELEVENLABS_HOSTED => (
-                    "ElevenLabs Agent (TinyHumans)",
-                    LiveProviderKind::Hosted,
-                    Vec::new(),
-                    Vec::new(),
-                ),
                 LIVE_PROVIDER_GEMINI => (
                     "Gemini Live (Google API key)",
                     LiveProviderKind::Byok,
@@ -111,10 +94,7 @@ pub(crate) fn provider_infos(config: &Config) -> Vec<LiveProviderInfo> {
                     strings(SARVAM_LANGUAGES),
                 ),
             };
-            let configured = match slug {
-                Some(slug) => stored_key(slug, config).is_some(),
-                None => hosted,
-            };
+            let configured = slug.is_some_and(|slug| stored_key(slug, config).is_some());
             LiveProviderInfo {
                 id: (*id).to_string(),
                 label: label.to_string(),
@@ -139,7 +119,7 @@ pub(crate) fn live_config(
     let mut live = LiveConfig::new();
     live.input_format = AudioFormat::pcm16(input_sample_rate);
     match provider {
-        LIVE_PROVIDER_GEMINI_HOSTED | LIVE_PROVIDER_GEMINI => {
+        LIVE_PROVIDER_GEMINI => {
             live.system_instruction = Some(system_instruction.to_string());
             live.model = settings.gemini.model.clone();
             live.voice = settings.gemini.voice.clone();
@@ -157,64 +137,30 @@ pub(crate) fn live_config(
                 other => live.language = Some(other.unwrap_or("en-IN").to_string()),
             }
         }
-        LIVE_PROVIDER_ELEVENLABS_HOSTED => {
-            // The hosted agent owns its prompt and its brain (OpenHuman over
-            // the Custom-LLM relay); only the voice may be overridden.
-            live.voice = non_empty(settings.elevenlabs.voice_id.clone());
-        }
         _ => {}
     }
+    super::registry::configure(config, provider, system_instruction, &mut live);
     live
 }
 
-fn non_empty(value: Option<String>) -> Option<String> {
-    value.filter(|v| !v.trim().is_empty())
-}
-
 /// A provider ready to connect, with the configuration it must connect with.
-pub(crate) struct PreparedProvider {
-    pub(crate) provider: Box<dyn LiveProvider>,
-    pub(crate) config: LiveConfig,
+pub struct PreparedProvider {
+    pub provider: Box<dyn LiveProvider>,
+    pub config: LiveConfig,
 }
 
 /// Resolves `provider` to something `tinyagents-live` can connect, minting a
-/// backend ticket or signed URL for the hosted ones.
+/// backend ticket or signed URL for the hosted ones (registered, see
+/// [`super::registry`]).
 pub(crate) async fn prepare(
     config: &Config,
     provider: &str,
-    mut live: LiveConfig,
+    live: LiveConfig,
 ) -> Result<PreparedProvider, LiveVoiceError> {
+    if let Some(entry) = super::registry::lookup(provider) {
+        return super::registry::prepare_with(&entry, provider, config, live).await;
+    }
     match provider {
-        LIVE_PROVIDER_GEMINI_HOSTED => {
-            let ticket = mint_gemini_ticket(config, &live).await?;
-            tracing::debug!(
-                "{LOG_PREFIX} minted gemini live ticket session={} model={}",
-                ticket.session_id,
-                ticket.model
-            );
-            let relay = GeminiRelay::connect_url(ticket.ws_url)
-                .with_session(ticket.session_id, ticket.model);
-            Ok(PreparedProvider {
-                provider: Box::new(relay),
-                config: live,
-            })
-        }
-        LIVE_PROVIDER_ELEVENLABS_HOSTED => {
-            let signed = crate::voice::realtime::mint_voice_agent_signed_url(config)
-                .await
-                .map_err(LiveVoiceError::backend)?
-                .value;
-            // `user_token` is the identity the backend's Custom-LLM relay
-            // verifies on every relayed turn (#5399).
-            live.provider_options = json!({
-                "user_id": signed.user_token,
-                "custom_llm_extra_body": { "user": signed.user_token },
-            });
-            Ok(PreparedProvider {
-                provider: Box::new(ElevenLabsConvai::connect_url(signed.signed_url)),
-                config: live,
-            })
-        }
         LIVE_PROVIDER_GEMINI => {
             let key = stored_key("google", config).ok_or_else(|| {
                 LiveVoiceError::not_configured("add a Google API key for Gemini Live")
@@ -236,58 +182,6 @@ pub(crate) async fn prepare(
             "unknown live provider `{other}`"
         ))),
     }
-}
-
-/// A minted relay ticket.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct GeminiTicket {
-    pub(crate) ws_url: String,
-    pub(crate) session_id: String,
-    pub(crate) model: String,
-}
-
-/// Parses the backend's ticket response (`data`-wrapped or bare).
-pub(crate) fn parse_ticket(raw: &Value) -> Result<GeminiTicket, LiveVoiceError> {
-    let data = raw.get("data").unwrap_or(raw);
-    let field = |name: &str| {
-        data.get(name)
-            .and_then(Value::as_str)
-            .filter(|v| !v.is_empty())
-            .map(str::to_string)
-    };
-    let ws_url = field("wsUrl").ok_or_else(|| {
-        LiveVoiceError::backend("backend returned no wsUrl for the live session".to_string())
-    })?;
-    Ok(GeminiTicket {
-        ws_url,
-        session_id: field("sessionId").unwrap_or_default(),
-        model: field("model").unwrap_or_default(),
-    })
-}
-
-async fn mint_gemini_ticket(
-    config: &Config,
-    live: &LiveConfig,
-) -> Result<GeminiTicket, LiveVoiceError> {
-    let credential =
-        crate::security::credentials::session_support::resolve_backend_credential(config)
-            .map_err(LiveVoiceError::not_configured)?;
-    let api_url =
-        crate::backend::require_base_url(&config.api_url).map_err(LiveVoiceError::backend)?;
-    crate::voice::realtime::ensure_secure_backend_url(&api_url).map_err(LiveVoiceError::backend)?;
-    let client =
-        BackendClient::new(&api_url).map_err(|e| LiveVoiceError::backend(e.to_string()))?;
-    let body = gemini::ticket_request(live);
-    let raw = client
-        .authed_json(
-            &credential,
-            Method::POST,
-            GEMINI_LIVE_SESSIONS_PATH,
-            Some(body),
-        )
-        .await
-        .map_err(|error| LiveVoiceError::backend(crate::backend::flatten_authed_error(error)))?;
-    parse_ticket(&raw)
 }
 
 #[cfg(test)]

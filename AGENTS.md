@@ -21,7 +21,7 @@ Architecture: [overview](docs/gitbooks/en/developing/architecture.md),
 | `crates/openhuman-cli/` | The `openhuman-core` binary (`src/main.rs`, `openhuman_rpc::host::cli`), the ops bins (`src/bin/`: `openhuman-fleet`, `test-mcp-stub`), and every root `tests/*.rs` / `examples/*.rs` target. Normal dependency: `openhuman-rpc` only; the tests reach core, embed and tinyhumans through `[dev-dependencies]`. The benchmark bins live in the openhuman-benchmarks repository |
 | `crates/openhuman-embed/` | Library facade over the core (depends on core only): `Runtime`/`RuntimeBuilder` with host presets, `embed::process` (tokio runtime, logging, dotenv, master key, Sentry options), and the curated facades hosts use (`config`, `artifacts`, `chat_surface`, `modules`, `identity`). Its doc-hidden `__host` list is for tinyhumans and rpc only |
 | `crates/openhuman-rpc/` | Top of the library chain (depends on tinyhumans only). JSON-RPC 2.0 over the core: envelopes, HTTP client, and the server (router, Socket.IO, listener, `run_server*`); `host::{cli, desktop, tui}`, the shared host boot; re-exports `embed` and `tinyhumans` as the hosts' curated facade; plus `session_store` (`session-store` feature), the on-disk session store (`session_raw/`, `session_db/`, `tinyagents_store/`, turn states) behind TinyAgents' session store port, which the app, CLI and TUI install. Core and embed reach session state through the port (`agent::session_store`); a few legacy paths still fall back to workspace files when no store is installed. With a storage URL (`OPENHUMAN_STORAGE_URL` / `[storage] url`), `install_for_host` installs TinyAgents' `DriverSessionStores` over that backend instead (core `storage` domain) |
-| `crates/openhuman-tinyhumans/` | The TinyHumans layer above embed (depends on embed only): SDK-backed backend transport, a `RuntimeBuilder` that boots connected, and the host-side login/session owner (login-token exchange, `/auth/me`, current-user cache, credential handoff) used by app and TUI |
+| `crates/openhuman-tinyhumans/` | The TinyHumans layer above embed (depends on embed only), and the only owner of anything hosted: the backend transport port and its SDK implementation, the authenticated client, routes and RPC proxies, and the hosted providers (integrations, voice, inference, channels, memory), all plugged into the core through its generic registries; a `RuntimeBuilder` that boots connected; and the host-side login/session owner (login-token exchange, `/auth/me`, current-user cache, credential handoff) used by app and TUI |
 | `crates/openhuman-tui/` | Standalone terminal frontend; depends on `openhuman-rpc` only and boots with `openhuman_rpc::host::tui` |
 | `tests/` | Rust integration and JSON-RPC tests |
 | `docs/gitbooks/` | Public product and contributor documentation, synced with GitBook (`en/` is canonical, `zh/` the translation) |
@@ -197,8 +197,8 @@ coverage must be at least 80 percent.
 - A suite that boots the core **in-process** and reaches the backend (mock)
   must call `tinyhumans_boot::boot()` from `tests/support/tinyhumans_boot.rs`
   first (it runs `openhuman_tinyhumans::install`, a dev-dependency of
-  `openhuman-cli`); the core has no backend transport of its own, and without
-  it every backend call answers `BACKEND_UNAVAILABLE:`. Suites that spawn the
+  `openhuman-cli`); the core has no hosted code of its own, and without it
+  every backend call answers `BACKEND_UNAVAILABLE:`. Suites that spawn the
   `openhuman-core` binary get it from `main.rs` (`openhuman_rpc::host::cli`).
 
 Shared mock backend:
@@ -654,84 +654,92 @@ module release before migrating a host call to it.
 
 ## Backend API
 
-The core does not depend on `tinyhumans-sdk`. It reaches the hosted backend
-only through the port `crates/openhuman-core/src/backend/transport/`
-(`BackendTransport`, `BackendRequest`, `BackendTransportError`); the SDK-backed
-implementation is `crates/openhuman-tinyhumans` (`SdkBackendTransport`), which
-sits above `openhuman-embed` and is installed once per process
-(`openhuman_tinyhumans::install`, or `RuntimeBuilder` for library hosts, or
-`CoreBuilder::backend_transport`). A core with no transport installed runs
-agents, memory, tools and RPC without any TinyHumans connection and answers
-backend-touching calls with `BackendApiError::BackendUnavailable` /
-`BACKEND_UNAVAILABLE:`.
+The core has no backend module, no hosted port, no hosted route and no
+TinyHumans hostname (`crates/openhuman-core/src/backend/` is gone, and
+`node scripts/ci/check-core-hosted-free.mjs`, part of `pnpm rust:layout`, fails
+on `crate::backend`, `tinyhumans.ai` and the hosted route literals
+`agent-integrations`, `/voice-agent`, `/openai/v1`, `/telemetry/langfuse`,
+`/memory/free-period` and `/teams/me` in core source outside comments and
+`_tests.rs`). The core does not depend on `tinyhumans-sdk`; the only crate that
+may is `openhuman-tinyhumans` (`cargo tree -p openhuman -i tinyhumans-sdk` must
+stay empty).
 
-**Exception: hosted memory.** The `tinyhumans` memory engine does not go
-through `BackendTransport`. `memory/engine.rs` builds TinyMemory's CortexDB
-engine with `EngineSettings { endpoint, headers, scope_root, .. }` and
-`EngineCredential::Dynamic(HostBearer)`, and TinyMemory's own `reqwest`
-client (`tinymemory-integrations/src/cortex/transport`) calls the backend's
-`/memory/*` routes. The core supplies only the pieces: the endpoint from
-`backend::base_url` (or `[memory.engines.tinyhumans] endpoint`), the
-attribution headers (`x-sdk-name`, …) from `backend::attribution_headers`, and a `BearerSource`
-that calls `resolve_backend_credential` on every request. So memory needs a
-transport installed for the URL (unless an endpoint is configured), but none
-of its requests pass through it,
-and transport-level policy (route registry, `map_sdk_error`) does not apply
-to them. The `cortexdb` engine likewise calls CortexDB directly with the
-user's key. Never add `tinyhumans-sdk` back to the core; the only
-crate allowed to depend on it is `openhuman-tinyhumans` (`cargo tree -p
-openhuman -i tinyhumans-sdk` must stay empty). Every host that boots a core
-(`crates/openhuman-app/src/core_process.rs` and `lib.rs::run_core_from_args`,
-`crates/openhuman-tui/src/runner.rs`, `crates/openhuman-cli/src/main.rs`)
-does it through an `openhuman_rpc::host` entry, which connects the TinyHumans
-layer (`openhuman_tinyhumans::RuntimeBuilder::connect`: the transport, as the
-process global and bound to the runtime; library hosts call
-`openhuman_tinyhumans::install` or the `RuntimeBuilder` directly). Connecting
-also registers the hosted RPC
-proxies (`billing`, `team`, `referral`, `announcements`, `webhooks`,
-`channel_link`, `oauth` — `crates/openhuman-tinyhumans/src/hosted/`) into the
-core's controller registry through `core::all::register_controller_extension`
-(`DomainGroup::Hosted`). New backend-only proxy domains belong there, not in
-the core.
+`crates/openhuman-tinyhumans` owns everything hosted: the transport port
+(`BackendTransport`, `BackendRequest`, `BackendTransportError`,
+`TransportProfile`, `BaseUrlPurpose` in `src/transport/port.rs`) and its
+SDK-backed implementation (`SdkBackendTransport`), the authenticated client
+(`src/client/`: `BackendClient`, `HostedApiError`, `flatten_authed_error`), the
+URL, header and product-identity policy (`src/backend/`: `url.rs`, `headers.rs`,
+`product.rs`), the hosted routes and RPC proxies (`src/hosted/`), and the hosted
+providers (`src/integrations/`, `src/voice/`, `src/inference/`,
+`src/channels/`, `src/memory/`). It builds one process-wide transport
+(`openhuman_tinyhumans::client::shared_transport`); the core holds no transport
+slot (`CoreBuilder::backend_transport` and the `CoreContext` accessor are
+removed). What a backend response *means* is decided in the transport
+(`tinyhumans_sdk::classify`, applied by `map_sdk_error`); the recovery lives in
+`BackendClient` and `IntegrationClient::map_transport_error`
+(`crates/openhuman-tinyhumans/src/integrations/client/errors.rs`). Add missing
+backend routes to the vendored SDK (its unexposed-route registry is the route
+policy the transport enforces), not to the core.
 
-Add missing backend routes to the vendored SDK (its unexposed-route registry
-is the route policy the transport enforces) and name them from the core;
-do not recreate route implementations in `crates/openhuman-core/src/backend/`.
+Tinyhumans plugs into the core only through generic registries, keyed by a
+slug or id, that know nothing about TinyHumans and that any other host could
+fill. `openhuman_tinyhumans::install` (or `RuntimeBuilder::connect`) registers
+them through `register_all` (`src/register.rs`), reaching the core via
+`openhuman_embed::__host`:
 
-The core holds no hosted URL, default, environment variable, header policy or
-product identity of its own any more — it only *asks* the installed
-transport, through `crates/openhuman-core/src/backend/mod.rs`'s
-`backend::base_url`, `backend::inference_base_url`, `backend::product_identity`
-and `backend::attribution_headers`. That state now lives with the transport
-implementation, in `crates/openhuman-tinyhumans/src/backend/`: `url.rs`
-(defaults, `BACKEND_URL`/`VITE_BACKEND_URL` overrides, the local-AI/inference
-guard), `headers.rs` (attribution headers and per-profile `reqwest` clients)
-and `product.rs` (`ProductIdentity`, re-exported at
-`openhuman_tinyhumans::{product_identity, set_product_identity,
-ProductIdentity}`).
+| Hook | Core module path |
+| --- | --- |
+| Agent tool sources (media, file storage, integrations, google places, stock prices, web3) | `tools::sources` (`register_tool_source`) |
+| STT, TTS and viseme providers by slug | `voice::factory::registry` |
+| Live voice sessions by slug | `voice::live::registry` |
+| Chat models, embeddings and model catalogs by provider id | `inference::registry` |
+| Channel callback (`ChannelBackendRequest` to `ChannelBackendResult`) | `channels::callback_slot` |
+| Config enricher filling `Config.resolved_endpoints` | `config::register_enricher` (`config/enrichers.rs`) |
+| Memory engines by id and the free-background-work predicate | `memory::engine_registry` |
+| Composio route builder by mode | `integrations::composio::client::register_composio_route_builder` |
+| Connector proxy target by mode | `modules::connectors::register_proxy_target` |
+| Wallet backend handler | `modules::wallet_backend` (`register_wallet_backend`) |
+| Hosted RPC proxies (`billing`, `team`, `referral`, `announcements`, `webhooks`, `channel_link`, `oauth`) | controller extension via `core::all::register_controller_extension` (`DomainGroup::Hosted`) |
 
-`crates/openhuman-core/src/backend/client.rs` owns the authenticated JSON
-client (`BackendClient`, renamed from `BackendOAuthClient`) and error
-classification. Authenticated `BackendClient` requests go through
-`authed_json`, whose private `finish_authed_json` classifies transient
-transport failures and maps 401s and the transport's typed channel-message
-404s (`ChannelMessageNotFound` / `ChannelMessageRouteMissing`) to typed
-`BackendApiError` variants. What a backend response *means* is decided in
-the transport (`tinyhumans_sdk::classify`, applied by
-`openhuman-tinyhumans`'s `map_sdk_error`), never by reading bodies in the
-core; the recovery stays in the core. `IntegrationClient::map_transport_error`
-(`crates/openhuman-core/src/integrations/client/errors.rs`) plays the same
-role for integrations. Route new backend calls through those helpers instead
-of matching `BackendTransportError` by hand.
+Registrations bind per process, or per `CoreContext` through
+`CoreBuilder::extensions` (the `*_in` variants). A core with nothing registered
+runs agents, memory, tools and RPC without any TinyHumans connection; hosted
+surfaces are missing and backend-touching calls answer `BACKEND_UNAVAILABLE:`
+(the generic sentinel prefixes stay in `core::observability`). The core reads
+resolved URLs, the socket URL, the tracing ingestion URL and headers, the
+attribution headers and the product identity from `Config.resolved_endpoints`,
+which the tinyhumans enricher fills on every config load; it never asks a
+transport. `Config.api_url` is honoured as an override exactly as before.
 
-Every TinyHumans backend request must carry a sanitized `x-sdk-name`, now
-stamped by the installed transport's `attribution_headers` (called through
-`backend::attribution_headers`):
+Every host that boots a core (`crates/openhuman-app/src/core_process.rs` and
+`lib.rs::run_core_from_args`, `crates/openhuman-tui/src/runner.rs`,
+`crates/openhuman-cli/src/main.rs`) does it through an `openhuman_rpc::host`
+entry, which connects the TinyHumans layer
+(`openhuman_tinyhumans::RuntimeBuilder::connect`); library hosts call
+`openhuman_tinyhumans::install` or the `RuntimeBuilder` directly. Tests that
+boot the core in-process and reach the mock backend call
+`tinyhumans_boot::boot()`. New backend-only proxy domains belong in
+`crates/openhuman-tinyhumans/src/hosted/`, not in the core.
+
+**Hosted memory.** The `tinyhumans` memory engine is registered through
+`memory::engine_registry` by `crates/openhuman-tinyhumans/src/memory/`. It
+builds TinyMemory's CortexDB engine with `EngineSettings { endpoint, headers,
+scope_root, .. }` and `EngineCredential::Dynamic(HostBearer)`, and TinyMemory's
+own `reqwest` client (`tinymemory-integrations/src/cortex/transport`) calls the
+backend's memory routes directly: none of those requests pass through
+`SdkBackendTransport`, so transport-level policy (the route registry,
+`map_sdk_error`) does not apply to them. The credential comes from
+`resolve_backend_credential` on every request. The `cortexdb` engine likewise
+calls CortexDB directly with the user's key.
+
+Every TinyHumans backend request must carry a sanitized `x-sdk-name`, stamped by
+the tinyhumans attribution headers (`src/backend/headers.rs`):
 
 - `BackendClient`
 - `IntegrationClient`, except redirected file downloads
-- the host session owner's `POST /auth/login-token/consume` and
-  `GET /auth/me` (`openhuman_tinyhumans::session`, through `ClientHeaders`)
+- the host session owner's login-token consume and current-user requests
+  (`openhuman_tinyhumans::session`, through `ClientHeaders`)
 - the agent's Langfuse and OTLP ingestion push
 - the managed model catalog listing
 

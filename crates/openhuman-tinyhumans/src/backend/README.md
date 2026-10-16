@@ -2,20 +2,21 @@
 
 Everything host-specific about reaching the TinyHumans backend: where it is,
 how requests are attributed, and which product they are attributed to. The
-core holds none of this. It asks the installed `BackendTransport`
-(`SdkBackendTransport` in [`../transport/`](../transport/README.md)) through
-the core's `backend::{base_url, inference_base_url, product_identity,
-attribution_headers}`, and the transport answers from the three files here.
+core holds none of this and has no backend module. This crate's config
+enricher ([`../client/enricher.rs`](../client/enricher.rs), registered with
+`config::register_enricher`) publishes the answers on `Config.resolved_endpoints`
+for the core to read, and `SdkBackendTransport`
+(in [`../transport/`](../transport/README.md)) answers from the three files here.
 
 ## How it works
 
 ```text
- core asks                         SdkBackendTransport answers from
+ asked for                         answered from
  -------------------------------   ------------------------------------
- backend::base_url(ControlPlane) -> url::effective_backend_api_url
- backend::inference_base_url     -> url::effective_api_url
- backend::attribution_headers    -> headers::attribution_headers
- backend::product_identity       -> product::product_identity
+ control-plane base URL          -> url::effective_backend_api_url
+ inference base URL              -> url::effective_api_url
+ attribution headers             -> headers::attribution_headers
+ product identity                -> product::product_identity
  (client construction)           -> headers::build_backend_client
 ```
 
@@ -89,7 +90,7 @@ does not strip a custom header when following a cross-origin redirect.
 OpenHuman and other products (OpenCompany, for example) share one login and
 reach the backend through this crate. The `x-sdk-name` header tells the
 backend which product a call came from. The identity is process-wide because
-the core builds backend requests at many call sites that no embedding product
+this crate builds backend requests at many call sites that no embedding product
 owns, so a host sets it once at startup with `set_product_identity`, before
 any backend traffic. A process that never sets it sends
 `DEFAULT_PRODUCT_IDENTITY` (`"openhuman"`).
@@ -123,8 +124,7 @@ process.
 
 ## Boundaries
 
-- The core owns the questions (`backend::base_url` and friends in
-  [`crates/openhuman-core/src/backend/mod.rs`](../../../openhuman-core/src/backend/mod.rs)) and the URL utilities this file
+- The core owns only the generic URL utilities this file
   re-exports (`openhuman_embed::__host::util::url`). It owns the app-environment
   reading too (`config::app_env`).
 - Do not put the `x-sdk-name` header on third-party endpoints, MCP servers,

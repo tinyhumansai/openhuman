@@ -18,7 +18,6 @@ fn summary_reflects_presets_and_knobs() {
     assert_eq!(summary.listen_host.as_deref(), Some("127.0.0.1"));
     assert_eq!(summary.listen_port, Some(7790));
     assert_eq!(summary.action_dir, Some(PathBuf::from("/srv/work")));
-    assert!(!summary.has_backend_transport);
     assert!(summary.controller_extensions.is_empty());
     assert!(summary.tool_ranker.is_none());
 }
