@@ -302,6 +302,7 @@ fn cloud_providers_entry_takes_precedence_over_local_runtime_synthesis() {
         label: "Remote Ollama".to_string(),
         endpoint: "https://ollama.example.com/v1".to_string(),
         auth_style: AuthStyle::Bearer,
+        headers: Default::default(),
         default_model: None,
     });
 
@@ -363,4 +364,84 @@ fn missing_cloud_providers_entry_for_unknown_slug_still_errors() {
         resolved.is_none(),
         "unknown slug with no cloud_providers entry must NOT synthesize",
     );
+}
+
+// ── configured headers on the listing (#7865) ───────────────────────────
+
+#[derive(Clone)]
+struct RecordedListing {
+    body: &'static str,
+    headers: Arc<Mutex<Vec<HeaderMap>>>,
+}
+
+async fn recording_models_handler(
+    State(state): State<RecordedListing>,
+    headers: HeaderMap,
+) -> Response {
+    state.headers.lock().expect("lock").push(headers);
+    (StatusCode::OK, state.body).into_response()
+}
+
+async fn spawn_recording_models_server(body: &'static str) -> (String, RecordedListing) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("local_addr");
+    let state = RecordedListing {
+        body,
+        headers: Arc::new(Mutex::new(Vec::new())),
+    };
+    let app = Router::new()
+        .route("/models", get(recording_models_handler))
+        .with_state(state.clone());
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("serve");
+    });
+    (format!("http://{addr}"), state)
+}
+
+#[tokio::test]
+async fn list_models_sends_the_entry_headers_and_the_product_user_agent() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let (endpoint, recorded) =
+        spawn_recording_models_server(r#"{"data":[{"id":"gated-model","owned_by":"team"}]}"#).await;
+    let mut config = configure_generic_workspace(&tmp, endpoint).await;
+    config.cloud_providers[0].headers = [("x-tenant".to_string(), "team-a".to_string())].into();
+
+    let outcome = list_configured_models_from_config("generic-test", &config)
+        .await
+        .expect("listing succeeds");
+    assert_eq!(outcome.value["models"][0]["id"], "gated-model");
+
+    let seen = recorded.headers.lock().expect("lock");
+    assert_eq!(seen.len(), 1, "one listing request");
+    assert_eq!(
+        seen[0].get("x-tenant").and_then(|v| v.to_str().ok()),
+        Some("team-a")
+    );
+    assert_eq!(
+        seen[0].get("user-agent").and_then(|v| v.to_str().ok()),
+        Some(crate::inference::provider::factory::request_identity::product_user_agent().as_str())
+    );
+}
+
+#[tokio::test]
+async fn list_models_lets_a_configured_user_agent_replace_the_product_one() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let (endpoint, recorded) = spawn_recording_models_server(r#"{"data":[]}"#).await;
+    let mut config = configure_generic_workspace(&tmp, endpoint).await;
+    config.cloud_providers[0].headers =
+        [("User-Agent".to_string(), "my-agent/1.0".to_string())].into();
+
+    list_configured_models_from_config("generic-test", &config)
+        .await
+        .expect("listing succeeds");
+
+    let seen = recorded.headers.lock().expect("lock");
+    let agents: Vec<_> = seen[0]
+        .get_all("user-agent")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .collect();
+    assert_eq!(agents, vec!["my-agent/1.0"]);
 }

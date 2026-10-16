@@ -157,6 +157,7 @@ pub(super) fn create_turn_chat_model_with_native_tools_and_route_inner(
                 .map(|(chat, resolved_model)| (chat, provider_name.clone(), resolved_model));
         }
         if let Some(result) = try_create_cloud_slug_chat_model_with_native_tools(
+            ctx,
             role,
             config,
             native_tool_calling,

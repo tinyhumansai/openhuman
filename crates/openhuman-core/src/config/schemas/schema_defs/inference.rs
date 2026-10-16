@@ -86,7 +86,7 @@ pub(super) fn lookup(function: &str) -> Option<ControllerSchema> {
                 FieldSchema {
                     name: "cloud_providers",
                     ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
-                    comment: "Optional list of cloud provider entries {id, slug, label, endpoint, auth_style, ca_cert_pem}. The optional PEM CA bundle is trusted only for this provider; an empty string clears it. API keys are stored separately via cloud_provider_set_key. Replaces config.cloud_providers wholesale.",
+                    comment: "Optional list of cloud provider entries {id, slug, label, endpoint, auth_style, ca_cert_pem, headers}. The optional PEM CA bundle is trusted only for this provider; an empty string clears it. `headers` is an optional {name: value} map of extra request headers sent on every request to this provider; omitting it keeps the entry's stored headers. API keys are stored separately via cloud_provider_set_key. Replaces config.cloud_providers wholesale.",
                     required: false,
                 },
                 optional_string("primary_cloud", "id of the cloud_providers entry used when a workload routes to 'cloud'. Empty string clears."),

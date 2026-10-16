@@ -132,6 +132,22 @@ Anything else that speaks the OpenAI-compatible API also works. Register it with
 
 For an HTTPS endpoint signed by a private or corporate CA, upload its PEM CA certificate in the custom provider editor. OpenHuman trusts that certificate for this provider's model listing and inference requests. You can also install the CA in the operating system's trust store; on macOS and Linux, `SSL_CERT_FILE` supplies a PEM bundle to the core process.
 
+Every request to an OpenAI-compatible provider identifies the client as `openhuman/<version>` in its `User-Agent`. A provider that needs a header the auth style does not cover takes it from a `headers` table on its `[[cloud_providers]]` entry in `config.toml`; the headers are sent on every request to that provider, chat and model listing alike, and a configured `User-Agent` or `x-opencode-session` replaces the value OpenHuman would add:
+
+```toml
+[[cloud_providers]]
+id = "p_gateway_1"
+slug = "my-gateway"
+label = "Team gateway"
+endpoint = "https://gateway.example/v1"
+auth_style = "bearer"
+
+[cloud_providers.headers]
+x-tenant = "team-a"
+```
+
+OpenCode Go (`https://opencode.ai/zen/go/v1`) needs no such table: it requires a stable per-conversation `x-opencode-session`, and OpenHuman derives one from the chat thread, channel conversation or automation job each request belongs to, so a thread's turns and its title and summary calls share a session.
+
 On a headless core (`openhuman-core serve`), custom cloud providers are built only when a backend session or TinyHumans API key is present. If you run the core with no account, set the endpoint up as the `local-openai` runtime instead: set `LOCAL_OPENAI_URL`, put the key in `local_ai.api_key`, and pin workloads to `local-openai:<model>`. See [Headless without a TinyHumans account](../cloud-deploy.md#headless-without-a-tinyhumans-account).
 
 ### 2. Route workloads to it
