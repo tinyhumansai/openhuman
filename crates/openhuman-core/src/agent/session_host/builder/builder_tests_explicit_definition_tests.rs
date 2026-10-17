@@ -58,6 +58,7 @@ async fn resolved_definition_prefers_the_sessions_own_over_a_same_id_registry_en
     let def = explicit_definition("orchestrator");
     assert_ne!(
         AgentDefinitionRegistry::global()
+            .as_deref()
             .and_then(|r| r.get("orchestrator"))
             .map(|d| d.sandbox_mode),
         Some(SandboxMode::ReadOnly),
@@ -91,6 +92,7 @@ async fn registry_built_sessions_resolve_the_registry_definition() {
     let resolved = agent.resolved_definition().expect("registry definition");
     assert_eq!(resolved.id, "orchestrator");
     let registry_mode = AgentDefinitionRegistry::global()
+        .as_deref()
         .and_then(|r| r.get("orchestrator"))
         .map(|d| d.sandbox_mode)
         .expect("registry orchestrator");

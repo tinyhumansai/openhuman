@@ -1,4 +1,5 @@
 use super::*;
+use crate::agent::registry::types::{AgentRegistryEntry, AgentRegistrySource, AgentSubagentPolicy};
 use crate::core::runtime::{ContextOverlay, CoreContext, DomainSet};
 use std::fs;
 use std::io::Write;
@@ -454,4 +455,88 @@ wildcard = {}
         defs[0].tools,
         tinyagents_definition::ToolScope::Wildcard
     ));
+}
+fn registry_entry_with_allowlist(id: &str, allowlist: Vec<String>) -> AgentRegistryEntry {
+    AgentRegistryEntry {
+        id: id.to_string(),
+        name: id.to_string(),
+        description: String::new(),
+        source: AgentRegistrySource::Default,
+        enabled: true,
+        model: None,
+        system_prompt: None,
+        tool_allowlist: Vec::new(),
+        tool_denylist: Vec::new(),
+        tool_rules: None,
+        subagents: AgentSubagentPolicy::from_allowlist(allowlist),
+        tags: Vec::new(),
+        metadata: serde_json::Value::Null,
+    }
+}
+
+#[test]
+fn entry_overlay_replaces_the_harness_subagents_allowlist() {
+    let registry = AgentDefinitionRegistry::builtins_only();
+    let compiled: Vec<String> = registry
+        .get("orchestrator")
+        .expect("built-in orchestrator")
+        .allowed_subagent_ids();
+    assert!(
+        !compiled.is_empty(),
+        "the test needs a non-empty compiled allowlist to prove the override wins"
+    );
+
+    let entry = registry_entry_with_allowlist("orchestrator", vec!["researcher".to_string()]);
+    let overlaid = registry
+        .with_entry_overlay(&entry)
+        .expect("orchestrator is a harness definition");
+    assert_eq!(
+        overlaid
+            .get("orchestrator")
+            .expect("orchestrator")
+            .allowed_subagent_ids(),
+        vec!["researcher".to_string()],
+        "the registry entry's allowlist must win over the compiled one (#6934)"
+    );
+    // The receiver is untouched: the overlay returns a copy.
+    assert_eq!(
+        registry
+            .get("orchestrator")
+            .expect("orchestrator")
+            .allowed_subagent_ids(),
+        compiled
+    );
+}
+
+#[test]
+fn entry_overlay_skips_ids_the_harness_does_not_know() {
+    let registry = AgentDefinitionRegistry::builtins_only();
+    let entry = registry_entry_with_allowlist("researcher", vec!["other".to_string()]);
+    assert!(
+        registry.with_entry_overlay(&entry).is_none(),
+        "custom agents resolve through find_custom_in_config at session build, \
+         not through the harness registry"
+    );
+}
+
+#[test]
+fn apply_registry_entries_refreshes_the_process_registry() {
+    AgentDefinitionRegistry::init_global_builtins().expect("init");
+    let before = AgentDefinitionRegistry::global().expect("initialised");
+
+    let entry = registry_entry_with_allowlist("orchestrator", vec!["researcher".to_string()]);
+    AgentDefinitionRegistry::apply_registry_entries(std::slice::from_ref(&entry));
+
+    let after = AgentDefinitionRegistry::global().expect("still initialised");
+    assert_eq!(
+        after
+            .get("orchestrator")
+            .expect("orchestrator")
+            .allowed_subagent_ids(),
+        vec!["researcher".to_string()],
+        "update_agent must reach the process registry without a restart (#6934)"
+    );
+
+    // Restore the compiled registry so parallel tests are unaffected.
+    AgentDefinitionRegistry::set_global(before);
 }

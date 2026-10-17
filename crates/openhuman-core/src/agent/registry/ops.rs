@@ -104,6 +104,9 @@ pub async fn update_agent(
         .save()
         .await
         .map_err(|e| format!("failed to save config: {e:#}"))?;
+    // Refresh the process registry so the new policy reaches
+    // `spawn_async_subagent`'s enum and dispatch checks without a restart (#6934).
+    AgentDefinitionRegistry::apply_registry_entries(&config.agent_registry.entries);
     Ok(updated)
 }
 
