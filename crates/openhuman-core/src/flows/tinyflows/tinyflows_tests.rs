@@ -32,8 +32,6 @@ use crate::config::Config;
 use crate::security::SecurityPolicy;
 
 use super::build_capabilities;
-#[cfg(target_os = "linux")]
-use super::caps::OpenHumanCode;
 use super::caps::{OpenHumanHttp, OpenHumanTools};
 
 fn test_config(tmp: &TempDir) -> Arc<Config> {

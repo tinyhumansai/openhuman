@@ -11,8 +11,8 @@ use tinystoragedrivers::{CollectionSpec, DocumentStore, Precondition};
 use super::{apply_bootstrap, strip_bootstrap, ConfigRead, ConfigSource, FileConfigSource};
 use crate::storage::Scope;
 
-/// The collection holding one config document per scope.
-pub(crate) const CONFIG_COLLECTION: &str = "config";
+use super::storage_schema::document_id;
+pub(crate) use super::storage_schema::CONFIG_COLLECTION;
 
 /// The document field holding the encrypted TOML body (`enc2:` hex).
 const BODY_FIELD: &str = "toml_enc";
@@ -101,7 +101,7 @@ impl DocumentConfigSource {
             .context("declare the config collection")?;
         let stored = self
             .docs
-            .get(CONFIG_COLLECTION, self.scope.as_str())
+            .get(CONFIG_COLLECTION, &document_id(self.scope.as_str())?)
             .await
             .context("read the config document")?;
         let Some(versioned) = stored else {
@@ -144,7 +144,7 @@ impl ConfigSource for DocumentConfigSource {
             .context("declare the config collection")?;
         let stored = self
             .docs
-            .get(CONFIG_COLLECTION, self.scope.as_str())
+            .get(CONFIG_COLLECTION, &document_id(self.scope.as_str())?)
             .await
             .context("read the config document")?;
         if stored.is_some() {
@@ -194,7 +194,7 @@ impl ConfigSource for DocumentConfigSource {
         self.docs
             .put(
                 CONFIG_COLLECTION,
-                self.scope.as_str(),
+                &document_id(self.scope.as_str())?,
                 json!({ BODY_FIELD: sealed }),
                 Precondition::None,
             )

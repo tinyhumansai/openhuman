@@ -218,6 +218,12 @@ pub(crate) fn resolve_config_dir_for_workspace(workspace_dir: &Path) -> (PathBuf
         );
     }
 
+    // A layout-v2 profile's workspace is `users/<id>/files`; its config dir is
+    // the profile directory, which carries the `.layout` marker.
+    if let Some(profile) = crate::config::schema::ProfileLayout::of_workspace(workspace_dir) {
+        return (profile.dir, workspace_dir.to_path_buf());
+    }
+
     let has_workspace_basename = workspace_dir
         .file_name()
         .is_some_and(|name| name == std::ffi::OsStr::new("workspace"));
@@ -430,7 +436,7 @@ pub(super) async fn resolve_config_dirs_ignoring_env(
     if let Some(user_id) = read_active_user_id_checked_async(default_openhuman_dir).await? {
         // The shared profile layout (`users/<id>/{config.toml,workspace}`),
         // the same one a SaaS core lays its profiles out with.
-        let profile = crate::config::schema::ProfileLayout::new(default_openhuman_dir, &user_id);
+        let profile = crate::config::schema::ProfileLayout::resolve(default_openhuman_dir, &user_id);
         tracing::debug!(
             user_id = %user_id,
             user_dir = %profile.dir.display(),
@@ -453,8 +459,9 @@ pub(super) async fn resolve_config_dirs_ignoring_env(
         ));
     }
 
-    let profile =
-        crate::config::schema::ProfileLayout::at(pre_login_user_dir(default_openhuman_dir));
+    let profile = crate::config::schema::ProfileLayout::resolve_at(pre_login_user_dir(
+        default_openhuman_dir,
+    ));
     tracing::debug!(
         user_id = %PRE_LOGIN_USER_ID,
         user_dir = %profile.dir.display(),

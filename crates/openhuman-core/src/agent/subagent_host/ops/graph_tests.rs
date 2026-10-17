@@ -63,7 +63,7 @@ fn a_subagent_writes_to_its_turn_trees_store_else_its_contexts() {
         .expect("a workspace store names its destination");
     assert!(
         fallback.ends_with(&format!(
-            "/{}/transcripts",
+            "/local/agent:{}/transcripts",
             crate::agent::session_store::DEFAULT_AGENT
         )),
         "{fallback}"

@@ -10,9 +10,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use serde_json::{json, Value};
+use serde_json::Value;
 use sha2::Digest;
-use tinystoragedrivers::{CollectionSpec, DocumentStore, ErrorKind, Precondition, ScopedStorage};
+use tinystoragedrivers::{DocumentStore, ErrorKind, Precondition, ScopedStorage};
 
 /// The module's scope of the installed backend, or `None` when the process
 /// runs without a storage backend (the module is then not using this storage).
@@ -37,42 +37,22 @@ pub(super) fn marker_id(prefix: &str, source: &Path) -> String {
     format!("{prefix}@{}", &hex::encode(digest)[..16])
 }
 
-/// Declares `collection` (host-only: not in any module's grant) and reports
-/// whether it already holds the marker `id`.
-pub(super) async fn already_imported(
-    docs: &Arc<dyn DocumentStore>,
-    collection: &str,
-    id: &str,
-) -> Result<bool> {
-    docs.ensure_collection(&CollectionSpec::new(collection))
+/// Whether the importer `kind` already finished for marker `id`, recorded in
+/// `tsd.migrations` of the module's scope. `kind` is the old marker
+/// collection name (`tinybox_host_import`), so a marker row an older build
+/// wrote ([`crate::storage::import_state::migrate_legacy_markers`]) answers
+/// the same question.
+pub(super) async fn already_imported(scoped: &ScopedStorage, kind: &str, id: &str) -> Result<bool> {
+    crate::storage::import_state::host_import_done(scoped, kind, id)
         .await
-        .map_err(|error| anyhow!("declare the marker collection: {:?}", error.kind()))?;
-    Ok(docs
-        .get(collection, id)
-        .await
-        .map_err(|error| anyhow!("read the marker: {:?}", error.kind()))?
-        .is_some())
+        .map_err(|error| anyhow!("read the import state: {:?}", error.kind()))
 }
 
-/// Records that the import of `id` finished. A marker another attempt wrote
-/// first is left alone.
-pub(super) async fn mark_imported(
-    docs: &Arc<dyn DocumentStore>,
-    collection: &str,
-    id: &str,
-    mut summary: Value,
-) -> Result<()> {
-    summary["at"] = json!(now_ms());
-    match docs
-        .put(collection, id, summary, Precondition::Absent)
+/// Records that the import of `id` finished. Marking twice is harmless.
+pub(super) async fn mark_imported(scoped: &ScopedStorage, kind: &str, id: &str) -> Result<()> {
+    crate::storage::import_state::host_import_mark(scoped, kind, id)
         .await
-    {
-        Ok(_) => Ok(()),
-        Err(error) if matches!(error.kind(), ErrorKind::Conflict | ErrorKind::AlreadyExists) => {
-            Ok(())
-        }
-        Err(error) => Err(anyhow!("write the marker: {:?}", error.kind())),
-    }
+        .map_err(|error| anyhow!("write the import state: {:?}", error.kind()))
 }
 
 /// Writes `doc` only when `id` is absent; `true` when it was written.

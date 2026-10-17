@@ -12,8 +12,8 @@
 //!   is refused.
 //! * **Which scope.** Never read from the request, which has no such field
 //!   (the wire types reject unknown fields). The scope is derived from the
-//!   module id and the host's current scope ([`crate::storage::scope_from`]):
-//!   `module:<id>@<base>`, so two modules never share a scope and a module can
+//!   module id and the host's current tenant ([`crate::storage::scope_for_module`]):
+//!   `<tenant>/module:<id>`, so two modules never share a scope and a module can
 //!   never name another tenant's. In SaaS mode a call with no profile is
 //!   refused like any other storage use.
 //! * **What it may touch.** The module's [`StorageGrant`], declared by the
@@ -149,46 +149,17 @@ fn failure(kind: StorageKind) -> HostError {
     HostError::Storage(StorageFailure { kind })
 }
 
-/// A module's scope under the host's current tenant.
+/// A module's scope under the host's current tenant: `<tenant>/module:<id>`
+/// ([`crate::storage::scope_for_module`]), `local/module:<id>` on the desktop
+/// and `u:<profile>/module:<id>` for a SaaS profile.
 ///
-/// * For a profile (SaaS): `<profile>~module:<id>`, with the profile escaped
-///   as a session key is. That sits under the profile's session-key prefix,
-///   so the profile's lease fence ([`crate::profiles`]) guards a module's
-///   writes exactly as it guards the profile's transcripts. Too long to be a
-///   scope is an error, never a hash, because a hash would fall outside the
-///   fence.
-/// * Otherwise: `module:<id>@<base>`, or a hash of both when that is not a
-///   valid scope or the id could make the form ambiguous.
-///
-/// Either way two modules never share a scope, and nothing the module sends
-/// takes part.
-pub(crate) fn module_scope(
-    profile: Option<&str>,
-    base: &Scope,
-    module_id: &str,
-) -> Result<Scope, StorageError> {
-    let plain = !module_id.is_empty()
-        && module_id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_');
-    if let Some(profile) = profile {
-        if !plain {
-            return Err(StorageError::invalid_input("module id is not a plain name"));
-        }
-        let prefix = crate::core::runtime::session_key_prefix(profile);
-        return Scope::new(format!("{prefix}module:{module_id}"));
-    }
-    if plain {
-        if let Ok(scope) = Scope::new(format!("module:{module_id}@{}", base.as_str())) {
-            return Ok(scope);
-        }
-    }
-    use sha2::Digest;
-    let mut digest = sha2::Sha256::new();
-    digest.update(module_id.as_bytes());
-    digest.update([0]);
-    digest.update(base.as_str().as_bytes());
-    Scope::new(format!("module-sha256:{}", hex::encode(digest.finalize())))
+/// The module scope sits under its tenant, so the tenant's lease fence
+/// ([`crate::profiles`]) guards a module's writes exactly as it guards the
+/// profile's transcripts, and a tenant purge reaches it. Two modules never
+/// share a scope, and nothing the module sends takes part. An id that is not
+/// a valid segment is hashed by the scope grammar itself, inside the tenant.
+pub(crate) fn module_scope(profile: Option<&str>, module_id: &str) -> Result<Scope, StorageError> {
+    crate::storage::scope_for_module(profile, module_id)
 }
 
 /// A module bound to a scope: its grant and the server that answers it.
@@ -538,9 +509,10 @@ pub(crate) fn current_module_scope(
     // A module call arrives on the module bus, outside any turn, so with no
     // tenant the host's default scope applies (refused in SaaS mode).
     let tenant = ctx.tenant().unwrap_or_default();
-    let base =
-        crate::storage::scope_from(tenant.profile.as_deref(), tenant.agent.as_deref(), saas)?;
-    module_scope(tenant.profile.as_deref(), &base, module_id)
+    // Resolves the acting scope for its SaaS refusal; the module scope itself
+    // depends only on the profile.
+    crate::storage::scope_from(tenant.profile.as_deref(), tenant.agent.as_deref(), saas)?;
+    module_scope(tenant.profile.as_deref(), module_id)
 }
 
 /// Production wiring: the broker's name owners, the installed backend, the

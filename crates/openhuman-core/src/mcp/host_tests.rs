@@ -16,6 +16,7 @@ fn populated_server() -> HostServer {
             enabled: false,
             allowed_tools: vec!["forecast".into()],
             disallowed_tools: vec!["debug".into()],
+            operator_trusted: false,
             timeout_secs: 9,
             auth: McpAuthConfig::BearerToken { token: "t".into() },
         },

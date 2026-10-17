@@ -13,7 +13,7 @@
 //! (`core::runtime::AgentContextRegistry`, which embed agents register on
 //! build) — its own context is used, with its configuration, policy and
 //! tools — or when an earlier process recorded its id in the backend's
-//! `local` scope (`storage_agents`, written by [`record`] when the agent
+//! `local` scope (`agents.registry`, written by [`record`] when the agent
 //! registers), so a restart still visits agents the host has not re-created
 //! yet; those are visited under the default context acting for them
 //! (`CoreContext::for_agent`).
@@ -28,14 +28,42 @@ use std::collections::{BTreeMap, HashSet};
 use std::future::Future;
 use std::sync::{Arc, LazyLock, Mutex};
 
-use serde_json::json;
+use serde_json::{json, Value};
+use tinystoragedrivers::schema::{Schema, ScopeClass, SourceRecord, Step, TargetRecord};
 use tinystoragedrivers::{CollectionSpec, Precondition, Query, Scope};
 
+use super::schema_support::{key_of, owner};
 use super::{block_on, installed, DocumentStoreExt, StorageBackend};
 use crate::core::runtime::{AgentContextRegistry, CoreContext, DispatchCtx};
 
 /// The `local`-scope collection recording which agents have their own scope.
-const AGENTS: &str = "storage_agents";
+pub(super) const AGENTS: &str = "agents.registry";
+/// The v1 name, `{}` per agent under the agent id.
+const LEGACY_AGENTS: &str = "storage_agents";
+
+/// What the agent registry keeps and the step from the v1 collection: the
+/// document id is `Key::of([agent id])` and the body names the agent, so a
+/// listing needs no unescaping.
+#[must_use]
+pub fn storage_schema() -> Schema {
+    Schema::new(owner("agents"))
+        .collection_with(2, CollectionSpec::new(AGENTS), ScopeClass::Tenant)
+        .step(Step::new("registry_v2", AGENTS, 1, 2, registry_v2).source(LEGACY_AGENTS))
+}
+
+fn registry_v2(batch: Vec<SourceRecord>) -> tinystoragedrivers::Result<Vec<TargetRecord>> {
+    batch
+        .into_iter()
+        .map(|record| {
+            Ok(TargetRecord::new(
+                AGENTS,
+                key_of(&record.id)?,
+                json!({ "agent_id": record.id }),
+            )
+            .created_ms(record.meta.created_ms))
+        })
+        .collect()
+}
 
 /// `(backend, agent id)` pairs this process has already recorded, the
 /// backend identified by its address (see [`backend_key`]).
@@ -95,7 +123,13 @@ fn record_in(backend: Arc<dyn StorageBackend>, agent: &str) {
     let result = block_on(async move {
         let docs = Arc::clone(backend.for_scope(&Scope::local())?.documents());
         docs.ensure_collection(&CollectionSpec::new(AGENTS)).await?;
-        docs.put(AGENTS, &id, json!({}), Precondition::None).await?;
+        docs.put(
+            AGENTS,
+            &key_of(&id)?,
+            json!({ "agent_id": id }),
+            Precondition::None,
+        )
+        .await?;
         Ok(())
     });
     match result {
@@ -118,7 +152,15 @@ fn recorded(backend: Arc<dyn StorageBackend>) -> Vec<String> {
         let docs = Arc::clone(backend.for_scope(&Scope::local())?.documents());
         docs.ensure_collection(&CollectionSpec::new(AGENTS)).await?;
         let stored = docs.query_all(AGENTS, &Query::all()).await?;
-        Ok(stored.into_iter().map(|doc| doc.id).collect::<Vec<_>>())
+        Ok(stored
+            .into_iter()
+            .filter_map(|doc| {
+                doc.doc
+                    .get("agent_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .collect::<Vec<_>>())
     });
     result.unwrap_or_else(|error| {
         tracing::warn!(%error, "[storage::agents] could not list recorded agent scopes");

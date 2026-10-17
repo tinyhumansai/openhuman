@@ -6,7 +6,7 @@
 //! bridge ([`super::block_on`]). [`compare_and_swap`] is the read, change,
 //! conditional-write loop every guarded SQL `UPDATE … WHERE` becomes, so two
 //! processes on one database never both apply a change that requires a
-//! particular prior state.
+//! particular prior state, on tsd's `Repo` and `RetryPolicy`.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -14,15 +14,12 @@ use std::sync::{Arc, LazyLock, Mutex, PoisonError, Weak};
 
 use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
-use tinystoragedrivers::{CollectionSpec, ErrorKind, Versioned};
+use tinystoragedrivers::{CollectionSpec, Repo as TsdRepo, RetryPolicy, Versioned};
 
 use super::{
     block_on, current_scope, installed, DocumentStore, Scope, ScopedStorage, StorageBackend,
     StorageError,
 };
-
-/// Compare-and-swap attempts before a contended update gives up.
-pub const CAS_ATTEMPTS: usize = 32;
 
 /// Collections already declared, per process: `(backend address, scope,
 /// collection)`. The `Weak` guards against an address reused by a later
@@ -82,6 +79,7 @@ struct Origin {
 /// One domain's document store under one storage scope.
 #[derive(Clone)]
 pub struct Repo {
+    scoped: ScopedStorage,
     docs: Arc<dyn DocumentStore>,
     domain: &'static str,
     collections: fn() -> Vec<CollectionSpec>,
@@ -155,11 +153,18 @@ impl Repo {
         collections: fn() -> Vec<CollectionSpec>,
     ) -> Self {
         Self {
+            scoped: scoped.clone(),
             docs: Arc::clone(scoped.documents()),
             domain,
             collections,
             origin: None,
         }
+    }
+
+    /// The scoped storage this repo was opened on, for the primitives that
+    /// bind to a whole scope (`tsd.migrations`).
+    pub fn scoped(&self) -> &ScopedStorage {
+        &self.scoped
     }
 
     /// Runs `f` once per process for this repo's backend instance, scope and
@@ -238,41 +243,30 @@ impl Repo {
 /// and returns what was stored, or `None` when the document is missing or
 /// `change` declines (it is no longer in the state the change requires).
 ///
+/// The loop is tsd's [`tinystoragedrivers::Repo::update`] with its default
+/// [`RetryPolicy`] (32 attempts, jittered 1 to 8 ms backoff); the host keeps
+/// no loop of its own.
+///
 /// # Errors
 ///
-/// A storage error, or a conflict when the document kept changing for
-/// [`CAS_ATTEMPTS`] attempts.
+/// A storage error, or a conflict when the document kept changing for the
+/// whole retry budget.
 pub async fn compare_and_swap(
     docs: &Arc<dyn DocumentStore>,
     collection: &str,
     id: &str,
-    change: impl Fn(&Value) -> Option<Value>,
+    change: impl Fn(&Value) -> Option<Value> + Send + Sync,
 ) -> Result<Option<Versioned<Value>>, StorageError> {
-    for _ in 0..CAS_ATTEMPTS {
-        let Some(stored) = docs.get(collection, id).await? else {
-            return Ok(None);
-        };
-        let Some(next) = change(&stored.doc) else {
-            return Ok(None);
-        };
-        match docs
-            .put(collection, id, next.clone(), stored.unchanged())
-            .await
-        {
-            Ok(version) => {
-                return Ok(Some(Versioned {
-                    id: id.to_string(),
-                    version,
-                    doc: next,
-                }));
-            }
-            Err(error) if error.kind() == ErrorKind::Conflict => {}
-            Err(error) => return Err(error),
-        }
-    }
-    Err(StorageError::conflict(format!(
-        "{collection}/{id} kept changing under {CAS_ATTEMPTS} attempts"
-    )))
+    let repo = TsdRepo::<Value>::new(docs, collection)?.with_retry(RetryPolicy::default());
+    let written = repo
+        .update(id, |current| Ok(current.and_then(|doc| change(&doc))))
+        .await?;
+    Ok(written.map(|(doc, version)| Versioned {
+        id: id.to_string(),
+        version,
+        doc,
+        meta: tinystoragedrivers::Meta::unknown(),
+    }))
 }
 
 /// The string field `field` of `doc`, when present.

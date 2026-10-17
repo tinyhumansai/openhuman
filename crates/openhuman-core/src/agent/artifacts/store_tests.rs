@@ -581,8 +581,10 @@ async fn regenerate_preserves_original_created_at() {
     .await
     .unwrap();
     assert_eq!(second.id, id);
+    // Stored as epoch milliseconds, so compare at that precision.
     assert_eq!(
-        second.created_at, original_created,
+        second.created_at.timestamp_millis(),
+        original_created.timestamp_millis(),
         "regenerate must preserve created_at, not bump it"
     );
 }

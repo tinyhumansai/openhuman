@@ -6,7 +6,6 @@ use super::*;
 use crate::cron::system_job_handlers::{register, SystemJobContext};
 use crate::cron::system_jobs::ensure_system_job;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
 use tempfile::TempDir;
 use tinyflows_bus::schedule::types::Schedule;
 use tinyflows_bus::schedule::JobPolicy;

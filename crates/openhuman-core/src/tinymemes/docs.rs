@@ -2,8 +2,11 @@
 //! index, the meme index and the ring of remixed message ids.
 //!
 //! They live on the storage document port ([`crate::storage`]) under the
-//! acting scope, one opaque JSON text per [`IndexKind`]. The host never parses
-//! them: the formats, the ring and its cap belong to the module.
+//! acting scope, in `memes.state`, one document per [`IndexKind`]. The host
+//! never interprets them: the formats, the ring and its cap belong to the
+//! module, and the text-to-body mapping to `tinymemes_bus::storage`
+//! (`state_body` / `state_text`), which also declares the step that brought
+//! the v1 `tinymemes_documents` rows (`{"json": "<text>"}`) here.
 //!
 //! Older installs kept them as `<workspace>/tinymemes/{slang-index,
 //! meme-index,remixed}.json`. The first load of a kind with no stored document
@@ -13,29 +16,23 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Result};
-use serde_json::{json, Value};
+use tinymemes_bus::storage::{state_body, state_id, state_text, STATE_COLLECTION as COLLECTION};
 use tinymemes_bus::IndexKind;
 use tinystoragedrivers::{CollectionSpec, Precondition};
 
 use crate::config::Config;
-use crate::storage::documents::{text, Repo};
+use crate::storage::documents::Repo;
 
 const DOMAIN: &str = "tinymemes::docs";
-const COLLECTION: &str = "tinymemes_documents";
 /// Directory of the pre-storage files, under the workspace.
 const LEGACY_DIR: &str = "tinymemes";
-const FIELD: &str = "json";
 
 fn collections() -> Vec<CollectionSpec> {
     vec![CollectionSpec::new(COLLECTION)]
 }
 
 fn doc_id(kind: IndexKind) -> &'static str {
-    match kind {
-        IndexKind::Slang => "slang",
-        IndexKind::Memes => "memes",
-        IndexKind::Remixed => "remixed",
-    }
+    state_id(kind)
 }
 
 fn legacy_file(kind: IndexKind) -> &'static str {
@@ -60,7 +57,7 @@ pub(super) fn load(config: &Config, kind: IndexKind) -> Result<Option<String>> {
     let id = doc_id(kind);
     let stored = repo.run(move |docs| async move { docs.get(COLLECTION, id).await })?;
     if let Some(stored) = stored {
-        return Ok(text(&stored.doc, FIELD).map(str::to_owned));
+        return Ok(Some(state_text(kind, &stored.doc)));
     }
     let path = legacy_path(&config.workspace_dir, kind);
     // Only an absent file means "nothing to adopt". Any other failure
@@ -72,16 +69,11 @@ pub(super) fn load(config: &Config, kind: IndexKind) -> Result<Option<String>> {
         Err(e) => return Err(anyhow!("read {}: {e}", path.display())),
     };
     // `Absent`: a concurrent save wins over the old file's content.
-    let adopted = legacy.clone();
+    let adopted = state_body(kind, &legacy);
     let written = repo.run(move |docs| async move {
-        docs.put(
-            COLLECTION,
-            id,
-            json!({ FIELD: adopted }),
-            Precondition::Absent,
-        )
-        .await
-        .map(|_| ())
+        docs.put(COLLECTION, id, adopted, Precondition::Absent)
+            .await
+            .map(|_| ())
     });
     match written {
         Ok(()) => {
@@ -101,7 +93,7 @@ pub(super) fn load(config: &Config, kind: IndexKind) -> Result<Option<String>> {
         Err(error) => {
             let stored = repo.run(move |docs| async move { docs.get(COLLECTION, id).await })?;
             match stored {
-                Some(stored) => Ok(text(&stored.doc, FIELD).map(str::to_owned)),
+                Some(stored) => Ok(Some(state_text(kind, &stored.doc))),
                 None => Err(error),
             }
         }
@@ -113,8 +105,7 @@ pub(super) fn save(config: &Config, kind: IndexKind, json: String) -> Result<()>
     let repo = repo(config)?;
     let id = doc_id(kind);
     repo.run(move |docs| async move {
-        let doc: Value = json!({ FIELD: json });
-        docs.put(COLLECTION, id, doc, Precondition::None)
+        docs.put(COLLECTION, id, state_body(kind, &json), Precondition::None)
             .await
             .map(|_| ())
     })

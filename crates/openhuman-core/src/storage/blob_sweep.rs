@@ -76,14 +76,14 @@ pub(crate) async fn sweep_scope_within(
 }
 
 /// Reclaims the lapsed blobs of each SaaS profile in `profile_ids`: the
-/// profile's own scope (`profile:<id>`) and the scopes the blob-owning modules
+/// profile's own scope (`u:<id>`) and the scopes the blob-owning modules
 /// keep for it. Returns the total reclaimed.
 pub(crate) async fn sweep_profiles(backend: &dyn StorageBackend, profile_ids: &[String]) -> u64 {
     let mut removed = 0;
     for id in profile_ids {
         let scope = super::scope_for_profile(id);
         removed += sweep_scope(backend, &scope).await;
-        for module_scope in crate::modules::expiring_blob_module_scopes_for(id, &scope) {
+        for module_scope in crate::modules::expiring_blob_module_scopes_for(id) {
             if module_scope != scope {
                 removed += sweep_scope(backend, &module_scope).await;
             }

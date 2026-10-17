@@ -353,15 +353,15 @@ fn an_unresolved_scope_fails_the_captured_decide_instead_of_using_another_scope(
 }
 
 #[test]
-fn expiry_is_compared_below_a_millisecond() {
+fn expiry_is_compared_in_epoch_milliseconds() {
     let store = docs();
     let whole = Utc::now().with_nanosecond(0).unwrap();
-    let due = whole + Duration::nanoseconds(900_000);
+    let due = whole + Duration::milliseconds(3);
     let mut p = pending("tight", 0, None);
     p.expires_at = Some(due);
     store.insert_pending(&p, "s").unwrap();
     assert!(store
-        .expire_stale(whole + Duration::nanoseconds(100_000))
+        .expire_stale(whole + Duration::milliseconds(2))
         .unwrap()
         .is_empty());
     assert_eq!(store.expire_stale(due).unwrap().len(), 1);

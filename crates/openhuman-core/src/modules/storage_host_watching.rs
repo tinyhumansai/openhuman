@@ -41,10 +41,6 @@ impl StorageBackend for WatchingStorage {
         self.inner.capabilities().with(Capability::Watch)
     }
 
-    fn database(&self, name: &str) -> Result<Arc<dyn StorageBackend>> {
-        self.inner.database(name)
-    }
-
     fn for_scope(&self, scope: &Scope) -> Result<ScopedStorage> {
         let scoped = self.inner.for_scope(scope)?;
         let sender = {
@@ -112,6 +108,19 @@ impl DocumentStore for Documents {
 
     async fn put(&self, c: &str, id: &str, doc: Value, p: Precondition) -> Result<Version> {
         let version = self.inner.put(c, id, doc, p).await?;
+        let _ = self.changed.send(());
+        Ok(version)
+    }
+
+    async fn put_with(
+        &self,
+        c: &str,
+        id: &str,
+        doc: Value,
+        p: Precondition,
+        options: tinystoragedrivers::WriteOptions,
+    ) -> Result<Version> {
+        let version = self.inner.put_with(c, id, doc, p, options).await?;
         let _ = self.changed.send(());
         Ok(version)
     }

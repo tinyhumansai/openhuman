@@ -449,7 +449,7 @@ impl ApprovalGate {
             }
         }
 
-        let request_id = uuid::Uuid::new_v4().to_string();
+        let request_id = tinystoragedrivers::Key::ulid().as_str().to_owned();
         let now = chrono::Utc::now();
         // Routes key on the tenant (profile and agent), so two SaaS profiles'
         // default agents, which carry no agent id, never share one.

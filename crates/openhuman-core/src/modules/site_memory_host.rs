@@ -2,9 +2,9 @@
 //! TinyComputer module keeps what finished browser tasks learned about a site.
 //!
 //! The module owns the rules (reuse, fact-value filtering, expiry, size
-//! limits); the host owns only the bytes: one file per site in
-//! `<workspace>/state/computer/sites/<site>.json`, readable by its owner
-//! alone. Site memory goes to the module and nowhere else: this file never
+//! limits); the host owns only the bytes: one storage value per site (`tsd.kv`
+//! owner `computer`, namespace `site_memory`; once
+//! `<workspace>/state/computer/sites/<site>.json`). Site memory goes to the module and nowhere else: this file never
 //! publishes it to the event bus, the agent's memory or a prompt.
 //!
 //! The host also owns three policies the module cannot know: whether tasks
@@ -30,7 +30,7 @@ const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 /// How long a site file is kept without a change.
 const KEEP_SECS: u64 = 30 * 24 * 60 * 60;
 
-/// The directory site files live in.
+/// The legacy directory site files lived in (imported once, then unused).
 pub(super) fn sites_dir(workspace: &Path) -> PathBuf {
     workspace.join("state").join("computer").join("sites")
 }
@@ -46,19 +46,42 @@ fn plain_site(site: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-')
 }
 
-/// The site files under one directory.
+/// What is stored for one site: the module's memory and when it was saved.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SiteRecord {
+    saved_ms: i64,
+    memory: SiteMemory,
+}
+
+fn now_ms() -> i64 {
+    chrono::Utc::now().timestamp_millis()
+}
+
+fn storage_error(error: impl std::fmt::Display) -> std::io::Error {
+    std::io::Error::other(format!("{error:#}"))
+}
+
+/// The site memories of one workspace, one `tsd.kv` value per site (owner
+/// `computer`, namespace `site_memory`, key the site) in the acting scope.
+/// Before schema v2 each was `<workspace>/state/computer/sites/<site>.json`;
+/// [`SiteStore::open`] imports those once and leaves them in place.
 pub(super) struct SiteStore {
-    dir: PathBuf,
+    kv: crate::storage::state_kv::StateKv,
 }
 
 impl SiteStore {
-    pub(super) fn new(dir: PathBuf) -> Self {
-        Self { dir }
+    pub(super) fn open(workspace: &Path) -> std::io::Result<Self> {
+        let kv = crate::storage::state_kv::StateKv::open(workspace, "computer", "site_memory")
+            .map_err(storage_error)?;
+        let legacy = sites_dir(workspace);
+        kv.import_once("sites_dir", || import_legacy(&kv, &legacy))
+            .map_err(storage_error)?;
+        Ok(Self { kv })
     }
 
-    fn path(&self, site: &str) -> std::io::Result<PathBuf> {
+    fn name(site: &str) -> std::io::Result<&str> {
         if plain_site(site) {
-            Ok(self.dir.join(format!("{site}.json")))
+            Ok(site)
         } else {
             Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -67,110 +90,131 @@ impl SiteStore {
         }
     }
 
-    /// `site`'s memory; a missing file is empty, and an unreadable one is set
-    /// aside as `<site>.json.corrupt` and read as empty.
+    /// `site`'s memory; nothing stored is empty, and an unreadable value is
+    /// dropped and read as empty.
     pub(super) async fn load(&self, site: &str) -> std::io::Result<SiteMemory> {
-        let path = self.path(site)?;
-        let read = match tokio::fs::metadata(&path).await {
-            Ok(m) if m.len() <= MAX_FILE_BYTES => tokio::fs::read(&path).await,
-            Ok(_) => Err(std::io::Error::other("larger than a site file can be")),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(SiteMemory::default()),
-            Err(e) => Err(e),
-        };
-        match read.and_then(|b| serde_json::from_slice(&b).map_err(std::io::Error::other)) {
-            Ok(memory) => Ok(memory),
+        let name = Self::name(site)?;
+        match self.kv.get::<SiteRecord>(name) {
+            Ok(record) => Ok(record.map(|record| record.memory).unwrap_or_default()),
             Err(error) => {
-                tracing::warn!(%error, "[site-memory-host] unreadable site file set aside");
-                let _ = tokio::fs::rename(&path, path.with_extension("json.corrupt")).await;
+                tracing::warn!(%error, "[site-memory-host] unreadable site record dropped");
+                self.kv.delete(name).map_err(storage_error)?;
                 Ok(SiteMemory::default())
             }
         }
     }
 
-    /// Replaces `site`'s memory; an empty one removes the file. Returns
-    /// whether the file holds the memory as sent.
+    /// Replaces `site`'s memory; an empty one removes the record. Returns
+    /// whether the store holds the memory as sent.
     pub(super) async fn save(&self, site: &str, memory: &SiteMemory) -> std::io::Result<bool> {
-        let path = self.path(site)?;
+        let name = Self::name(site)?;
         if memory.is_empty() {
-            remove(&path).await?;
+            self.kv.delete(name).map_err(storage_error)?;
             return Ok(true);
         }
-        let bytes = serde_json::to_vec_pretty(memory).map_err(std::io::Error::other)?;
+        let record = SiteRecord {
+            saved_ms: now_ms(),
+            memory: memory.clone(),
+        };
+        let bytes = serde_json::to_vec(&record).map_err(std::io::Error::other)?;
         if u64::try_from(bytes.len()).map_or(true, |n| n > MAX_FILE_BYTES) {
-            tracing::warn!("[site-memory-host] site memory over the file limit; not saved");
+            tracing::warn!("[site-memory-host] site memory over the size limit; not saved");
             return Ok(false);
         }
-        write_private(&path, &bytes).await?;
+        self.kv.put(name, &record).map_err(storage_error)?;
         Ok(true)
     }
 
     /// Forgets `site`, or every site; returns how many were forgotten.
     pub(super) async fn forget(&self, site: Option<&str>) -> std::io::Result<u64> {
         if let Some(site) = site {
-            let path = self.path(site)?;
-            let aside = remove(&path.with_extension("json.corrupt")).await?;
-            remove(&path.with_extension("json.tmp")).await?;
-            let kept = remove(&path).await?;
-            return Ok(u64::from(kept || aside));
+            let kept = self.kv.delete(Self::name(site)?).map_err(storage_error)?;
+            return Ok(u64::from(kept));
         }
-        let mut entries = match tokio::fs::read_dir(&self.dir).await {
-            Ok(entries) => entries,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-            Err(e) => return Err(e),
-        };
-        let mut sites = std::collections::BTreeSet::new();
-        while let Some(entry) = entries.next_entry().await? {
-            if entry.file_type().await?.is_file() {
-                let name = entry.file_name().to_string_lossy().into_owned();
-                if let Some(site) = name
-                    .strip_suffix(".json")
-                    .or_else(|| name.strip_suffix(".json.corrupt"))
-                {
-                    sites.insert(site.to_owned());
-                }
-                remove(&entry.path()).await?;
+        let mut forgotten = 0;
+        for (name, _) in self
+            .kv
+            .list::<serde_json::Value>("")
+            .map_err(storage_error)?
+        {
+            if self.kv.delete(&name).map_err(storage_error)? {
+                forgotten += 1;
             }
         }
-        Ok(sites.len() as u64)
+        Ok(forgotten)
     }
-}
 
-async fn remove(path: &Path) -> std::io::Result<bool> {
-    match tokio::fs::remove_file(path).await {
-        Ok(()) => Ok(true),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(e) => Err(e),
-    }
-}
-
-/// Writes through a temporary file, in a directory and file only their owner
-/// can read: plans and elements tell where a person browses.
-async fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    use tokio::io::AsyncWriteExt;
-    if let Some(dir) = path.parent() {
-        tokio::fs::create_dir_all(dir).await?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            tokio::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).await?;
+    /// Removes the sites nothing changed for [`KEEP_SECS`]: every entry in
+    /// them has expired.
+    pub(super) fn sweep(&self) {
+        let cutoff = now_ms() - i64::try_from(KEEP_SECS).unwrap_or(i64::MAX) * 1000;
+        let listed = match self.kv.list::<serde_json::Value>("") {
+            Ok(listed) => listed,
+            Err(error) => {
+                tracing::warn!(%error, "[site-memory-host] sweep could not list sites");
+                return;
+            }
+        };
+        for (name, value) in listed {
+            let saved = value.get("saved_ms").and_then(serde_json::Value::as_i64);
+            if saved.is_some_and(|saved| saved <= cutoff) {
+                match self.kv.delete(&name) {
+                    Ok(_) => tracing::debug!(
+                        "[site-memory-host] removed a site record unchanged for 30 days"
+                    ),
+                    Err(error) => {
+                        tracing::warn!(%error, "[site-memory-host] old site record not removed");
+                    }
+                }
+            }
         }
     }
-    let staged = path.with_extension("json.tmp");
-    let mut options = tokio::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    options.mode(0o600);
-    let mut file = options.open(&staged).await?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))
-            .await?;
+}
+
+/// Copies the legacy `<site>.json` files of `dir`, dated by their last change
+/// so the 30-day sweep treats them as before. An existing record wins; a file
+/// that does not parse, or a copy set aside, is skipped.
+fn import_legacy(
+    kv: &crate::storage::state_kv::StateKv,
+    dir: &Path,
+) -> anyhow::Result<()> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(site) = name.strip_suffix(".json").filter(|site| plain_site(site)) else {
+            continue;
+        };
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        if !metadata.is_file() || metadata.len() > MAX_FILE_BYTES {
+            continue;
+        }
+        let memory = match std::fs::read(entry.path())
+            .map_err(anyhow::Error::from)
+            .and_then(|bytes| Ok(serde_json::from_slice::<SiteMemory>(&bytes)?))
+        {
+            Ok(memory) => memory,
+            Err(error) => {
+                tracing::warn!(%error, "[site-memory-host] unreadable legacy site file skipped");
+                continue;
+            }
+        };
+        let saved_ms = metadata
+            .modified()
+            .ok()
+            .and_then(|at| at.duration_since(UNIX_EPOCH).ok())
+            .map_or_else(now_ms, |since| {
+                i64::try_from(since.as_millis()).unwrap_or_else(|_| now_ms())
+            });
+        kv.insert_if_absent(site, &SiteRecord { saved_ms, memory })?;
     }
-    file.write_all(bytes).await?;
-    file.flush().await?;
-    drop(file);
-    tokio::fs::rename(&staged, path).await
+    Ok(())
 }
 
 #[derive(Clone)]
@@ -256,41 +300,10 @@ pub async fn forget(config: &crate::config::Config, site: Option<&str>) -> std::
     let epoch = epochs.entry(config.workspace_dir.clone()).or_insert(0);
     *epoch += 1;
     let epoch = *epoch;
-    let store = SiteStore::new(sites_dir(&config.workspace_dir));
+    let store = SiteStore::open(&config.workspace_dir)?;
     let forgotten = store.forget(site.as_deref()).await?;
     tracing::debug!(forgotten, epoch, "[site-memory-host] forgot sites");
     Ok(usize::try_from(forgotten).unwrap_or(usize::MAX))
-}
-
-/// Removes the site files nothing changed for [`KEEP_SECS`]: every entry in
-/// them has expired, as has a copy set aside or a write left behind.
-async fn sweep(dir: &Path) {
-    let now = std::time::SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs());
-    let Ok(mut entries) = tokio::fs::read_dir(dir).await else {
-        return;
-    };
-    while let Ok(Some(entry)) = entries.next_entry().await {
-        let Ok(metadata) = entry.metadata().await else {
-            continue;
-        };
-        let changed = metadata
-            .modified()
-            .ok()
-            .and_then(|at| at.duration_since(UNIX_EPOCH).ok())
-            .map_or(now, |since| since.as_secs());
-        if metadata.is_file() && changed.saturating_add(KEEP_SECS) <= now {
-            match remove(&entry.path()).await {
-                Ok(_) => {
-                    tracing::debug!("[site-memory-host] removed a site file unchanged for 30 days");
-                }
-                Err(error) => {
-                    tracing::warn!(%error, "[site-memory-host] old site file not removed");
-                }
-            }
-        }
-    }
 }
 
 /// `Load`, under `config`.
@@ -300,9 +313,9 @@ async fn load_site(
 ) -> std::io::Result<LoadSiteResponse> {
     let epochs = guard().lock().await;
     let epoch = epochs.get(&config.workspace_dir).copied().unwrap_or(0);
-    let dir = sites_dir(&config.workspace_dir);
-    sweep(&dir).await;
-    let memory = SiteStore::new(dir).load(&request.site).await?;
+    let store = SiteStore::open(&config.workspace_dir)?;
+    store.sweep();
+    let memory = store.load(&request.site).await?;
     Ok(LoadSiteResponse { memory, epoch })
 }
 
@@ -321,7 +334,7 @@ async fn save_site(
         );
         return Ok(SaveSiteResponse { saved: false });
     }
-    let saved = SiteStore::new(sites_dir(&config.workspace_dir))
+    let saved = SiteStore::open(&config.workspace_dir)?
         .save(&request.site, &request.memory)
         .await?;
     Ok(SaveSiteResponse { saved })

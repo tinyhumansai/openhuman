@@ -7,7 +7,7 @@
 //! conversations of every thread a channel owns.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{LazyLock, Mutex};
 
 use tinymemory_api::{ForgetTarget, ItemKind, MetaFilter};
@@ -20,23 +20,19 @@ use super::error::{MemoryError, MemoryResult};
 /// Serialises read-modify-writes of the file in this process.
 static LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
-fn path(workspace_dir: &Path) -> PathBuf {
-    workspace_dir.join("memory").join("channel_threads.json")
-}
+const STATE: &str = "channel_threads";
 
 fn read(workspace_dir: &Path) -> BTreeMap<String, BTreeSet<String>> {
-    std::fs::read_to_string(path(workspace_dir))
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
+    super::state_store::load(workspace_dir, STATE)
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "[memory:channels] reading channel threads failed");
+            None
+        })
         .unwrap_or_default()
 }
 
 fn write(workspace_dir: &Path, all: &BTreeMap<String, BTreeSet<String>>) {
-    let file = path(workspace_dir);
-    let result = serde_json::to_vec_pretty(all)
-        .map_err(std::io::Error::other)
-        .and_then(|json| crate::memory::files::write_private(&file, &json));
-    if let Err(error) = result {
+    if let Err(error) = super::state_store::save(workspace_dir, STATE, all) {
         tracing::warn!(%error, "[memory:channels] writing channel threads failed");
     }
 }

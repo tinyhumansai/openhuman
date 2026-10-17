@@ -5,7 +5,7 @@
 //! different user signs in. The session store is installed once, process-wide
 //! (a detached turn still writing across a rebind must keep landing in a
 //! store, not in a no-provider fallback), so it cannot be replaced by a new
-//! provider object; it forwards to a [`DriverSessionStores`] that
+//! provider object; it forwards to a [`TenantSessionStores`] that
 //! [`rebind_all`] points at the new workspace's backend.
 //!
 //! Handles already handed out keep the backend they were opened on, so a turn
@@ -13,8 +13,8 @@
 
 use std::sync::{Arc, LazyLock, Mutex, PoisonError, RwLock, Weak};
 
+use super::tenant_router::TenantSessionStores;
 use tinyagents_session::port::{AgentStores, SessionStoreProvider};
-use tinyagents_session::DriverSessionStores;
 use tinystoragedrivers::{Blocking, StorageBackend, StorageError};
 
 /// The live [`ReboundSessionStores`] of one owner, so a rebind reaches the one
@@ -63,9 +63,9 @@ impl StoreRegistry {
 /// The process's registry, the one [`ReboundSessionStores::new`] joins.
 static PROCESS: LazyLock<StoreRegistry> = LazyLock::new(StoreRegistry::default);
 
-/// [`DriverSessionStores`] over a backend [`rebind_all`] can replace.
+/// [`TenantSessionStores`] over a backend [`rebind_all`] can replace.
 pub struct ReboundSessionStores {
-    inner: RwLock<Arc<DriverSessionStores>>,
+    inner: RwLock<Arc<TenantSessionStores>>,
     bridge: Blocking,
     recover_on_open: bool,
 }
@@ -80,7 +80,7 @@ impl std::fmt::Debug for ReboundSessionStores {
 
 impl ReboundSessionStores {
     /// Session stores over `backend`; `recover_on_open` is
-    /// [`DriverSessionStores::recover_on_open`].
+    /// the provider's `recover_on_open`.
     ///
     /// # Errors
     ///
@@ -104,8 +104,7 @@ impl ReboundSessionStores {
         recover_on_open: bool,
     ) -> Result<Arc<Self>, StorageError> {
         let bridge = Blocking::new()?;
-        let inner = DriverSessionStores::with_bridge(backend, bridge.clone())
-            .recover_on_open(recover_on_open);
+        let inner = TenantSessionStores::with_bridge(backend, bridge.clone(), recover_on_open);
         let this = Arc::new(Self {
             inner: RwLock::new(Arc::new(inner)),
             bridge,
@@ -115,14 +114,14 @@ impl ReboundSessionStores {
         Ok(this)
     }
 
-    fn current(&self) -> Arc<DriverSessionStores> {
+    fn current(&self) -> Arc<TenantSessionStores> {
         Arc::clone(&self.inner.read().unwrap_or_else(PoisonError::into_inner))
     }
 
     /// Points the store at `backend`: agents opened from now on live there.
     pub fn rebind(&self, backend: Arc<dyn StorageBackend>) {
-        let next = DriverSessionStores::with_bridge(backend, self.bridge.clone())
-            .recover_on_open(self.recover_on_open);
+        let next =
+            TenantSessionStores::with_bridge(backend, self.bridge.clone(), self.recover_on_open);
         *self.inner.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(next);
         tracing::info!(
             target: "openhuman::storage",

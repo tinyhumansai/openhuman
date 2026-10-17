@@ -310,7 +310,7 @@ pub fn list_runs(config: &Config, job_id: &str, limit: usize) -> Result<Vec<Cron
 
 /// Moves a job's next run to `at`, which no production path can do directly
 /// (a patch reschedules from the schedule, not to a given instant). Writes the
-/// three forms the store keeps of the instant, so the due-job query sees it.
+/// instant the store keeps (`next_run_ms`), so the due-job query sees it.
 #[cfg(test)]
 pub(crate) fn force_next_run_for_test(
     config: &Config,
@@ -323,14 +323,12 @@ pub(crate) fn force_next_run_for_test(
     let job_id = job_id.to_string();
     crate::storage::block_on_anyhow(async move {
         let stored = docs
-            .get("cron_jobs", &job_id)
+            .get("cron.jobs", &job_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("no job {job_id}"))?;
         let mut doc = stored.doc;
-        doc["next_run"] = serde_json::json!(at.to_rfc3339());
         doc["next_run_ms"] = serde_json::json!(at.timestamp_millis());
-        doc["next_run_ns"] = serde_json::json!(at.timestamp_nanos_opt().unwrap_or(i64::MAX));
-        docs.put("cron_jobs", &job_id, doc, Precondition::None)
+        docs.put("cron.jobs", &job_id, doc, Precondition::None)
             .await?;
         Ok(())
     })

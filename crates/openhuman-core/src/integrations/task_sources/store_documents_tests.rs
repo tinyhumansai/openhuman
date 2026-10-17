@@ -131,7 +131,11 @@ fn record_fetch_stamps_the_source() {
         .record_fetch("missing", at, FetchReason::Manual, "ok")
         .unwrap();
     let read = store.get_source("s").unwrap();
-    assert_eq!(read.last_fetch_at, Some(at));
+    // Stored as epoch milliseconds.
+    assert_eq!(
+        read.last_fetch_at.map(|at| at.timestamp_millis()),
+        Some(at.timestamp_millis())
+    );
     assert_eq!(
         read.last_status.as_deref(),
         Some(format!("{}: ok: 3 new", FetchReason::Manual.as_str()).as_str())

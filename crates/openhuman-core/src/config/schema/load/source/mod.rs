@@ -29,6 +29,7 @@
 
 mod document;
 mod file;
+pub(crate) mod storage_schema;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;

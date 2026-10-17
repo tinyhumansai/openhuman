@@ -27,50 +27,31 @@ use crate::config::Config;
 use super::engine;
 use super::error::{MemoryError, MemoryResult};
 
-fn path(workspace_dir: &Path) -> PathBuf {
-    workspace_dir.join("memory").join("pending_deletions.json")
-}
+const STATE: &str = "pending_deletions";
 
-/// `<workspace>/memory/pending_deletions.json`: owner-only, written through a
-/// temporary file and a rename so a stop mid-write never loses the queue. An
-/// unparsable file is set aside; an empty queue removes the file.
+/// The workspace's `pending_deletions` state value: a stop mid-write never
+/// loses the queue (the storage write is atomic). An unparsable value is
+/// dropped and logged; an empty queue removes the value.
 struct FileStore {
-    file: PathBuf,
+    workspace_dir: PathBuf,
 }
 
 impl ListStore<PendingDeletion> for FileStore {
     fn load(&self) -> Result<Vec<PendingDeletion>, StoreError> {
-        let Ok(text) = std::fs::read_to_string(&self.file) else {
-            return Ok(Vec::new());
-        };
-        Ok(serde_json::from_str(&text).unwrap_or_else(|error| {
-            tracing::warn!(%error, "[memory:deletion] pending deletions unparsable; set aside");
-            if let Err(error) =
-                std::fs::rename(&self.file, self.file.with_extension("json.corrupt"))
-            {
-                tracing::warn!(%error, "[memory:deletion] could not set the file aside");
-            }
-            Vec::new()
-        }))
+        super::state_store::load(&self.workspace_dir, STATE)
+            .map(Option::unwrap_or_default)
+            .or_else(|error| {
+                tracing::warn!(%error, "[memory:deletion] pending deletions unreadable; dropped");
+                Ok(Vec::new())
+            })
     }
 
     fn save(&self, all: &[PendingDeletion]) -> Result<(), StoreError> {
         if all.is_empty() {
-            return match std::fs::remove_file(&self.file) {
-                Ok(()) => Ok(()),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                Err(error) => Err(StoreError(error.to_string())),
-            };
+            return super::state_store::remove(&self.workspace_dir, STATE)
+                .map_err(|error| StoreError(error.to_string()));
         }
-        let temp = self.file.with_extension("json.tmp");
-        self.file
-            .parent()
-            .map_or(Ok(()), super::files::create_private_dir_all)
-            .and_then(|()| {
-                let json = serde_json::to_vec_pretty(all).map_err(std::io::Error::other)?;
-                super::files::write_private(&temp, &json)?;
-                std::fs::rename(&temp, &self.file)
-            })
+        super::state_store::save(&self.workspace_dir, STATE, &all)
             .map_err(|error| StoreError(error.to_string()))
     }
 }
@@ -91,7 +72,7 @@ fn queue(workspace_dir: &Path) -> Arc<Queue> {
         .or_insert_with(|| {
             Arc::new(DeletionQueue::new(
                 FileStore {
-                    file: path(workspace_dir),
+                    workspace_dir: workspace_dir.to_path_buf(),
                 },
                 Backoff::default(),
             ))

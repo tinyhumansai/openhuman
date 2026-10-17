@@ -2,7 +2,7 @@ use super::*;
 use crate::memory::test_fixtures::config_in;
 
 #[test]
-fn the_state_file_round_trips_through_the_atomic_store() {
+fn the_state_round_trips_through_the_store() {
     let tmp = tempfile::tempdir().unwrap();
     let store = FileCheckpointStore::new(tmp.path());
     assert_eq!(
@@ -17,7 +17,6 @@ fn the_state_file_round_trips_through_the_atomic_store() {
     store.save(&file).unwrap();
     assert_eq!(store.load(), file);
     assert!(listed_unconfirmed(tmp.path()));
-    assert!(tmp.path().join("memory/import_state.json").is_file());
 }
 
 #[test]

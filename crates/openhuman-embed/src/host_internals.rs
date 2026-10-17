@@ -299,6 +299,12 @@ pub mod storage {
         block_on, block_on_anyhow, clear, configured_url, driver_is_shared, install,
         install_for_url, installed, open, url_from, StorageBackend, STORAGE_URL_VAR,
     };
+
+    /// The layout v1 -> v2 migration the host runs at boot when
+    /// `[storage] auto_migrate_layout` is set.
+    pub mod layout {
+        pub use openhuman_core::storage::layout::auto_migrate;
+    }
 }
 
 pub mod profiles {

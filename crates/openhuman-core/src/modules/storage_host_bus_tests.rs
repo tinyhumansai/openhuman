@@ -5,36 +5,21 @@ use tinystoragedrivers_busproxy::{ERROR_DENIED, OBJECT_ROOT};
 
 #[test]
 fn module_scopes_are_distinct_per_module_and_per_tenant() {
-    let local = Scope::local();
-    let a = module_scope(None, &local, "alpha").unwrap();
-    let b = module_scope(None, &local, "beta").unwrap();
+    let a = module_scope(None, "alpha").unwrap();
+    let b = module_scope(None, "beta").unwrap();
     assert_ne!(a, b);
-    assert_eq!(a.as_str(), "module:alpha@local");
-    let acme = module_scope(
-        Some("acme"),
-        &crate::storage::scope_for_profile("acme"),
-        "alpha",
-    )
-    .unwrap();
+    assert_eq!(a.as_str(), "local/module:alpha");
+    let acme = module_scope(Some("acme"), "alpha").unwrap();
     assert_ne!(a, acme);
-    let other = module_scope(
-        Some("globex"),
-        &crate::storage::scope_for_profile("globex"),
-        "alpha",
-    )
-    .unwrap();
+    assert_eq!(acme.as_str(), "u:acme/module:alpha");
+    let other = module_scope(Some("globex"), "alpha").unwrap();
     assert_ne!(acme, other);
 }
 
 #[test]
 fn a_profiles_module_scope_sits_under_its_lease_fence() {
     for profile in ["acme", "user-1_x", "h-0123456789abcdef0123456789abcdef"] {
-        let scope = module_scope(
-            Some(profile),
-            &crate::storage::scope_for_profile(profile),
-            "tinymcp",
-        )
-        .unwrap();
+        let scope = module_scope(Some(profile), "tinymcp").unwrap();
         let covered =
             crate::profiles::fence::scopes_of(&crate::profiles::ProfileId::parse(profile).unwrap());
         assert!(
@@ -49,18 +34,15 @@ fn a_profiles_module_scope_sits_under_its_lease_fence() {
 }
 
 #[test]
-fn an_ambiguous_module_id_falls_back_to_a_hashed_scope() {
-    let local = Scope::local();
-    let hashed = module_scope(None, &local, "a@b").unwrap();
-    assert!(hashed.as_str().starts_with("module-sha256:"));
-    assert_ne!(hashed, module_scope(None, &local, "a@c").unwrap());
-    // For a profile there is no hash fallback: it would leave the fence.
-    assert!(module_scope(
-        Some("acme"),
-        &crate::storage::scope_for_profile("acme"),
-        "a@b"
-    )
-    .is_err());
+fn an_unusual_module_id_is_hashed_inside_its_tenant() {
+    let hashed = module_scope(Some("acme"), "a@b c").unwrap();
+    assert!(hashed.as_str().starts_with("u:acme/module:~"), "{hashed}");
+    assert_ne!(hashed, module_scope(Some("acme"), "a@b d").unwrap());
+    // Hashing keeps the scope under the fence.
+    assert_eq!(
+        hashed.tenant_scope(),
+        Some(crate::storage::scope_for_profile("acme"))
+    );
 }
 
 #[tokio::test]

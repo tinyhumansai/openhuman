@@ -232,7 +232,11 @@ fn add_once_propagates_parse_delay_errors() {
 fn add_once_at_stores_exact_timestamp() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp);
-    let when = chrono::Utc::now() + chrono::Duration::hours(1);
+    // The store keeps instants as epoch milliseconds.
+    let when = chrono::DateTime::from_timestamp_millis(
+        (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp_millis(),
+    )
+    .unwrap();
     let job = add_once_at(&config, when, "echo hi").unwrap();
     match job.schedule {
         Schedule::At { at } => assert_eq!(at, when),

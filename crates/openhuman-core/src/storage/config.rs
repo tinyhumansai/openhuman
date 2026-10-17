@@ -5,7 +5,8 @@
 //!
 //! 1. `OPENHUMAN_STORAGE_URL`;
 //! 2. `[storage] url` in `config.toml`;
-//! 3. the default, `sqlite:<workspace_dir>/storage` ([`default_url`]).
+//! 3. the default ([`default_url`]): `sqlite:<user dir>/storage.db` for a
+//!    layout-v2 profile, `sqlite:<workspace_dir>/storage` for a v1 one.
 //!
 //! Every host opens the resolved URL once at startup and installs it
 //! ([`super::install`]); every domain then reaches storage through it, and the
@@ -25,9 +26,10 @@
 
 use std::path::Path;
 
+use crate::config::schema::profile_layout::{LayoutVersion, ProfileLayout};
 use crate::config::Config;
 
-/// The directory under the workspace the default backend lives in.
+/// The directory under the workspace the v1 default backend lives in.
 pub const DEFAULT_DIR: &str = "storage";
 
 /// The retired opt-out values (`classic`, `legacy`). They are no longer a mode:
@@ -74,10 +76,40 @@ pub fn mode(config: &Config) -> StorageMode {
     mode_from(std::env::var(super::STORAGE_URL_VAR).ok(), config)
 }
 
-/// The default URL for `workspace_dir`: SQLite in directory mode under
-/// `<workspace>/storage`, one file per named database.
+/// The default URL for a profile of layout `layout`: `sqlite:<dir>/storage.db`
+/// for V2 (one file for the whole profile), `sqlite:<workspace>/storage` for
+/// V1 (SQLite in directory mode, one file per named database).
+pub fn default_url_for(layout: &ProfileLayout) -> String {
+    match layout.version {
+        LayoutVersion::V2 => format!("sqlite:{}", layout.storage_db.display()),
+        LayoutVersion::V1 => format!(
+            "sqlite:{}",
+            layout.workspace_dir.join(DEFAULT_DIR).display()
+        ),
+    }
+}
+
+/// The default URL for `workspace_dir`. A V2 profile's files directory
+/// ([`ProfileLayout::of_workspace`]) gets its `storage.db`; any other
+/// workspace is V1 and gets the directory-mode backend inside it.
 pub fn default_url(workspace_dir: &Path) -> String {
-    format!("sqlite:{}", workspace_dir.join(DEFAULT_DIR).display())
+    match ProfileLayout::of_workspace(workspace_dir) {
+        Some(layout) => default_url_for(&layout),
+        None => format!("sqlite:{}", workspace_dir.join(DEFAULT_DIR).display()),
+    }
+}
+
+/// Creates what [`default_url`] opens into: the profile directory for a V2
+/// `storage.db`, `<workspace>/storage` for V1.
+///
+/// # Errors
+///
+/// When the directory cannot be created.
+pub fn prepare_default_dir(workspace_dir: &Path) -> std::io::Result<()> {
+    match ProfileLayout::of_workspace(workspace_dir) {
+        Some(layout) => std::fs::create_dir_all(&layout.dir),
+        None => std::fs::create_dir_all(workspace_dir.join(DEFAULT_DIR)),
+    }
 }
 
 /// The URL in effect for `mode`: the configured one, or the default under

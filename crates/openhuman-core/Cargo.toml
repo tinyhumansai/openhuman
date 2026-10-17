@@ -146,7 +146,7 @@ tinyagents-harness = { path = "../../vendor/tinyagents/crates/tinyagents-harness
     "multimodal",
     "builtin-tools",
 ] }
-tinybox-bus = { path = "../../vendor/tinybox/crates/tinybox-bus" }
+tinybox-bus = { path = "../../vendor/tinybox/crates/tinybox-bus", features = ["storage"] }
 tiny-artifacts = { path = "../../vendor/tiny-artifacts/crates/tiny-artifacts" }
 tinyagents-definition = { path = "../../vendor/tinyagents/crates/tinyagents-definition" }
 # Live (realtime voice) agent sessions: `tinyagents-live` runs a
@@ -162,15 +162,15 @@ tinyagents-registry = { path = "../../vendor/tinyagents/crates/tinyagents-regist
 tinyagents-session = { path = "../../vendor/tinyagents/crates/tinyagents-session", features = ["storage-drivers"] }
 # The storage ports and the URL-to-backend facade (`storage` domain). No driver
 # by default: the `storage-*` features below add them.
-tinystoragedrivers = { git = "https://github.com/tinyhumansai/tinystoragedrivers", tag = "v0.11.0", default-features = false, features = ["blocking", "secrets", "file", "sqlite"] }
+tinystoragedrivers = { git = "https://github.com/tinyhumansai/tinystoragedrivers", tag = "v1.0.0", default-features = false, features = ["blocking", "secrets", "file", "sqlite"] }
 # The storage bus: the wire contract and the reference host server that the
 # `modules::storage_host` interface answers loaded modules with. Modules only.
-tinystoragedrivers-bus = { git = "https://github.com/tinyhumansai/tinystoragedrivers", tag = "v0.11.0", optional = true }
-tinystoragedrivers-client = { git = "https://github.com/tinyhumansai/tinystoragedrivers", tag = "v0.11.0", optional = true }
+tinystoragedrivers-bus = { git = "https://github.com/tinyhumansai/tinystoragedrivers", tag = "v1.0.0", optional = true }
+tinystoragedrivers-client = { git = "https://github.com/tinyhumansai/tinystoragedrivers", tag = "v1.0.0", optional = true }
 # The host half of the storage bus transport: registers the four `Storage`
 # objects and binds blob streams and watch signals to the calling peer
 # (`Connection::accept_stream_from` / `emit_to`).
-tinystoragedrivers-busproxy = { git = "https://github.com/tinyhumansai/tinystoragedrivers", tag = "v0.11.0", optional = true }
+tinystoragedrivers-busproxy = { git = "https://github.com/tinyhumansai/tinystoragedrivers", tag = "v1.0.0", optional = true }
 # The module-side export macro, used only to wrap the host's own storage server
 # as a *linked* module (`modules/storage_host_linked.rs`): a linked module is the
 # one in-process recipient the bus attests, so it is how `Secrets` can be served.
@@ -226,19 +226,19 @@ tinymemory-integrations = { path = "../../vendor/tinymemory/crates/tinymemory-in
 # crate makes calls into the loaded `tinyconnectors` module and compiles none
 # of it.
 #
-tinyconnectors-bus = { path = "../../vendor/tinyconnectors/crates/tinyconnectors-bus" }
+tinyconnectors-bus = { path = "../../vendor/tinyconnectors/crates/tinyconnectors-bus", features = ["storage"] }
 
 
 
 # tinymcp's contract, including the pure tool-UI rules (`tinymcp_bus::ui`). The
 # MCP runtime itself runs as a module behind it.
-tinymcp-bus = { path = "../../vendor/tinymcp/crates/tinymcp-bus", features = ["schemars"] }
+tinymcp-bus = { path = "../../vendor/tinymcp/crates/tinymcp-bus", features = ["schemars", "storage"] }
 # The transport-free channel vocabulary: inbound envelopes, outbound intents,
 # the config schema, controller metadata and relay frames. UNCONDITIONAL — `DomainEvent` embeds
 # `ChannelInboundEnvelope`, `config/schema/channels.rs` re-exports the config
 # types, so this vocabulary is always-on kernel surface. It costs serde/schemars and nothing
 # this build did not already have.
-tinychannels-bus = { version = "0.1", path = "../../vendor/tinychannels/crates/tinychannels-bus" }
+tinychannels-bus = { version = "0.1", path = "../../vendor/tinychannels/crates/tinychannels-bus", features = ["storage"] }
 # tinybus — the message bus. Owns what `crates/openhuman-core/src/core/event_bus/` used to: the typed
 # pub/sub surface (`EventBus`, `EventHandler`, `SubscriptionHandle`), the
 # in-process zero-serialization request registry (`NativeRegistry`), and peer
@@ -303,7 +303,7 @@ log = "0.4"
 # Final-reply slang + meme remix (runtime flag OPENHUMAN_TINYMEMES, off by
 # default). The engine runs in the `tinymemes` module; the host links only its
 # `*-bus` contract (vendored submodule: vendor/tinymemes).
-tinymemes-bus = { path = "../../vendor/tinymemes/crates/tinymemes-bus", optional = true }
+tinymemes-bus = { path = "../../vendor/tinymemes/crates/tinymemes-bus", features = ["storage"], optional = true }
 # The Jev client the host serves to the module's `Evaluate` callback (managed
 # Jev over the backend's System One proxy). Not a module implementation.
 tinyinference-decisions = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-decisions", optional = true }
@@ -382,6 +382,8 @@ sentry = { version = "0.47.0", default-features = false, optional = true, featur
 url = "2"
 tempfile = "3"
 fs2 = "0.4"
+# Streams the layout-migration archive (`storage::layout::archive`), a `.tar.zst`.
+zstd = "0.13"
 # The scheduler gate's battery/AC probe (`platform::llm_gate::signals`),
 # behind the `scheduler-gate` feature. CPU sampling uses `sysinfo` above.
 starship-battery = { version = "0.12", optional = true }
@@ -449,7 +451,7 @@ tinyvoice-bus = { path = "../../vendor/tinyvoice/crates/tinyvoice-bus", optional
 # no gate to hang off.
 #
 # After cloning: `git submodule update --init vendor/tinyjuice`.
-tinyjuice-bus = { path = "../../vendor/tinyjuice/crates/tinyjuice-bus" }
+tinyjuice-bus = { path = "../../vendor/tinyjuice/crates/tinyjuice-bus", features = ["storage"] }
 
 # Transport-free vocabulary for the compiled TinyHosts provider module.
 # Optional: exclusive to the default-OFF `hosting` feature.
@@ -480,7 +482,7 @@ tinyhosts-bus = { path = "../../vendor/tinyhosts/crates/tinyhosts-bus", optional
 # The root crate is still taken under [dev-dependencies], where test fixtures
 # derive a known account. Dev-dependency features are not linked into the
 # shipped binary, so that does not undo the shed.
-tinywallet-bus = { path = "../../vendor/tinywallet/crates/tinywallet-bus", default-features = false, features = ["wire"], optional = true }
+tinywallet-bus = { path = "../../vendor/tinywallet/crates/tinywallet-bus", default-features = false, features = ["wire", "storage"], optional = true }
 
 
 [target.'cfg(windows)'.dependencies]
@@ -761,7 +763,7 @@ media = ["tinyagents-harness/media"]
 # runtime `DomainSet::flows` flag (#4796): the feature narrows the compile-time
 # surface, `DomainSet` gates it at runtime.
 # NOTE: this gate does NOT drop `tinyagents` itself — 26+ domains consume it.
-flows = ["modules", "dep:tinyflows", "dep:tinyflows-catalog", "dep:tinyflows-copilot", "dep:tinyflows-drivers", "tinyflows-import/engine", "tinyflows-import/store", "tinyflows-import/catalog", "tinyflows-drivers/catalog"]
+flows = ["modules", "dep:tinyflows", "dep:tinyflows-catalog", "dep:tinyflows-copilot", "dep:tinyflows-drivers", "tinyflows-import/engine", "tinyflows-import/store", "tinyflows-import/catalog", "tinyflows-drivers/catalog", "tinyflows-drivers/schedule"]
 # Skills domains: `openhuman::skills` (metadata/discovery/install),
 # `openhuman::skill_runtime` (SKILL.md execution + the skill_executor agent),
 # and `openhuman::skill_registry` (remote catalogs + the skill_setup agent).

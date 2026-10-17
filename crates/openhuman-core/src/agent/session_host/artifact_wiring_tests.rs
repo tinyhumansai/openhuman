@@ -54,7 +54,7 @@ async fn the_store_materialises_in_the_workspace_not_the_action_dir() {
         tool_result_artifacts_dir(&workspace)
     );
     let pointer = store.path_for_read_tool("shell", Some("c"));
-    assert_eq!(pointer, "tool-results/s/shell/c.txt");
+    assert_eq!(pointer, "harness/tool_results/s/shell/c.txt");
 }
 
 /// A large result is stored on the blob store, its pointer opens through the
@@ -69,7 +69,10 @@ async fn a_stored_result_survives_a_session_reload() {
         apply_per_result_persistence(raw, None, Some(&first), "shell", Some("call-1"), 1024).await;
     assert!(outcome.persisted, "{out}");
     let key = outcome.artifact_path.expect("pointer");
-    assert!(key.starts_with("tool-results/thread-1/shell/"), "{key}");
+    assert!(
+        key.starts_with("harness/tool_results/thread-1/shell/"),
+        "{key}"
+    );
 
     let reloaded = build_artifact_store(&workspace, "thread-1");
     let mut args = json!({"path": key});

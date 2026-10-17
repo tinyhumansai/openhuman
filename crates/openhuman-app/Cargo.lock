@@ -681,6 +681,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "54413ede23c2daf518f35156dfde027feb2374004d63bd497f983c8db9c0e313"
 dependencies = [
  "find-msvc-tools",
+ "jobserver",
+ "libc",
  "shlex",
 ]
 
@@ -932,6 +934,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "01a7799fd6b852db0e61728dde9a204c423b44d689dbd432522543614b490e78"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "cron"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5dcd6f69605c2956916ce24e8af637b754964c9a83f4662d3a2361654cdba09"
+dependencies = [
+ "chrono",
+ "once_cell",
+ "phf 0.11.3",
+ "winnow 0.7.15",
 ]
 
 [[package]]
@@ -2852,6 +2866,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "jobserver"
+version = "0.1.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c00acbd29eabad4a2392fa0e921c874934dbbf4194312ad20f04a0ed67a3cb3"
+dependencies = [
+ "getrandom 0.4.3",
+ "libc",
+]
+
+[[package]]
 name = "js-sys"
 version = "0.3.105"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3867,6 +3891,7 @@ dependencies = [
  "x25519-dalek",
  "zeroize",
  "zip 2.4.2",
+ "zstd",
 ]
 
 [[package]]
@@ -4183,6 +4208,16 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "phf"
+version = "0.11.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fd6780a80ae0c52cc120a26a1a42c1ae51b247a253e4e06113d23d2c2edd078"
+dependencies = [
+ "phf_macros 0.11.3",
+ "phf_shared 0.11.3",
+]
+
+[[package]]
+name = "phf"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "913273894cec178f401a31ec4b656318d95473527be05c0752cc41cdc32be8b7"
@@ -4196,7 +4231,7 @@ version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1562dc717473dbaa4c1f85a36410e03c047b2e7df7f45ee938fbef64ae7fadf"
 dependencies = [
- "phf_macros",
+ "phf_macros 0.13.1",
  "phf_shared 0.13.1",
  "serde",
 ]
@@ -4207,8 +4242,18 @@ version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "49aa7f9d80421bca176ca8dbfebe668cc7a2684708594ec9f3c0db0805d5d6e1"
 dependencies = [
- "phf_generator",
+ "phf_generator 0.13.1",
  "phf_shared 0.13.1",
+]
+
+[[package]]
+name = "phf_generator"
+version = "0.11.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c80231409c20246a13fddb31776fb942c38553c51e871f8cbd687a4cfb5843d"
+dependencies = [
+ "phf_shared 0.11.3",
+ "rand 0.8.8",
 ]
 
 [[package]]
@@ -4223,15 +4268,37 @@ dependencies = [
 
 [[package]]
 name = "phf_macros"
+version = "0.11.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f84ac04429c13a7ff43785d75ad27569f2951ce0ffd30a3321230db2fc727216"
+dependencies = [
+ "phf_generator 0.11.3",
+ "phf_shared 0.11.3",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "phf_macros"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "812f032b54b1e759ccd5f8b6677695d5268c588701effba24601f6932f8269ef"
 dependencies = [
- "phf_generator",
+ "phf_generator 0.13.1",
  "phf_shared 0.13.1",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "phf_shared"
+version = "0.11.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "67eabc2ef2a60eb7faa00097bd1ffdb5bd28e62bf39990626a582201b7a754e5"
+dependencies = [
+ "siphasher",
 ]
 
 [[package]]
@@ -5781,7 +5848,7 @@ version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "585635e46db231059f76c5849798146164652513eb9e8ab2685939dd90f29b69"
 dependencies = [
- "phf_generator",
+ "phf_generator 0.13.1",
  "phf_shared 0.13.1",
  "proc-macro2",
  "quote",
@@ -6338,7 +6405,7 @@ dependencies = [
  "serde_with",
  "swift-rs",
  "thiserror 2.0.20",
- "toml 1.1.6+spec-1.1.0",
+ "toml 0.9.12+spec-1.1.0",
  "url",
  "urlpattern",
  "uuid",
@@ -6374,7 +6441,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.5",
  "windows-sys 0.52.0",
@@ -6514,7 +6581,6 @@ dependencies = [
  "futures",
  "serde",
  "serde_json",
- "sha2 0.11.0",
  "tinyagents-harness",
  "tinyagents-tasks",
  "tinyinference-llm",
@@ -6673,9 +6739,11 @@ dependencies = [
 
 [[package]]
 name = "tinybox-bus"
-version = "0.1.35"
+version = "0.1.36"
 dependencies = [
  "serde",
+ "serde_json",
+ "tinystoragedrivers-core",
 ]
 
 [[package]]
@@ -6731,6 +6799,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "tinystoragedrivers-core",
  "tokio",
 ]
 
@@ -6749,6 +6818,7 @@ version = "0.19.3"
 dependencies = [
  "serde",
  "serde_json",
+ "tinystoragedrivers-core",
 ]
 
 [[package]]
@@ -6831,6 +6901,7 @@ dependencies = [
  "sha2 0.11.0",
  "tinyflows",
  "tinyflows-catalog",
+ "tinyflows-schedule",
  "tinystoragedrivers-core",
  "tokio",
  "tracing",
@@ -6855,6 +6926,22 @@ dependencies = [
  "tinystoragedrivers-core",
  "tinystoragedrivers-sqlite",
  "tracing",
+]
+
+[[package]]
+name = "tinyflows-schedule"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "chrono-tz",
+ "cron",
+ "serde",
+ "tinyflows-bus",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -7046,6 +7133,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "tinystoragedrivers-core",
 ]
 
 [[package]]
@@ -7068,12 +7156,13 @@ dependencies = [
 
 [[package]]
 name = "tinymcp-bus"
-version = "0.18.6"
+version = "0.18.7"
 dependencies = [
  "base64 0.23.1",
  "schemars 1.2.2",
  "serde",
  "serde_json",
+ "tinystoragedrivers-core",
 ]
 
 [[package]]
@@ -7082,6 +7171,7 @@ version = "0.4.0"
 dependencies = [
  "serde",
  "serde_json",
+ "tinystoragedrivers-core",
 ]
 
 [[package]]
@@ -7177,6 +7267,7 @@ name = "tinyskills-drivers"
 version = "0.5.1"
 dependencies = [
  "cap-std",
+ "serde",
  "serde_json",
  "thiserror 2.0.20",
  "tinyskills",
@@ -7186,7 +7277,7 @@ dependencies = [
 
 [[package]]
 name = "tinystoragedrivers"
-version = "0.11.0"
+version = "1.0.0"
 dependencies = [
  "tinystoragedrivers-core",
  "tinystoragedrivers-file",
@@ -7196,7 +7287,7 @@ dependencies = [
 
 [[package]]
 name = "tinystoragedrivers-bus"
-version = "0.11.0"
+version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7205,7 +7296,7 @@ dependencies = [
 
 [[package]]
 name = "tinystoragedrivers-busproxy"
-version = "0.11.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "serde",
@@ -7219,7 +7310,7 @@ dependencies = [
 
 [[package]]
 name = "tinystoragedrivers-client"
-version = "0.11.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "serde",
@@ -7232,18 +7323,22 @@ dependencies = [
 
 [[package]]
 name = "tinystoragedrivers-core"
-version = "0.11.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
+ "data-encoding",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "thiserror 2.0.20",
  "tokio",
+ "ulid",
+ "zstd",
 ]
 
 [[package]]
 name = "tinystoragedrivers-file"
-version = "0.11.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "libc",
@@ -7255,7 +7350,7 @@ dependencies = [
 
 [[package]]
 name = "tinystoragedrivers-secrets"
-version = "0.11.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "atomicwrites",
@@ -7278,12 +7373,14 @@ dependencies = [
 
 [[package]]
 name = "tinystoragedrivers-sqlite"
-version = "0.11.0"
+version = "1.0.0"
 dependencies = [
  "rusqlite",
  "serde_json",
+ "sha2 0.10.9",
  "tinystoragedrivers-core",
  "tokio",
+ "zstd",
 ]
 
 [[package]]
@@ -7370,6 +7467,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "tinystoragedrivers-core",
 ]
 
 [[package]]
@@ -7809,6 +7907,16 @@ dependencies = [
  "memoffset",
  "tempfile",
  "windows-sys 0.60.2",
+]
+
+[[package]]
+name = "ulid"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "470dbf6591da1b39d43c14523b2b469c86879a53e8b758c8e090a470fe7b1fbe"
+dependencies = [
+ "rand 0.9.5",
+ "web-time",
 ]
 
 [[package]]
@@ -8947,6 +9055,9 @@ name = "winnow"
 version = "0.7.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df79d97927682d2fd8adb29682d1140b343be4ac0f08fd68b7765d9c059d3945"
+dependencies = [
+ "memchr",
+]
 
 [[package]]
 name = "winnow"
@@ -9321,6 +9432,34 @@ dependencies = [
  "crc32fast",
  "log",
  "simd-adler32",
+]
+
+[[package]]
+name = "zstd"
+version = "0.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e91ee311a569c327171651566e07972200e76fcfe2242a4fa446149a3881c08a"
+dependencies = [
+ "zstd-safe",
+]
+
+[[package]]
+name = "zstd-safe"
+version = "7.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "64d80649ab6db9d9f6f9c80a40becd948eda4714a0a5ac8c4d157a32231c7882"
+dependencies = [
+ "zstd-sys",
+]
+
+[[package]]
+name = "zstd-sys"
+version = "2.1.2+zstd.1.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "481ada9c543b2323cbb7bbdbb5249177fbf0188ed959ed2c15e4b22421c84ed3"
+dependencies = [
+ "cc",
+ "pkg-config",
 ]
 
 [[package]]

@@ -50,7 +50,7 @@ async fn rejects_if_already_worker_thread() {
         CreateConversationThread {
             id: thread_id.to_string(),
             title: "Worker".into(),
-            created_at: "now".into(),
+            created_at: chrono::Utc::now().to_rfc3339(),
             parent_thread_id: None,
             labels: Some(vec!["tasks".to_string()]),
             personality_id: None,
@@ -77,7 +77,7 @@ async fn rejects_if_has_parent_thread_id() {
         CreateConversationThread {
             id: thread_id.to_string(),
             title: "Sub".into(),
-            created_at: "now".into(),
+            created_at: chrono::Utc::now().to_rfc3339(),
             parent_thread_id: Some("parent".into()),
             labels: None,
             personality_id: None,

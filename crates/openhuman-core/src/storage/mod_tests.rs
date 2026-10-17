@@ -76,18 +76,18 @@ fn install_installed_and_clear() {
 }
 
 #[test]
-fn agent_scopes_match_the_session_store() {
-    assert_eq!(scope_for_agent("agent-7").as_str(), "agent-7");
+fn agent_scopes_sit_under_the_local_tenant() {
+    assert_eq!(scope_for_agent("agent-7").as_str(), "local/agent:agent-7");
     assert!(scope_for_agent("has a space")
         .as_str()
-        .starts_with("sha256:"));
+        .starts_with("local/agent:~"));
 }
 
 #[test]
 fn the_scope_follows_the_acting_agent_and_fails_closed_in_saas() {
     assert_eq!(
         scope_from(None, Some("agent-7"), false).unwrap().as_str(),
-        "agent-7"
+        "local/agent:agent-7"
     );
     assert!(
         scope_from(None, Some("agent-7"), true).is_err(),
@@ -107,20 +107,20 @@ fn a_profile_scopes_storage_over_its_agents() {
             scope_from(Some("u-alice"), Some("u-alice"), saas)
                 .unwrap()
                 .as_str(),
-            "profile:u-alice"
+            "u:u-alice"
         );
         assert_eq!(
             scope_from(Some("u-alice"), None, saas).unwrap().as_str(),
-            "profile:u-alice"
+            "u:u-alice"
         );
     }
     assert_ne!(scope_for_profile("a"), scope_for_profile("b"));
     let odd = scope_for_profile("has a space");
-    assert!(odd.as_str().starts_with("profile-sha256:"), "{odd}");
+    assert!(odd.as_str().starts_with("u:~"), "{odd}");
     assert_ne!(odd, scope_for_profile("has  a space"));
     assert!(scope_for_profile(&"x".repeat(400))
         .as_str()
-        .starts_with("profile-sha256:"));
+        .starts_with("u:~"));
 }
 
 #[test]

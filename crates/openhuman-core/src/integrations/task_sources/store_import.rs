@@ -17,7 +17,8 @@ use chrono::DateTime;
 use rusqlite::Connection;
 use serde_json::{json, Map, Value};
 
-use super::store_documents::{ingested_id, to_doc, INGESTED, SOURCES};
+use super::storage_schema::{LEGACY_INGESTED, LEGACY_SOURCES};
+use super::store_documents::to_doc;
 use crate::config::Config;
 use crate::storage::import::{table_exists, ImportDoc};
 
@@ -44,7 +45,7 @@ fn read_rows(conn: &Connection) -> Result<Vec<ImportDoc>> {
             // table is not retired with a source missing from the new one.
             let source = row.context("[task_sources::import] decode a task_sources row")?;
             docs.push(ImportDoc {
-                collection: SOURCES,
+                collection: LEGACY_SOURCES,
                 id: source.id.clone(),
                 doc: to_doc(&source)?,
             });
@@ -82,8 +83,8 @@ fn read_rows(conn: &Connection) -> Result<Vec<ImportDoc>> {
                 doc.insert("ingested_ms".into(), json!(ingested.timestamp_millis()));
                 doc.insert("ingested_at".into(), json!(ingested_at));
                 Ok(ImportDoc {
-                    collection: INGESTED,
-                    id: ingested_id(&source_id, &external_id),
+                    collection: LEGACY_INGESTED,
+                    id: format!("{}:{source_id}/{external_id}", source_id.len()),
                     doc: Value::Object(doc),
                 })
             })

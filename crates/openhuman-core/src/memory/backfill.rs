@@ -99,32 +99,21 @@ struct BackfillFile {
     stored: BTreeMap<String, u32>,
 }
 
-fn file_path(workspace_dir: &Path) -> PathBuf {
-    workspace_dir
-        .join("memory")
-        .join("conversations_backfill.json")
-}
+const STATE: &str = "conversations_backfill";
 
 fn read_file(workspace_dir: &Path) -> BackfillFile {
-    std::fs::read_to_string(file_path(workspace_dir))
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
+    super::state_store::load(workspace_dir, STATE)
+        .unwrap_or_else(|error| {
+            tracing::warn!(error = %error, "[memory:backfill] reading state failed");
+            None
+        })
         .unwrap_or_default()
 }
 
-/// Persists `file` atomically (staged, synced, renamed), so a crash
-/// mid-write keeps the previous progress instead of losing it.
+/// Persists `file` atomically (one storage write), so a crash mid-write keeps
+/// the previous progress instead of losing it.
 fn write_file(workspace_dir: &Path, file: &BackfillFile) {
-    let result = serde_json::to_vec_pretty(file)
-        .map_err(|error| error.to_string())
-        .and_then(|json| {
-            crate::security::secret_storage::file_store::write_atomic(
-                &file_path(workspace_dir),
-                &json,
-            )
-            .map_err(|error| error.to_string())
-        });
-    if let Err(error) = result {
+    if let Err(error) = super::state_store::save(workspace_dir, STATE, file) {
         tracing::warn!(error = %error, "[memory:backfill] writing state failed");
     }
 }

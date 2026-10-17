@@ -6,7 +6,7 @@
 //! a run the previous process never finished, and reads as `idle`.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{LazyLock, Mutex};
 
 use chrono::{DateTime, Utc};
@@ -34,23 +34,19 @@ pub struct SourceState {
     pub items: u64,
 }
 
-fn path(workspace_dir: &Path) -> PathBuf {
-    workspace_dir.join("memory").join("sources_state.json")
-}
+const STATE: &str = "sources_state";
 
 fn read_all(workspace_dir: &Path) -> BTreeMap<String, SourceState> {
-    std::fs::read_to_string(path(workspace_dir))
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
+    crate::memory::state_store::load(workspace_dir, STATE)
+        .unwrap_or_else(|error| {
+            tracing::warn!(error = %error, "[memory:sources] reading sync state failed");
+            None
+        })
         .unwrap_or_default()
 }
 
 fn write_all(workspace_dir: &Path, all: &BTreeMap<String, SourceState>) {
-    let file = path(workspace_dir);
-    let result = serde_json::to_vec_pretty(all)
-        .map_err(std::io::Error::other)
-        .and_then(|json| crate::memory::files::write_private(&file, &json));
-    if let Err(error) = result {
+    if let Err(error) = crate::memory::state_store::save(workspace_dir, STATE, all) {
         tracing::warn!(error = %error, "[memory:sources] writing sync state failed");
     }
 }

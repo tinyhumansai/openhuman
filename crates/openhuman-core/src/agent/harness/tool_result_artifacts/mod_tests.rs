@@ -32,7 +32,7 @@ async fn threshold_persists_to_blobs_and_file_read_serves_the_key() {
     )
     .await;
 
-    let key = "tool-results/session_one/shell/call-1.txt";
+    let key = "harness/tool_results/session_one/shell/call-1.txt";
     assert!(outcome.persisted);
     assert!(out.contains(&format!("artifact_path: {key}\n")), "{out}");
     assert!(out.contains("[preview]"));

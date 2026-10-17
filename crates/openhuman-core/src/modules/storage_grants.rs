@@ -172,51 +172,15 @@ impl StorageGrant {
     }
 }
 
-/// One module's declaration: its registry id and the grant it holds.
-type Declaration = (&'static str, fn() -> StorageGrant);
-
 /// The modules whose build declares storage, and what each may use.
 ///
-/// A module adds its row here (a declaration is a reviewable build-time
-/// decision, like the registry's digests) and then calls
-/// `ai.tinyhumans.tinystorage.Storage`; a module with no row has no storage at
-/// all. `tinymcp` (v0.18.0 and later) reaches its servers, audit log and
-/// environment secrets through this table; so do `tinyconnectors` (v0.18.0:
-/// scope preferences and trigger archive), `tinywallet` (v0.22.0: x402 ledger and
-/// budget hold), `tinybox` (v0.1.29: box records, jail index) and `tinyjuice`
-/// (v0.10.0: CCR blobs).
+/// The grant is generated from the module owner's `storage_schema()`
+/// (`storage_grant_schemas`), so it cannot drift from what the module
+/// declares; a module with no row has no storage at all. Rows: `tinychannels`,
+/// `tinymcp`, `tinyconnectors`, `tinywallet`, `tinybox` and `tinyjuice`.
 #[must_use]
 pub fn declared(module_id: &str) -> Option<StorageGrant> {
-    let table: &[Declaration] = &[
-        (
-            super::storage_grant_tinychannels::MODULE_ID,
-            super::storage_grant_tinychannels::grant,
-        ),
-        (
-            super::storage_grant_tinymcp::MODULE_ID,
-            super::storage_grant_tinymcp::grant,
-        ),
-        (
-            super::storage_grant_tinyconnectors::MODULE_ID,
-            super::storage_grant_tinyconnectors::grant,
-        ),
-        (
-            super::storage_grant_tinywallet::MODULE_ID,
-            super::storage_grant_tinywallet::grant,
-        ),
-        (
-            super::storage_grant_tinybox::MODULE_ID,
-            super::storage_grant_tinybox::grant,
-        ),
-        (
-            super::storage_grant_tinyjuice::MODULE_ID,
-            super::storage_grant_tinyjuice::grant,
-        ),
-    ];
-    table
-        .iter()
-        .find(|(id, _)| *id == module_id)
-        .map(|(_, grant)| grant())
+    super::storage_grant_schemas::grant_for(module_id)
 }
 
 fn text<'a>(request: &'a Value, field: &str) -> Result<&'a str, Denied> {

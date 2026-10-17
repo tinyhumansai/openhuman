@@ -98,11 +98,21 @@ async fn configured_storage_url() -> anyhow::Result<Option<String>> {
         return Ok(storage_url_from(env, &Default::default()));
     }
     // Boot-time resolution: the host's own context, no turn's.
-    let config = crate::core_host::config::ops::load_config_in(
-        &crate::core_host::core::runtime::DispatchCtx::host_default(),
-    )
-    .await
-    .map_err(|error| anyhow::anyhow!("loading the config to resolve the storage url: {error}"))?;
+    let ctx = crate::core_host::core::runtime::DispatchCtx::host_default();
+    let load = || async {
+        crate::core_host::config::ops::load_config_in(&ctx)
+            .await
+            .map_err(|error| {
+                anyhow::anyhow!("loading the config to resolve the storage url: {error}")
+            })
+    };
+    let mut config = load().await?;
+    // `[storage] auto_migrate_layout`: move a layout-v1 profile to v2 before
+    // the backend opens, then re-read the config, whose workspace is now the
+    // profile's `files/` directory.
+    if crate::core_host::storage::layout::auto_migrate(&config).await {
+        config = load().await?;
+    }
     Ok(storage_url_from(env, &config))
 }
 

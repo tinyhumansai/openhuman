@@ -17,7 +17,6 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::sync::Arc;
 
 use serde_json::{json, Value};
 use sha2::Digest;
@@ -25,7 +24,7 @@ use tinychannels_bus::module_delivery::{
     DeliveryQueueEntry, DeliveryTerminalResult, DELIVERY_PENDING_CAPACITY, DELIVERY_RECORD_BYTES,
     DELIVERY_RESULT_CAPACITY, DELIVERY_RESULT_TTL_SECONDS,
 };
-use tinystoragedrivers::{CollectionSpec, DocumentStore, ErrorKind, Precondition};
+use tinystoragedrivers::{CollectionSpec, ErrorKind, Precondition};
 
 const LOG_PREFIX: &str = "[channel-delivery-import]";
 const MODULE_ID: &str = "tinychannels";
@@ -76,20 +75,19 @@ pub(super) async fn import_legacy_delivery(
     let scoped = backend
         .for_scope(&scope)
         .map_err(|error| anyhow::anyhow!("open the module scope: {:?}", error.kind()))?;
-    import_into(scoped.documents(), workspace).await
+    import_into(&scoped, workspace).await
 }
 
-async fn import_into(docs: &Arc<dyn DocumentStore>, workspace: &Path) -> anyhow::Result<Outcome> {
+async fn import_into(
+    scoped: &tinystoragedrivers::ScopedStorage,
+    workspace: &Path,
+) -> anyhow::Result<Outcome> {
+    let docs = scoped.documents();
     let path = workspace.join(LEGACY_FILE);
     let marker = marker_id(workspace);
-    docs.ensure_collection(&CollectionSpec::new(MARKER_COLLECTION))
+    if crate::storage::import_state::host_import_done(scoped, MARKER_COLLECTION, &marker)
         .await
-        .map_err(|error| anyhow::anyhow!("declare the marker collection: {:?}", error.kind()))?;
-    if docs
-        .get(MARKER_COLLECTION, &marker)
-        .await
-        .map_err(|error| anyhow::anyhow!("read the marker: {:?}", error.kind()))?
-        .is_some()
+        .map_err(|error| anyhow::anyhow!("read the import state: {:?}", error.kind()))?
     {
         return Ok(Outcome::AlreadyDone);
     }
@@ -152,15 +150,9 @@ async fn import_into(docs: &Arc<dyn DocumentStore>, workspace: &Path) -> anyhow:
             }
         }
     }
-    let body = json!({ "found": found, "written": written, "at": now });
-    match docs
-        .put(MARKER_COLLECTION, &marker, body, Precondition::Absent)
+    crate::storage::import_state::host_import_mark(scoped, MARKER_COLLECTION, &marker)
         .await
-    {
-        Ok(_) => {}
-        Err(error) if matches!(error.kind(), ErrorKind::Conflict | ErrorKind::AlreadyExists) => {}
-        Err(error) => return Err(anyhow::anyhow!("write the marker: {:?}", error.kind())),
-    }
+        .map_err(|error| anyhow::anyhow!("write the import state: {:?}", error.kind()))?;
     tracing::info!("{LOG_PREFIX} imported found={found} written={written}");
     Ok(Outcome::Imported { found, written })
 }

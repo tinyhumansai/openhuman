@@ -7,9 +7,10 @@
 //! saving is attributed to and the USD price per input token from
 //! [`crate::agent::cost`].
 //!
-//! The snapshot is deliberately local, not on the storage port: it is one
-//! process-global counter that is cheap to lose. Allowlisted in
-//! `scripts/ci/check-storage-bypass.mjs`.
+//! The snapshot file is written by the module itself (`ConfigureSavings` takes
+//! its path), not by the host, so it is outside the host's storage-bypass
+//! ratchet. Keeping it on the storage port needs a storage-backed savings
+//! contract in tinyjuice first; the host passes the path until then.
 
 use std::sync::{Mutex, OnceLock};
 

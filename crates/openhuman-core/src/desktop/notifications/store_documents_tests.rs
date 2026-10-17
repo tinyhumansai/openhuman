@@ -314,6 +314,7 @@ fn an_unparseable_raw_payload_reads_as_a_string() {
         id: "x".to_string(),
         version: tinystoragedrivers::Version::FIRST,
         doc: json!({ "raw_payload": "plain text", "status": "weird" }),
+        meta: tinystoragedrivers::Meta::unknown(),
     };
     let read = to_notification(&stored);
     assert_eq!(read.raw_payload, json!("plain text"));

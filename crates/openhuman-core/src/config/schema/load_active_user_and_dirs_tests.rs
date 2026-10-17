@@ -116,7 +116,8 @@ async fn resolve_dirs_uses_active_user_when_present() {
         .unwrap();
     let expected_pre_login_dir = root.join("users").join(PRE_LOGIN_USER_ID);
     assert_eq!(oh_dir, expected_pre_login_dir);
-    assert_eq!(ws_dir, expected_pre_login_dir.join("workspace"));
+    // A brand-new profile is layout v2: its workspace is `files/`.
+    assert_eq!(ws_dir, expected_pre_login_dir.join("files"));
     assert_eq!(source, ConfigResolutionSource::DefaultConfigDir);
 
     // With active user → scopes to user dir.
@@ -126,7 +127,7 @@ async fn resolve_dirs_uses_active_user_when_present() {
         .unwrap();
     let expected_user_dir = root.join("users").join("u-test");
     assert_eq!(oh_dir, expected_user_dir);
-    assert_eq!(ws_dir, expected_user_dir.join("workspace"));
+    assert_eq!(ws_dir, expected_user_dir.join("files"));
     assert_eq!(source, ConfigResolutionSource::ActiveUser);
 
     if let Some(value) = prior_workspace {
@@ -534,7 +535,7 @@ async fn empty_env_workspace_falls_through_to_active_user() {
     let expected = root.join("users").join("u-fallthrough");
     assert_eq!(source, ConfigResolutionSource::ActiveUser);
     assert_eq!(oh_dir, expected);
-    assert_eq!(ws_dir, expected.join("workspace"));
+    assert_eq!(ws_dir, expected.join("files"));
 }
 
 #[tokio::test]
@@ -551,7 +552,7 @@ async fn missing_env_workspace_uses_pre_login_default() {
     let expected = root.join("users").join(PRE_LOGIN_USER_ID);
     assert_eq!(source, ConfigResolutionSource::DefaultConfigDir);
     assert_eq!(oh_dir, expected);
-    assert_eq!(ws_dir, expected.join("workspace"));
+    assert_eq!(ws_dir, expected.join("files"));
 }
 
 // ── resolve_config_dir_for_workspace ───────────────────────────

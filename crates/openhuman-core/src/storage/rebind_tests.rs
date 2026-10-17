@@ -190,3 +190,37 @@ fn a_backend_that_cannot_be_opened_keeps_the_previous_one() {
     assert!(error.is_err());
     assert!(installed.urls().is_empty(), "nothing was installed");
 }
+
+#[test]
+fn rebinding_to_a_fresh_v2_profile_opens_its_storage_db_and_leaves_a_v1_one_alone() {
+    let root = TempDir::new().unwrap();
+    let v1 = TempDir::new().unwrap();
+    let layout = crate::config::schema::ProfileLayout::resolve(root.path(), "alice");
+    std::fs::create_dir_all(&layout.workspace_dir).unwrap();
+    let installed = Installed::default();
+    let current = super::super::config::default_url(v1.path());
+
+    let config = Config {
+        workspace_dir: layout.workspace_dir.clone(),
+        config_path: layout.config_path.clone(),
+        ..Config::default()
+    };
+    let rebound = rebind_with(&config, Some(current), installed.install())
+        .unwrap()
+        .expect("the workspace moved");
+
+    assert_eq!(
+        installed.urls(),
+        [format!("sqlite:{}", layout.storage_db.display())]
+    );
+    assert!(rebound.to.ends_with("/storage.db"), "{}", rebound.to);
+    assert!(layout.storage_db.is_file(), "the profile got its database");
+    assert!(
+        !layout.workspace_dir.join("storage").exists(),
+        "no v1 storage directory under files/"
+    );
+    assert!(
+        !v1.path().join("storage").exists(),
+        "the old profile is untouched"
+    );
+}

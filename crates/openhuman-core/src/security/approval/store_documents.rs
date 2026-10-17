@@ -10,14 +10,15 @@
 //!
 //! | Collection | Document id | Holds |
 //! | --- | --- | --- |
-//! | `approvals` | `request_id` | one approval request and its audit trail |
-//! | `approval_flow_trust` | `(flow_id, tool_name)` | one "approve always for this flow" grant |
+//! | `approvals.requests` | `request_id` | one approval request and its audit trail |
+//! | `approvals.flow_trust` | `Key::of([flow_id, tool_name])` | one "approve always for this flow" grant |
 //!
 //! The SQL guards become preconditions: a request is inserted only if absent,
 //! and deciding, expiring and recording execution are compare-and-swap on the
 //! document's version, each applied only while the row is still in the state
 //! the SQL `WHERE` clause required (`decided_at IS NULL`, and so on). Two
-//! processes sharing one database therefore decide a request at most once.
+//! processes sharing one database therefore decide a request at most once. The
+//! shapes and the v1 -> v2 steps are in [`super::storage_schema`].
 //! `args_redacted` and `source_context` are stored as JSON strings, so a
 //! MongoDB-backed port never meets an arbitrary key.
 
@@ -28,21 +29,19 @@ use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 
 use crate::config::Config;
+use crate::storage::documents::compare_and_swap;
 use crate::storage::local;
 use crate::storage::{block_on, DocumentStore, DocumentStoreExt, ScopedStorage, StorageError};
 use tinystoragedrivers::{
-    CollectionSpec, ErrorKind, Filter, IndexSpec, Precondition, Query, Sort, Versioned,
+    CollectionSpec, ErrorKind, Filter, Key, Precondition, Query, Sort, Versioned,
 };
+
+use super::storage_schema::{legacy_collections, specs};
+pub(super) use super::storage_schema::{trust_id, APPROVALS, FLOW_TRUST};
 
 use super::types::{
     ApprovalAuditEntry, ApprovalDecision, ApprovalSourceContext, ExecutionOutcome, PendingApproval,
 };
-
-pub(super) const APPROVALS: &str = "approvals";
-pub(super) const FLOW_TRUST: &str = "approval_flow_trust";
-
-/// Compare-and-swap attempts before a contended update gives up.
-const CAS_ATTEMPTS: usize = 32;
 
 const DOMAIN: &str = "approval::store";
 
@@ -78,8 +77,9 @@ pub(super) fn for_agent(config: &Config, agent: &str) -> Result<Docs> {
 pub(crate) fn import_source() -> crate::storage::import::Source {
     crate::storage::import::Source {
         domain: "approval",
+        owner: "approvals",
         db: "approval/approval.db",
-        collections,
+        collections: legacy_collections,
         read_legacy: |scratch, _real| super::store_import::read(scratch),
         rekey: |record, _config| record,
     }
@@ -87,34 +87,19 @@ pub(crate) fn import_source() -> crate::storage::import::Source {
 
 /// The collections the approval store keeps.
 pub(super) fn collections() -> Vec<CollectionSpec> {
-    vec![
-        CollectionSpec::new(APPROVALS)
-            .index(IndexSpec::new("by_pending", ["pending", "created_at"]))
-            .index(IndexSpec::new("by_decided", ["pending", "decided_at"]))
-            .index(IndexSpec::new("by_session", ["session_id", "pending"])),
-        CollectionSpec::new(FLOW_TRUST).index(IndexSpec::new("by_flow", ["flow_id", "tool_name"])),
-    ]
+    specs().into()
 }
 
 fn storage(error: StorageError) -> anyhow::Error {
     anyhow!("[approval::store] storage: {error}")
 }
 
-/// Fixed-width (nanosecond, `Z`) so the strings sort in time order.
-pub(super) fn rfc3339(at: DateTime<Utc>) -> String {
-    at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
+fn from_ms(ms: Option<i64>) -> Option<DateTime<Utc>> {
+    ms.and_then(DateTime::from_timestamp_millis)
 }
 
-/// The comparable expiry key: nanoseconds since the epoch, falling back to
-/// milliseconds for instants beyond the i64-nanosecond range (year 2262).
-pub(super) fn expiry_key(at: DateTime<Utc>) -> i64 {
-    at.timestamp_nanos_opt()
-        .unwrap_or_else(|| at.timestamp_millis().saturating_mul(1_000_000))
-}
-
-fn parse_time(raw: Option<&str>) -> Option<DateTime<Utc>> {
-    raw.and_then(|value| DateTime::parse_from_rfc3339(value).ok())
-        .map(|at| at.with_timezone(&Utc))
+fn millis(doc: &Value, field: &str) -> Option<i64> {
+    doc.get(field).and_then(Value::as_i64)
 }
 
 fn text<'a>(doc: &'a Value, field: &str) -> Option<&'a str> {
@@ -131,8 +116,8 @@ fn to_pending(stored: &Versioned<Value>) -> PendingApproval {
         args_redacted: text(doc, "args_redacted")
             .and_then(|raw| serde_json::from_str(raw).ok())
             .unwrap_or(Value::Null),
-        created_at: parse_time(text(doc, "created_at")).unwrap_or_else(Utc::now),
-        expires_at: parse_time(text(doc, "expires_at")),
+        created_at: from_ms(millis(doc, "created_ms")).unwrap_or_else(Utc::now),
+        expires_at: from_ms(millis(doc, "deadline_ms")),
         source_context: text(doc, "source_context").and_then(|raw| {
             serde_json::from_str::<ApprovalSourceContext>(raw)
                 .map_err(|error| {
@@ -152,7 +137,7 @@ fn to_pending(stored: &Versioned<Value>) -> PendingApproval {
 /// decided or its decision is unknown.
 fn to_audit(stored: &Versioned<Value>) -> Option<ApprovalAuditEntry> {
     let pending = to_pending(stored);
-    let decided_at = parse_time(text(&stored.doc, "decided_at"))?;
+    let decided_at = from_ms(millis(&stored.doc, "decided_ms"))?;
     let decision = ApprovalDecision::from_str(text(&stored.doc, "decision")?)?;
     Some(ApprovalAuditEntry {
         request_id: pending.request_id,
@@ -210,9 +195,8 @@ impl Docs {
             "args_redacted": serde_json::to_string(&pending.args_redacted)
                 .context("[approval::store] serialize args_redacted")?,
             "session_id": session_id,
-            "created_at": rfc3339(pending.created_at),
-            "expires_at": pending.expires_at.map(rfc3339),
-            "expires_ts": pending.expires_at.map(expiry_key),
+            "created_ms": pending.created_at.timestamp_millis(),
+            "deadline_ms": pending.expires_at.map(|at| at.timestamp_millis()),
             "source_context": pending
                 .source_context
                 .as_ref()
@@ -242,20 +226,20 @@ impl Docs {
         source_context: &ApprovalSourceContext,
         decision: ApprovalDecision,
     ) -> Result<()> {
-        let now = rfc3339(Utc::now());
+        let now = Utc::now().timestamp_millis();
         let doc = json!({
             "tool_name": tool_name,
             "action_summary": action_summary,
             "args_redacted": "{}",
             "session_id": session_id,
-            "created_at": now,
+            "created_ms": now,
             "source_context": serde_json::to_string(source_context)
                 .context("[approval::store] serialize preauthorization source_context")?,
             "pending": false,
-            "decided_at": now,
+            "decided_ms": now,
             "decision": decision.as_str(),
         });
-        let id = uuid::Uuid::new_v4().to_string();
+        let id = Key::ulid().as_str().to_owned();
         self.run(|docs| async move {
             docs.put(APPROVALS, &id, doc, Precondition::Absent)
                 .await
@@ -268,11 +252,11 @@ impl Docs {
     /// them.
     pub(super) fn expire_stale(&self, now: DateTime<Utc>) -> Result<Vec<PendingApproval>> {
         let deny = ApprovalDecision::Deny.as_str();
-        let decided_at = rfc3339(now);
-        let now_ts = expiry_key(now);
+        let decided_ms = now.timestamp_millis();
+        let now_ts = decided_ms;
         self.run(|docs| async move {
             let query =
-                Query::filter(Filter::eq("pending", true).and(Filter::lte("expires_ts", now_ts)));
+                Query::filter(Filter::eq("pending", true).and(Filter::lte("deadline_ms", now_ts)));
             let mut expired = Vec::new();
             for stale in docs.query_all(APPROVALS, &query).await? {
                 let moved = update(&docs, &stale.id, |doc| {
@@ -281,7 +265,7 @@ impl Docs {
                     }
                     let mut next = doc.clone();
                     next["pending"] = json!(false);
-                    next["decided_at"] = json!(decided_at);
+                    next["decided_ms"] = json!(decided_ms);
                     next["decision"] = json!(deny);
                     Some(next)
                 })
@@ -296,7 +280,7 @@ impl Docs {
 
     pub(super) fn list_pending(&self) -> Result<Vec<PendingApproval>> {
         self.run(|docs| async move {
-            let query = Query::filter(Filter::eq("pending", true)).sort(Sort::asc("created_at"));
+            let query = Query::filter(Filter::eq("pending", true)).sort(Sort::asc("created_ms"));
             Ok(docs
                 .query_all(APPROVALS, &query)
                 .await?
@@ -322,7 +306,7 @@ impl Docs {
         let id = request_id.to_string();
         self.run(|docs| async move {
             Ok(docs.get(APPROVALS, &id).await?.and_then(|stored| {
-                text(&stored.doc, "decided_at")?;
+                millis(&stored.doc, "decided_ms")?;
                 ApprovalDecision::from_str(text(&stored.doc, "decision")?)
             }))
         })
@@ -344,7 +328,7 @@ impl Docs {
         at: DateTime<Utc>,
     ) -> Result<Option<PendingApproval>> {
         let id = request_id.to_string();
-        let decided_at = rfc3339(at);
+        let decided_ms = at.timestamp_millis();
         self.run(|docs| async move {
             let decided = update(&docs, &id, |doc| {
                 if doc.get("pending") != Some(&json!(true)) {
@@ -352,7 +336,7 @@ impl Docs {
                 }
                 let mut next = doc.clone();
                 next["pending"] = json!(false);
-                next["decided_at"] = json!(decided_at);
+                next["decided_ms"] = json!(decided_ms);
                 next["decision"] = json!(decision.as_str());
                 Some(next)
             })
@@ -368,16 +352,16 @@ impl Docs {
         error: Option<&str>,
     ) -> Result<bool> {
         let id = request_id.to_string();
-        let executed_at = rfc3339(Utc::now());
+        let executed_ms = Utc::now().timestamp_millis();
         let error = audit_error(error);
         self.run(|docs| async move {
             let recorded = update(&docs, &id, |doc| {
                 // Decided first, and the first outcome wins.
-                if text(doc, "decided_at").is_none() || text(doc, "executed_at").is_some() {
+                if millis(doc, "decided_ms").is_none() || millis(doc, "executed_ms").is_some() {
                     return None;
                 }
                 let mut next = doc.clone();
-                next["executed_at"] = json!(executed_at);
+                next["executed_ms"] = json!(executed_ms);
                 next["execution_outcome"] = json!(outcome.as_str());
                 next["execution_error"] = json!(error);
                 Some(next)
@@ -391,7 +375,7 @@ impl Docs {
         self.run(|docs| async move {
             let query =
                 Query::filter(Filter::eq("pending", false).and(Filter::exists("decision", true)))
-                    .sort(Sort::desc("decided_at"))
+                    .sort(Sort::desc("decided_ms"))
                     .limit(limit);
             let page = docs.query(APPROVALS, &query).await?;
             Ok(page.items.iter().filter_map(to_audit).collect())
@@ -416,7 +400,7 @@ impl Docs {
         let doc = json!({
             "flow_id": flow_id,
             "tool_name": tool_name,
-            "created_at": rfc3339(Utc::now()),
+            "created_ms": Utc::now().timestamp_millis(),
         });
         self.run(|docs| async move {
             // `INSERT OR IGNORE`: re-granting is a no-op.
@@ -477,12 +461,6 @@ impl Docs {
     }
 }
 
-/// The id of a `(flow_id, tool_name)` grant: length-prefixed, so no two
-/// pairs collide.
-pub(super) fn trust_id(flow_id: &str, tool_name: &str) -> String {
-    format!("{}:{flow_id}/{tool_name}", flow_id.len())
-}
-
 async fn declare(docs: &Arc<dyn DocumentStore>) -> Result<(), StorageError> {
     for spec in collections() {
         docs.ensure_collection(&spec).await?;
@@ -496,33 +474,9 @@ async fn declare(docs: &Arc<dyn DocumentStore>) -> Result<(), StorageError> {
 async fn update(
     docs: &Arc<dyn DocumentStore>,
     id: &str,
-    change: impl Fn(&Value) -> Option<Value>,
+    change: impl Fn(&Value) -> Option<Value> + Send + Sync,
 ) -> Result<Option<Versioned<Value>>, StorageError> {
-    for _ in 0..CAS_ATTEMPTS {
-        let Some(stored) = docs.get(APPROVALS, id).await? else {
-            return Ok(None);
-        };
-        let Some(next) = change(&stored.doc) else {
-            return Ok(None);
-        };
-        match docs
-            .put(APPROVALS, id, next.clone(), stored.unchanged())
-            .await
-        {
-            Ok(version) => {
-                return Ok(Some(Versioned {
-                    id: id.to_string(),
-                    version,
-                    doc: next,
-                }));
-            }
-            Err(error) if error.kind() == ErrorKind::Conflict => {}
-            Err(error) => return Err(error),
-        }
-    }
-    Err(StorageError::conflict(format!(
-        "approval {id} kept changing under {CAS_ATTEMPTS} attempts"
-    )))
+    compare_and_swap(docs, APPROVALS, id, change).await
 }
 
 #[cfg(test)]

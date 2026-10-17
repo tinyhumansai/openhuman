@@ -131,7 +131,7 @@ impl Environment for Env {
         Some(Arc::clone(&self.0))
     }
     fn module_scope(&self, module_id: &str) -> Result<Scope, StorageError> {
-        module_scope(None, &Scope::local(), module_id)
+        module_scope(None, module_id)
     }
     fn grant(&self, module_id: &str) -> Option<StorageGrant> {
         declared(module_id)
@@ -259,7 +259,7 @@ impl Rig {
     }
 
     fn scope(&self, module_id: &str) -> Scope {
-        module_scope(None, &Scope::local(), module_id).unwrap()
+        module_scope(None, module_id).unwrap()
     }
 }
 
@@ -289,12 +289,12 @@ async fn a_loaded_module_reads_and_writes_its_own_granted_collection() {
         .call(
             "Documents",
             "Put",
-            put("mcp_servers", "files", &json!({"qualified_name": "files"})),
+            put("mcp.servers", "files", &json!({"qualified_name": "files"})),
         )
         .await;
     assert!(stored.get("ok").is_some(), "{stored}");
     let read = rig
-        .call("Documents", "Get", get("mcp_servers", "files"))
+        .call("Documents", "Get", get("mcp.servers", "files"))
         .await;
     assert!(read.get("ok").is_some(), "{read}");
     assert!(read.to_string().contains("qualified_name"), "{read}");
@@ -302,7 +302,7 @@ async fn a_loaded_module_reads_and_writes_its_own_granted_collection() {
     let own = rig.backend.for_scope(&rig.scope("tinymcp")).unwrap();
     assert!(own
         .documents()
-        .get("mcp_servers", "files")
+        .get("mcp.servers", "files")
         .await
         .unwrap()
         .is_some());
@@ -399,7 +399,7 @@ async fn a_loaded_module_cannot_name_or_reach_another_scope() {
         handle
             .documents()
             .put(
-                "mcp_servers",
+                "mcp.servers",
                 "victim",
                 json!({"marker": "OTHER-SCOPE-SECRET"}),
                 Default::default(),
@@ -409,13 +409,13 @@ async fn a_loaded_module_cannot_name_or_reach_another_scope() {
     }
     // Same id, own scope: not found, not the other scope's document.
     let read = rig
-        .call("Documents", "Get", get("mcp_servers", "victim"))
+        .call("Documents", "Get", get("mcp.servers", "victim"))
         .await;
     assert!(read["ok"].is_null(), "{read}");
     assert!(!read.to_string().contains("OTHER-SCOPE-SECRET"), "{read}");
     // A scope smuggled into the request is not a selector the wire knows.
     for field in ["scope", "agent", "module", "profile"] {
-        let mut request = get("mcp_servers", "victim");
+        let mut request = get("mcp.servers", "victim");
         request[field] = json!("local");
         let answer = rig.call("Documents", "Get", request).await;
         assert!(answer.get("err").is_some(), "{field}: {answer}");
@@ -426,7 +426,7 @@ async fn a_loaded_module_cannot_name_or_reach_another_scope() {
         .call(
             "Documents",
             "Put",
-            put("mcp_servers", "mine", &json!({"qualified_name": "mine"})),
+            put("mcp.servers", "mine", &json!({"qualified_name": "mine"})),
         )
         .await;
     assert!(wrote.get("ok").is_some(), "{wrote}");
@@ -434,7 +434,7 @@ async fn a_loaded_module_cannot_name_or_reach_another_scope() {
         let handle = rig.backend.for_scope(&scope).unwrap();
         assert!(handle
             .documents()
-            .get("mcp_servers", "mine")
+            .get("mcp.servers", "mine")
             .await
             .unwrap()
             .is_none());
@@ -478,7 +478,7 @@ async fn a_loaded_module_cannot_use_a_collection_it_never_declared() {
         .call(
             "Documents",
             "DropCollection",
-            json!({"collection": "mcp_servers"}),
+            json!({"collection": "mcp.servers"}),
         )
         .await;
     assert!(denied(&dropped, "schema-is-host-only"), "{dropped}");
@@ -531,7 +531,7 @@ async fn a_peer_that_is_not_a_registry_module_is_refused() {
             STORAGE_INTERFACE,
         )
         .unwrap();
-    let refused: tinybus::Result<Value> = proxy.call("Get", (get("mcp_servers", "files"),)).await;
+    let refused: tinybus::Result<Value> = proxy.call("Get", (get("mcp.servers", "files"),)).await;
     match refused {
         Err(tinybus::Error::MethodFailed { name, message }) => {
             assert_eq!(name, "ai.tinyhumans.tinystorage.Error.Denied");
@@ -547,7 +547,7 @@ async fn a_blob_over_the_inline_cap_is_refused_and_stores_nothing() {
     let rig = rig("tinyjuice").await;
     let small: Value = rig
         .probe
-        .call("PutBlob", ("tinyjuice_ccr/small", 1024usize))
+        .call("PutBlob", ("juice/ccr/small", 1024usize))
         .await
         .unwrap();
     assert!(
@@ -560,7 +560,7 @@ async fn a_blob_over_the_inline_cap_is_refused_and_stores_nothing() {
     // `an_inline_blob_no_frame_can_carry_fails_fast_instead_of_hanging`.)
     let big: Value = rig
         .probe
-        .call("PutBlob", ("tinyjuice_ccr/over-cap", 2usize * 1024 * 1024))
+        .call("PutBlob", ("juice/ccr/over-cap", 2usize * 1024 * 1024))
         .await
         .unwrap();
     assert!(
@@ -570,14 +570,14 @@ async fn a_blob_over_the_inline_cap_is_refused_and_stores_nothing() {
     let handle = rig.backend.for_scope(&rig.scope("tinyjuice")).unwrap();
     assert!(handle
         .blobs()
-        .head("tinyjuice_ccr/over-cap")
+        .head("juice/ccr/over-cap")
         .await
         .unwrap()
         .is_none());
     // The refusal does not take the module's connection down with it.
     let after: Value = rig
         .probe
-        .call("PutBlob", ("tinyjuice_ccr/after", 2048usize))
+        .call("PutBlob", ("juice/ccr/after", 2048usize))
         .await
         .unwrap();
     assert!(
@@ -586,7 +586,7 @@ async fn a_blob_over_the_inline_cap_is_refused_and_stores_nothing() {
     );
     // A blob key outside the CCR prefix is not the module's.
     let outside = rig
-        .call("Blobs", "Get", json!({"key": "tinyjuice_other/x"}))
+        .call("Blobs", "Get", json!({"key": "juice/other/x"}))
         .await;
     assert!(denied(&outside, "target-not-granted"), "{outside}");
 }
@@ -600,7 +600,7 @@ async fn every_call_is_audited_under_the_module_id_without_a_payload() {
             "Documents",
             "Put",
             put(
-                "mcp_servers",
+                "mcp.servers",
                 "audited",
                 &json!({"marker": "PAYLOAD-MARKER"}),
             ),

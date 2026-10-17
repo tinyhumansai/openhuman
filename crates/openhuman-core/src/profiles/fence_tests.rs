@@ -69,7 +69,19 @@ fn a_profiles_fence_covers_its_scope_and_its_sessions() {
         profile: Some("alice".into()),
         agent: None,
     };
-    assert!(covers(&crate::core::runtime::session_key(&tenant)));
+    let _ = tenant;
+    assert!(covers(
+        crate::storage::scope_for_profile("alice")
+            .agent("default")
+            .unwrap()
+            .as_str()
+    ));
+    assert!(covers(
+        crate::storage::scope_for_profile("alice")
+            .module("tinymcp")
+            .unwrap()
+            .as_str()
+    ));
     assert!(!covers(
         crate::storage::scope_for_profile("alice2").as_str()
     ));
@@ -83,8 +95,8 @@ async fn a_takeover_fences_the_old_holders_writes_before_its_heartbeat_runs() {
     let alice = profile("alice");
     a.provision(&alice).await.unwrap();
     let state = a.open(&alice).await.unwrap();
-    write(&a_storage, "profile:alice").await.unwrap();
-    write(&a_storage, "alice~default").await.unwrap();
+    write(&a_storage, "u:alice").await.unwrap();
+    write(&a_storage, "u:alice/agent:default").await.unwrap();
 
     // Another node takes the profile over (by its clock the lease ran out).
     let thief = DocumentLeases::cluster(
@@ -100,7 +112,9 @@ async fn a_takeover_fences_the_old_holders_writes_before_its_heartbeat_runs() {
         .unwrap();
 
     // Node A's next write is refused at once, and the profile is latched.
-    let refused = write(&a_storage, "alice~default").await.unwrap_err();
+    let refused = write(&a_storage, "u:alice/agent:default")
+        .await
+        .unwrap_err();
     assert!(matches!(
         fence_error(&refused),
         Some(FenceError::Superseded { .. })
@@ -114,10 +128,10 @@ async fn a_takeover_fences_the_old_holders_writes_before_its_heartbeat_runs() {
     // writes) while the profile's state is still held.
     let report = renew_once(&a).await;
     assert_eq!(report.fenced, vec![alice.clone()]);
-    assert!(write(&a_storage, "profile:alice").await.is_err());
+    assert!(write(&a_storage, "u:alice").await.is_err());
     drop(state);
     // Nothing holds the fenced context any more: the tombstone is pruned.
-    write(&a_storage, "profile:alice").await.unwrap();
+    write(&a_storage, "u:alice").await.unwrap();
 }
 
 #[tokio::test]
@@ -128,15 +142,15 @@ async fn a_clean_release_retires_the_fence_and_a_reopen_registers_a_new_one() {
     let alice = profile("alice");
     a.provision(&alice).await.unwrap();
     let first = a.open(&alice).await.unwrap().lease_fence().epoch();
-    assert_eq!(a.fences().lookup("profile:alice").unwrap().epoch(), first);
+    assert_eq!(a.fences().lookup("u:alice").unwrap().epoch(), first);
 
     assert!(a.release(&alice).await.unwrap());
-    assert!(a.fences().lookup("profile:alice").is_none());
+    assert!(a.fences().lookup("u:alice").is_none());
 
     let second = a.open(&alice).await.unwrap();
     assert!(second.lease_fence().epoch() > first);
     assert!(Arc::ptr_eq(
-        &a.fences().lookup("alice~default").unwrap(),
+        &a.fences().lookup("u:alice/agent:default").unwrap(),
         second.lease_fence()
     ));
 

@@ -34,11 +34,7 @@ impl Environment for Env {
 
     fn module_scope(&self, module_id: &str) -> Result<Scope, StorageError> {
         let profile = self.profile.lock().unwrap().clone();
-        let base = match &profile {
-            Some(profile) => crate::storage::scope_for_profile(profile),
-            None => Scope::local(),
-        };
-        module_scope(profile.as_deref(), &base, module_id)
+        module_scope(profile.as_deref(), module_id)
     }
 
     fn grant(&self, module_id: &str) -> Option<StorageGrant> {
@@ -466,7 +462,7 @@ async fn a_collection_listing_shows_only_the_modules_own_names() {
     .await
     .unwrap();
     // The host keeps something else in the module's scope.
-    let scope = module_scope(None, &Scope::local(), "alpha").unwrap();
+    let scope = module_scope(None, "alpha").unwrap();
     let storage = rig.backend.for_scope(&scope).unwrap();
     storage
         .documents()
@@ -682,7 +678,7 @@ async fn every_call_is_audited_without_its_payload() {
         trail[0],
         AuditRecord {
             module: "alpha".into(),
-            scope: "module:alpha@local".into(),
+            scope: "local/module:alpha".into(),
             object: "Documents",
             op: "Put".into(),
             target: "notes".into(),

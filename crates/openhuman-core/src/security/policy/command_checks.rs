@@ -1,3 +1,7 @@
+// tinybox's shell helpers are deprecated in favour of tinysecurity-policy; the
+// test-only comparisons below keep using them until that move lands.
+#![allow(deprecated)]
+
 use std::path::{Path, PathBuf};
 
 #[cfg(test)]

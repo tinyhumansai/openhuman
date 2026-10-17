@@ -668,6 +668,9 @@ fn build_registered_controllers() -> Vec<GroupedController> {
         DomainGroup::Desktop,
         crate::desktop::notifications::all_notifications_registered_controllers(),
     );
+    // Storage layout v1 -> v2 migration, status and restore
+    #[rustfmt::skip]
+    push(&mut controllers, DomainGroup::Config, crate::storage::layout::schemas::all_registered_controllers());
     // Mobile device pairing and management
     push(
         &mut controllers,
@@ -885,6 +888,7 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "devices" => Some(
             "Paired mobile device management — pairing channel creation, listing, and revocation.",
         ),
+        "storage" => Some("Storage layout v1 to v2 migration, schema status and restore."),
         "subsystems" => Some(
             "Kernel subsystem slots and their bound drivers: class, health, contract version, and advertised capabilities.",
         ),

@@ -76,13 +76,25 @@ async fn a_failed_forget_is_kept_for_the_next_drain() {
 }
 
 #[test]
-fn an_unparsable_queue_is_set_aside_not_lost() {
+fn an_unparsable_legacy_queue_is_ignored_and_left_in_place() {
     let tmp = tempfile::tempdir().unwrap();
-    let file = path(tmp.path());
+    let file = crate::memory::state_store::legacy_path(tmp.path(), "pending_deletions");
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
     std::fs::write(&file, "not json").unwrap();
     assert!(pending(tmp.path()).is_empty());
-    assert!(file.with_extension("json.corrupt").exists());
+    enqueue(tmp.path(), thread("t"));
+    assert_eq!(pending(tmp.path()), vec![thread("t")]);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "not json");
+}
+
+#[test]
+fn a_legacy_queue_file_is_imported_once() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = crate::memory::state_store::legacy_path(tmp.path(), "pending_deletions");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, serde_json::to_vec(&vec![thread("old")]).unwrap()).unwrap();
+    assert_eq!(pending(tmp.path()), vec![thread("old")]);
+    assert!(file.exists(), "the legacy file is not touched");
 }
 
 #[tokio::test]
@@ -93,15 +105,3 @@ async fn a_blank_thread_id_queues_nothing() {
     assert!(pending(&config.workspace_dir).is_empty());
 }
 
-#[cfg(unix)]
-#[test]
-fn the_pending_queue_is_owner_only() {
-    use std::os::unix::fs::PermissionsExt;
-    let tmp = tempfile::tempdir().unwrap();
-    enqueue(tmp.path(), thread("t"));
-    let mode = std::fs::metadata(path(tmp.path()))
-        .unwrap()
-        .permissions()
-        .mode();
-    assert_eq!(mode & 0o077, 0, "{mode:o}");
-}

@@ -31,33 +31,31 @@ async fn a_blob_over_the_bus_frame_round_trips_through_a_peer_bound_stream() {
     let rig = rig("tinyjuice").await;
     // 20 MiB: over the 16 MiB frame no inline call could carry.
     let len = 20 * MIB;
-    let stored = rig
-        .member("StreamPut", ("tinyjuice_ccr/streamed", len))
-        .await;
+    let stored = rig.member("StreamPut", ("juice/ccr/streamed", len)).await;
     assert_eq!(stored["ok"]["len"], len, "{stored}");
     // It is in the module's own scope, byte for byte.
     let handle = rig.backend.for_scope(&rig.scope("tinyjuice")).unwrap();
     let meta = handle
         .blobs()
-        .head("tinyjuice_ccr/streamed")
+        .head("juice/ccr/streamed")
         .await
         .unwrap()
         .expect("the streamed blob is stored");
     assert_eq!(meta.len, len);
     let bytes = handle
         .blobs()
-        .get_range("tinyjuice_ccr/streamed", 0..1024)
+        .get_range("juice/ccr/streamed", 0..1024)
         .await
         .unwrap()
         .expect("range");
     assert!(bytes.iter().all(|byte| *byte == 0xAB));
     // And it comes back whole by `GetStream`.
-    let read = rig.member("StreamGet", ("tinyjuice_ccr/streamed",)).await;
+    let read = rig.member("StreamGet", ("juice/ccr/streamed",)).await;
     assert_eq!(read["ok"]["len"], len, "{read}");
     assert_eq!(read["ok"]["meta_len"], len, "{read}");
     assert_eq!(read["ok"]["all_fill"], true, "{read}");
     // A key that is not there is `null`, not an error.
-    let missing = rig.member("StreamGet", ("tinyjuice_ccr/absent",)).await;
+    let missing = rig.member("StreamGet", ("juice/ccr/absent",)).await;
     assert!(
         missing["ok"].is_null() && missing.get("ok").is_some(),
         "{missing}"
@@ -76,26 +74,22 @@ async fn a_streamed_blob_is_still_bound_by_the_grant_and_the_length() {
     let _turn = TURN.lock().await;
     let rig = rig("tinyjuice").await;
     // Outside the CCR prefix: refused before anything is stored.
-    let outside = rig
-        .member("StreamPut", ("tinyjuice_other/x", 2 * MIB))
-        .await;
+    let outside = rig.member("StreamPut", ("juice/other/x", 2 * MIB)).await;
     assert!(outside.get("err").is_some(), "{outside}");
     let handle = rig.backend.for_scope(&rig.scope("tinyjuice")).unwrap();
     assert!(handle
         .blobs()
-        .head("tinyjuice_other/x")
+        .head("juice/other/x")
         .await
         .unwrap()
         .is_none());
-    let denied_get = rig.member("StreamGet", ("tinyjuice_other/x",)).await;
+    let denied_get = rig.member("StreamGet", ("juice/other/x",)).await;
     assert!(
         denied_get["err"].to_string().contains("target-not-granted"),
         "{denied_get}"
     );
     // The module keeps working after a refusal.
-    let after = rig
-        .member("StreamPut", ("tinyjuice_ccr/after", 3 * MIB))
-        .await;
+    let after = rig.member("StreamPut", ("juice/ccr/after", 3 * MIB)).await;
     assert_eq!(after["ok"]["len"], 3 * MIB, "{after}");
 }
 
@@ -107,7 +101,7 @@ async fn an_inline_blob_no_frame_can_carry_fails_fast_instead_of_hanging() {
     // frame, over the 16 MiB cap.
     let started = std::time::Instant::now();
     let big: Value = rig
-        .member("PutBlob", ("tinyjuice_ccr/over-frame", 5_000_000usize))
+        .member("PutBlob", ("juice/ccr/over-frame", 5_000_000usize))
         .await;
     assert!(
         big.get("err").is_some(),
@@ -121,13 +115,11 @@ async fn an_inline_blob_no_frame_can_carry_fails_fast_instead_of_hanging() {
     let handle = rig.backend.for_scope(&rig.scope("tinyjuice")).unwrap();
     assert!(handle
         .blobs()
-        .head("tinyjuice_ccr/over-frame")
+        .head("juice/ccr/over-frame")
         .await
         .unwrap()
         .is_none());
-    let after: Value = rig
-        .member("PutBlob", ("tinyjuice_ccr/after", 2048usize))
-        .await;
+    let after: Value = rig.member("PutBlob", ("juice/ccr/after", 2048usize)).await;
     assert!(
         after.get("ok").is_some(),
         "the module keeps working: {after}"
@@ -138,7 +130,7 @@ async fn an_inline_blob_no_frame_can_carry_fails_fast_instead_of_hanging() {
 async fn a_watch_signal_reaches_the_module_that_opened_the_watch() {
     let _turn = TURN.lock().await;
     let rig = rig("tinymcp").await;
-    let seen = rig.member("WatchPut", ("mcp_servers", "watched")).await;
+    let seen = rig.member("WatchPut", ("mcp.servers", "watched")).await;
     assert_eq!(seen["ok"], "invalidated", "{seen}");
     // A collection the grant never declared cannot be watched.
     let refused = rig
@@ -184,7 +176,7 @@ async fn a_second_module_cannot_receive_the_first_modules_watch_signals() {
         .unwrap();
     let own_id = own["watch_id"].as_str().unwrap().to_string();
     // The first module opens a watch and changes its document.
-    let first = rig.member("WatchPut", ("mcp_servers", "w1")).await;
+    let first = rig.member("WatchPut", ("mcp.servers", "w1")).await;
     assert_eq!(first["ok"], "invalidated", "{first}");
     // The second module's own change reaches the second module.
     let _: Value = documents
@@ -223,14 +215,14 @@ async fn a_second_module_cannot_read_or_take_the_first_modules_streams() {
     // which has no blobs at all.
     let rig = rig_with_peers("tinyjuice", &["tinyjuice", "tinymcp"]).await;
     let stored = rig
-        .member("StreamPut", ("tinyjuice_ccr/private", 2 * MIB))
+        .member("StreamPut", ("juice/ccr/private", 2 * MIB))
         .await;
     assert_eq!(stored["ok"]["len"], 2 * MIB, "{stored}");
 
     // A module without blob rights is refused outright.
     let nosy: tinybus::Result<Value> = rig
         .peer_proxy(1, "Blobs")
-        .call("GetStream", (json!({"key": "tinyjuice_ccr/private"}),))
+        .call("GetStream", (json!({"key": "juice/ccr/private"}),))
         .await;
     match nosy {
         Err(tinybus::Error::MethodFailed { name, message }) => {
@@ -249,10 +241,7 @@ async fn a_second_module_cannot_read_or_take_the_first_modules_streams() {
         .peer_proxy(0, "Blobs")
         .call(
             "PutStream",
-            (
-                json!({"key": "tinyjuice_ccr/hijacked", "len": MIB}),
-                reference,
-            ),
+            (json!({"key": "juice/ccr/hijacked", "len": MIB}), reference),
         )
         .await;
     assert!(
@@ -262,12 +251,12 @@ async fn a_second_module_cannot_read_or_take_the_first_modules_streams() {
     let handle = rig.backend.for_scope(&rig.scope("tinyjuice")).unwrap();
     assert!(handle
         .blobs()
-        .head("tinyjuice_ccr/hijacked")
+        .head("juice/ccr/hijacked")
         .await
         .unwrap()
         .is_none());
     // The refused attempt did not spend the stream: its owner still uses it.
-    let used = rig.member("UseStream", ("tinyjuice_ccr/owned", MIB)).await;
+    let used = rig.member("UseStream", ("juice/ccr/owned", MIB)).await;
     assert!(
         used.get("ok").is_some(),
         "the owner lost its stream: {used}"
@@ -275,7 +264,7 @@ async fn a_second_module_cannot_read_or_take_the_first_modules_streams() {
     assert_eq!(
         handle
             .blobs()
-            .head("tinyjuice_ccr/owned")
+            .head("juice/ccr/owned")
             .await
             .unwrap()
             .expect("stored by the owner")
@@ -284,7 +273,7 @@ async fn a_second_module_cannot_read_or_take_the_first_modules_streams() {
     );
 
     // A download the host opened toward the probe is not readable by a peer.
-    let reply = rig.member("RawGetStream", ("tinyjuice_ccr/private",)).await;
+    let reply = rig.member("RawGetStream", ("juice/ccr/private",)).await;
     let download: tinybus::StreamRef = serde_json::from_value(reply["ok"][1].clone())
         .unwrap_or_else(|_| panic!("a download reference: {reply}"));
     assert!(

@@ -9,8 +9,10 @@
 //!
 //! | Collection | Document id | Holds |
 //! | --- | --- | --- |
-//! | `task_sources` | source id | one configured source |
-//! | `ingested_tasks` | `(source_id, external_id)` | one dedup ledger entry |
+//! | `task_sources.sources` | source id | one configured source |
+//! | `task_sources.ingested` | `Key::of([source_id, external_id])` | one dedup ledger entry |
+//!
+//! The shapes and the v1 -> v2 steps are in [`super::storage_schema`].
 //!
 //! `filter`, `target` and the task `payload` are JSON strings, as in SQLite,
 //! so a MongoDB-backed port never meets an arbitrary key. Epoch-millisecond
@@ -20,7 +22,7 @@
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use serde_json::{json, Map, Value};
-use tinystoragedrivers::{CollectionSpec, Filter, IndexSpec, Precondition, Query, Sort, Versioned};
+use tinystoragedrivers::{CollectionSpec, Filter, Precondition, Query, Sort, Versioned};
 
 use super::store::{apply_patch, content_hash, IngestedTaskRef};
 use super::types::{
@@ -31,27 +33,25 @@ use crate::integrations::composio::contract::NormalizedTask;
 use crate::storage::documents::{compare_and_swap, text, Repo};
 use crate::storage::{DocumentStoreExt, StorageError};
 
-pub(super) const SOURCES: &str = "task_sources";
-pub(super) const INGESTED: &str = "ingested_tasks";
+pub(super) use super::storage_schema::{ingested_id, INGESTED, SOURCES};
+use super::storage_schema::{legacy_collections, specs};
+use crate::storage::schema_support::key_of;
 const DOMAIN: &str = "task_sources::store";
 
 /// The legacy `sources.db`, as the storage importer reads it.
 pub(crate) fn import_source() -> crate::storage::import::Source {
     crate::storage::import::Source {
         domain: "task_sources",
+        owner: "task_sources",
         db: "task_sources/sources.db",
-        collections,
+        collections: legacy_collections,
         read_legacy: |scratch, _real| super::store_import::read(scratch),
         rekey: |record, _config| record,
     }
 }
 
 fn collections() -> Vec<CollectionSpec> {
-    vec![
-        CollectionSpec::new(SOURCES).index(IndexSpec::new("by_created", ["created_ms"])),
-        CollectionSpec::new(INGESTED)
-            .index(IndexSpec::new("by_source", ["source_id", "ingested_ms"])),
-    ]
+    specs().into()
 }
 
 /// The document store for this call: the storage backend, in the acting scope.
@@ -61,12 +61,6 @@ pub(super) fn current(config: &Config) -> Result<Docs> {
         DOMAIN,
         collections,
     )?))
-}
-
-/// The ledger id for one `(source, external task)`; the length prefix keeps
-/// `("a/b", "c")` and `("a", "b/c")` apart.
-pub(super) fn ingested_id(source_id: &str, external_id: &str) -> String {
-    format!("{}:{source_id}/{external_id}", source_id.len())
 }
 
 pub(super) fn to_doc(source: &TaskSource) -> Result<Value> {
@@ -86,7 +80,6 @@ pub(super) fn to_doc(source: &TaskSource) -> Result<Value> {
         "max_tasks_per_fetch".into(),
         json!(source.max_tasks_per_fetch),
     );
-    doc.insert("created_at".into(), json!(source.created_at.to_rfc3339()));
     doc.insert(
         "created_ms".into(),
         json!(source.created_at.timestamp_millis()),
@@ -94,10 +87,6 @@ pub(super) fn to_doc(source: &TaskSource) -> Result<Value> {
     let optional = [
         ("connection_id", source.connection_id.clone()),
         ("name", source.name.clone()),
-        (
-            "last_fetch_at",
-            source.last_fetch_at.map(|at| at.to_rfc3339()),
-        ),
         ("last_status", source.last_status.clone()),
     ];
     for (field, value) in optional {
@@ -105,13 +94,24 @@ pub(super) fn to_doc(source: &TaskSource) -> Result<Value> {
             doc.insert(field.into(), json!(value));
         }
     }
+    if let Some(at) = source.last_fetch_at {
+        doc.insert("last_fetch_ms".into(), json!(at.timestamp_millis()));
+    }
     Ok(Value::Object(doc))
 }
 
-fn parse_time(raw: &str) -> Result<DateTime<Utc>> {
-    Ok(DateTime::parse_from_rfc3339(raw)
-        .with_context(|| format!("invalid RFC3339 timestamp in task source: {raw}"))?
-        .with_timezone(&Utc))
+fn from_ms(ms: i64) -> Result<DateTime<Utc>> {
+    DateTime::from_timestamp_millis(ms)
+        .ok_or_else(|| anyhow!("timestamp out of range in task source: {ms}"))
+}
+
+/// The source id a document id was built from (`Key::of` of it).
+fn source_id_of(id: &str) -> String {
+    tinystoragedrivers::Key::new(id)
+        .ok()
+        .and_then(|key| key.split())
+        .and_then(|mut parts| (parts.len() == 1).then(|| parts.remove(0)))
+        .unwrap_or_else(|| id.to_string())
 }
 
 fn to_source(stored: &Versioned<Value>) -> Result<TaskSource> {
@@ -123,7 +123,7 @@ fn to_source(stored: &Versioned<Value>) -> Result<TaskSource> {
             .ok_or_else(|| anyhow!("task source missing {name}"))
     };
     Ok(TaskSource {
-        id: stored.id.clone(),
+        id: source_id_of(&stored.id),
         provider: ProviderSlug::parse(field("provider")?).map_err(|error| anyhow!(error))?,
         connection_id: text(doc, "connection_id").map(str::to_string),
         name: text(doc, "name").map(str::to_string),
@@ -135,8 +135,16 @@ fn to_source(stored: &Versioned<Value>) -> Result<TaskSource> {
             .context("invalid target json")?,
         max_tasks_per_fetch: u32::try_from(number("max_tasks_per_fetch")?)
             .context("invalid max_tasks_per_fetch")?,
-        created_at: parse_time(field("created_at")?)?,
-        last_fetch_at: text(doc, "last_fetch_at").map(parse_time).transpose()?,
+        created_at: from_ms(
+            doc.get("created_ms")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| anyhow!("task source missing created_ms"))?,
+        )?,
+        last_fetch_at: doc
+            .get("last_fetch_ms")
+            .and_then(Value::as_i64)
+            .map(from_ms)
+            .transpose()?,
         last_status: text(doc, "last_status").map(str::to_string),
     })
 }
@@ -156,7 +164,7 @@ impl Docs {
     }
 
     pub(super) fn add_source(&self, source: &TaskSource) -> Result<TaskSource> {
-        let id = source.id.clone();
+        let id = key_of(&source.id)?;
         let doc = to_doc(source)?;
         self.0.run(|docs| async move {
             docs.put(SOURCES, &id, doc, Precondition::Absent)
@@ -167,7 +175,7 @@ impl Docs {
     }
 
     pub(super) fn get_source(&self, id: &str) -> Result<TaskSource> {
-        let key = id.to_string();
+        let key = key_of(id)?;
         let stored = self
             .0
             .run(|docs| async move { docs.get(SOURCES, &key).await })?
@@ -189,13 +197,14 @@ impl Docs {
         // Validate against the current source first, so a mismatched filter
         // is reported as the SQL store reports it.
         apply_patch(&mut self.get_source(id)?, patch.clone())?;
-        let key = id.to_string();
+        let key = key_of(id)?;
         let updated = self.0.run(|docs| async move {
             compare_and_swap(&docs, SOURCES, &key, |doc| {
                 let stored = Versioned {
                     id: key.clone(),
                     version: tinystoragedrivers::Version::FIRST,
                     doc: doc.clone(),
+                    meta: tinystoragedrivers::Meta::unknown(),
                 };
                 let mut source = to_source(&stored).ok()?;
                 apply_patch(&mut source, patch.clone()).ok()?;
@@ -207,12 +216,13 @@ impl Docs {
     }
 
     pub(super) fn remove_source(&self, id: &str) -> Result<()> {
-        let key = id.to_string();
+        let key = key_of(id)?;
+        let source_id = id.to_string();
         let removed = self.0.run(|docs| async move {
             // Ledger first: if the source delete then fails, the source is
             // still there (and merely re-ingests), instead of a ledger with no
             // owner that a later source with the same id would inherit.
-            docs.delete_where(INGESTED, &Filter::eq("source_id", key.clone()))
+            docs.delete_where(INGESTED, &Filter::eq("source_id", source_id))
                 .await?;
             docs.delete(SOURCES, &key, Precondition::None).await
         })?;
@@ -230,13 +240,13 @@ impl Docs {
         reason: FetchReason,
         status: &str,
     ) -> Result<()> {
-        let key = id.to_string();
+        let key = key_of(id)?;
         let line = format!("{}: {status}", reason.as_str());
-        let finished = finished_at.to_rfc3339();
+        let finished = finished_at.timestamp_millis();
         self.0.run(|docs| async move {
             compare_and_swap(&docs, SOURCES, &key, |doc| {
                 let mut next = doc.clone();
-                next["last_fetch_at"] = json!(finished);
+                next["last_fetch_ms"] = json!(finished);
                 next["last_status"] = json!(line);
                 Some(next)
             })
@@ -287,10 +297,7 @@ impl Docs {
             "content_hash": content_hash(task),
             "title": task.title,
             "payload": serde_json::to_string(task).context("serialize ingested task payload")?,
-            "ingested_at": now.to_rfc3339(),
             "ingested_ms": now.timestamp_millis(),
-            // Breaks ties between arrivals in one millisecond.
-            "ingested_ns": now.timestamp_nanos_opt().unwrap_or(i64::MAX),
         });
         self.0.run(|docs| async move {
             docs.put(INGESTED, &key, doc, Precondition::None)
@@ -302,7 +309,6 @@ impl Docs {
     pub(super) fn list_ingested_refs(&self, source_id: &str) -> Result<Vec<IngestedTaskRef>> {
         let query = Query::filter(Filter::eq("source_id", source_id))
             .sort(Sort::asc("ingested_ms"))
-            .sort(Sort::asc("ingested_ns"))
             .sort(Sort::asc("external_id"));
         self.0.run(|docs| async move {
             Ok(docs
@@ -332,7 +338,7 @@ impl Docs {
         let query =
             Query::filter(Filter::eq("source_id", source_id).and(Filter::exists("payload", true)))
                 .sort(Sort::desc("ingested_ms"))
-                .sort(Sort::desc("ingested_ns"))
+                .sort(Sort::desc("external_id"))
                 .limit(limit.max(1));
         self.0.run(|docs| async move {
             let page = docs.query(INGESTED, &query).await?;

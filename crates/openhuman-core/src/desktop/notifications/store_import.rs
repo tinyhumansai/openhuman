@@ -23,7 +23,9 @@ use serde_json::json;
 mod store_rows;
 use store_rows::rows_to_notifications;
 
-use super::store_documents::{core_id, to_doc, CORE, LOCAL_WORKSPACE, NOTIFICATIONS, SETTINGS};
+use super::storage_schema::{LEGACY_CORE, LEGACY_NOTIFICATIONS, LEGACY_SETTINGS};
+use super::store_documents::LOCAL_WORKSPACE;
+use super::types::IntegrationNotification;
 use crate::config::Config;
 use crate::storage::import::{table_exists, ImportDoc};
 
@@ -121,6 +123,40 @@ pub(crate) fn with_connection<T>(
     f(&conn)
 }
 
+/// The v1 core-notification document id: the workspace is length-prefixed.
+pub(crate) fn legacy_core_id(workspace: &str, event_id: &str) -> String {
+    format!("{}:{workspace}/{event_id}", workspace.len())
+}
+
+/// A notification in its v1 document shape (`received_at`, `scored_at`
+/// formatted times), which the owner's step converts.
+fn legacy_doc(n: &IntegrationNotification) -> serde_json::Value {
+    let mut doc = serde_json::Map::new();
+    doc.insert("provider".into(), json!(n.provider));
+    doc.insert("title".into(), json!(n.title));
+    doc.insert("body".into(), json!(n.body));
+    doc.insert("raw_payload".into(), json!(n.raw_payload.to_string()));
+    doc.insert("status".into(), json!(n.status.as_str()));
+    doc.insert("received_at".into(), json!(n.received_at.to_rfc3339()));
+    doc.insert(
+        "received_ms".into(),
+        json!(n.received_at.timestamp_millis()),
+    );
+    let optional = [
+        ("account_id", n.account_id.as_ref().map(|v| json!(v))),
+        ("importance_score", n.importance_score.map(|v| json!(v))),
+        ("triage_action", n.triage_action.as_ref().map(|v| json!(v))),
+        ("triage_reason", n.triage_reason.as_ref().map(|v| json!(v))),
+        ("scored_at", n.scored_at.map(|v| json!(v.to_rfc3339()))),
+    ];
+    for (field, value) in optional {
+        if let Some(value) = value {
+            doc.insert(field.into(), value);
+        }
+    }
+    serde_json::Value::Object(doc)
+}
+
 /// Reads every legacy row.
 pub(crate) fn read(config: &Config) -> Result<Vec<ImportDoc>> {
     read_for(config, LOCAL_WORKSPACE)
@@ -148,9 +184,9 @@ fn read_rows(conn: &Connection, workspace: &str) -> Result<Vec<ImportDoc>> {
             .context("[notifications::import] query integration_notifications")?;
         for notification in rows_to_notifications(rows)? {
             docs.push(ImportDoc {
-                collection: NOTIFICATIONS,
+                collection: LEGACY_NOTIFICATIONS,
                 id: notification.id.clone(),
-                doc: to_doc(&notification),
+                doc: legacy_doc(&notification),
             });
         }
     }
@@ -163,7 +199,7 @@ fn read_rows(conn: &Connection, workspace: &str) -> Result<Vec<ImportDoc>> {
             .context("[notifications::import] prepare notification_settings")?;
         let rows = stmt.query_map([], |row| {
             Ok(ImportDoc {
-                collection: SETTINGS,
+                collection: LEGACY_SETTINGS,
                 id: row.get(0)?,
                 doc: json!({
                     "enabled": row.get::<_, i64>(1)? != 0,
@@ -186,8 +222,8 @@ fn read_rows(conn: &Connection, workspace: &str) -> Result<Vec<ImportDoc>> {
         let rows = stmt.query_map([], |row| {
             let id: String = row.get(0)?;
             Ok(ImportDoc {
-                collection: CORE,
-                id: core_id(workspace, &id),
+                collection: LEGACY_CORE,
+                id: legacy_core_id(workspace, &id),
                 doc: json!({
                     "workspace": workspace,
                     "payload": row.get::<_, String>(1)?,

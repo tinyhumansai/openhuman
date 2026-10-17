@@ -9,7 +9,7 @@
 //!
 //! | Collection | Document id | Holds |
 //! | --- | --- | --- |
-//! | `artifact_versions` | artifact id | the whole `ArtifactRecord`, plus `updated_ms` for ordering |
+//! | `artifacts.versions` | `Key::of([artifact id])` | the whole `ArtifactRecord` with snake_case keys and `*_ms` times ([`super::storage_schema`]) |
 //!
 //! Only the records move. A file version's bytes stay in a file
 //! (`ArtifactVersion::file`), as the legacy card's do.
@@ -28,10 +28,11 @@ use serde_json::Value;
 use tiny_artifacts::{ArtifactRecord, ArtifactStore};
 use tinystoragedrivers::{CollectionSpec, Precondition, Query, Sort};
 
+use super::storage_schema::{version_body, version_record, VERSIONS};
 use crate::storage::documents::Repo;
+use crate::storage::schema_support::key_of;
 use crate::storage::DocumentStoreExt;
 
-const VERSIONS: &str = "artifact_versions";
 const DOMAIN: &str = "artifacts::versions";
 
 fn collections() -> Vec<CollectionSpec> {
@@ -106,7 +107,7 @@ impl ArtifactStore for DocumentArtifactStore {
 
     async fn get(&self, id: &str) -> Result<Option<ArtifactRecord>> {
         let repo = self.repo().await?;
-        let id = id.to_string();
+        let id = key_of(id)?;
         let stored = on_blocking(repo, move |repo| {
             repo.run(|docs| async move { docs.get(VERSIONS, &id).await })
         })
@@ -116,7 +117,7 @@ impl ArtifactStore for DocumentArtifactStore {
 
     async fn upsert(&self, artifact: &ArtifactRecord) -> Result<()> {
         let repo = self.repo().await?;
-        let id = artifact.id.clone();
+        let id = key_of(&artifact.id)?;
         let doc = doc_of(artifact)?;
         on_blocking(repo, move |repo| {
             repo.run(|docs| async move {
@@ -142,7 +143,7 @@ impl ArtifactStore for DocumentArtifactStore {
             }
         }
         let repo = self.repo().await?;
-        let id = id.to_string();
+        let id = key_of(id)?;
         on_blocking(repo, move |repo| {
             repo.run(|docs| async move { docs.delete(VERSIONS, &id, Precondition::None).await })
         })
@@ -151,16 +152,13 @@ impl ArtifactStore for DocumentArtifactStore {
 }
 
 fn doc_of(record: &ArtifactRecord) -> Result<Value> {
-    let mut doc = serde_json::to_value(record).context("serialize artifact record")?;
-    doc["updated_ms"] = Value::from(record.updated_at_millis);
-    Ok(doc)
+    Ok(version_body(
+        &serde_json::to_value(record).context("serialize artifact record")?,
+    ))
 }
 
-fn record_of(mut doc: Value) -> Result<ArtifactRecord> {
-    if let Some(fields) = doc.as_object_mut() {
-        fields.remove("updated_ms");
-    }
-    serde_json::from_value(doc).context("parse artifact record")
+fn record_of(doc: Value) -> Result<ArtifactRecord> {
+    serde_json::from_value(version_record(&doc)).context("parse artifact record")
 }
 
 /// Imports the legacy `<id>.json` records in `dir` that the store does not
@@ -196,7 +194,7 @@ fn import_legacy(repo: &Repo, dir: &Path) -> Result<usize> {
         if path.file_stem().and_then(|s| s.to_str()) != Some(record.id.as_str()) {
             continue;
         }
-        let id = record.id.clone();
+        let id = key_of(&record.id)?;
         let doc = doc_of(&record)?;
         let created = repo.run(|docs| async move {
             match docs.put(VERSIONS, &id, doc, Precondition::Absent).await {

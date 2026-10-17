@@ -71,12 +71,12 @@ impl Snapshot {
     ///
     /// When the copy cannot be opened with the SQLite driver or read.
     pub fn driver_docs(&self, collections: fn() -> Vec<CollectionSpec>) -> Result<Vec<Record>> {
-        use tinystoragedrivers::{DocumentStoreExt, Query, Scope, StorageBackend};
+        use tinystoragedrivers::{DocumentStoreExt, Query, StorageBackend};
 
         let storage = tinystoragedrivers::sqlite::SqliteStorage::open(&self.db)
             .with_context(|| format!("open the copy {}", self.db.display()))?;
         let scoped = storage
-            .for_scope(&Scope::local())
+            .for_scope(&crate::storage::tenant_scope(None))
             .context("open the local scope of the copy")?;
         let docs = std::sync::Arc::clone(scoped.documents());
         let specs = collections();

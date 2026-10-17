@@ -96,7 +96,7 @@ pub(crate) async fn update<T, R>(
     ctx: &crate::core::runtime::DispatchCtx,
     config: &Config,
     name: &'static str,
-    change: impl Fn(&mut T) -> (R, bool) + Send + 'static,
+    change: impl Fn(&mut T) -> (R, bool) + Send + Sync + 'static,
 ) -> Result<R, String>
 where
     T: DeserializeOwned + Serialize + Default + Send + 'static,

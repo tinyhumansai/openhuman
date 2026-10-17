@@ -190,9 +190,11 @@ impl RuntimeBuilder {
         };
         if self.session_store.is_none() {
             if let Some(backend) = &storage_backend {
-                let stores = tinyagents_session::DriverSessionStores::new(backend.clone())
-                    .map_err(|e| RuntimeError::Build(e.into()))?
-                    .recover_on_open(!openhuman_core::storage::driver_is_shared(backend.driver()));
+                let stores = openhuman_core::agent::session_store::TenantSessionStores::new(
+                    backend.clone(),
+                    !openhuman_core::storage::driver_is_shared(backend.driver()),
+                )
+                .map_err(|e| RuntimeError::Build(e.into()))?;
                 self.session_store = Some(Arc::new(stores));
             }
         }

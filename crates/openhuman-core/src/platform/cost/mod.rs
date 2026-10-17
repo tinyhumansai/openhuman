@@ -6,8 +6,10 @@ pub mod route;
 mod rpc;
 mod schemas;
 pub mod scope;
+mod storage_schema;
 pub mod tools;
 pub mod tracker;
+pub use storage_schema::storage_schema;
 mod tracker_documents;
 pub mod types;
 

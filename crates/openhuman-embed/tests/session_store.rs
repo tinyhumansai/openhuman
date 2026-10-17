@@ -170,7 +170,7 @@ fn a_stateless_runtime_keeps_every_conversation_in_its_session_store() {
                 .expect("asha's storage scope")
                 .documents()
                 .query_all(
-                    tinyagents_harness::observability::DriverStatusStore::DEFAULT_COLLECTION,
+                    tinyagents_harness::observability::DriverStatusStore::COLLECTION,
                     &Default::default(),
                 )
                 .await

@@ -89,7 +89,7 @@ fn persistence_failure_and_invalid_scope_never_acknowledge_a_write() {
     let args = json!({"action":"learn","text":"Prefers tea"});
     assert!(enqueue(&config, &args, &facts).is_err());
     assert!(!path(&config.workspace_dir).exists());
-    std::fs::write(config.workspace_dir.join("memory"), "blocks directory").unwrap();
+    std::fs::write(config.workspace_dir.join("storage"), "blocks the storage directory").unwrap();
     assert!(enqueue(&config, &args, &self::facts(&config)).is_err());
 }
 
@@ -105,25 +105,12 @@ fn private_outbox_is_scrubbed_before_persistence_and_has_a_size_limit() {
         &facts(&config),
     )
     .unwrap();
-    let file = path(&config.workspace_dir);
-    let persisted = std::fs::read_to_string(&file).unwrap();
+    let persisted = serde_json::to_string(&read(&config.workspace_dir).unwrap()).unwrap();
     assert!(!persisted.contains(secret));
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        assert_eq!(
-            std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
-            0o600
-        );
-        assert_eq!(
-            std::fs::metadata(file.parent().unwrap())
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
-            0o700
-        );
-    }
+    assert!(
+        !path(&config.workspace_dir).exists(),
+        "the queue is a storage value, not a file"
+    );
     let huge = "x".repeat(MAX_BYTES);
     assert!(enqueue(
         &config,
@@ -240,7 +227,8 @@ fn corrupt_existing_outbox_is_preserved_and_refuses_new_writes() {
     let tmp = tempfile::tempdir().unwrap();
     let config = config_in(&tmp);
     let file = path(&config.workspace_dir);
-    super::super::files::write_private(&file, b"corrupt existing state").unwrap();
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, b"corrupt existing state").unwrap();
     assert!(enqueue(
         &config,
         &json!({"action":"learn","text":"Prefers tea"}),

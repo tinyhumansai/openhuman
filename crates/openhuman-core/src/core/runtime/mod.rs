@@ -68,7 +68,10 @@ pub use context::{ContextOverlay, CoreContext};
 pub use dispatch_ctx::DispatchCtx;
 pub use mode::{current_mode, is_saas, Mode};
 pub use saas::SaasConfig;
-pub use tenant::{current_tenant, session_key, session_key_prefix, tenant_key, NoTenant, Tenant};
+pub use tenant::{
+    current_tenant, session_key, session_key_prefix, split_session_key, tenant_key, NoTenant,
+    Tenant,
+};
 
 /// Operator-owned direct inference settings.
 pub mod direct_profile_provider;

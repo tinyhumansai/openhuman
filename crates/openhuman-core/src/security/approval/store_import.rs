@@ -13,7 +13,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde_json::{json, Map, Value};
 
-use super::store_documents::{expiry_key, rfc3339, trust_id, APPROVALS, FLOW_TRUST};
+use super::storage_schema::{LEGACY_APPROVALS, LEGACY_FLOW_TRUST};
 use crate::config::Config;
 use crate::storage::import::{table_exists, ImportDoc};
 
@@ -214,6 +214,19 @@ pub(crate) fn read(config: &Config) -> Result<Vec<ImportDoc>> {
     with_connection(config, read_rows)
 }
 
+/// Fixed-width (nanosecond, `Z`) so the strings sort in time order: the v1
+/// document layout the steps read.
+fn rfc3339(at: DateTime<Utc>) -> String {
+    at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
+}
+
+/// The comparable expiry key v1 stored: nanoseconds since the epoch, falling
+/// back to milliseconds for instants beyond the i64-nanosecond range.
+fn expiry_key(at: DateTime<Utc>) -> i64 {
+    at.timestamp_nanos_opt()
+        .unwrap_or_else(|| at.timestamp_millis().saturating_mul(1_000_000))
+}
+
 fn instant(raw: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(raw)
         .ok()
@@ -272,7 +285,7 @@ fn read_rows(conn: &Connection) -> Result<Vec<ImportDoc>> {
                     }
                 }
                 Ok(ImportDoc {
-                    collection: APPROVALS,
+                    collection: LEGACY_APPROVALS,
                     id: row.get(0)?,
                     doc: Value::Object(doc),
                 })
@@ -299,8 +312,8 @@ fn read_rows(conn: &Connection) -> Result<Vec<ImportDoc>> {
             let (flow_id, tool_name, created) =
                 row.context("[approval::import] decode a flow_tool_trust row")?;
             docs.push(ImportDoc {
-                collection: FLOW_TRUST,
-                id: trust_id(&flow_id, &tool_name),
+                collection: LEGACY_FLOW_TRUST,
+                id: format!("{}:{flow_id}/{tool_name}", flow_id.len()),
                 doc: json!({
                     "flow_id": flow_id,
                     "tool_name": tool_name,

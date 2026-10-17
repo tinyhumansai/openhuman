@@ -37,7 +37,7 @@ rejects all exceptions and pending contracts. Cargo failure is an audit failure.
 Generated probes and lockfiles stay in the checkout's `target/module-boundaries/`.
 
 `check-openhuman-rust-layout.mjs`, `check-crate-chain.mjs` and
-`check-storage-owner.mjs` run through `pnpm rust:layout`. The module-boundary audit has the two pnpm commands above,
+`check-storage-owner.mjs` and `check-storage-schema.mjs` run through `pnpm rust:layout`. The module-boundary audit has the two pnpm commands above,
 and the ambient-access ratchet runs through `pnpm saas:ambient`. Other gates
 are invoked directly, e.g.
 `node scripts/ci/check-feature-forwarding.mjs` or

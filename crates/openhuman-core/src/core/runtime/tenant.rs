@@ -237,6 +237,20 @@ fn escape_profile(profile: &str) -> String {
     profile.replace('%', "%25").replace('~', "%7E")
 }
 
+fn unescape_profile(escaped: &str) -> String {
+    escaped.replace("%7E", "~").replace("%25", "%")
+}
+
+/// The `(profile, agent)` a [`session_key`] was built from: `None` profile for
+/// the desktop operator. The inverse of [`session_key`], so the session store
+/// can bind `Scope::tenant(profile).agent(agent)` instead of a flat string.
+pub fn split_session_key(key: &str) -> (Option<String>, String) {
+    match key.split_once('~') {
+        Some((profile, agent)) => (Some(unescape_profile(profile)), agent.to_owned()),
+        None => (None, unescape_profile(key)),
+    }
+}
+
 #[cfg(test)]
 #[path = "tenant_tests.rs"]
 mod tests;

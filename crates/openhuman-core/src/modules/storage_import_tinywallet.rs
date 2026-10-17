@@ -26,7 +26,7 @@ use anyhow::{anyhow, Context, Result};
 use serde_json::json;
 use tinystoragedrivers::ScopedStorage;
 
-use super::storage_grant_tinywallet::{MODULE_ID, PAYMENTS_STREAM};
+use super::storage_grant_schemas::tinywallet::{MODULE_ID, PAYMENTS_STREAM};
 use super::storage_import_support as support;
 use crate::core::runtime::DispatchCtx;
 
@@ -64,7 +64,7 @@ async fn import_into(
 ) -> Result<Outcome> {
     let docs = scoped.documents();
     let marker = support::marker_id("x402", workspace_dir);
-    if support::already_imported(docs, MARKER_COLLECTION, &marker).await? {
+    if support::already_imported(scoped, MARKER_COLLECTION, &marker).await? {
         return Ok(Outcome::AlreadyDone);
     }
     let ledger = workspace_dir.join(LEDGER_FILE);
@@ -83,13 +83,7 @@ async fn import_into(
     let payments = support::append_if_empty(scoped, PAYMENTS_STREAM, records)
         .await
         .map_err(|error| anyhow!("import the payments: {error:#}"))?;
-    support::mark_imported(
-        docs,
-        MARKER_COLLECTION,
-        &marker,
-        json!({ "payments": payments, "skipped": skipped }),
-    )
-    .await?;
+    support::mark_imported(scoped, MARKER_COLLECTION, &marker).await?;
     tracing::info!("{LOG_PREFIX} imported payments={payments} skipped={skipped}");
     Ok(Outcome::Imported { payments, skipped })
 }

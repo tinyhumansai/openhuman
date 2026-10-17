@@ -53,12 +53,11 @@ fn dump(
     collection: &str,
 ) -> BTreeMap<String, serde_json::Value> {
     let docs = Arc::clone(backend.for_scope(&Scope::local()).unwrap().documents());
-    let specs = (source.collections)();
+    let _ = source;
     let collection = collection.to_string();
     crate::storage::block_on(async move {
-        for spec in &specs {
-            docs.ensure_collection(spec).await?;
-        }
+        docs.ensure_collection(&tinystoragedrivers::CollectionSpec::new(&collection))
+            .await?;
         let found = docs.query_all(&collection, &Query::all()).await?;
         Ok(found.into_iter().map(|d| (d.id, d.doc)).collect())
     })
@@ -115,7 +114,7 @@ fn devices_move_into_the_backend_and_the_legacy_file_is_untouched() {
     let (found, written) = imported(run_with(&backend, &config, &[source]));
 
     assert_eq!((found, written), (3, 3));
-    let found = dump(&backend, &source, "paired_devices");
+    let found = dump(&backend, &source, "devices.paired");
     assert_eq!(found["chan-a"]["label"], "Phone");
     assert_eq!(found["chan-a"]["core_session_token_hash"], "hash");
     assert_eq!(found["chan-a"]["revoked"], false);
@@ -140,7 +139,7 @@ fn a_finished_import_does_not_run_again_or_resurrect_deleted_records() {
     // The user removes a record; the untouched legacy file still has it.
     let docs = Arc::clone(backend.for_scope(&Scope::local()).unwrap().documents());
     crate::storage::block_on(async move {
-        docs.delete("paired_devices", "chan-b", Precondition::None)
+        docs.delete("devices.paired", "chan-b", Precondition::None)
             .await
     })
     .unwrap();
@@ -149,7 +148,7 @@ fn a_finished_import_does_not_run_again_or_resurrect_deleted_records() {
         outcome(run_with(&backend, &config, &[source])),
         Outcome::AlreadyDone
     );
-    assert!(!dump(&backend, &source, "paired_devices").contains_key("chan-b"));
+    assert!(!dump(&backend, &source, "devices.paired").contains_key("chan-b"));
 }
 
 #[test]
@@ -160,41 +159,23 @@ fn an_import_claimed_by_another_process_waits_for_it_and_does_not_repeat_it() {
     let source = devices();
 
     // Another process holds the claim for this domain and workspace, and
-    // finishes (marker written, claim released) shortly after we start.
+    // finishes (marked done, claim released) shortly after we start.
     let markers = Repo::on(&backend, &Scope::local(), "storage::import", marker_spec).unwrap();
-    let marker = marker_id(source.domain, &config.workspace_dir);
-    let claim = crate::storage::import_claim::claim_id(&marker);
-    let held_claim = claim.clone();
-    let version = markers
-        .run(move |docs| async move {
-            docs.put(
-                MARKER_COLLECTION,
-                &held_claim,
-                json!({ "claimed_at_ms": chrono::Utc::now().timestamp_millis() }),
-                Precondition::Absent,
-            )
-            .await
-        })
-        .unwrap();
+    let step = marker_step(source.domain, &config.workspace_dir);
+    let (held_tx, held_rx) = std::sync::mpsc::channel::<()>();
     let finisher = {
-        let markers = markers.clone();
+        let (markers, step) = (markers.clone(), step.clone());
         std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(400));
-            markers
-                .run(move |docs| async move {
-                    docs.put(
-                        MARKER_COLLECTION,
-                        &marker,
-                        json!({ "version": MARKER_VERSION, "found": 1, "written": 1 }),
-                        Precondition::Absent,
-                    )
-                    .await?;
-                    docs.delete(MARKER_COLLECTION, &claim, Precondition::Version(version))
-                        .await
-                })
-                .unwrap();
+            crate::storage::import_state::with_claim(&markers, MARKER_OWNER, &step.clone(), || {
+                held_tx.send(()).unwrap();
+                std::thread::sleep(std::time::Duration::from_millis(400));
+                crate::storage::import_state::set_done(&markers, MARKER_OWNER, &step)
+            })
+            .unwrap()
+            .expect("the first claimant runs");
         })
     };
+    held_rx.recv().unwrap();
 
     let started = std::time::Instant::now();
     assert_eq!(
@@ -206,7 +187,43 @@ fn an_import_claimed_by_another_process_waits_for_it_and_does_not_repeat_it() {
         "the loser must not proceed while the claim is held"
     );
     finisher.join().unwrap();
-    assert!(dump(&backend, &source, "paired_devices").is_empty());
+    assert!(dump(&backend, &source, "devices.paired").is_empty());
+}
+
+#[test]
+fn a_marker_row_an_older_build_wrote_counts_as_a_finished_import() {
+    let (_dir, config) = workspace();
+    legacy_device(&config, "chan-a", "Phone", false);
+    let backend = backend();
+    let source = devices();
+    let marker = marker_id(source.domain, &config.workspace_dir);
+    let scoped = backend.for_scope(&Scope::local()).unwrap();
+    let docs = Arc::clone(scoped.documents());
+    crate::storage::block_on(async move {
+        docs.ensure_collection(&tinystoragedrivers::CollectionSpec::new(MARKER_KIND))
+            .await?;
+        docs.put(
+            MARKER_KIND,
+            &marker,
+            serde_json::json!({ "version": 1, "found": 1, "written": 1 }),
+            Precondition::Absent,
+        )
+        .await
+    })
+    .unwrap();
+    // Boot moves the marker row into `tsd.migrations`.
+    let owned = scoped.clone();
+    crate::storage::block_on(async move {
+        crate::storage::import_state::migrate_legacy_markers(&owned).await
+    })
+    .unwrap();
+
+    assert!(is_done(&backend, &config, &source).unwrap());
+    assert_eq!(
+        outcome(run_with(&backend, &config, &[source])),
+        Outcome::AlreadyDone
+    );
+    assert!(dump(&backend, &source, "devices.paired").is_empty());
 }
 
 #[test]
@@ -246,7 +263,7 @@ fn processes_importing_one_workspace_at_once_import_it_once() {
                 }
             )));
     assert!(is_done(&backend, &config, &source).unwrap());
-    assert_eq!(dump(&backend, &source, "paired_devices").len(), 20);
+    assert_eq!(dump(&backend, &source, "devices.paired").len(), 20);
 }
 
 #[test]
@@ -259,10 +276,10 @@ fn an_existing_record_is_never_overwritten() {
     // A record the new code already wrote (a resumed import).
     let docs = Arc::clone(backend.for_scope(&Scope::local()).unwrap().documents());
     crate::storage::block_on(async move {
-        docs.ensure_collection(&(source.collections)().remove(0))
+        docs.ensure_collection(&tinystoragedrivers::CollectionSpec::new("devices.paired"))
             .await?;
         docs.put(
-            "paired_devices",
+            "devices.paired",
             "chan-a",
             serde_json::json!({ "label": "newer" }),
             Precondition::Absent,
@@ -275,7 +292,7 @@ fn an_existing_record_is_never_overwritten() {
 
     assert_eq!((found, written), (2, 1));
     assert_eq!(
-        dump(&backend, &source, "paired_devices")["chan-a"]["label"],
+        dump(&backend, &source, "devices.paired")["chan-a"]["label"],
         "newer"
     );
 }
@@ -356,7 +373,7 @@ fn records_the_previous_release_wrote_as_documents_are_imported_and_win_over_leg
     // chan-a from the document table (newer copy) and the legacy row with the
     // same id (skipped), plus chan-d.
     assert_eq!((found, written), (3, 2));
-    let devices = dump(&backend, &source, "paired_devices");
+    let devices = dump(&backend, &source, "devices.paired");
     assert_eq!(devices["chan-a"]["label"], "Renamed");
     assert_eq!(devices["chan-a"]["revoked"], true);
     assert_eq!(devices["chan-d"]["label"], "Only a document");
@@ -385,7 +402,7 @@ fn rows_still_in_the_write_ahead_log_are_read() {
 
     assert_eq!((found, written), (1, 1));
     assert_eq!(
-        dump(&backend, &source, "paired_devices")["wal-chan"]["label"],
+        dump(&backend, &source, "devices.paired")["wal-chan"]["label"],
         "In the log"
     );
     drop(conn);

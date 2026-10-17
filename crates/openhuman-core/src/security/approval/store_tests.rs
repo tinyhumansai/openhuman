@@ -50,7 +50,7 @@ fn raw_doc(config: &Config, request_id: &str) -> Option<serde_json::Value> {
         .expect("open the storage backend");
     let docs = std::sync::Arc::clone(opened.scoped().expect("scope").documents());
     let id = request_id.to_string();
-    crate::storage::block_on(async move { docs.get("approvals", &id).await })
+    crate::storage::block_on(async move { docs.get("approvals.requests", &id).await })
         .expect("read the approval document")
         .map(|stored| stored.doc)
 }
@@ -59,12 +59,19 @@ fn text_field(doc: &serde_json::Value, field: &str) -> Option<String> {
     doc.get(field).and_then(|v| v.as_str()).map(str::to_string)
 }
 
+/// An instant field (epoch milliseconds) as text, so a test asks "is it set".
+fn time_field(doc: &serde_json::Value, field: &str) -> Option<String> {
+    doc.get(field)
+        .and_then(serde_json::Value::as_i64)
+        .map(|ms| ms.to_string())
+}
+
 fn fetch_decision_state(
     config: &Config,
     request_id: &str,
 ) -> Option<(Option<String>, Option<String>)> {
     raw_doc(config, request_id)
-        .map(|doc| (text_field(&doc, "decided_at"), text_field(&doc, "decision")))
+        .map(|doc| (time_field(&doc, "decided_ms"), text_field(&doc, "decision")))
 }
 
 // ── record_execution tests (#2135) ──────────
@@ -75,7 +82,7 @@ fn read_execution_row(
 ) -> (Option<String>, Option<String>, Option<String>) {
     let doc = raw_doc(config, request_id).expect("row exists");
     (
-        text_field(&doc, "executed_at"),
+        time_field(&doc, "executed_ms"),
         text_field(&doc, "execution_outcome"),
         text_field(&doc, "execution_error"),
     )

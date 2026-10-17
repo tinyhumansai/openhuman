@@ -3,7 +3,8 @@
 //! With a storage backend installed, every node of a deployment reads one
 //! registry: collection [`REGISTRY_COLLECTION`] of the shared
 //! [`CLUSTER_SCOPE`](crate::storage::lease::CLUSTER_SCOPE), one
-//! [`ProfileMeta`] document per profile. Without one it is the
+//! document per profile (`{profile_id, layout_version}`, the creation time in
+//! the record's metadata; [`super::storage_schema`]). Without one it is the
 //! `profile.toml` file beside each profile's state
 //! (`<root>/users/<id>/profile.toml`), as before.
 //!
@@ -14,21 +15,42 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tinystoragedrivers::{CollectionSpec, DocumentStoreExt, ErrorKind, Precondition, Query, Scope};
+use tinystoragedrivers::{
+    CollectionSpec, DocumentStoreExt, ErrorKind, Precondition, Query, Scope, ScopedStorage,
+    Versioned, WriteOptions,
+};
 
 use super::layout::{self, ProfileLayout};
+use super::storage_schema::migrate_cluster;
+pub use super::storage_schema::REGISTRY_COLLECTION;
 use super::types::{ProfileId, ProfileMeta};
 use crate::storage::lease::CLUSTER_SCOPE;
+use crate::storage::schema_support::key_of;
 use crate::storage::{DocumentStore, StorageBackend};
 
-/// The collection the profile records live in, under the cluster scope.
-pub const REGISTRY_COLLECTION: &str = "profiles";
+/// The profile a registry document holds: the body's fields, and the creation
+/// time (Unix seconds) from the record's metadata.
+fn meta_of(stored: &Versioned<serde_json::Value>) -> Result<ProfileMeta, serde_json::Error> {
+    let mut doc = stored.doc.clone();
+    doc["created_at"] = (stored.meta.created_ms.max(0) / 1000).into();
+    serde_json::from_value(doc)
+}
+
+/// The body a profile is stored as: its fields without the creation time.
+fn body_of(meta: &ProfileMeta) -> Result<serde_json::Value, serde_json::Error> {
+    let mut doc = serde_json::to_value(meta)?;
+    if let Some(fields) = doc.as_object_mut() {
+        fields.remove("created_at");
+    }
+    Ok(doc)
+}
 
 /// Where provisioned profiles are recorded. See the module docs.
 pub enum ProfileRegistry {
     /// One document per profile in the shared backend.
     Documents {
         docs: Arc<dyn DocumentStore>,
+        scoped: ScopedStorage,
         declared: tokio::sync::OnceCell<()>,
     },
     /// `profile.toml` under each profile's directory below `root`.
@@ -63,6 +85,7 @@ impl ProfileRegistry {
         let scoped = backend.for_scope(&scope).map_err(|e| e.to_string())?;
         Ok(Self::Documents {
             docs: Arc::clone(scoped.documents()),
+            scoped,
             declared: tokio::sync::OnceCell::new(),
         })
     }
@@ -73,13 +96,20 @@ impl ProfileRegistry {
     }
 
     async fn docs(&self) -> Result<Option<&Arc<dyn DocumentStore>>, String> {
-        let Self::Documents { docs, declared } = self else {
+        let Self::Documents {
+            docs,
+            scoped,
+            declared,
+        } = self
+        else {
             return Ok(None);
         };
         declared
             .get_or_try_init(|| async {
                 docs.ensure_collection(&CollectionSpec::new(REGISTRY_COLLECTION))
-                    .await
+                    .await?;
+                // The cluster scope is outside boot's per-tenant migration.
+                migrate_cluster(scoped).await
             })
             .await
             .map_err(|e| format!("profile registry: {e}"))?;
@@ -93,14 +123,15 @@ impl ProfileRegistry {
     /// When the record cannot be read or parsed.
     pub async fn get(&self, id: &ProfileId) -> Result<Option<ProfileMeta>, String> {
         if let Some(docs) = self.docs().await? {
+            let key = key_of(id.as_str()).map_err(|e| format!("profile {id}: {e}"))?;
             let Some(stored) = docs
-                .get(REGISTRY_COLLECTION, id.as_str())
+                .get(REGISTRY_COLLECTION, &key)
                 .await
                 .map_err(|e| format!("reading profile {id}: {e}"))?
             else {
                 return Ok(None);
             };
-            return serde_json::from_value(stored.doc)
+            return meta_of(&stored)
                 .map(Some)
                 .map_err(|e| format!("parsing profile {id}: {e}"));
         }
@@ -119,10 +150,19 @@ impl ProfileRegistry {
     pub async fn create(&self, meta: &ProfileMeta) -> Result<bool, String> {
         let id = &meta.profile_id;
         if let Some(docs) = self.docs().await? {
-            let doc =
-                serde_json::to_value(meta).map_err(|e| format!("encoding profile {id}: {e}"))?;
+            let doc = body_of(meta).map_err(|e| format!("encoding profile {id}: {e}"))?;
+            let key = key_of(id.as_str()).map_err(|e| format!("profile {id}: {e}"))?;
+            let created_ms = i64::try_from(meta.created_at)
+                .unwrap_or(i64::MAX / 1000)
+                .saturating_mul(1000);
             return match docs
-                .put(REGISTRY_COLLECTION, id.as_str(), doc, Precondition::Absent)
+                .put_with(
+                    REGISTRY_COLLECTION,
+                    &key,
+                    doc,
+                    Precondition::Absent,
+                    WriteOptions::new().created_ms(created_ms),
+                )
                 .await
             {
                 Ok(_) => Ok(true),
@@ -152,8 +192,9 @@ impl ProfileRegistry {
     /// When the record cannot be removed.
     pub async fn remove(&self, id: &ProfileId) -> Result<bool, String> {
         if let Some(docs) = self.docs().await? {
+            let key = key_of(id.as_str()).map_err(|e| format!("profile {id}: {e}"))?;
             return docs
-                .delete(REGISTRY_COLLECTION, id.as_str(), Precondition::None)
+                .delete(REGISTRY_COLLECTION, &key, Precondition::None)
                 .await
                 .map_err(|e| format!("forgetting profile {id}: {e}"));
         }
@@ -174,7 +215,7 @@ impl ProfileRegistry {
                 .await
                 .map_err(|e| format!("listing profiles: {e}"))?;
             for doc in stored {
-                match serde_json::from_value::<ProfileMeta>(doc.doc) {
+                match meta_of(&doc) {
                     Ok(meta) => found.push(meta),
                     Err(error) => {
                         log::warn!("[profiles][registry] skipping record {}: {error}", doc.id);

@@ -10,7 +10,7 @@ fn memory() -> SiteMemory {
 
 fn store() -> (tempfile::TempDir, SiteStore) {
     let dir = tempfile::tempdir().unwrap();
-    let store = SiteStore::new(sites_dir(dir.path()));
+    let store = SiteStore::open(dir.path()).unwrap();
     (dir, store)
 }
 
@@ -39,14 +39,14 @@ async fn a_site_that_is_not_a_plain_host_is_refused() {
 }
 
 #[tokio::test]
-async fn an_unreadable_file_is_set_aside_and_read_as_empty() {
+async fn an_unreadable_record_is_dropped_and_read_as_empty() {
     let (dir, store) = store();
-    let sites = sites_dir(dir.path());
-    std::fs::create_dir_all(&sites).unwrap();
-    std::fs::write(sites.join("x.com.json"), b"not json").unwrap();
+    crate::storage::state_kv::StateKv::open(dir.path(), "computer", "site_memory")
+        .unwrap()
+        .put("x.com", &"not a site record")
+        .unwrap();
     assert!(store.load("x.com").await.unwrap().is_empty());
-    assert!(sites.join("x.com.json.corrupt").exists());
-    assert_eq!(store.forget(Some("x.com")).await.unwrap(), 1);
+    assert_eq!(store.forget(Some("x.com")).await.unwrap(), 0);
 }
 
 #[tokio::test]
@@ -58,17 +58,36 @@ async fn forgetting_every_site_counts_distinct_sites() {
     assert_eq!(store.forget(None).await.unwrap(), 0);
 }
 
-#[cfg(unix)]
 #[tokio::test]
-async fn site_files_are_private_to_their_owner() {
-    use std::os::unix::fs::PermissionsExt;
-    let (dir, store) = store();
-    store.save("a.com", &memory()).await.unwrap();
-    let mode = std::fs::metadata(sites_dir(dir.path()).join("a.com.json"))
+async fn legacy_site_files_are_imported_once_dated_by_their_last_change_and_left_in_place() {
+    let dir = tempfile::tempdir().unwrap();
+    let sites = sites_dir(dir.path());
+    std::fs::create_dir_all(&sites).unwrap();
+    let write = |name: &str, body: &[u8]| std::fs::write(sites.join(name), body).unwrap();
+    write("fresh.com.json", &serde_json::to_vec(&memory()).unwrap());
+    write("old.com.json", &serde_json::to_vec(&memory()).unwrap());
+    write("broken.com.json", b"not json");
+    write("aside.com.json.corrupt", b"not json");
+    let aged = std::time::SystemTime::now() - std::time::Duration::from_secs(KEEP_SECS + 60);
+    std::fs::File::options()
+        .write(true)
+        .open(sites.join("old.com.json"))
         .unwrap()
-        .permissions()
-        .mode();
-    assert_eq!(mode & 0o777, 0o600);
+        .set_modified(aged)
+        .unwrap();
+
+    let store = SiteStore::open(dir.path()).unwrap();
+    assert_eq!(store.load("fresh.com").await.unwrap(), memory());
+    assert!(store.load("broken.com").await.unwrap().is_empty());
+    assert!(sites.join("fresh.com.json").exists(), "the legacy file is not touched");
+    // The imported old site is swept like any other that nothing changed.
+    store.sweep();
+    assert!(store.load("old.com").await.unwrap().is_empty());
+    assert_eq!(store.load("fresh.com").await.unwrap(), memory());
+    // Forgetting is not undone by a later open importing the file again.
+    assert_eq!(store.forget(Some("fresh.com")).await.unwrap(), 1);
+    let reopened = SiteStore::open(dir.path()).unwrap();
+    assert!(reopened.load("fresh.com").await.unwrap().is_empty());
 }
 
 #[test]
@@ -178,24 +197,26 @@ async fn nothing_is_kept_while_learning_is_off_and_a_settings_switch_outranks_th
 }
 
 #[tokio::test]
-async fn a_load_sweeps_site_files_nothing_changed_for_thirty_days() {
+async fn a_load_sweeps_sites_nothing_changed_for_thirty_days() {
     let dir = tempfile::tempdir().unwrap();
     let config = workspace_config(&dir, true);
     let epoch = load(&config, "old.example").await.epoch;
     assert!(save(&config, "old.example", epoch).await);
     assert!(save(&config, "new.example", epoch).await);
-    let old = sites_dir(dir.path()).join("old.example.json");
-    let aged = std::time::SystemTime::now() - std::time::Duration::from_secs(KEEP_SECS + 60);
-    std::fs::File::options()
-        .write(true)
-        .open(&old)
+    crate::storage::state_kv::StateKv::open(dir.path(), "computer", "site_memory")
         .unwrap()
-        .set_modified(aged)
+        .put(
+            "old.example",
+            &SiteRecord {
+                saved_ms: now_ms() - i64::try_from(KEEP_SECS + 60).unwrap() * 1000,
+                memory: memory(),
+            },
+        )
         .unwrap();
 
-    load(&config, "new.example").await;
-    assert!(!old.exists());
-    assert!(sites_dir(dir.path()).join("new.example.json").exists());
+    assert_eq!(load(&config, "new.example").await.memory, memory());
+    assert!(load(&config, "old.example").await.memory.is_empty());
+    assert_eq!(load(&config, "new.example").await.memory, memory());
 }
 
 #[test]

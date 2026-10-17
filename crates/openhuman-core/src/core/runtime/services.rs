@@ -132,6 +132,15 @@ pub(crate) async fn start_selected_services(
                 crate::storage::blob_sweep::SWEEP_INTERVAL,
             ),
         );
+        // Run-journal sealing backfill, retention and backend maintenance.
+        tasks.track(
+            "journal_maintenance",
+            crate::storage::journal_maintenance::spawn(
+                &crate::core::runtime::DispatchCtx::new(std::sync::Arc::clone(ctx)),
+                crate::storage::journal_maintenance::FIRST_SWEEP_DELAY,
+                crate::storage::journal_maintenance::SWEEP_INTERVAL,
+            ),
+        );
     }
     // Flow-run boot reconciliation is selected by the flows *domain*, not by
     // a background service — runs can be started without cron in the

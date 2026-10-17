@@ -1,6 +1,7 @@
 use super::*;
 use crate::cron::client::testing as cron_store;
 use crate::storage::{MemoryStorage, Scope};
+use serde_json::json;
 use serde_json::Value;
 use sha2::Digest;
 use std::collections::BTreeMap;
@@ -203,6 +204,16 @@ fn cron_jobs_and_runs_come_across_with_their_fields() {
         got.as_object_mut().unwrap().remove("id");
         let mut want = legacy.clone();
         want.as_object_mut().unwrap().remove("id");
+        // v2 keeps instants as epoch milliseconds and stamps the creation time
+        // from the driver clock: compare `next_run` at millisecond precision and
+        // leave `created_at` out (the tinyflows import step does not carry it).
+        for body in [&mut got, &mut want] {
+            body.as_object_mut().unwrap().remove("created_at");
+            if let Some(next) = body["next_run"].as_str() {
+                let at = chrono::DateTime::parse_from_rfc3339(next).unwrap();
+                body["next_run"] = json!(at.timestamp_millis());
+            }
+        }
         assert_eq!(got, want, "job {legacy_id}");
         let runs = cron_store::list_runs(&backend, &Scope::local(), &new_id).unwrap();
         assert_eq!(

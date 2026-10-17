@@ -8,7 +8,8 @@
 //! (memory audit 01-scopes F2).
 //!
 //! The root is now `user:local-<install id>`: a random UUID minted once and
-//! recorded in `<workspace>/memory/local_root.json` (0600). Nothing about the
+//! recorded in the `memory`/`state`/`local_root` storage value (once
+//! `<workspace>/memory/local_root.json`). Nothing about the
 //! machine goes into it.
 //!
 //! An install whose memory already lives under the hostname-derived root
@@ -59,10 +60,13 @@ pub struct LocalRoot {
 static CACHE: LazyLock<Mutex<HashMap<PathBuf, String>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// The record's path in `workspace_dir`.
+const STATE: &str = "local_root";
+
+/// The record's key in the memory state store; `workspace_dir` also names the
+/// legacy `memory/local_root.json` it is imported from.
 #[must_use]
 pub fn path(workspace_dir: &Path) -> PathBuf {
-    workspace_dir.join("memory").join("local_root.json")
+    super::state_store::legacy_path(workspace_dir, STATE)
 }
 
 /// The root of the local session `user_id` whose config is `config`: the
@@ -79,7 +83,7 @@ pub fn resolve(config: &Config, user_id: &str) -> Option<String> {
     {
         return Some(root.clone());
     }
-    let record = match read(&file) {
+    let record = match read(&config.workspace_dir) {
         Ok(Some(record)) => record,
         Ok(None) => {
             let fresh = if has_memory_under_legacy_root(config) {
@@ -93,7 +97,7 @@ pub fn resolve(config: &Config, user_id: &str) -> Option<String> {
                     origin: Origin::Minted,
                 }
             };
-            match record_once(&file, &fresh) {
+            match record_once(&config.workspace_dir, &fresh) {
                 Ok(landed) => {
                     tracing::info!(
                         origin = ?landed.origin,
@@ -138,43 +142,33 @@ pub fn legacy_root(user_id: &str) -> String {
 /// finished.
 fn has_memory_under_legacy_root(config: &Config) -> bool {
     super::scope::layout_is_v3(config)
-        || super::layout_migration::state::path(&config.workspace_dir).exists()
+        || super::layout_migration::state::exists(&config.workspace_dir)
 }
 
-fn read(file: &Path) -> std::io::Result<Option<LocalRoot>> {
-    let text = match std::fs::read_to_string(file) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error),
-    };
-    let record: LocalRoot = serde_json::from_str(&text).map_err(std::io::Error::other)?;
+fn valid(record: &LocalRoot) -> std::io::Result<()> {
     let id = record.root.strip_prefix(LOCAL_ROOT_PREFIX).unwrap_or("");
     if id.is_empty() || !id.bytes().all(|b| b.is_ascii_alphanumeric()) {
         return Err(std::io::Error::other(
             "the recorded local root is malformed",
         ));
     }
-    Ok(Some(record))
+    Ok(())
 }
 
-/// Writes `record` to `file` unless one is already there, and returns the
-/// one that is: staged in a private temporary file, then hard-linked into
-/// place, which fails rather than replace another process's record.
-fn record_once(file: &Path, record: &LocalRoot) -> std::io::Result<LocalRoot> {
-    let dir = file
-        .parent()
-        .ok_or_else(|| std::io::Error::other("the record has no directory"))?;
-    super::files::create_private_dir_all(dir)?;
-    let temp = tempfile::NamedTempFile::new_in(dir)?;
-    serde_json::to_writer_pretty(temp.as_file(), record).map_err(std::io::Error::other)?;
-    temp.as_file().sync_all()?;
-    match std::fs::hard_link(temp.path(), file) {
-        Ok(()) => Ok(record.clone()),
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            read(file)?.ok_or_else(|| std::io::Error::other("the local root record vanished"))
-        }
-        Err(error) => Err(error),
+fn read(workspace_dir: &Path) -> anyhow::Result<Option<LocalRoot>> {
+    let record: Option<LocalRoot> = super::state_store::load_strict(workspace_dir, STATE)?;
+    if let Some(record) = &record {
+        valid(record)?;
     }
+    Ok(record)
+}
+
+/// Writes `record` unless one is already stored, and returns the one that is:
+/// the insert fails rather than replace another process's record.
+fn record_once(workspace_dir: &Path, record: &LocalRoot) -> anyhow::Result<LocalRoot> {
+    let landed = super::state_store::record_once(workspace_dir, STATE, record)?;
+    valid(&landed)?;
+    Ok(landed)
 }
 
 #[cfg(test)]

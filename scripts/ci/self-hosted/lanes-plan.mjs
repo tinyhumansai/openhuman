@@ -203,6 +203,13 @@ export function buildPlan({ profile, areas, env = {}, isPullRequest = true }) {
           run: "node scripts/ci/check-storage-owner.mjs",
         },
         {
+          // The composed storage schema: names, casing, single ownership and
+          // the generated docs/storage-schema.md.
+          name: "storage-schema",
+          when: rust,
+          run: "node scripts/ci/check-storage-schema.mjs",
+        },
+        {
           name: "agent-runtime-boundary",
           when: core,
           run: "pnpm agent:runtime-boundary",

@@ -24,12 +24,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
-use serde_json::json;
-use tinystoragedrivers::{ErrorKind, Precondition};
 
-use super::{marker_id, marker_spec, Outcome, Report, MARKER_COLLECTION, MARKER_VERSION};
+use super::{marker_spec, marker_step, Outcome, Report, MARKER_OWNER};
 use crate::config::Config;
 use crate::storage::documents::Repo;
+use crate::storage::import_state;
 use crate::storage::{Scope, StorageBackend};
 
 /// The marker name of the flow catalog (flows, revisions, runs, state,
@@ -58,60 +57,35 @@ pub(super) fn marked(
     domain: &str,
     body: impl FnOnce() -> Result<Option<(usize, usize, usize)>>,
 ) -> Result<Outcome> {
-    let marker = marker_id(domain, workspace);
-    let markers = Repo::on(backend, &Scope::local(), "storage::import", marker_spec)?;
-    let id = marker.clone();
-    let done = markers
-        .run(move |docs| async move { docs.get(MARKER_COLLECTION, &id).await })?
-        .is_some();
-    if done {
+    let step = marker_step(domain, workspace);
+    let markers = Repo::on(
+        backend,
+        &crate::storage::tenant_scope(None),
+        "storage::import",
+        marker_spec,
+    )?;
+    if import_state::is_done(&markers, MARKER_OWNER, &step)? {
         return Ok(Outcome::AlreadyDone);
     }
-    let claimed = super::super::import_claim::with_claim(
-        &markers,
-        MARKER_COLLECTION,
-        &marker.clone(),
-        || {
-            let again = marker.clone();
-            let done = markers
-                .run(move |docs| async move { docs.get(MARKER_COLLECTION, &again).await })?
-                .is_some();
-            if done {
-                return Ok(Outcome::AlreadyDone);
-            }
-            let Some((found, written, skipped)) = body()? else {
-                return Ok(Outcome::NoSource);
-            };
-            if skipped > 0 {
-                tracing::warn!(
-                    target: "openhuman::storage_import",
-                    domain,
-                    skipped,
-                    "[storage::import] legacy records were skipped; the import stays open for retry"
-                );
-                return Ok(Outcome::Imported { found, written });
-            }
-            let body = json!({
-                "version": MARKER_VERSION,
-                "domain": domain,
-                "found": found,
-                "written": written,
-                "at": chrono::Utc::now().to_rfc3339(),
-            });
-            markers.run(move |docs| async move {
-                match docs
-                    .put(MARKER_COLLECTION, &marker, body, Precondition::Absent)
-                    .await
-                {
-                    Ok(_) => Ok(()),
-                    // Another process finished first.
-                    Err(error) if error.kind() == ErrorKind::Conflict => Ok(()),
-                    Err(error) => Err(error),
-                }
-            })?;
-            Ok(Outcome::Imported { found, written })
-        },
-    )?;
+    let claimed = import_state::with_claim(&markers, MARKER_OWNER, &step, || {
+        if import_state::is_done(&markers, MARKER_OWNER, &step)? {
+            return Ok(Outcome::AlreadyDone);
+        }
+        let Some((found, written, skipped)) = body()? else {
+            return Ok(Outcome::NoSource);
+        };
+        if skipped > 0 {
+            tracing::warn!(
+                target: "openhuman::storage_import",
+                domain,
+                skipped,
+                "[storage::import] legacy records were skipped; the import stays open for retry"
+            );
+            return Ok(Outcome::Imported { found, written });
+        }
+        import_state::set_done(&markers, MARKER_OWNER, &step)?;
+        Ok(Outcome::Imported { found, written })
+    })?;
     Ok(claimed.unwrap_or(Outcome::InProgress))
 }
 
@@ -287,7 +261,7 @@ pub fn run_with(backend: &Arc<dyn StorageBackend>, config: &Config) -> Vec<Repor
     #[cfg(feature = "flows")]
     reports.push(finish(
         FLOWS_DOMAIN,
-        import_flows(backend, &Scope::local(), config),
+        import_flows(backend, &crate::storage::tenant_scope(None), config),
     ));
     #[cfg(not(feature = "flows"))]
     if config.workspace_dir.join("flows").exists() {
@@ -298,7 +272,13 @@ pub fn run_with(backend: &Arc<dyn StorageBackend>, config: &Config) -> Vec<Repor
     }
     reports.push(finish(
         CRON_DOMAIN,
-        import_cron(backend, &Scope::local(), config, &config.workspace_dir, ""),
+        import_cron(
+            backend,
+            &crate::storage::tenant_scope(None),
+            config,
+            &config.workspace_dir,
+            "",
+        ),
     ));
     for (agent, dir) in agent_cron_dirs(&config.workspace_dir) {
         let scope = crate::storage::scope_for_agent(&agent);

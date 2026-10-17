@@ -127,10 +127,13 @@ impl HostArtifactStore {
     }
 }
 
-/// The part of a key below the `tool-results` namespace (either form).
+/// The part of a key below the tool-results namespace: the harness's
+/// `harness/tool_results/…` (v2), `tool-results/…` (v1) or the relative
+/// `artifacts/tool-results/…` form.
 fn relative_to_namespace(key: &str) -> &str {
     let key = key.trim_start_matches("./");
     key.strip_prefix("artifacts/tool-results/")
+        .or_else(|| key.strip_prefix("harness/tool_results/"))
         .or_else(|| key.strip_prefix("tool-results/"))
         .unwrap_or(key)
 }

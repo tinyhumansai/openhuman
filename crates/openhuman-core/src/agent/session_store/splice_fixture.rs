@@ -14,10 +14,13 @@ use tinyagents_session::transcript::{TranscriptLocator, TranscriptMessage, Trans
 /// A fresh transcript store over the driver ports on memory (the production
 /// store, minus the disk), shared by cloning the `Arc`.
 pub(crate) fn memory_locator() -> Arc<dyn TranscriptLocator> {
-    DriverSessionStores::new(Arc::new(crate::storage::MemoryStorage::new()))
-        .expect("driver session stores over memory")
-        .for_agent("fixture")
-        .transcripts
+    DriverSessionStores::new(
+        Arc::new(crate::storage::MemoryStorage::new()),
+        crate::storage::Scope::local(),
+    )
+    .expect("driver session stores over memory")
+    .for_agent("fixture")
+    .transcripts
 }
 
 /// A thread's head transcript as the model reads it.

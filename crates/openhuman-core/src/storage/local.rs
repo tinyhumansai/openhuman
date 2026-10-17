@@ -4,7 +4,7 @@
 //! store reaches it through [`super::installed`]. A unit test, or an embedder
 //! that never ran the host boot, installs none; rather than keep a second,
 //! file-shaped implementation of each store for them, such a call opens **the
-//! same default a host would**: `sqlite:<workspace>/storage`
+//! same default a host would**: `sqlite:<workspace>/storage` (v1) or `sqlite:<user dir>/storage.db` (v2)
 //! ([`super::config::default_url`]), once per workspace for the life of the
 //! process. A different workspace is a different database, which is also what
 //! isolates tests that use a temp directory each.
@@ -67,9 +67,9 @@ pub fn backend_for(workspace_dir: &Path) -> Result<Arc<dyn StorageBackend>> {
         return Ok(Arc::clone(backend));
     }
     let url = super::config::default_url(workspace_dir);
-    std::fs::create_dir_all(workspace_dir.join(super::config::DEFAULT_DIR)).with_context(|| {
+    super::config::prepare_default_dir(workspace_dir).with_context(|| {
         format!(
-            "create the storage directory under {}",
+            "create the storage directory for {}",
             workspace_dir.display()
         )
     })?;

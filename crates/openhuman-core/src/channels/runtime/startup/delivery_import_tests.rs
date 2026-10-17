@@ -20,12 +20,11 @@ fn entry(id: &str, at: u64) -> DeliveryQueueEntry {
     )
 }
 
-fn docs() -> Arc<dyn DocumentStore> {
+fn scoped() -> tinystoragedrivers::ScopedStorage {
     let backend = MemoryStorage::new();
-    let scoped = backend
+    backend
         .for_scope(&Scope::new("module:tinychannels@test").unwrap())
-        .unwrap();
-    Arc::clone(scoped.documents())
+        .unwrap()
 }
 
 fn write_legacy(workspace: &Path, body: &Value) {
@@ -57,9 +56,10 @@ async fn legacy_queue_lands_in_the_module_collections_and_the_file_is_untouched(
     let dir = tempfile::tempdir().unwrap();
     write_legacy(dir.path(), &legacy_state());
     let before = std::fs::read(dir.path().join(LEGACY_FILE)).unwrap();
-    let docs = docs();
+    let scoped = scoped();
+    let docs = std::sync::Arc::clone(scoped.documents());
 
-    let outcome = import_into(&docs, dir.path()).await.unwrap();
+    let outcome = import_into(&scoped, dir.path()).await.unwrap();
 
     // Expired results are not carried over.
     assert_eq!(
@@ -83,14 +83,15 @@ async fn legacy_queue_lands_in_the_module_collections_and_the_file_is_untouched(
 async fn the_import_runs_once_so_a_finished_delivery_is_not_resurrected() {
     let dir = tempfile::tempdir().unwrap();
     write_legacy(dir.path(), &legacy_state());
-    let docs = docs();
-    import_into(&docs, dir.path()).await.unwrap();
+    let scoped = scoped();
+    let docs = std::sync::Arc::clone(scoped.documents());
+    import_into(&scoped, dir.path()).await.unwrap();
 
     docs.delete(PENDING, "p1", Precondition::None)
         .await
         .unwrap();
     assert_eq!(
-        import_into(&docs, dir.path()).await.unwrap(),
+        import_into(&scoped, dir.path()).await.unwrap(),
         Outcome::AlreadyDone
     );
     assert!(docs.get(PENDING, "p1").await.unwrap().is_none());
@@ -100,13 +101,14 @@ async fn the_import_runs_once_so_a_finished_delivery_is_not_resurrected() {
 async fn an_existing_module_record_is_never_overwritten() {
     let dir = tempfile::tempdir().unwrap();
     write_legacy(dir.path(), &legacy_state());
-    let docs = docs();
+    let scoped = scoped();
+    let docs = std::sync::Arc::clone(scoped.documents());
     let newer = serde_json::to_value(entry("p1", 99)).unwrap();
     docs.put(PENDING, "p1", newer.clone(), Precondition::Absent)
         .await
         .unwrap();
 
-    let outcome = import_into(&docs, dir.path()).await.unwrap();
+    let outcome = import_into(&scoped, dir.path()).await.unwrap();
 
     assert_eq!(
         outcome,
@@ -121,14 +123,14 @@ async fn an_existing_module_record_is_never_overwritten() {
 #[tokio::test]
 async fn a_missing_file_imports_nothing_and_writes_no_marker() {
     let dir = tempfile::tempdir().unwrap();
-    let docs = docs();
+    let scoped = scoped();
     assert_eq!(
-        import_into(&docs, dir.path()).await.unwrap(),
+        import_into(&scoped, dir.path()).await.unwrap(),
         Outcome::NoSource
     );
     write_legacy(dir.path(), &legacy_state());
     assert!(matches!(
-        import_into(&docs, dir.path()).await.unwrap(),
+        import_into(&scoped, dir.path()).await.unwrap(),
         Outcome::Imported { .. }
     ));
 }
@@ -139,12 +141,12 @@ async fn a_corrupt_file_fails_without_a_marker_and_is_retried_once_repaired() {
     let path = dir.path().join(LEGACY_FILE);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, b"{ not json").unwrap();
-    let docs = docs();
-    assert!(import_into(&docs, dir.path()).await.is_err());
+    let scoped = scoped();
+    assert!(import_into(&scoped, dir.path()).await.is_err());
 
     write_legacy(dir.path(), &legacy_state());
     assert!(matches!(
-        import_into(&docs, dir.path()).await.unwrap(),
+        import_into(&scoped, dir.path()).await.unwrap(),
         Outcome::Imported { written: 4, .. }
     ));
 }
@@ -156,9 +158,9 @@ async fn records_whose_key_does_not_match_their_id_are_skipped() {
         dir.path(),
         &json!({"pending": {"wrong-key": entry("p1", 1)}}),
     );
-    let docs = docs();
+    let scoped = scoped();
     assert_eq!(
-        import_into(&docs, dir.path()).await.unwrap(),
+        import_into(&scoped, dir.path()).await.unwrap(),
         Outcome::Imported {
             found: 0,
             written: 0

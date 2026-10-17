@@ -74,6 +74,10 @@ required-features = ["http-server", "bin-tools"]
 # files. #5021 is still the right fix for symbols named in the middle of an
 # otherwise gate-free target — required-features is the blunt instrument, and
 # it costs the whole target when the gate is off.
+[[example]]
+name = "storage_schema_dump"
+path = "../../examples/storage_schema_dump.rs"
+
 [[test]]
 # Loads the tinydocs module from the linked executable and calls GenerateDocx
 # end to end. Local only: needs `--features linked-modules,documents`.
@@ -110,6 +114,11 @@ path = "../../tests/storage_approvals_e2e.rs"
 # storage backend into the process-wide slot.
 name = "storage_domains_e2e"
 path = "../../tests/storage_domains_e2e.rs"
+
+[[test]]
+# Spawns the binary against a tempdir HOME; installs nothing in-process.
+name = "storage_layout_migration_e2e"
+path = "../../tests/storage_layout_migration_e2e.rs"
 
 [[test]]
 # Its own binary: it installs a storage backend into the process-wide slot.
@@ -352,7 +361,7 @@ serde = { version = "1", features = ["derive"] }
 tempfile = "3"
 tinyinference-llm = { path = "../../vendor/tinyagents/vendor/tinyinference/crates/tinyinference-llm" }
 # The document-port contract for failure injection in cron storage regressions.
-tinystoragedrivers-core = { git = "https://github.com/tinyhumansai/tinystoragedrivers", tag = "v0.11.0" }
+tinystoragedrivers-core = { git = "https://github.com/tinyhumansai/tinystoragedrivers", tag = "v1.0.0" }
 tinytools = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinytools" }
 tinytools-std = { path = "../../vendor/tinyagents/vendor/tinytools/crates/tinytools-std" }
 # The completion log a detached sub-agent leaves, for the SaaS delivery-recovery e2e.

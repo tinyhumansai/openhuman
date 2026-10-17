@@ -93,14 +93,9 @@ async fn import_into(
 ) -> Result<Outcome> {
     let docs = scoped.documents();
     let marker = marker_id(data_dir);
-    docs.ensure_collection(&CollectionSpec::new(MARKER_COLLECTION))
+    if crate::storage::import_state::host_import_done(scoped, MARKER_COLLECTION, &marker)
         .await
-        .map_err(|error| anyhow!("declare the marker collection: {:?}", error.kind()))?;
-    if docs
-        .get(MARKER_COLLECTION, &marker)
-        .await
-        .map_err(|error| anyhow!("read the marker: {:?}", error.kind()))?
-        .is_some()
+        .map_err(|error| anyhow!("read the import state: {:?}", error.kind()))?
     {
         return Ok(Outcome::AlreadyDone);
     }
@@ -174,20 +169,9 @@ async fn import_into(
         }
     }
 
-    let body = json!({
-        "servers": servers,
-        "secrets": secret_count,
-        "audit": audited,
-        "at": now_ms(),
-    });
-    match docs
-        .put(MARKER_COLLECTION, &marker, body, Precondition::Absent)
+    crate::storage::import_state::host_import_mark(scoped, MARKER_COLLECTION, &marker)
         .await
-    {
-        Ok(_) => {}
-        Err(error) if matches!(error.kind(), ErrorKind::Conflict | ErrorKind::AlreadyExists) => {}
-        Err(error) => return Err(anyhow!("write the marker: {:?}", error.kind())),
-    }
+        .map_err(|error| anyhow!("write the import state: {:?}", error.kind()))?;
     tracing::info!(
         "{LOG_PREFIX} imported servers={servers} secrets={secret_count} audit={audited}"
     );

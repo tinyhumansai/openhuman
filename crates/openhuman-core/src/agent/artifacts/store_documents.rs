@@ -10,8 +10,10 @@
 //!
 //! | Collection | Document id | Holds |
 //! | --- | --- | --- |
-//! | `artifacts` | artifact id | the [`ArtifactMeta`] fields, plus `created_ms` for ordering |
-//! | `artifact_args` | artifact id | `args`: the producer-tool arguments (the `args.json` sidecar) |
+//! | `artifacts.records` | `Key::of([artifact id])` | the [`ArtifactMeta`] fields with `created_ms` in place of `created_at` |
+//! | `artifacts.args` | `Key::of([artifact id])` | the producer-tool arguments (the `args.json` sidecar), unwrapped |
+//!
+//! The shapes and the v1 -> v2 steps are in [`super::storage_schema`].
 //!
 //! # Content files
 //!
@@ -33,23 +35,21 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use serde_json::{json, Value};
-use tinystoragedrivers::{CollectionSpec, Filter, IndexSpec, Precondition, Query, Sort};
+use serde_json::Value;
+use tinystoragedrivers::{CollectionSpec, Filter, Precondition, Query, Sort};
 
+use super::storage_schema::{
+    args_body, args_of_body, meta_from_body, meta_to_body, records_spec, ARGS, RECORDS as ARTIFACTS,
+};
 use super::types::ArtifactMeta;
 use crate::storage::documents::Repo;
+use crate::storage::schema_support::key_of;
 use crate::storage::DocumentStoreExt;
 
-const ARTIFACTS: &str = "artifacts";
-const ARGS: &str = "artifact_args";
 const DOMAIN: &str = "artifacts::store";
 
 fn collections() -> Vec<CollectionSpec> {
-    vec![
-        CollectionSpec::new(ARTIFACTS)
-            .index(IndexSpec::new("by_thread", ["thread_id", "created_ms"])),
-        CollectionSpec::new(ARGS),
-    ]
+    vec![records_spec(), CollectionSpec::new(ARGS)]
 }
 
 /// The document store for this call: the installed backend, else the
@@ -88,9 +88,8 @@ impl Docs {
     }
 
     pub(super) fn put_meta(&self, meta: &ArtifactMeta) -> Result<()> {
-        let mut doc = serde_json::to_value(meta).context("serialize artifact meta")?;
-        doc["created_ms"] = Value::from(meta.created_at.timestamp_millis());
-        let id = meta.id.clone();
+        let doc = meta_to_body(meta).context("serialize artifact meta")?;
+        let id = key_of(&meta.id)?;
         self.0.run(|docs| async move {
             docs.put(ARTIFACTS, &id, doc, Precondition::None)
                 .await
@@ -102,28 +101,27 @@ impl Docs {
     /// not overwrite a record created since, by this core or another).
     /// `false` when one was already there.
     fn put_meta_if_absent(&self, meta: &ArtifactMeta) -> Result<bool> {
-        let mut doc = serde_json::to_value(meta).context("serialize artifact meta")?;
-        doc["created_ms"] = Value::from(meta.created_at.timestamp_millis());
-        let id = meta.id.clone();
+        let doc = meta_to_body(meta).context("serialize artifact meta")?;
+        let id = key_of(&meta.id)?;
         self.0
             .run(|docs| async move { put_absent(&docs, ARTIFACTS, &id, doc).await })
     }
 
     /// The arguments' counterpart of [`Self::put_meta_if_absent`].
     fn put_args_if_absent(&self, id: &str, args: &Value) -> Result<bool> {
-        let id = id.to_string();
-        let doc = json!({ "args": args });
+        let id = key_of(id)?;
+        let doc = args_body(args);
         self.0
             .run(|docs| async move { put_absent(&docs, ARGS, &id, doc).await })
     }
 
     pub(super) fn get_meta(&self, id: &str) -> Result<Option<ArtifactMeta>> {
-        let id = id.to_string();
+        let id = key_of(id)?;
         let stored = self
             .0
             .run(|docs| async move { docs.get(ARTIFACTS, &id).await })?;
         stored
-            .map(|stored| serde_json::from_value(stored.doc).context("parse artifact meta"))
+            .map(|stored| meta_from_body(stored.doc).context("parse artifact meta"))
             .transpose()
     }
 
@@ -146,7 +144,7 @@ impl Docs {
             .run(|docs| async move { docs.query_all(ARTIFACTS, &query).await })?;
         Ok(stored
             .into_iter()
-            .filter_map(|item| match serde_json::from_value(item.doc) {
+            .filter_map(|item| match meta_from_body(item.doc) {
                 Ok(meta) => Some(meta),
                 Err(error) => {
                     log::warn!(
@@ -160,8 +158,8 @@ impl Docs {
     }
 
     pub(super) fn put_args(&self, id: &str, args: &Value) -> Result<()> {
-        let id = id.to_string();
-        let doc = json!({ "args": args });
+        let id = key_of(id)?;
+        let doc = args_body(args);
         self.0.run(|docs| async move {
             docs.put(ARGS, &id, doc, Precondition::None)
                 .await
@@ -170,11 +168,11 @@ impl Docs {
     }
 
     pub(super) fn get_args(&self, id: &str) -> Result<Option<Value>> {
-        let id = id.to_string();
+        let id = key_of(id)?;
         let stored = self
             .0
             .run(|docs| async move { docs.get(ARGS, &id).await })?;
-        Ok(stored.and_then(|stored| stored.doc.get("args").cloned()))
+        Ok(stored.map(|stored| args_of_body(&stored.doc)))
     }
 
     /// Removes the record and its arguments; `false` when there was no record.
@@ -182,7 +180,7 @@ impl Docs {
     /// finds no record and only an orphaned arguments document is left, never
     /// a listed artifact that lost its regenerate arguments.
     pub(super) fn delete(&self, id: &str) -> Result<bool> {
-        let id = id.to_string();
+        let id = key_of(id)?;
         self.0.run(|docs| async move {
             let existed = docs.delete(ARTIFACTS, &id, Precondition::None).await?;
             docs.delete(ARGS, &id, Precondition::None).await?;

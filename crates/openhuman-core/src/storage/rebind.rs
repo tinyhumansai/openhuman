@@ -1,7 +1,7 @@
 //! Following the workspace.
 //!
-//! The default backend is `sqlite:<workspace>/storage`, so it belongs to a
-//! workspace. The desktop rebinds its workspace when a different user signs in
+//! The default backend is `sqlite:<user dir>/storage.db` (layout v2) or
+//! `sqlite:<workspace>/storage` (v1), so it belongs to a workspace. The desktop rebinds its workspace when a different user signs in
 //! (`CoreContext::rebind_default_workspace`); this module is the storage half
 //! of that rebind. It re-resolves the URL for the new workspace and, when it
 //! differs from the one the host installed:
@@ -84,14 +84,12 @@ pub(crate) fn rebind_with(
         workspace = %config.workspace_dir.display(),
         "[storage] the workspace moved; reopening the storage backend"
     );
-    std::fs::create_dir_all(config.workspace_dir.join(super::config::DEFAULT_DIR)).with_context(
-        || {
-            format!(
-                "create the storage directory under {}",
-                config.workspace_dir.display()
-            )
-        },
-    )?;
+    super::config::prepare_default_dir(&config.workspace_dir).with_context(|| {
+        format!(
+            "create the storage directory for {}",
+            config.workspace_dir.display()
+        )
+    })?;
     let url = next.clone();
     let backend = super::block_on_anyhow(async move { Ok(super::open(&url).await?) })
         .with_context(|| format!("open the storage backend {redacted_to}"))?;

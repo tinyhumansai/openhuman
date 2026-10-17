@@ -35,6 +35,7 @@ pub use profile_layout::{users_dir, ProfileLayout};
 mod identity_cost;
 mod load;
 pub(crate) use load::config_from_toml_str;
+pub(crate) use load::source::storage_schema::storage_schema as config_storage_schema;
 pub use load::{
     action_dir_env_override, active_user_marker_path, active_workspace_dir,
     active_workspace_dir_cached, active_workspace_snapshot, clear_active_user, default_action_dir,

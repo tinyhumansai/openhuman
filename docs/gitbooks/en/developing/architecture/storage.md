@@ -7,7 +7,7 @@ icon: database
 
 # Storage
 
-OpenHuman keeps durable state on the ports of [`tinystoragedrivers`](https://github.com/tinyhumansai/tinystoragedrivers), vendored at `vendor/tinystoragedrivers` (v0.11.0). The host and every module declare it by git tag, and the root and app `[patch."https://github.com/tinyhumansai/tinystoragedrivers"]` tables redirect each of them onto that one checkout, so the build holds one copy. The vendored commit must stay semver-compatible with the tag modules declare; `scripts/ci/check-storage-owner.mjs` fails when any `tinystoragedrivers*` package resolves outside `vendor/tinystoragedrivers/`. One URL picks the backend for the whole process. The host adapter is `crates/openhuman-core/src/storage/`. It resolves the URL, opens the backend, holds it in a process slot and decides which scope a call runs in. The ports, the drivers and their conformance suites belong to `tinystoragedrivers`, and the typed records stay with the domain that owns them.
+OpenHuman keeps durable state on the ports of [`tinystoragedrivers`](https://github.com/tinyhumansai/tinystoragedrivers), vendored at `vendor/tinystoragedrivers` (v1.0.0). The host and every module declare it by git tag, and the root and app `[patch."https://github.com/tinyhumansai/tinystoragedrivers"]` tables redirect each of them onto that one checkout, so the build holds one copy. The vendored commit must stay semver-compatible with the tag modules declare; `scripts/ci/check-storage-owner.mjs` fails when any `tinystoragedrivers*` package resolves outside `vendor/tinystoragedrivers/`. One URL picks the backend for the whole process. The host adapter is `crates/openhuman-core/src/storage/`. It resolves the URL, opens the backend, holds it in a process slot and decides which scope a call runs in. The ports, the drivers and their conformance suites belong to `tinystoragedrivers`, and the typed records stay with the domain that owns them.
 
 With no URL configured, which is the desktop default, the host opens `sqlite:<workspace>/storage` and installs it. The URL decides where the whole process keeps its state, and there is no second layout: older installs' per-domain databases, transcripts and turn-state files are imported once, read-only, when the backend is installed. The files that remain outside the ports are listed under "What is not on the ports yet" below.
 
@@ -52,12 +52,14 @@ The host opens the configured backend before the core boots and installs it with
 
 ## Scopes
 
-Every record lives in a scope, and two scopes on one backend never see each other's data. A single-user install scopes by **agent id**, and a SaaS host scopes by **profile** (the tenant). `storage::scope_for_agent` and `storage::scope_for_profile` are the single mappings, and the session store uses the same ones, so every domain agrees. An agent's scope is its id when that is a valid scope name, else `sha256:<hex digest of the id>` (TinyAgents' `DriverSessionStores::scope_for`). A profile's scope is `profile:<id>`, or `profile-sha256:<hex digest of the id>` when that is not a valid scope name. The prefixes keep the two kinds of key from colliding, and `local` is the literal operator scope.
+Every record lives in a scope, and two scopes on one backend never see each other's data. There is one scope grammar, tinystoragedrivers' (`docs/specs/schema-v2.md` §1): a **tenant** (`local` for the desktop operator, `u:<profile>` for a SaaS profile) optionally narrowed to one **principal** (`<tenant>/agent:<id>` or `<tenant>/module:<id>`), plus the tenant-less `cluster` scope that holds the profile registry and the process leases. The host builds scopes only through `Scope::local()`, `Scope::tenant(id)`, `.agent(id)` and `.module(id)` (`storage::scope`: `tenant_scope`, `scope_for_profile`, `scope_for_agent`, `scope_for_module`), never from raw strings. A segment that is too long or holds characters outside the grammar is hashed by tsd itself (`~` plus 26 base32 characters), and only the segment is hashed, so a hashed agent or module still sits under its tenant.
+
+The **tenant is the isolation boundary.** A profile's lease fence guards its tenant scope and the prefix `<tenant>/`, which covers every agent and module scope beneath it, hashed or not (`profiles::fence::scopes_of`). A tenant purge covers the tenant scope and every principal under it, enumerated with `StorageBackend::scopes_of_tenant`. The session store is TinyAgents' `DriverSessionStores`, one provider per tenant (`agent::session_store::TenantSessionStores` routes the host's flat session key `<profile>~<agent>` to the provider of that tenant), so a session record is always in `local/agent:<id>` or `u:<profile>/agent:<id>`. Domain stores keep their records in the tenant scope, and a loadable module's records are in `<tenant>/module:<id>`.
 
 `storage::current_scope()` resolves the scope of the current call from the task's tenant (`storage::scope_from(profile, agent, saas)`), in this order:
 
 1. A **profile**, when the work runs for one: the scope is the profile's, whatever agent acts inside it. In SaaS mode the agents of one profile therefore share that profile's scope.
-2. Otherwise the acting **agent** (`CoreContext::session_agent`): the scope is that agent's.
+2. Otherwise the acting **agent** (`CoreContext::session_agent`): the scope is `local/agent:<id>`.
 3. Otherwise `local`: the operator, the CLI and the desktop shell in single-user mode.
 
 In SaaS mode a call with no profile is refused instead of falling into a bucket other users could share, whether or not an agent acts. If the task's tenant cannot be resolved at all (`current_tenant()` fails), `current_scope()` returns that error in every mode instead of falling back to `local`.
@@ -104,6 +106,23 @@ On a shared backend (MongoDB) other processes may write the same records, so boo
 | `sqlite:<file>.db` | That file, laid out the same way.                                                                                                                                                                                    |
 | `file:<dir>`       | `<dir>/scopes/<scope>/docs/<collection>/<id>.json` for documents, with collection metadata in `<dir>/_meta/collections/<collection>.json`. Streams are JSONL and blobs are raw files under the same scope directory. |
 | `mongodb://…/<db>` | One database. Each named database is a collection prefix, and every record carries its scope.                                                                                                                        |
+
+### Profile layout v1 and v2
+
+A desktop profile lives in `~/.openhuman/users/<id>/`, in one of two layouts (`config/schema/profile_layout.rs`, `LayoutVersion`):
+
+```text
+v1 (every install before storage schema v2)    v2 (a brand-new profile)
+users/<id>/                                    users/<id>/
+  config.toml                                    .layout        marker: 2
+  workspace/    internal state + storage/        config.toml
+                                                 storage.db     every store, one SQLite file
+                                                 files/         Config.workspace_dir
+```
+
+The version is read from disk, never configured. A `.layout` file reading `2` is v2. A profile directory that is missing or empty is new and starts as v2 (the marker is written the first time it is resolved, so it stays v2 once `config.toml` appears). A directory with content and no marker is v1 and behaves exactly as before: `workspace_dir` is `users/<id>/workspace`, and the default URL is `sqlite:<workspace>/storage`. Resolving a v1 profile writes nothing.
+
+Under v2 `Config.workspace_dir` is `users/<id>/files`, so the call sites that join workspace-relative paths keep working, and `config.toml` and `storage.db` stay at the profile root, where `workspace_dir.parent()` finds them. The default URL is `sqlite:users/<id>/storage.db`. An explicit `OPENHUMAN_STORAGE_URL` or `[storage] url` wins under both layouts. Rebind (a different user signing in) and the no-backend local fallback derive the URL from the new workspace, so they follow the layout. The binary reads both layouts. SaaS profiles (`ProfileLayout::new`) stay v1. Moving a v1 profile to v2 is the migration tracked in #7997 and is not done at boot.
 
 ### The default follows the workspace
 
@@ -166,3 +185,15 @@ CI has two lanes for this:
 - `crates/openhuman-core/src/storage/README.md` for the entry points and the consumers.
 - The `tinystoragedrivers` specs: `docs/specs/storage-ports.md` and `docs/plans/storage-rollout.md` in the tinystoragedrivers repository (tag `v0.11.0`).
 - [Security](security.md) for the keyring and credential stores.
+
+## Schema, boot and migration
+
+Every crate that stores records exports `storage_schema()` (collections named `<owner>.<entity>`, streams, blob and secret prefixes, each with a scope class and the v1 to v2 steps that bring older data forward). The host composes them in `storage::schema` (`Registry::compose`: harness, session, graph, tasks, flows and cron, skills, and with `modules` the mcp, channels, connectors, box and juice owners, with `web3` the wallet, with `tinymemes` the memes owner). The composed result is documented in [`docs/storage-schema.md`](../../../../storage-schema.md), generated by `scripts/ci/check-storage-schema.mjs` (`pnpm docs:generate`), which also lints names, casing, `*_ms` time fields and single ownership in `pnpm rust:layout`.
+
+`storage::open` runs `storage::boot::prepare_and_migrate` on the raw backend before the lease fence wraps it:
+
+1. `Registry::prepare` declares every collection.
+2. **Scope move** (`storage::scope_move`): every v1 scope is copied (documents with their schema, creation time and expiry; streams and their sealed state; blobs) into the v2 scope it maps to and then removed. v1 raw agent ids and `default` become `local/agent:<id>`, `<profile>~<agent>` becomes `u:<profile>/agent:<agent>`, `profile:<id>` becomes `u:<id>`, `module:<id>@<base>` and `<profile>~module:<id>` become `<tenant>/module:<id>`. A hashed v1 scope (`sha256:`, `profile-sha256:`, `module-sha256:`) maps only when a recorded agent, a provisioned profile or a registry module hashes to it; others stay in place and are logged. The move is resumable and recorded in the target scope's `tsd.migrations` (owner `host`, step `scope_move:<source>`).
+3. Per scope: the pre-migrate importer (`import_legacy_ledger`), `Registry::migrate` (each owner's steps), then the post-migrate importers that move key-value state and counters into `tsd.kv` and `tsd.counters` (`import_legacy_kv`, `import_legacy_leases`, `import_legacy_task_cache`, the flows importers). A failing piece is logged and retried at the next boot.
+
+A module's storage grant is generated from the module-scoped items of its owner's schema (`modules::storage_grant_schemas`), so it cannot drift from what the module declares. The module's legacy-file importers still write the v1 shapes; the owner's steps carry them forward.

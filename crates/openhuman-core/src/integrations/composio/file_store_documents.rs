@@ -8,29 +8,64 @@
 //!
 //! # Layout
 //!
-//! | Collection | Document id | Holds |
-//! | --- | --- | --- |
-//! | `composio_state` | the value name (`composio_identities.json`, ...) | `value`: the serde value |
-//! | `composio_state_import` | the value name | marker: the legacy `integrations/<name>` file was imported (the file is left byte-identical) |
+//! Each named value is one entry of tsd's key-value primitive
+//! (`tsd.kv`, owner `composio`, namespace `state`, [`tinystoragedrivers::Kv`]),
+//! keyed by the value name (`composio_identities.json`, ...), holding the
+//! serde value unwrapped. v1 kept it in a `composio_state` collection as
+//! `{"value": ...}`; [`migrate_legacy_state`] moves those at boot. The
+//! one-time import of a legacy `integrations/<name>` file is a
+//! `tsd.migrations` entry (owner `composio`,
+//! [`crate::storage::import_state`]), so the file itself is never touched.
+//!
+//! `Kv` has no read-modify-write, so [`Docs::update`] runs tsd's retrying
+//! compare-and-swap ([`tinystoragedrivers::Repo::update`]) over the same
+//! `tsd.kv` document; [`KvEntry`] is that document's body, and the tests pin
+//! it to what `Kv` reads and writes.
 
 use std::path::Path;
 
 use anyhow::Result;
 use serde::de::DeserializeOwned;
-use serde::Serialize;
-use serde_json::json;
-use tinystoragedrivers::{CollectionSpec, ErrorKind, Precondition, StorageError};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use tinystoragedrivers::{
+    CollectionSpec, DocumentStore, DocumentStoreExt, Key, Kv, ScopedStorage, StorageError,
+};
 
 use crate::storage::documents::Repo;
+use crate::storage::import_state;
 
-const STATE: &str = "composio_state";
-/// One marker document per legacy file whose one-time import finished, so the
-/// file itself is never touched.
-const IMPORTED: &str = "composio_state_import";
+/// The `tsd.kv` owner and namespace of the state values.
+const KV_OWNER: &str = "composio";
+const KV_NS: &str = "state";
+/// The `tsd.migrations` owner of the legacy-file imports.
+const IMPORT_OWNER: &str = "composio";
+/// The old marker collection, now the `kind` of an import's step.
+const IMPORT_KIND: &str = "composio_state_import";
+/// The v1 collection, `{"value": ...}` per document.
+const LEGACY_STATE: &str = "composio_state";
 const DOMAIN: &str = "composio::file_store";
 
 fn collections() -> Vec<CollectionSpec> {
-    vec![CollectionSpec::new(STATE), CollectionSpec::new(IMPORTED)]
+    tinystoragedrivers::primitives::collection_specs()
+}
+
+/// The body of a `tsd.kv` document (`{owner, ns, key, value}`), as `Kv` writes it.
+#[derive(Serialize, Deserialize)]
+struct KvEntry {
+    owner: String,
+    ns: String,
+    key: String,
+    value: Value,
+}
+
+/// The `tsd.kv` document id of value `name`, as `Kv` derives it.
+fn kv_id(name: &str) -> Result<String, StorageError> {
+    Ok(Key::of([KV_OWNER, KV_NS, name])?.as_str().to_owned())
+}
+
+fn kv(docs: &std::sync::Arc<dyn DocumentStore>) -> Result<Kv, StorageError> {
+    Kv::ns(docs, KV_OWNER, KV_NS)
 }
 
 /// The document store for this call: the installed backend, else the
@@ -60,11 +95,11 @@ impl Docs {
 
     /// The value stored stored under `name`, or `T::default()`.
     pub(super) fn load<T: DeserializeOwned + Default>(&self, name: &str) -> Result<T> {
-        let id = name.to_string();
-        let stored = self
+        let name = name.to_string();
+        let stored: Option<Value> = self
             .0
-            .run(|docs| async move { docs.get(STATE, &id).await })?;
-        match stored.and_then(|stored| stored.doc.get("value").cloned()) {
+            .run(|docs| async move { kv(&docs)?.get::<Value>(&name).await })?;
+        match stored {
             Some(value) => Ok(serde_json::from_value(value)?),
             None => Ok(T::default()),
         }
@@ -78,109 +113,144 @@ impl Docs {
     pub(super) fn update<T, R>(
         &self,
         name: &str,
-        change: impl Fn(&mut T) -> (R, bool) + Send + 'static,
+        change: impl Fn(&mut T) -> (R, bool) + Send + Sync + 'static,
     ) -> Result<R>
     where
         T: DeserializeOwned + Serialize + Default + Send + 'static,
         R: Send + 'static,
     {
-        let id = name.to_string();
+        let name = name.to_string();
         self.0.run(|docs| async move {
-            for _ in 0..crate::storage::documents::CAS_ATTEMPTS {
-                let stored = docs.get(STATE, &id).await?;
-                let (mut value, precondition) = match &stored {
-                    Some(stored) => (
-                        stored
-                            .doc
-                            .get("value")
-                            .cloned()
-                            .map(serde_json::from_value)
-                            .transpose()
-                            .map_err(|e| StorageError::invalid_input(e.to_string()))?
-                            .unwrap_or_default(),
-                        stored.unchanged(),
-                    ),
-                    None => (T::default(), Precondition::Absent),
+            let repo = tinystoragedrivers::Repo::<KvEntry>::new(
+                &docs,
+                tinystoragedrivers::primitives::KV,
+            )?;
+            let mut result = None;
+            repo.update(&kv_id(&name)?, |current| {
+                let mut value: T = match &current {
+                    Some(entry) => serde_json::from_value(entry.value.clone())
+                        .map_err(|e| StorageError::invalid_input(e.to_string()))?,
+                    None => T::default(),
                 };
-                let (result, changed) = change(&mut value);
+                let (outcome, changed) = change(&mut value);
+                result = Some(outcome);
                 if !changed {
-                    return Ok(result);
+                    return Ok(None);
                 }
-                let doc = json!({
-                    "value": serde_json::to_value(&value)
-                        .map_err(|e| StorageError::invalid_input(e.to_string()))?
-                });
-                match docs.put(STATE, &id, doc, precondition).await {
-                    Ok(_) => return Ok(result),
-                    Err(error) if error.kind() == ErrorKind::Conflict => {}
-                    Err(error) => return Err(error),
-                }
-            }
-            Err(StorageError::conflict(format!(
-                "{STATE}/{id} kept changing under {} attempts",
-                crate::storage::documents::CAS_ATTEMPTS
-            )))
+                Ok(Some(KvEntry {
+                    owner: KV_OWNER.to_owned(),
+                    ns: KV_NS.to_owned(),
+                    key: name.clone(),
+                    value: serde_json::to_value(&value)
+                        .map_err(|e| StorageError::invalid_input(e.to_string()))?,
+                }))
+            })
+            .await?;
+            result.ok_or_else(|| StorageError::backend("composio state update produced no result"))
         })
     }
 
     /// Whether the one-time import of the legacy `integrations/<name>` file
     /// finished in this scope.
     pub(super) fn legacy_imported(&self, name: &str) -> Result<bool> {
-        let id = name.to_string();
-        let found = self
-            .0
-            .run(|docs| async move { docs.get(IMPORTED, &id).await })?;
-        Ok(found.is_some())
+        import_state::is_done(&self.0, IMPORT_OWNER, &import_step(name))
     }
 
     /// Stores `value` under `name` only when no value is stored there yet
     /// (the one-time import of a pre-documents state file), then records the
-    /// import in a marker document so it never runs again. The legacy file is
+    /// import in `tsd.migrations` so it never runs again. The legacy file is
     /// not modified. Returns whether the value was written.
     pub(super) fn import_if_absent(&self, name: &str, value: serde_json::Value) -> Result<bool> {
-        let id = name.to_string();
-        let doc = json!({ "value": value });
-        log::debug!("[composio:store] document import id={id}");
-        let claimed =
-            crate::storage::import_claim::with_claim(&self.0, IMPORTED, &id.clone(), || {
-                let (id, doc) = (id.clone(), doc.clone());
-                self.0.run(|docs| async move {
-                    let wrote = match docs.put(STATE, &id, doc, Precondition::Absent).await {
-                        Ok(_) => true,
-                        Err(error) if error.kind() == ErrorKind::Conflict => false,
-                        Err(error) => return Err(error),
-                    };
-                    match docs
-                        .put(
-                            IMPORTED,
-                            &id,
-                            json!({ "imported": true }),
-                            Precondition::Absent,
-                        )
-                        .await
-                    {
-                        Ok(_) => {}
-                        // Another core finished first.
-                        Err(error) if error.kind() == ErrorKind::Conflict => {}
-                        Err(error) => return Err(error),
+        log::debug!("[composio:store] document import id={name}");
+        let step = import_step(name);
+        let claimed = import_state::with_claim(&self.0, IMPORT_OWNER, &step, || {
+            let (id, entry) = (
+                kv_id(name)?,
+                KvEntry {
+                    owner: KV_OWNER.to_owned(),
+                    ns: KV_NS.to_owned(),
+                    key: name.to_owned(),
+                    value: value.clone(),
+                },
+            );
+            let wrote = self.0.run(|docs| async move {
+                let repo = tinystoragedrivers::Repo::<KvEntry>::new(
+                    &docs,
+                    tinystoragedrivers::primitives::KV,
+                )?;
+                match repo.insert(&id, &entry).await {
+                    Ok(_) => Ok(true),
+                    Err(error) if error.kind() == tinystoragedrivers::ErrorKind::Conflict => {
+                        Ok(false)
                     }
-                    Ok(wrote)
-                })
+                    Err(error) => Err(error),
+                }
             })?;
+            import_state::set_done(&self.0, IMPORT_OWNER, &step)?;
+            Ok(wrote)
+        })?;
         Ok(claimed.unwrap_or(false))
     }
 
     #[cfg(test)]
     pub(super) fn save<T: Serialize>(&self, name: &str, value: &T) -> Result<()> {
-        let id = name.to_string();
-        let doc = json!({ "value": serde_json::to_value(value)? });
-        log::debug!("[composio:store] document save id={id}");
-        self.0.run(|docs| async move {
-            docs.put(STATE, &id, doc, Precondition::None)
-                .await
-                .map(|_| ())
-        })
+        let name = name.to_string();
+        let value = serde_json::to_value(value)?;
+        log::debug!("[composio:store] document save id={name}");
+        self.0
+            .run(|docs| async move { kv(&docs)?.put(&name, &value).await.map(|_| ()) })
     }
+}
+
+fn import_step(name: &str) -> String {
+    import_state::step_id(IMPORT_KIND, name)
+}
+
+/// Moves the v1 `composio_state` documents (`{"value": ...}`) into `tsd.kv`
+/// (owner `composio`, namespace `state`), then drops the collection. A value
+/// already in `tsd.kv` wins: it is newer. Returns the values moved.
+///
+/// A document step cannot write another owner's collection, so this is the
+/// boot-time importer that stands in for the step the catalogue lists for
+/// `composio_state` (schema-v2.md, host stores).
+///
+/// # Errors
+///
+/// A storage error; the values not yet moved stay in place for the next boot.
+pub(crate) async fn migrate_legacy_state(scoped: &ScopedStorage) -> Result<usize, StorageError> {
+    use tinystoragedrivers::Capability;
+    let docs = scoped.documents();
+    if !docs
+        .capabilities()
+        .contains(Capability::CollectionEnumeration)
+        || !docs
+            .collections("")
+            .await?
+            .iter()
+            .any(|name| name == LEGACY_STATE)
+    {
+        return Ok(0);
+    }
+    for spec in collections() {
+        docs.ensure_collection(&spec).await?;
+    }
+    let store = kv(docs)?;
+    let mut moved = 0;
+    for legacy in docs
+        .query_all(LEGACY_STATE, &tinystoragedrivers::Query::all())
+        .await?
+    {
+        let Some(value) = legacy.doc.get("value") else {
+            continue;
+        };
+        if store.get::<Value>(&legacy.id).await?.is_none() {
+            store.put(&legacy.id, value).await?;
+            moved += 1;
+        }
+    }
+    docs.drop_collection(LEGACY_STATE).await?;
+    log::info!("[composio:store] moved {moved} legacy state values to tsd.kv");
+    Ok(moved)
 }
 
 #[cfg(test)]

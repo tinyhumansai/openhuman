@@ -282,11 +282,12 @@ async fn an_unreadable_file_writes_no_marker_so_the_next_start_retries() {
     )
     .await
     .is_err());
-    let marker = rig
-        .scoped
-        .documents()
-        .get(MARKER_COLLECTION, &marker_id(dir.path()))
-        .await
-        .unwrap();
-    assert!(marker.is_none());
+    let done = crate::storage::import_state::host_import_done(
+        &rig.scoped,
+        MARKER_COLLECTION,
+        &marker_id(dir.path()),
+    )
+    .await
+    .unwrap();
+    assert!(!done);
 }

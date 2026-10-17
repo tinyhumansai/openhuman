@@ -310,6 +310,8 @@ tinyinference-voice = { path = "../../vendor/tinyagents/vendor/tinyinference/cra
 # copy so the graph holds exactly one `tinybus` (one `Interface`, one
 # `Connection`) instead of a second one compiled only for the storage wire types.
 tinybus = { path = "../../vendor/tinybus/crates/tinybus" }
+tinybus-macros = { path = "../../vendor/tinybus/crates/tinybus-macros" }
+tinybus-module = { path = "../../vendor/tinybus/crates/tinybus-module" }
 
 [patch."https://github.com/tinyhumansai/tinystoragedrivers"]
 # One editable checkout every module resolves onto: each vendor/tiny* manifest

@@ -293,9 +293,9 @@ pub fn open_delegation_checkpointer(
         .and_then(|opened| opened.scoped())
         .map_err(|e| format!("open the storage for graph checkpoints: {e:#}"))?;
     Ok(Arc::new(
-        tinyagents_graph::checkpoint::DriverCheckpointer::<DelegationState>::with_prefix(
+        tinyagents_graph::checkpoint::DriverCheckpointer::<DelegationState>::with_namespace(
             Arc::clone(scoped.documents()),
-            "delegation_graph",
+            "delegation",
         ),
     ))
 }

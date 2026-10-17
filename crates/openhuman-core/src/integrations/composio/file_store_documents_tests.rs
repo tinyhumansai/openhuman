@@ -113,3 +113,91 @@ fn concurrent_updates_do_not_lose_each_other() {
     let loaded: BTreeMap<String, u32> = docs.load(path()).unwrap();
     assert_eq!(loaded.len(), 8);
 }
+
+#[test]
+fn values_are_tsd_kv_entries_that_kv_itself_reads_and_updates_in_place() {
+    let storage = MemoryStorage::new();
+    let docs = docs_in(&storage, "local");
+    let mut value = BTreeMap::new();
+    value.insert("gmail".to_string(), 1u32);
+    docs.save(path(), &value).unwrap();
+
+    // `update` writes the same document `Kv` reads, so the two never drift.
+    let bumped = docs
+        .update::<BTreeMap<String, u32>, u32>(path(), |map| {
+            let next = map.get("gmail").copied().unwrap_or(0) + 1;
+            map.insert("gmail".into(), next);
+            (next, true)
+        })
+        .unwrap();
+    assert_eq!(bumped, 2);
+
+    let scoped = storage.for_scope(&Scope::new("local").unwrap()).unwrap();
+    let kv = tinystoragedrivers::Kv::ns(scoped.documents(), "composio", "state").unwrap();
+    let read: Option<BTreeMap<String, u32>> =
+        crate::storage::block_on(async move { kv.get(path()).await }).unwrap();
+    assert_eq!(read.unwrap()["gmail"], 2);
+}
+
+#[test]
+fn an_unchanged_update_writes_nothing_and_returns_its_result() {
+    let docs = docs_in(&MemoryStorage::new(), "local");
+    let seen = docs
+        .update::<BTreeMap<String, u32>, usize>(path(), |map| (map.len(), false))
+        .unwrap();
+    assert_eq!(seen, 0);
+    let loaded: BTreeMap<String, u32> = docs.load(path()).unwrap();
+    assert!(loaded.is_empty());
+}
+
+#[test]
+fn the_import_marker_is_a_migrations_entry_and_stops_a_second_import() {
+    let docs = docs_in(&MemoryStorage::new(), "local");
+    assert!(!docs.legacy_imported(path()).unwrap());
+    assert!(docs
+        .import_if_absent(path(), serde_json::json!({ "gmail": 5 }))
+        .unwrap());
+    assert!(docs.legacy_imported(path()).unwrap());
+    let loaded: BTreeMap<String, u32> = docs.load(path()).unwrap();
+    assert_eq!(loaded["gmail"], 5);
+}
+
+#[tokio::test]
+async fn v1_state_documents_move_into_kv_without_replacing_a_newer_value() {
+    use tinystoragedrivers::Precondition;
+    let storage = MemoryStorage::new();
+    let scoped = storage.for_scope(&Scope::new("local").unwrap()).unwrap();
+    let raw = scoped.documents();
+    raw.ensure_collection(&tinystoragedrivers::CollectionSpec::new("composio_state"))
+        .await
+        .unwrap();
+    for (name, value) in [("a.json", 1), ("b.json", 2)] {
+        raw.put(
+            "composio_state",
+            name,
+            serde_json::json!({ "value": { "n": value } }),
+            Precondition::Absent,
+        )
+        .await
+        .unwrap();
+    }
+    let kv = tinystoragedrivers::Kv::ns(raw, "composio", "state").unwrap();
+    for spec in tinystoragedrivers::primitives::collection_specs() {
+        raw.ensure_collection(&spec).await.unwrap();
+    }
+    kv.put("b.json", &serde_json::json!({ "n": 99 }))
+        .await
+        .unwrap();
+
+    assert_eq!(migrate_legacy_state(&scoped).await.unwrap(), 1);
+    assert_eq!(
+        kv.get::<serde_json::Value>("a.json").await.unwrap(),
+        Some(serde_json::json!({ "n": 1 }))
+    );
+    assert_eq!(
+        kv.get::<serde_json::Value>("b.json").await.unwrap(),
+        Some(serde_json::json!({ "n": 99 })),
+        "a value already in kv is newer"
+    );
+    assert_eq!(migrate_legacy_state(&scoped).await.unwrap(), 0);
+}

@@ -120,7 +120,11 @@ async fn a_document_holds_no_plaintext_and_no_bootstrap_tables() {
         .unwrap();
 
     let docs = Arc::clone(scoped(&storage, "alice").documents());
-    let stored = docs.get("config", "alice").await.unwrap().unwrap();
+    let stored = docs
+        .get("config.documents", "alice")
+        .await
+        .unwrap()
+        .unwrap();
     let raw = serde_json::to_string(&stored.doc).unwrap();
     assert!(raw.contains("enc2:"), "{raw}");
     for leaked in ["sk-very-secret", "mongodb", "default_model", "[storage]"] {
@@ -146,11 +150,16 @@ async fn a_document_does_not_decrypt_under_another_scope_or_master_key() {
     // Another scope's data key cannot open alice's ciphertext even when the
     // sealed value is copied across (per-scope key derivation).
     let docs = Arc::clone(scoped(&storage, "alice").documents());
-    let sealed = docs.get("config", "alice").await.unwrap().unwrap().doc;
+    let sealed = docs
+        .get("config.documents", "alice")
+        .await
+        .unwrap()
+        .unwrap()
+        .doc;
     let bob_docs = Arc::clone(scoped(&storage, "bob").documents());
     bob_docs
         .put(
-            "config",
+            "config.documents",
             "bob",
             sealed,
             tinystoragedrivers::Precondition::None,
@@ -191,7 +200,7 @@ async fn a_document_read_takes_its_bootstrap_tables_from_the_file() {
     let key = keys(1).data_key(&Scope::new("alice").unwrap()).unwrap();
     let sealed = crypto::encrypt_enc2(&key, b"[storage]\nurl = \"evil\"\n").unwrap();
     docs.put(
-        "config",
+        "config.documents",
         "alice",
         serde_json::json!({ "toml_enc": sealed }),
         tinystoragedrivers::Precondition::None,
@@ -350,7 +359,7 @@ async fn a_present_but_malformed_document_is_an_error_not_absence() {
     let source = document_source(&storage, "alice", &file);
     let docs = Arc::clone(scoped(&storage, "alice").documents());
     docs.put(
-        "config",
+        "config.documents",
         "alice",
         serde_json::json!({ "toml_enc": 123 }),
         tinystoragedrivers::Precondition::None,
@@ -378,7 +387,7 @@ async fn a_document_that_does_not_parse_is_an_error_and_leaves_the_bootstrap_fil
     let key = keys(3).data_key(&Scope::new("tenant-a").unwrap()).unwrap();
     let sealed = crypto::encrypt_enc2(&key, b"default_model = 5\n").unwrap();
     docs.put(
-        "config",
+        "config.documents",
         "tenant-a",
         serde_json::json!({ "toml_enc": sealed }),
         tinystoragedrivers::Precondition::None,
@@ -513,11 +522,14 @@ async fn a_document_save_refuses_process_key_secrets_it_cannot_open() {
         "{error:#}"
     );
     let docs = Arc::clone(scoped(&storage, "tenant-a").documents());
-    docs.ensure_collection(&tinystoragedrivers::CollectionSpec::new("config"))
+    docs.ensure_collection(&tinystoragedrivers::CollectionSpec::new("config.documents"))
         .await
         .unwrap();
     assert!(
-        docs.get("config", "tenant-a").await.unwrap().is_none(),
+        docs.get("config.documents", "tenant-a")
+            .await
+            .unwrap()
+            .is_none(),
         "nothing was written over the shared document"
     );
 }

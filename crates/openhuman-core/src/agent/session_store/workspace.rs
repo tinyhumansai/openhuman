@@ -17,16 +17,16 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 
+use super::tenant_router::TenantSessionStores;
 use tinyagents_harness::multimodal::BlobAttachmentStash;
 use tinyagents_session::port::{AgentStores, SessionStoreProvider, TurnStates};
 use tinyagents_session::run_ledger::{LedgerError, LedgerResult, RunLedgerStore};
-use tinyagents_session::DriverSessionStores;
 use tinystoragedrivers::{BlobStore, DocumentStore, MemoryStorage, StorageBackend};
 
 /// One fallback provider and the backend it was built over.
 struct Fallback {
     backend: Arc<dyn StorageBackend>,
-    provider: Arc<DriverSessionStores>,
+    provider: Arc<TenantSessionStores>,
 }
 
 static FALLBACKS: LazyLock<Mutex<HashMap<PathBuf, Fallback>>> = LazyLock::new(Mutex::default);
@@ -57,7 +57,7 @@ pub fn release_workspace(workspace_dir: &Path) {
 }
 
 /// The provider for `workspace_dir`: the installed one, else a
-/// `DriverSessionStores` over the workspace's default backend.
+/// `TenantSessionStores` over the workspace's default backend.
 ///
 /// Never fails: a default that cannot be opened (a read-only workspace) is
 /// logged and replaced by an in-memory backend for that workspace, so a turn
@@ -87,9 +87,9 @@ pub(super) fn fallback_provider(workspace_dir: &Path) -> Arc<dyn SessionStorePro
             return existing.provider.clone();
         }
     }
-    match DriverSessionStores::new(Arc::clone(&backend)) {
+    match TenantSessionStores::new(Arc::clone(&backend), false) {
         Ok(provider) => {
-            let provider = Arc::new(provider.recover_on_open(false));
+            let provider = Arc::new(provider);
             fallbacks.insert(
                 workspace_dir.to_path_buf(),
                 Fallback {
@@ -114,8 +114,8 @@ fn memory_fallback(workspace_dir: &Path) -> Arc<dyn SessionStoreProvider> {
         .entry(workspace_dir.to_path_buf())
         .or_insert_with(|| {
             let backend: Arc<dyn StorageBackend> = Arc::new(MemoryStorage::new());
-            match DriverSessionStores::new(backend) {
-                Ok(provider) => Arc::new(provider.recover_on_open(false)),
+            match TenantSessionStores::new(backend, false) {
+                Ok(provider) => Arc::new(provider),
                 Err(_) => Arc::new(tinyagents_session::port::InMemorySessionStores::new()),
             }
         })
@@ -214,7 +214,7 @@ fn tenant_scope_for(
             return None;
         }
     };
-    match backend.for_scope(&crate::storage::scope_for_agent(&key)) {
+    match backend.for_scope(&session_scope(&key)) {
         Ok(scoped) => Some((key, scoped)),
         Err(error) => {
             log::warn!("[session_store] {what} scope refused agent={key}: {error}");
@@ -264,7 +264,7 @@ pub fn current_documents_for(workspace_dir: &Path) -> Option<Arc<dyn DocumentSto
             return None;
         }
     };
-    match backend.for_scope(&crate::storage::scope_for_agent(&key)) {
+    match backend.for_scope(&session_scope(&key)) {
         Ok(scoped) => Some(Arc::clone(scoped.documents())),
         Err(error) => {
             log::warn!("[session_store] documents scope refused agent={key}: {error}");
@@ -400,6 +400,19 @@ impl SessionStoreProvider for WorkspaceSessionStores {
     fn destination_key(&self) -> Option<String> {
         Some("workspace-default".to_string())
     }
+}
+
+/// The storage scope a session key (`crate::core::runtime::session_key`)
+/// names: `local/agent:<id>` or `u:<profile>/agent:<id>`, the scope the
+/// session store itself binds that key to.
+pub fn session_scope(key: &str) -> tinystoragedrivers::Scope {
+    let (profile, mut agent) = crate::core::runtime::split_session_key(key);
+    if agent.is_empty() {
+        agent = crate::storage::scope::DEFAULT_AGENT.to_owned();
+    }
+    crate::storage::tenant_scope(profile.as_deref())
+        .agent(&agent)
+        .unwrap_or_else(|_| unreachable!("a non-empty agent id is a valid segment"))
 }
 
 #[cfg(test)]

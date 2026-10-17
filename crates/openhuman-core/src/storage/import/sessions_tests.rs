@@ -124,7 +124,7 @@ fn a_classic_workspace_moves_into_the_backend_and_its_files_are_untouched() {
     let outcome = reports.into_iter().next().unwrap().outcome.unwrap();
     assert!(matches!(outcome, Outcome::Imported { .. }), "{outcome:?}");
 
-    let provider = DriverSessionStores::new(Arc::clone(&backend)).unwrap();
+    let provider = DriverSessionStores::new(Arc::clone(&backend), Scope::local()).unwrap();
     // The transcript landed in the orchestrator's scope, where its session
     // resumes it.
     let orchestrator = provider.try_for_agent("orchestrator").unwrap();
@@ -183,7 +183,7 @@ fn a_transcript_naming_an_unknown_agent_lands_in_the_default_agent() {
 
     run_with(&backend, &config).remove(0).outcome.unwrap();
 
-    let provider = DriverSessionStores::new(Arc::clone(&backend)).unwrap();
+    let provider = DriverSessionStores::new(Arc::clone(&backend), Scope::local()).unwrap();
     let default = provider.try_for_agent(DEFAULT_AGENT).unwrap();
     assert!(default.transcripts.root_for_thread("thread-9").is_some());
 }

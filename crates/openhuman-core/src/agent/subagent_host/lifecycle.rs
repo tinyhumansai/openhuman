@@ -7,14 +7,11 @@
 
 use std::{
     collections::HashMap,
-    fs::OpenOptions,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
 
 use async_trait::async_trait;
-use fs2::FileExt;
-use sha2::{Digest, Sha256};
 use tinyagents_harness::context::{RunConfig, RunContext};
 use tinyagents_orchestration::subagent::{
     ArtifactReference, PreparedSubagent, SubagentCapabilities, SubagentDriver, SubagentError,
@@ -538,29 +535,19 @@ impl SubagentExecutor<crate::agent::tinyagents::host::OpenHumanRunContext> for O
 }
 
 /// Durable OpenHuman pause/terminal records scoped by the complete neutral
-/// task key.  The key is encoded rather than using a task id as a filename, so
-/// equally named children of separate roots/parents can never resume or close
-/// one another's lifecycle.
+/// task key, on the storage port ([`store::LifecycleStore`]). The key is
+/// encoded rather than used raw, so equally named children of separate
+/// roots/parents can never resume or close one another's lifecycle.
 pub(super) struct OpenHumanPersistence {
     checkpoint_dir: std::path::PathBuf,
     host_outcome: Arc<Mutex<Option<SubagentRunOutcome>>>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
-struct TerminalRecord {
-    outcome: SubagentOutcome,
-    #[serde(default)]
-    agent_id: String,
-    #[serde(default)]
-    elapsed_ms: u64,
-}
+use store::{LifecycleRecord, LifecycleStore, TerminalRecord};
 
-#[derive(serde::Deserialize)]
-#[serde(untagged)]
-enum CompatibleTerminalRecord {
-    Current(TerminalRecord),
-    Legacy(SubagentOutcome),
-}
+/// What a pause or terminal write decided, so the compare-and-swap closure
+/// can report an error without unwinding it.
+type Decision<T> = Result<T, String>;
 
 impl OpenHumanPersistence {
     pub(super) fn new(checkpoint_dir: std::path::PathBuf) -> Self {
@@ -575,240 +562,30 @@ impl OpenHumanPersistence {
         self
     }
 
-    fn key_component(key: &SubagentTaskKey) -> String {
-        fn hex(value: &str) -> String {
-            value
-                .as_bytes()
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect()
-        }
-        let encoded = format!(
-            "{}-{}-{}-{}",
-            hex(&key.root_run_id),
-            hex(&key.parent_run_id),
-            hex(key.thread_id.as_deref().unwrap_or("")),
-            hex(&key.task_id),
-        );
-        // A task key normally contains short UUID-like identifiers, for which
-        // the reversible encoding preserves existing checkpoint paths. A
-        // background child may inherit a rendered parent identifier, however;
-        // hex-encoding that value can exceed the filesystem filename limit.
-        // Hash only that exceptional form while keeping all key fields in the
-        // digest input so distinct lifecycle scopes cannot alias.
-        if encoded.len() <= 180 {
-            encoded
-        } else {
-            format!("sha256-{:x}", Sha256::digest(encoded.as_bytes()))
-        }
-    }
-
+    /// The name callers report for `key`'s pause. The pause itself is a
+    /// storage record now; this keeps the historical
+    /// `lifecycle/<component>.pause.json` spelling so reported checkpoint
+    /// names are unchanged and stay unique per scoped key.
     fn pause_path(&self, key: &SubagentTaskKey) -> std::path::PathBuf {
         self.checkpoint_dir
             .join("lifecycle")
-            .join(format!("{}.pause.json", Self::key_component(key)))
+            .join(format!("{}.pause.json", store::key_component(key)))
     }
 
-    fn terminal_path(&self, key: &SubagentTaskKey) -> std::path::PathBuf {
-        self.checkpoint_dir
-            .join("lifecycle")
-            .join(format!("{}.terminal.json", Self::key_component(key)))
+    fn store(&self) -> Result<LifecycleStore, SubagentError> {
+        LifecycleStore::open(&self.checkpoint_dir)
     }
 
-    fn index_path(&self, task_id: &str) -> std::path::PathBuf {
-        self.checkpoint_dir
-            .join("lifecycle")
-            .join(format!("task-{}.index.json", Self::task_component(task_id)))
-    }
-
-    fn lock_path(&self, key: &SubagentTaskKey) -> std::path::PathBuf {
-        self.checkpoint_dir
-            .join("lifecycle")
-            .join(format!("{}.lock", Self::key_component(key)))
-    }
-
-    fn index_lock_path(&self, task_id: &str) -> std::path::PathBuf {
-        self.checkpoint_dir
-            .join("lifecycle")
-            .join(format!("task-{}.index.lock", Self::task_component(task_id)))
-    }
-
-    fn task_component(task_id: &str) -> String {
-        let encoded = task_id
-            .as_bytes()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
-        if encoded.len() <= 180 {
-            encoded
-        } else {
-            format!("sha256-{:x}", Sha256::digest(encoded.as_bytes()))
-        }
-    }
-
-    fn lock_file(path: &std::path::Path) -> Result<std::fs::File, SubagentError> {
-        let parent = path.parent().expect("lifecycle lock path has a parent");
-        std::fs::create_dir_all(parent)
-            .map_err(|error| SubagentError::Persistence(error.to_string()))?;
-        let file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(path)
-            .map_err(|error| SubagentError::Persistence(error.to_string()))?;
-        file.lock_exclusive()
-            .map_err(|error| SubagentError::Persistence(error.to_string()))?;
-        Ok(file)
-    }
-
-    fn key_lock(&self, key: &SubagentTaskKey) -> Result<std::fs::File, SubagentError> {
-        Self::lock_file(&self.lock_path(key))
-    }
-
-    fn index_lock(&self, task_id: &str) -> Result<std::fs::File, SubagentError> {
-        Self::lock_file(&self.index_lock_path(task_id))
-    }
-
-    fn read_index_keys(&self, task_id: &str) -> Result<Vec<SubagentTaskKey>, SubagentError> {
-        let raw = match std::fs::read_to_string(self.index_path(task_id)) {
-            Ok(raw) => raw,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(error) => return Err(SubagentError::Persistence(error.to_string())),
-        };
-        let value: serde_json::Value = serde_json::from_str(&raw)
-            .map_err(|error| SubagentError::Persistence(error.to_string()))?;
-        // Accept the short-lived single-key format written by the first
-        // lifecycle extraction, but immediately write the collision-safe
-        // vector format on the next mutation.
-        let keys = value
-            .get("keys")
-            .cloned()
-            .map(serde_json::from_value)
-            .transpose()
-            .map_err(|error| SubagentError::Persistence(error.to_string()))?
-            .or_else(|| {
-                value
-                    .get("key")
-                    .cloned()
-                    .and_then(|key| serde_json::from_value(key).ok())
-                    .map(|key| vec![key])
-            })
-            .unwrap_or_default();
-        Ok(keys)
-    }
-
-    fn write_index_keys(
-        &self,
-        task_id: &str,
-        keys: &[SubagentTaskKey],
-    ) -> Result<(), SubagentError> {
-        let path = self.index_path(task_id);
-        if keys.is_empty() {
-            match std::fs::remove_file(path) {
-                Ok(()) => return Ok(()),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-                Err(error) => return Err(SubagentError::Persistence(error.to_string())),
-            }
-        }
-        Self::replace_file(
-            &path,
-            serde_json::to_vec(&serde_json::json!({"keys": keys}))
-                .map_err(|error| SubagentError::Persistence(error.to_string()))?,
-        )
-    }
-
-    fn add_index_key(&self, key: &SubagentTaskKey) -> Result<(), SubagentError> {
-        let _index_lock = self.index_lock(&key.task_id)?;
-        let mut keys = self.read_index_keys(&key.task_id)?;
-        if !keys.contains(key) {
-            keys.push(key.clone());
-            self.write_index_keys(&key.task_id, &keys)?;
-        }
-        Ok(())
-    }
-
-    fn remove_index_key(&self, key: &SubagentTaskKey) -> Result<(), SubagentError> {
-        let _index_lock = self.index_lock(&key.task_id)?;
-        let mut keys = self.read_index_keys(&key.task_id)?;
-        keys.retain(|candidate| candidate != key);
-        self.write_index_keys(&key.task_id, &keys)
-    }
-
-    fn replace_file(path: &std::path::Path, bytes: Vec<u8>) -> Result<(), SubagentError> {
-        let parent = path.parent().expect("lifecycle state path has a parent");
-        std::fs::create_dir_all(parent)
-            .map_err(|error| SubagentError::Persistence(error.to_string()))?;
-        let temporary = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
-        std::fs::write(&temporary, bytes)
-            .map_err(|error| SubagentError::Persistence(error.to_string()))?;
-        match std::fs::rename(&temporary, path) {
-            Ok(()) => Ok(()),
-            Err(error) => {
-                let _ = std::fs::remove_file(&temporary);
-                Err(SubagentError::Persistence(error.to_string()))
-            }
-        }
-    }
-
-    fn insert_file(path: &std::path::Path, bytes: Vec<u8>) -> Result<bool, SubagentError> {
-        let parent = path.parent().expect("lifecycle state path has a parent");
-        std::fs::create_dir_all(parent)
-            .map_err(|error| SubagentError::Persistence(error.to_string()))?;
-        let temporary = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
-        std::fs::write(&temporary, bytes)
-            .map_err(|error| SubagentError::Persistence(error.to_string()))?;
-        match std::fs::hard_link(&temporary, path) {
-            Ok(()) => {
-                let _ = std::fs::remove_file(&temporary);
-                Ok(true)
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                let _ = std::fs::remove_file(&temporary);
-                Ok(false)
-            }
-            Err(error) => {
-                let _ = std::fs::remove_file(&temporary);
-                Err(SubagentError::Persistence(error.to_string()))
-            }
-        }
-    }
-
-    fn read_pause_checkpoint(
-        &self,
+    /// The record's pause, refusing one stored under a different key.
+    fn pause_of(
+        record: &LifecycleRecord,
         key: &SubagentTaskKey,
     ) -> Result<Option<super::SubagentCheckpointData>, SubagentError> {
-        let raw = match std::fs::read_to_string(self.pause_path(key)) {
-            Ok(raw) => raw,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(SubagentError::Persistence(error.to_string())),
-        };
-        let checkpoint = serde_json::from_str::<super::SubagentCheckpointData>(&raw)
-            .map_err(|error| SubagentError::Persistence(error.to_string()))?;
-        if checkpoint.task_key.as_ref() != Some(key) {
-            return Err(SubagentError::Persistence("checkpoint key mismatch".into()));
-        }
-        Ok(Some(checkpoint))
-    }
-
-    fn read_terminal_record(
-        &self,
-        key: &SubagentTaskKey,
-    ) -> Result<Option<TerminalRecord>, SubagentError> {
-        let raw = match std::fs::read_to_string(self.terminal_path(key)) {
-            Ok(raw) => raw,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(SubagentError::Persistence(error.to_string())),
-        };
-        match serde_json::from_str(&raw)
-            .map_err(|error| SubagentError::Persistence(error.to_string()))?
-        {
-            CompatibleTerminalRecord::Current(record) => Ok(Some(record)),
-            CompatibleTerminalRecord::Legacy(outcome) => Ok(Some(TerminalRecord {
-                outcome,
-                agent_id: String::new(),
-                elapsed_ms: 0,
-            })),
+        match &record.pause {
+            Some(checkpoint) if checkpoint.task_key.as_ref() != Some(key) => {
+                Err(SubagentError::Persistence("checkpoint key mismatch".into()))
+            }
+            other => Ok(other.clone()),
         }
     }
 
@@ -816,13 +593,12 @@ impl OpenHumanPersistence {
         &self,
         key: &SubagentTaskKey,
     ) -> Result<Option<(String, u64)>, SubagentError> {
-        let _key_lock = self.key_lock(key)?;
-        if let Some(record) = self.read_terminal_record(key)? {
-            return Ok(
-                (!record.agent_id.is_empty()).then_some((record.agent_id, record.elapsed_ms))
-            );
+        let record = self.store()?.record(key)?;
+        if let Some(terminal) = record.terminal {
+            return Ok((!terminal.agent_id.is_empty())
+                .then_some((terminal.agent_id, terminal.elapsed_ms)));
         }
-        Ok(self.read_pause_checkpoint(key)?.and_then(|checkpoint| {
+        Ok(Self::pause_of(&record, key)?.and_then(|checkpoint| {
             (!checkpoint.agent_id.is_empty())
                 .then_some((checkpoint.agent_id, checkpoint.elapsed_ms))
         }))
@@ -889,11 +665,11 @@ impl OpenHumanPersistence {
         &self,
         key: &SubagentTaskKey,
     ) -> Result<Option<super::SubagentCheckpointData>, SubagentError> {
-        let _key_lock = self.key_lock(key)?;
-        if self.terminal_path(key).exists() {
+        let record = self.store()?.record(key)?;
+        if record.terminal.is_some() {
             return Ok(None);
         }
-        self.read_pause_checkpoint(key)
+        Self::pause_of(&record, key)
     }
 
     fn checkpoint_for_task(
@@ -905,10 +681,10 @@ impl OpenHumanPersistence {
                 "unsafe task id"
             )));
         }
-        let keys = {
-            let _index_lock = self.index_lock(task_id).map_err(map_lifecycle_error)?;
-            self.read_index_keys(task_id).map_err(map_lifecycle_error)?
-        };
+        let keys = self
+            .store()
+            .and_then(|store| store.index_keys(task_id))
+            .map_err(map_lifecycle_error)?;
         let mut live = Vec::new();
         for key in keys {
             if let Some(checkpoint) = self.live_checkpoint(&key).map_err(map_lifecycle_error)? {
@@ -944,16 +720,18 @@ impl tinyagents_orchestration::subagent::SubagentPersistence for OpenHumanPersis
         &self,
         key: &SubagentTaskKey,
     ) -> Result<Option<SubagentOutcome>, SubagentError> {
-        let _key_lock = self.key_lock(key)?;
-        Ok(self.read_terminal_record(key)?.map(|record| record.outcome))
+        Ok(self
+            .store()?
+            .record(key)?
+            .terminal
+            .map(|record| record.outcome))
     }
     async fn load(&self, key: &SubagentTaskKey) -> Result<Option<SubagentResume>, SubagentError> {
-        let _key_lock = self.key_lock(key)?;
-        if self.terminal_path(key).exists() {
+        let record = self.store()?.record(key)?;
+        if record.terminal.is_some() {
             return Ok(None);
         }
-        Ok(self
-            .read_pause_checkpoint(key)?
+        Ok(Self::pause_of(&record, key)?
             .as_ref()
             .map(Self::checkpoint_resume))
     }
@@ -962,23 +740,18 @@ impl tinyagents_orchestration::subagent::SubagentPersistence for OpenHumanPersis
         &self,
         key: &SubagentTaskKey,
     ) -> Result<Option<SubagentOutcome>, SubagentError> {
-        let _key_lock = self.key_lock(key)?;
-        if self.terminal_path(key).exists() {
+        let record = self.store()?.record(key)?;
+        if record.terminal.is_some() {
             return Ok(None);
         }
-        Ok(self
-            .read_pause_checkpoint(key)?
-            .map(Self::checkpoint_outcome))
+        Ok(Self::pause_of(&record, key)?.map(Self::checkpoint_outcome))
     }
 
     async fn save_pause(
         &self,
         pause: tinyagents_orchestration::subagent::PersistedSubagentPause,
     ) -> Result<SubagentPausePersistenceDisposition, SubagentError> {
-        let _key_lock = self.key_lock(&pause.key)?;
-        if self.terminal_path(&pause.key).exists() {
-            return Ok(SubagentPausePersistenceDisposition::TerminalExisting);
-        }
+        let store = self.store()?;
         let paused = match &pause.outcome.status {
             SubagentOutcomeKind::AwaitingInput(paused) => paused,
             _ => {
@@ -1041,29 +814,39 @@ impl tinyagents_orchestration::subagent::SubagentPersistence for OpenHumanPersis
                 .map(|outcome| outcome.elapsed.as_millis() as u64)
                 .unwrap_or_default(),
         };
-        let json = serde_json::to_vec_pretty(&checkpoint)
-            .map_err(|error| SubagentError::Persistence(error.to_string()))?;
-        let path = self.pause_path(&pause.key);
-        let existing = self.read_pause_checkpoint(&pause.key)?;
-        match (pause.replaces.as_ref(), existing) {
-            (None, None) => {
-                // Index first: a failed data write can leave a stale index,
-                // which readers filter by the live pause record. A successful
-                // pause can never be unresumable through a missing index.
-                self.add_index_key(&pause.key)?;
-                if Self::insert_file(&path, json)? {
-                    Ok(SubagentPausePersistenceDisposition::Inserted)
-                } else {
-                    Ok(SubagentPausePersistenceDisposition::Existing)
+        // Index first: a failed data write can leave a stale index, which
+        // readers filter by the live pause record. A successful pause can
+        // never be unresumable through a missing index.
+        store.add_index_key(&pause.key)?;
+        let (key, replaces) = (pause.key.clone(), pause.replaces.clone());
+        let decided: Decision<SubagentPausePersistenceDisposition> = store.update(&pause.key, {
+            move |record| {
+                if record.terminal.is_some() {
+                    return (
+                        Ok(SubagentPausePersistenceDisposition::TerminalExisting),
+                        false,
+                    );
+                }
+                let current = match Self::pause_of(record, &key) {
+                    Ok(current) => current,
+                    Err(error) => return (Err(error.to_string()), false),
+                };
+                match (replaces.as_ref(), current) {
+                    (None, None) => {
+                        record.pause = Some(checkpoint.clone());
+                        (Ok(SubagentPausePersistenceDisposition::Inserted), true)
+                    }
+                    (Some(expected), Some(current))
+                        if Self::checkpoint_resume(&current) == *expected =>
+                    {
+                        record.pause = Some(checkpoint.clone());
+                        (Ok(SubagentPausePersistenceDisposition::Replaced), true)
+                    }
+                    _ => (Ok(SubagentPausePersistenceDisposition::Existing), false),
                 }
             }
-            (Some(expected), Some(current)) if Self::checkpoint_resume(&current) == *expected => {
-                self.add_index_key(&pause.key)?;
-                Self::replace_file(&path, json)?;
-                Ok(SubagentPausePersistenceDisposition::Replaced)
-            }
-            _ => Ok(SubagentPausePersistenceDisposition::Existing),
-        }
+        })?;
+        decided.map_err(SubagentError::Persistence)
     }
 
     async fn record_terminal(
@@ -1072,28 +855,13 @@ impl tinyagents_orchestration::subagent::SubagentPersistence for OpenHumanPersis
         outcome: &SubagentOutcome,
         replaces: Option<&SubagentResume>,
     ) -> Result<SubagentTerminalPersistenceDisposition, SubagentError> {
-        let _key_lock = self.key_lock(key)?;
-        if self.terminal_path(key).exists() {
-            return Ok(SubagentTerminalPersistenceDisposition::Existing);
-        }
-        if let Some(current) = self.read_pause_checkpoint(key)? {
-            let can_consume_pause =
-                replaces.is_some_and(|expected| Self::checkpoint_resume(&current) == *expected);
-            if !can_consume_pause {
-                return Ok(SubagentTerminalPersistenceDisposition::PauseExisting);
-            }
-        } else if replaces.is_some() {
-            return Err(SubagentError::Persistence(
-                "terminal continuation lost its expected durable pause".into(),
-            ));
-        }
-        let path = self.terminal_path(key);
+        let store = self.store()?;
         let host = self
             .host_outcome
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone();
-        let record = serde_json::to_vec(&TerminalRecord {
+        let terminal = TerminalRecord {
             outcome: outcome.clone(),
             agent_id: host
                 .as_ref()
@@ -1103,26 +871,56 @@ impl tinyagents_orchestration::subagent::SubagentPersistence for OpenHumanPersis
                 .as_ref()
                 .map(|outcome| outcome.elapsed.as_millis() as u64)
                 .unwrap_or_default(),
-        })
-        .map_err(|error| SubagentError::Persistence(error.to_string()))?;
-        match Self::insert_file(&path, record)? {
-            true => {
-                // Terminal is the durable winner. Retiring a matching pause
-                // afterwards cannot reopen the lifecycle because `load` first
-                // observes this terminal marker.
-                let _ = std::fs::remove_file(self.pause_path(key));
-                // A stale task-id index is harmless because recovery filters
-                // terminal keys. Never turn a durable terminal success into an
-                // error merely because cleanup of a derived index failed.
-                if let Err(error) = self.remove_index_key(key) {
-                    tracing::warn!(task_id = %key.task_id, error = %error, "[subagent] terminal committed but task-id index cleanup failed");
+        };
+        let (scoped, replaces) = (key.clone(), replaces.cloned());
+        let decided: Decision<SubagentTerminalPersistenceDisposition> = store.update(key, {
+            move |record| {
+                if record.terminal.is_some() {
+                    return (Ok(SubagentTerminalPersistenceDisposition::Existing), false);
                 }
-                Ok(SubagentTerminalPersistenceDisposition::Inserted)
+                match Self::pause_of(record, &scoped) {
+                    Err(error) => return (Err(error.to_string()), false),
+                    Ok(Some(current)) => {
+                        let can_consume_pause = replaces
+                            .as_ref()
+                            .is_some_and(|expected| Self::checkpoint_resume(&current) == *expected);
+                        if !can_consume_pause {
+                            return (
+                                Ok(SubagentTerminalPersistenceDisposition::PauseExisting),
+                                false,
+                            );
+                        }
+                    }
+                    Ok(None) if replaces.is_some() => {
+                        return (
+                            Err("terminal continuation lost its expected durable pause".into()),
+                            false,
+                        );
+                    }
+                    Ok(None) => {}
+                }
+                // Terminal is the durable winner. Retiring a matching pause in
+                // the same write means it can never reopen the lifecycle.
+                record.terminal = Some(terminal.clone());
+                record.pause = None;
+                (Ok(SubagentTerminalPersistenceDisposition::Inserted), true)
             }
-            false => Ok(SubagentTerminalPersistenceDisposition::Existing),
+        })?;
+        let disposition = decided.map_err(SubagentError::Persistence)?;
+        if disposition == SubagentTerminalPersistenceDisposition::Inserted {
+            // A stale task-id index is harmless because recovery filters
+            // terminal keys. Never turn a durable terminal success into an
+            // error merely because cleanup of a derived index failed.
+            if let Err(error) = store.remove_index_key(key) {
+                tracing::warn!(task_id = %key.task_id, error = %error, "[subagent] terminal committed but task-id index cleanup failed");
+            }
         }
+        Ok(disposition)
     }
 }
+
+#[path = "lifecycle_store.rs"]
+mod store;
 
 #[path = "lifecycle_outcome.rs"]
 mod outcome;

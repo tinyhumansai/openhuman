@@ -14,7 +14,7 @@ fn profile() -> ProfileId {
 fn context_with_store() -> (Arc<CoreContext>, Arc<dyn SessionStoreProvider>) {
     let backend: Arc<dyn StorageBackend> = Arc::new(MemoryStorage::new());
     let provider: Arc<dyn SessionStoreProvider> = Arc::new(
-        tinyagents_session::DriverSessionStores::new(backend)
+        tinyagents_session::DriverSessionStores::new(backend, crate::storage::Scope::local())
             .unwrap()
             .recover_on_open(false),
     );

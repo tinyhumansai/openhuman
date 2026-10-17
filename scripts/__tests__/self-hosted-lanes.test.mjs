@@ -247,6 +247,7 @@ test("the lane plan retains the shared CI checks", () => {
     "cargo fmt --manifest-path Cargo.toml --package openhuman --package openhuman-cli --package openhuman-embed --package openhuman-modules-linked --package openhuman-rpc --package openhuman-tinyhumans --package openhuman-tui -- --check",
     "node scripts/ci/check-openhuman-rust-layout.mjs",
     "node scripts/ci/check-storage-owner.mjs",
+    "node scripts/ci/check-storage-schema.mjs",
     "pnpm agent:runtime-boundary",
     "pnpm rust:ignored-tests",
     "bash scripts/check-linux-tls-dependencies.sh",

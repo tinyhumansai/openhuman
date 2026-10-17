@@ -363,16 +363,17 @@ async fn edit_workflow_surfaces_draft_write_back_failure() {
     let conn =
         crate::storage::rusqlite::Connection::open(config.workspace_dir.join("storage/storage.db"))
             .unwrap();
+    // Layout 2 keeps every scope's documents in the `docs` table.
     let docs_table: String = conn
         .query_row(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE '%\\_tsd\\_docs' ESCAPE '\\'",
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'docs'",
             [],
             |row| row.get(0),
         )
         .unwrap();
     conn.execute_batch(&format!(
         "CREATE TRIGGER refuse_draft_updates BEFORE UPDATE ON {docs_table}
-         WHEN NEW.coll = 'flows_drafts'
+         WHEN NEW.coll = 'flows.drafts'
          BEGIN SELECT RAISE(ABORT, 'drafts are read-only'); END;"
     ))
     .unwrap();

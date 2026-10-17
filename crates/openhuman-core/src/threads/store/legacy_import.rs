@@ -4,8 +4,8 @@
 //! upsert/delete log) plus one `threads/<hex(thread_id)>.jsonl` per thread
 //! under `<workspace>/memory/conversations/`. The file store is gone, so the
 //! first use of a workspace's backend folds those files into it. The files are
-//! only ever **read**: a marker document in the backend records completion, and
-//! the legacy tree stays byte-identical (`storage::import` follows the same
+//! only ever **read**: a `tsd.migrations` entry in the backend records
+//! completion, and the legacy tree stays byte-identical (`storage::import` follows the same
 //! rule for the per-domain databases).
 
 use std::collections::BTreeMap;
@@ -17,17 +17,22 @@ use sha2::{Digest, Sha256};
 use tinyagents_session::threads::{
     ConversationPersistence, CreateConversationThread, DriverConversationStore, ThreadMessage,
 };
-use tinystoragedrivers::{CollectionSpec, ErrorKind, Precondition};
+use tinystoragedrivers::CollectionSpec;
 
 use crate::storage::documents::Repo;
+use crate::storage::import_state;
 
-const MARKERS: &str = "threads_import";
+/// The `tsd.migrations` owner of the import.
+const OWNER: &str = "threads";
+/// The old marker collection, now the `kind` of the import's step.
+const IMPORT_KIND: &str = "threads_import";
 const MARKER_PREFIX: &str = "legacy-conversations";
 const LOG_PREFIX: &str = "[conversations:import]";
 
-/// The collection that holds the completion marker.
+/// The collections the thread host declares: the transcript keys. The import
+/// state is in `tsd.migrations`, which `Registry::prepare` declares.
 pub(super) fn collections() -> Vec<CollectionSpec> {
-    vec![CollectionSpec::new(MARKERS)]
+    vec![super::storage_schema::spec()]
 }
 
 /// The `threads.jsonl` records the importer needs; the stats records the old
@@ -148,7 +153,7 @@ pub(super) fn import_once(
 ) -> Result<()> {
     let root = super::backend::legacy_root(workspace_dir);
     let source = crate::storage::source_key(&root);
-    let marker_id = format!("{MARKER_PREFIX}:{source}");
+    let step = import_state::step_id(IMPORT_KIND, &format!("{MARKER_PREFIX}:{source}"));
     repo.once_per_backend(&format!("legacy-import:{source}"), || {
         match std::fs::metadata(root.join("threads.jsonl")) {
             Ok(meta) if meta.is_file() => {}
@@ -158,52 +163,30 @@ pub(super) fn import_once(
                 return Err(anyhow::Error::new(error).context("stat the legacy threads log"))
             }
         }
-        let marked = repo.run(|docs| {
-            let marker_id = marker_id.clone();
-            async move { docs.get(MARKERS, &marker_id).await }
-        })?;
-        if marked.is_some() {
+        if import_state::is_done(repo, OWNER, &step)? {
             log::debug!("{LOG_PREFIX} already imported");
             return Ok(());
         }
-        let claimed =
-            crate::storage::import_claim::with_claim(repo, MARKERS, &marker_id.clone(), || {
-                let marked = repo.run(|docs| {
-                    let marker_id = marker_id.clone();
-                    async move { docs.get(MARKERS, &marker_id).await }
-                })?;
-                if marked.is_some() {
-                    return Ok(());
-                }
-                let threads = fold_threads(&root)?;
-                let mut messages = Vec::with_capacity(threads.len());
-                for thread in &threads {
-                    messages.push(read_jsonl::<ThreadMessage>(&messages_path(
-                        &root, &thread.id,
-                    ))?);
-                }
-                let store = store.clone();
-                let (threads_n, messages_n) = crate::storage::block_on_anyhow(async move {
-                    copy(&store, threads, messages).await
-                })?;
-                repo.run(|docs| async move {
-                    match docs
-                        .put(
-                            MARKERS,
-                            &marker_id,
-                            serde_json::json!({ "threads": threads_n, "messages": messages_n }),
-                            Precondition::Absent,
-                        )
-                        .await
-                    {
-                        Ok(_) => Ok(()),
-                        Err(error) if error.kind() == ErrorKind::Conflict => Ok(()),
-                        Err(error) => Err(error),
-                    }
-                })?;
-                log::info!("{LOG_PREFIX} imported threads={threads_n} messages={messages_n}");
-                Ok(())
-            })?;
+        let claimed = import_state::with_claim(repo, OWNER, &step, || {
+            if import_state::is_done(repo, OWNER, &step)? {
+                return Ok(());
+            }
+            let threads = fold_threads(&root)?;
+            let mut messages = Vec::with_capacity(threads.len());
+            for thread in &threads {
+                messages.push(read_jsonl::<ThreadMessage>(&messages_path(
+                    &root, &thread.id,
+                ))?);
+            }
+            let store = store.clone();
+            let (threads_n, messages_n) =
+                crate::storage::block_on_anyhow(
+                    async move { copy(&store, threads, messages).await },
+                )?;
+            import_state::set_done(repo, OWNER, &step)?;
+            log::info!("{LOG_PREFIX} imported threads={threads_n} messages={messages_n}");
+            Ok(())
+        })?;
         if claimed.is_none() {
             log::debug!("{LOG_PREFIX} another process is importing; skipped");
         }

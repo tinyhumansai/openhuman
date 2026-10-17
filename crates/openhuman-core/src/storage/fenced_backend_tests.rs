@@ -165,24 +165,6 @@ async fn a_renewed_grant_keeps_admitting_writes() {
     a.put("profile:alice", "n").await.unwrap();
 }
 
-#[tokio::test]
-async fn named_databases_are_fenced_too() {
-    let backend = shared();
-    let (a, b) = (Node::new("node-a", &backend), Node::new("node-b", &backend));
-    a.take("alice").await;
-    b.set_clock(TTL.as_millis() as u64 + 1);
-    b.take("alice").await;
-    let sessions = a.storage.database("sessions").unwrap();
-    let scoped = sessions
-        .for_scope(&Scope::new("alice~default").unwrap())
-        .unwrap();
-    assert!(scoped
-        .documents()
-        .put("t", "x", json!({}), Precondition::None)
-        .await
-        .is_err());
-}
-
 /// File leases (`LocalLeases`, hosts without a backend) cannot be lost while
 /// the process lives, so a fence over one admits writes until the holder
 /// releases it.
@@ -371,26 +353,6 @@ async fn stream_and_blob_writes_are_driver_fenced() {
     assert!(scoped.blobs().put("k", b"x".to_vec(), None).await.is_err());
 }
 
-/// A named database cannot see the lease record, so its writes get the
-/// host check only: the race stays open there, as the module docs say.
-#[tokio::test]
-async fn a_named_database_falls_back_to_the_host_check() {
-    let backend = shared();
-    let (a, fence, leases) = paused_holder(&backend).await;
-    let scoped = a
-        .database("sessions")
-        .unwrap()
-        .for_scope(&Scope::new("profile:alice").unwrap())
-        .unwrap();
-    leases.armed.store(true, Ordering::SeqCst);
-    scoped
-        .documents()
-        .put("t", "x", json!({}), Precondition::None)
-        .await
-        .unwrap();
-    assert!(!fence.is_fenced());
-}
-
 /// A driver without fencing gets the host check only, and writes through.
 #[tokio::test]
 async fn a_driver_without_fencing_falls_back_to_the_host_check() {
@@ -417,9 +379,6 @@ impl StorageBackend for NoFencing {
     }
     fn for_scope(&self, scope: &Scope) -> Result<ScopedStorage> {
         self.0.for_scope(scope)
-    }
-    fn database(&self, name: &str) -> Result<Arc<dyn StorageBackend>> {
-        self.0.database(name)
     }
 }
 

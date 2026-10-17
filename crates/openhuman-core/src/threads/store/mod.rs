@@ -33,6 +33,8 @@ pub mod blocking;
 
 mod bus;
 mod legacy_import;
+mod storage_schema;
+pub use storage_schema::storage_schema;
 #[cfg(test)]
 #[path = "legacy_import_tests.rs"]
 mod legacy_import_tests;

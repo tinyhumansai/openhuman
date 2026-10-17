@@ -42,7 +42,7 @@ use super::tinyflows::{finish, marked};
 use super::{Outcome, Report, Snapshot};
 use crate::agent::session_store::DEFAULT_AGENT;
 use crate::config::Config;
-use crate::storage::StorageBackend;
+use crate::storage::{Scope, StorageBackend};
 
 /// The marker name of the session import.
 pub const SESSIONS_DOMAIN: &str = "sessions";
@@ -67,7 +67,7 @@ fn import(backend: &Arc<dyn StorageBackend>, config: &Config) -> Result<Outcome>
         if !db.is_file() && !raw.is_dir() && !turns.is_dir() {
             return Ok(None);
         }
-        let provider = DriverSessionStores::new(Arc::clone(backend))
+        let provider = DriverSessionStores::new(Arc::clone(backend), Scope::local())
             .map_err(|error| anyhow::anyhow!("start the session store bridge: {error}"))?
             .recover_on_open(false);
         let mut found = 0usize;

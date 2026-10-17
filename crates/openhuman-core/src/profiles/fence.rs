@@ -7,11 +7,15 @@
 //! `storage::open` consults). From then on each write through the storage
 //! ports to one of the profile's scopes is checked against the grant:
 //!
-//! - the profile's own scope (`storage::scope_for_profile`), where its
-//!   domain stores, secrets, cron and flows keep their records;
-//! - every session scope of the profile (`<profile>~<agent>`,
-//!   `core::runtime::session_key_prefix`), where the session store keeps
-//!   transcripts and turn states.
+//! - the profile's tenant scope (`storage::scope_for_profile`, `u:<id>`),
+//!   where its domain stores, secrets, cron and flows keep their records;
+//! - every principal scope under the tenant (`u:<id>/agent:<agent>` and
+//!   `u:<id>/module:<module>`), where the session store keeps transcripts and
+//!   turn states and modules keep theirs.
+//!
+//! The tenant is the fence boundary: one exact scope plus the prefix
+//! `<tenant>/`, which a hashed segment cannot escape (tsd hashes the segment,
+//! never the whole scope).
 //!
 //! The heartbeat records each renewal on the fence and latches it when the
 //! lease is lost; a write check that finds the record moved on latches it
@@ -47,15 +51,13 @@ pub(crate) fn skew_margin(ttl: Duration) -> u64 {
     u64::try_from((ttl / 6).as_millis()).unwrap_or(u64::MAX)
 }
 
-/// The scopes profile `id`'s grant guards.
+/// The scopes profile `id`'s grant guards: its tenant scope and everything
+/// under `<tenant>/`.
 pub(crate) fn scopes_of(id: &ProfileId) -> Vec<ScopeMatch> {
+    let tenant = crate::storage::scope_for_profile(id.as_str());
     vec![
-        ScopeMatch::Exact(
-            crate::storage::scope_for_profile(id.as_str())
-                .as_str()
-                .to_string(),
-        ),
-        ScopeMatch::Prefix(crate::core::runtime::session_key_prefix(id.as_str())),
+        ScopeMatch::Exact(tenant.as_str().to_string()),
+        ScopeMatch::Prefix(format!("{}/", tenant.as_str())),
     ]
 }
 

@@ -17,7 +17,6 @@ use tinymemory_integrations::import::{
 };
 
 use crate::config::Config;
-use crate::security::secret_storage::file_store::write_atomic;
 
 use super::engine;
 use super::error::{MemoryError, MemoryResult};
@@ -57,28 +56,32 @@ fn release(workspace_dir: &Path) {
 /// mid-write leaves the previous state, never a torn file that reads back as
 /// a fresh start and re-sends everything.
 pub(crate) struct FileCheckpointStore {
-    path: PathBuf,
+    workspace_dir: PathBuf,
 }
+
+const STATE: &str = "import_state";
 
 impl FileCheckpointStore {
     pub(crate) fn new(workspace_dir: &Path) -> Self {
         Self {
-            path: workspace_dir.join("memory").join("import_state.json"),
+            workspace_dir: workspace_dir.to_path_buf(),
         }
     }
 }
 
 impl CheckpointStore for FileCheckpointStore {
     fn load(&self) -> ImportFile {
-        std::fs::read_to_string(&self.path)
-            .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
+        super::state_store::load(&self.workspace_dir, STATE)
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "[memory:import] reading the checkpoint failed");
+                None
+            })
             .unwrap_or_default()
     }
 
     fn save(&self, file: &ImportFile) -> Result<(), String> {
-        let json = serde_json::to_vec_pretty(file).map_err(|error| error.to_string())?;
-        write_atomic(&self.path, &json).map_err(|error| error.to_string())
+        super::state_store::save(&self.workspace_dir, STATE, file)
+            .map_err(|error| error.to_string())
     }
 }
 

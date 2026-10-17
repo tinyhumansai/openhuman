@@ -26,7 +26,9 @@ use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 use tinystoragedrivers::{CollectionSpec, ScopedStorage};
 
-use super::storage_grant_tinyconnectors::{MODULE_ID, PREFS_COLLECTION, TRIGGER_STREAM_PREFIX};
+use super::storage_grant_schemas::tinyconnectors::{
+    MODULE_ID, PREFS_COLLECTION, TRIGGER_STREAM_PREFIX,
+};
 use super::storage_import_support as support;
 use crate::core::runtime::DispatchCtx;
 
@@ -87,7 +89,7 @@ async fn import_into(
 ) -> Result<Outcome> {
     let docs = scoped.documents();
     let marker = support::marker_id("connectors", state_dir);
-    if support::already_imported(docs, MARKER_COLLECTION, &marker).await? {
+    if support::already_imported(scoped, MARKER_COLLECTION, &marker).await? {
         return Ok(Outcome::AlreadyDone);
     }
     let prefs_dir = state_dir.join(PREFS_DIR);
@@ -116,13 +118,7 @@ async fn import_into(
         triggers += support::append_if_empty(scoped, &day.stream, day.records).await?;
     }
 
-    support::mark_imported(
-        docs,
-        MARKER_COLLECTION,
-        &marker,
-        json!({ "prefs": prefs, "triggers": triggers, "skipped": legacy.skipped }),
-    )
-    .await?;
+    support::mark_imported(scoped, MARKER_COLLECTION, &marker).await?;
     tracing::info!(
         "{LOG_PREFIX} imported prefs={prefs} triggers={triggers} skipped={}",
         legacy.skipped

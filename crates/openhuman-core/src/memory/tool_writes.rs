@@ -3,15 +3,15 @@
 //! The queue itself (bounds, coalescing, fencing, ordered drain) is
 //! `tinymemory_tools::pending`; this module is the host adapter. It keeps the
 //! per-owner partitioning of the files under `<workspace>/memory/`, the
-//! validation and scrubbing of a write before it is queued, the file-backed
-//! `ListStore` (owner-only, fsynced), the executor that runs a write against
+//! validation and scrubbing of a write before it is queued, the
+//! `ListStore` over the memory state store (one `tsd.kv` value per
+//! partition, named like the old `<workspace>/memory/<name>.json`), the executor that runs a write against
 //! the bound engine under a timeout, and the erasure barrier that waits for a
 //! write already in flight. Only scrubbed items and trusted scope are
 //! persisted; credentials are resolved at drain time. Enqueue never waits on
 //! the remote engine.
 
 use std::collections::HashMap;
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
@@ -210,7 +210,8 @@ pub(super) fn enqueue(
     let _guard = LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if !file.exists() && partitions(config)?.len() >= MAX_PENDING {
+    let known = partitions(config)?;
+    if !known.contains(&file) && known.len() >= MAX_PENDING {
         return Err(MemoryError::Unavailable(
             "memory write queue full; nothing was queued".into(),
         ));
@@ -227,8 +228,7 @@ pub(super) fn enqueue(
     })
 }
 
-/// A [`ListStore`] over one queue file: owner-only, written through a
-/// temporary file and a rename, with the file and its directory fsynced.
+/// A [`ListStore`] over one queue partition (one storage write per save).
 struct FileStore {
     file: PathBuf,
 }
@@ -243,32 +243,34 @@ impl ListStore<Entry> for FileStore {
     }
 }
 
+/// The state-store coordinates of a queue partition: its workspace and name
+/// (the stem of its legacy `<workspace>/memory/<name>.json` path).
+fn coordinates(file: &Path) -> std::io::Result<(&Path, &str)> {
+    let workspace = file
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| std::io::Error::other("the queue partition has no workspace"))?;
+    let name = file
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .ok_or_else(|| std::io::Error::other("the queue partition has no name"))?;
+    Ok((workspace, name))
+}
+
 fn read_file(path: &Path) -> std::io::Result<Vec<Entry>> {
-    let file = match std::fs::File::open(path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(error),
-    };
-    let mut bytes = Vec::new();
-    file.take((MAX_BYTES + 1) as u64).read_to_end(&mut bytes)?;
-    if bytes.len() > MAX_BYTES {
-        return Err(std::io::Error::other("queue file too large"));
-    }
-    let stored: Vec<Stored> = serde_json::from_slice(&bytes).map_err(std::io::Error::other)?;
+    let (workspace, name) = coordinates(path)?;
+    let stored: Option<Vec<Stored>> =
+        super::state_store::load_strict(workspace, name).map_err(std::io::Error::other)?;
+    let stored = stored.unwrap_or_default();
     Ok(stored.into_iter().map(Entry::from).collect())
 }
 
 fn write_file(file: &Path, entries: &[Entry]) -> std::io::Result<()> {
-    let bytes = serde_json::to_vec(entries).map_err(std::io::Error::other)?;
-    let temp = file.with_extension("json.tmp");
-    super::files::create_private_dir_all(file.parent().expect("memory directory"))?;
-    let mut output = super::files::create_private(&temp)?;
-    output.write_all(&bytes)?;
-    output.sync_all()?;
-    std::fs::rename(&temp, file)?;
-    #[cfg(unix)]
-    std::fs::File::open(file.parent().expect("memory directory"))?.sync_all()?;
-    Ok(())
+    let (workspace, name) = coordinates(file)?;
+    if serde_json::to_vec(entries).map_err(std::io::Error::other)?.len() > MAX_BYTES {
+        return Err(std::io::Error::other("queue too large"));
+    }
+    super::state_store::save(workspace, name, &entries).map_err(std::io::Error::other)
 }
 
 fn queue(file: &Path) -> Arc<Queue> {
@@ -348,26 +350,15 @@ fn owner_state(config: &Config) -> &'static OwnerState {
 
 fn partitions(config: &Config) -> MemoryResult<Vec<PathBuf>> {
     let prefix = format!("{}-", owner_prefix(config));
-    let entries = match std::fs::read_dir(config.workspace_dir.join("memory")) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(_) => return Err(unavailable()),
-    };
-    let mut files = Vec::new();
-    for entry in entries {
-        let file = entry.map_err(|_| unavailable())?.path();
-        if file
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.starts_with(&prefix) && name.ends_with(".json"))
-        {
-            files.push(file);
-            if files.len() > MAX_PENDING {
-                return Err(unavailable());
-            }
-        }
+    let names = super::state_store::names(&config.workspace_dir, &prefix)
+        .map_err(|_| unavailable())?;
+    if names.len() > MAX_PENDING {
+        return Err(unavailable());
     }
-    Ok(files)
+    Ok(names
+        .into_iter()
+        .map(|name| super::state_store::legacy_path(&config.workspace_dir, &name))
+        .collect())
 }
 
 /// Owner epoch captured when automatic turn work is admitted, before it can

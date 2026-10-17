@@ -124,14 +124,31 @@ pub(crate) struct TurnJournal {
     run_id: RunId,
     status_store: Arc<DriverStatusStore>,
     event_sink: Arc<JournalSink>,
+    /// The journal the sink appends to, kept to seal the run's stream once the
+    /// append worker has drained.
+    journal: Arc<dyn HarnessEventJournal>,
     /// The in-flight status snapshot, mutated in place to `completed`/`failed`.
     status: Mutex<HarnessRunStatus>,
 }
 
 impl TurnJournal {
+    /// Flush the append worker, then seal the run's journal stream: nothing is
+    /// appended to a finished run, and a sealed journal reads back identically
+    /// while the storage maintenance sweep applies its retention. Non-fatal.
+    async fn flush_and_seal(&self) {
+        self.event_sink.flush();
+        match self.journal.seal_run(self.run_id.as_str()).await {
+            Ok(()) => log::debug!("[journal] sealed run_id={}", self.run_id.as_str()),
+            Err(err) => log::debug!(
+                "[journal] seal failed run_id={} err={err}",
+                self.run_id.as_str()
+            ),
+        }
+    }
+
     /// Best-effort terminal write: mark the run completed and persist. Non-fatal.
     pub(crate) async fn finish_completed(&self) {
-        self.event_sink.flush();
+        self.flush_and_seal().await;
         let snapshot = {
             let mut guard = self.status.lock().unwrap();
             guard.mark_completed();
@@ -149,7 +166,7 @@ impl TurnJournal {
     /// Best-effort terminal write: mark the run failed (recording `error`) and
     /// persist. Non-fatal.
     pub(crate) async fn finish_failed(&self, error: &str) {
-        self.event_sink.flush();
+        self.flush_and_seal().await;
         let snapshot = {
             let mut guard = self.status.lock().unwrap();
             guard.mark_failed(error);
@@ -206,7 +223,7 @@ pub(crate) async fn attach_turn_journal(
     // `events` was seeded with `with_stream_id(run_id)`, every persisted
     // observation's `event_id` is the stable `{run_id}-evt-{offset}`.
     let journal: Arc<dyn HarnessEventJournal> = Arc::new(StoreEventJournal::new(journal_store));
-    let journal_sink = Arc::new(JournalSink::new(journal, run_id.clone()));
+    let journal_sink = Arc::new(JournalSink::new(Arc::clone(&journal), run_id.clone()));
     let redacting = RedactingSink::new(journal_sink.clone(), process_env_secrets());
 
     // FanOutSink is the durable-observer composition seam (05.2 adds graph sinks
@@ -239,6 +256,7 @@ pub(crate) async fn attach_turn_journal(
         run_id,
         status_store,
         event_sink: journal_sink,
+        journal,
         status: Mutex::new(status),
     })
 }

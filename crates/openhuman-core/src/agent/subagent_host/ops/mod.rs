@@ -16,7 +16,7 @@
 //! | `runner.rs`         | `run_subagent`, `run_typed_mode`                               |
 //! | `graph.rs`          | `run_subagent_via_graph` — the sub-agent turn graph + tools    |
 //! | `checkpoint.rs`     | `SubagentCheckpoint` — cap-hit summary                         |
-//! | `pause_checkpoint.rs` | `write` — the on-disk pause snapshot for `continue_subagent`  |
+//! | `pause_checkpoint.rs` | `is_safe_task_id` — the guard for model-authored task ids        |
 
 mod checkpoint;
 mod graph;

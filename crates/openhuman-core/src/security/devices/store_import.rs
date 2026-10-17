@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 use serde_json::{json, Value};
 
-use super::store_documents::DEVICES;
+use super::storage_schema::LEGACY_DEVICES;
 use crate::config::Config;
 use crate::storage::import::{table_exists, ImportDoc};
 
@@ -68,7 +68,7 @@ fn read_rows(conn: &Connection) -> Result<Vec<ImportDoc>> {
     let rows = stmt
         .query_map([], |row| {
             Ok(ImportDoc {
-                collection: DEVICES,
+                collection: LEGACY_DEVICES,
                 id: row.get(0)?,
                 doc: json!({
                     "label": row.get::<_, String>(1)?,
