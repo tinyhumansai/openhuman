@@ -286,6 +286,7 @@ pub fn all_tools_with_runtime(
     // taken. `goal_get`/`goal_set`/`goal_complete` — pause/resume/budget are
     // system-driven and have no model tool.
     tools.extend(crate::agent::goals::goal_tools(&root_config.workspace_dir));
+    crate::agent::autonomous::tools::register_with_goals(&mut tools, &root_config.workspace_dir);
 
     #[cfg(feature = "modules")]
     if browser_config.enabled && config.components.computer {

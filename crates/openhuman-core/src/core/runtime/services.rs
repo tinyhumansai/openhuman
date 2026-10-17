@@ -427,6 +427,7 @@ pub fn start_bootstrap_jobs(services: ServiceSet, config: &Config) {
         log::debug!("[runtime.bootstrap] task-source polling disabled by ServiceSet");
     }
 
+    crate::agent::autonomous::service::start();
     log::debug!("[runtime.bootstrap] bootstrap job dispatch complete");
 }
 

@@ -28,6 +28,7 @@ mod loader;
 #[path = "fleet_prompt_tests.rs"]
 mod fleet_prompt_tests;
 
+pub mod coding_worker;
 pub mod critic;
 pub mod image_agent;
 pub mod morning_briefing;

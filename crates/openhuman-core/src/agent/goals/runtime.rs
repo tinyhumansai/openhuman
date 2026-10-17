@@ -43,6 +43,28 @@ pub async fn load_for_thread(workspace_dir: &Path, thread_id: Option<&str>) -> O
 
 /// Reactivate a paused goal for an explicit thread (thread-resume semantics).
 /// Best-effort: a failure is logged and surfaced as `Ok(None)`-style `None`.
+pub async fn pause_for_thread(
+    workspace_dir: &Path,
+    thread_id: Option<&str>,
+) -> Option<Option<ThreadGoal>> {
+    let thread_id = normalized_thread(thread_id)?;
+    match store::pause(workspace_dir, &thread_id).await {
+        Ok(goal) => {
+            BUS.publish(DomainEvent::ThreadGoalUpdated {
+                thread_id: goal.thread_id.clone(),
+                goal_id: goal.goal_id.clone(),
+                status: goal.status.as_str().to_string(),
+                goal: Some(super::goal_to_value(&goal)),
+            });
+            Some(Some(goal))
+        }
+        Err(e) => {
+            tracing::debug!(thread_id = %thread_id, error = %e, "[thread_goals] pause_for_thread failed");
+            None
+        }
+    }
+}
+
 pub async fn resume_for_thread(
     workspace_dir: &Path,
     thread_id: Option<&str>,

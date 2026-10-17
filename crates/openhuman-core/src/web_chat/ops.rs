@@ -3,6 +3,7 @@
 //! coordinate over, and the guards (wall-clock backstop, budget correlation,
 //! Sentry suppression) applied around every turn.
 
+mod autonomous_turn;
 mod budget_correlation;
 mod channel_ops;
 mod followups;
@@ -25,6 +26,7 @@ pub use channel_ops::{
 };
 
 pub use start_chat::{start_chat, StartChatError};
+pub(crate) use autonomous_turn::start_autonomous_turn;
 pub use system_turn::{run_system_turn_on_thread, SESSION_CHECKOUT_FAILURE, SYSTEM_CLIENT_ID};
 
 #[cfg(test)]
