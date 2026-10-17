@@ -22,3 +22,65 @@ fn controller_lists_match_lengths() {
         all_about_app_registered_controllers().len()
     );
 }
+
+#[tokio::test]
+async fn rendered_catalog_responses_omit_retired_promises_and_keep_real_capabilities() {
+    use crate::core::runtime::{CoreContext, DomainSet};
+    let ctx = DispatchCtx::new(CoreContext::for_test(DomainSet::full(), None));
+    let retired = [
+        "workflows.connect_google",
+        "workflows.connect_notion",
+        "workflows.connect_crypto_exchange",
+        "settings.delete_all_data",
+    ];
+    for category in [None, Some("workflows"), Some("settings")] {
+        let mut params = Map::new();
+        if let Some(category) = category {
+            params.insert("category".into(), Value::String(category.into()));
+        }
+        let response = handle_about_app_list(ctx.clone(), params).await.unwrap();
+        let rendered = response.to_string();
+        for id in retired {
+            assert!(!rendered.contains(id), "rendered list must omit {id}");
+        }
+        let rows = crate::core::unwrap_rpc(&response)
+            .as_array()
+            .expect("capability list");
+        if category != Some("workflows") {
+            assert!(rows
+                .iter()
+                .any(|row| row["id"] == "settings.clear_app_data"));
+        }
+        if category != Some("settings") {
+            assert!(rows.iter().any(|row| row["id"] == "composio.direct_mode"));
+        }
+    }
+    for id in retired {
+        let params = serde_json::json!({"id":id}).as_object().unwrap().clone();
+        assert!(handle_about_app_lookup(ctx.clone(), params)
+            .await
+            .unwrap_err()
+            .contains("unknown capability id"));
+        let params = serde_json::json!({"query":id}).as_object().unwrap().clone();
+        let response = handle_about_app_search(ctx.clone(), params).await.unwrap();
+        assert!(crate::core::unwrap_rpc(&response)
+            .as_array()
+            .unwrap()
+            .is_empty());
+    }
+    for (query, id) in [
+        ("Composio", "composio.direct_mode"),
+        ("clear app data", "settings.clear_app_data"),
+    ] {
+        let params = serde_json::json!({"query":query})
+            .as_object()
+            .unwrap()
+            .clone();
+        let response = handle_about_app_search(ctx.clone(), params).await.unwrap();
+        assert!(crate::core::unwrap_rpc(&response)
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["id"] == id));
+    }
+}
