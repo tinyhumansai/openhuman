@@ -3,6 +3,11 @@ use crate::security::egress::EgressLedger;
 
 use crate::inference::provider::factory::cloud_slug::try_create_cloud_slug_chat_model_from_string_with_native_tools;
 
+/// The calling task's context; it carries no turn origin in these tests.
+fn ambient_ctx() -> crate::core::runtime::DispatchCtx {
+    crate::core::runtime::DispatchCtx::ambient()
+}
+
 #[test]
 fn custom_ca_bundle_builds_a_provider_scoped_chat_client() {
     let _guard = crate::inference::inference_test_guard();
@@ -13,6 +18,7 @@ fn custom_ca_bundle_builds_a_provider_scoped_chat_client() {
         include_str!("../../util/tls/test-ca.pem").into(),
     );
     let (model, model_id) = try_create_cloud_slug_chat_model_from_string_with_native_tools(
+        &ambient_ctx(),
         "chat",
         "team:private-model",
         &config,
@@ -455,6 +461,7 @@ fn anthropic_auth_cloud_slug_in_text_mode_keeps_the_compat_client() {
         .cloud_providers
         .push(anthropic_entry("p_anth", "anthropic"));
     let (model, model_id) = try_create_cloud_slug_chat_model_from_string_with_native_tools(
+        &ambient_ctx(),
         "chat",
         "anthropic:claude-sonnet-4-6",
         &config,
@@ -482,7 +489,7 @@ fn configured_openhuman_jwt_slug_routes_to_managed_chat_model() {
     config.chat_provider = Some("openhuman:reasoning-v1".to_string());
 
     let (model, model_id) =
-        try_create_cloud_slug_chat_model("chat", &config, &EgressLedger::none())
+        try_create_cloud_slug_chat_model(&ambient_ctx(), "chat", &config, &EgressLedger::none())
             .expect("configured OpenhumanJwt slug should be recognized")
             .expect("managed model should build");
 
@@ -490,9 +497,10 @@ fn configured_openhuman_jwt_slug_routes_to_managed_chat_model() {
 
     // A concrete catalog id is forwarded verbatim.
     config.chat_provider = Some("openhuman:openrouter/deepseek/deepseek-v4-pro".to_string());
-    let (_, pinned_id) = try_create_cloud_slug_chat_model("chat", &config, &EgressLedger::none())
-        .expect("configured OpenhumanJwt slug should be recognized")
-        .expect("managed model should build");
+    let (_, pinned_id) =
+        try_create_cloud_slug_chat_model(&ambient_ctx(), "chat", &config, &EgressLedger::none())
+            .expect("configured OpenhumanJwt slug should be recognized")
+            .expect("managed model should build");
     assert_eq!(pinned_id, "openrouter/deepseek/deepseek-v4-pro");
     assert_eq!(
         model
@@ -518,6 +526,7 @@ async fn openhuman_jwt_slug_discloses_pinned_model() {
     config.cloud_providers.push(oh_entry("p_oh"));
     let provider = format!("openhuman:{marker}");
     let _ = try_create_cloud_slug_chat_model_from_string(
+        &ambient_ctx(),
         "chat",
         &provider,
         &config,
@@ -653,6 +662,7 @@ fn openhuman_jwt_slug_preserves_forced_text_mode() {
     config.cloud_providers.push(oh_entry("p_oh"));
 
     let (model, _) = try_create_cloud_slug_chat_model_from_string_with_native_tools(
+        &ambient_ctx(),
         "chat",
         "openhuman:reasoning-v1",
         &config,
@@ -677,6 +687,7 @@ fn openhuman_jwt_slug_without_model_preserves_managed_role_tier() {
     config.cloud_providers.push(oh_entry("p_oh"));
 
     let (_model, model_id) = try_create_cloud_slug_chat_model_from_string(
+        &ambient_ctx(),
         "summarization",
         "openhuman:",
         &config,
@@ -697,7 +708,7 @@ fn try_create_cloud_slug_flips_openai_but_declines_non_cloud() {
     openai.cloud_providers.push(openai_entry("p_oai", "openai"));
     openai.chat_provider = Some("openai:gpt-4o-mini".to_string());
     let (model, model_id) =
-        try_create_cloud_slug_chat_model("chat", &openai, &EgressLedger::none())
+        try_create_cloud_slug_chat_model(&ambient_ctx(), "chat", &openai, &EgressLedger::none())
             .expect("openai should flip crate-native")
             .expect("build");
     assert_eq!(model_id, "gpt-4o-mini");
@@ -708,16 +719,29 @@ fn try_create_cloud_slug_flips_openai_but_declines_non_cloud() {
 
     // Managed (default), local runtimes, and unconfigured slugs are not cloud
     // slugs — they decline and fall through to their own paths.
-    assert!(
-        try_create_cloud_slug_chat_model("chat", &Config::default(), &EgressLedger::none())
-            .is_none()
-    );
+    assert!(try_create_cloud_slug_chat_model(
+        &ambient_ctx(),
+        "chat",
+        &Config::default(),
+        &EgressLedger::none()
+    )
+    .is_none());
     let mut local = Config::default();
     local.chat_provider = Some("ollama:qwen2.5".to_string());
-    assert!(try_create_cloud_slug_chat_model("chat", &local, &EgressLedger::none()).is_none());
+    assert!(try_create_cloud_slug_chat_model(
+        &ambient_ctx(),
+        "chat",
+        &local,
+        &EgressLedger::none()
+    )
+    .is_none());
     let mut unconfigured = Config::default();
     unconfigured.chat_provider = Some("deepseek:deepseek-chat".to_string());
-    assert!(
-        try_create_cloud_slug_chat_model("chat", &unconfigured, &EgressLedger::none()).is_none()
-    );
+    assert!(try_create_cloud_slug_chat_model(
+        &ambient_ctx(),
+        "chat",
+        &unconfigured,
+        &EgressLedger::none()
+    )
+    .is_none());
 }

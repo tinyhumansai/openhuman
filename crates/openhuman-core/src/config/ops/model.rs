@@ -215,6 +215,7 @@ fn complete_byok_route(config: &mut Config, explicit: &ExplicitRolePins) {
                 label: "Custom inference endpoint".to_string(),
                 endpoint: endpoint.clone(),
                 auth_style: AuthStyle::Bearer,
+                headers: Default::default(),
                 default_model: Some(model.clone()),
             });
             BYOK_INFERENCE_SLUG.to_string()
@@ -339,7 +340,27 @@ pub async fn apply_model_settings(
             "[config] apply_model_settings: preserving {} reserved cloud provider(s) before overwrite",
             preserved.len()
         );
-        config.cloud_providers = providers;
+        // An entry arriving without `headers` keeps the ones stored for it
+        // (matched by id, else slug): the settings panel echoes every entry
+        // back on save and has no editor for headers, so a table set in
+        // `config.toml` (#7865) must survive an unrelated edit. Sending a
+        // non-empty map replaces them.
+        let stored = std::mem::take(&mut config.cloud_providers);
+        config.cloud_providers = providers
+            .into_iter()
+            .map(|mut entry| {
+                if entry.headers.is_empty() {
+                    if let Some(previous) = stored
+                        .iter()
+                        .find(|e| e.id == entry.id)
+                        .or_else(|| stored.iter().find(|e| e.slug == entry.slug))
+                    {
+                        entry.headers = previous.headers.clone();
+                    }
+                }
+                entry
+            })
+            .collect();
         let before_reinject = config.cloud_providers.len();
         for entry in preserved {
             let preserved_slug = entry.slug.trim();

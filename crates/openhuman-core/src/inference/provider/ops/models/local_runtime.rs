@@ -53,6 +53,7 @@ pub fn synthesize_local_runtime_entry(
         // header — `lookup_key_for_slug` may still return a key, but
         // `AuthStyle::None` ignores it (see auth-style match below).
         auth_style: AuthStyle::None,
+        headers: Default::default(),
         default_model: None,
     })
 }
