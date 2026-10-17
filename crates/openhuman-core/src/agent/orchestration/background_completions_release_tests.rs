@@ -12,6 +12,11 @@ fn workspace() -> TestWorkspace {
     TestWorkspace::new()
 }
 
+/// Whether any scope still holds a registered router for `ws`.
+fn has_router(ws: &Path) -> bool {
+    state().routers.keys().any(|(dir, _)| dir.as_path() == ws)
+}
+
 fn pending_ids(ws: &Path, thread: &str) -> Vec<String> {
     pending_for(ws, thread)
         .into_iter()
@@ -36,10 +41,7 @@ async fn release_all_closes_every_router_and_the_log_stays_replayable() {
     .await;
 
     assert!(release_all().await >= 1);
-    assert!(
-        !state().routers.contains_key(w),
-        "the router (and its log handle) is dropped"
-    );
+    assert!(!has_router(w), "the router (and its log handle) is dropped");
     assert!(
         workspace_for_thread(&cx(), "thread-rel").is_none(),
         "process-local maps are cleared"
@@ -78,7 +80,7 @@ async fn release_all_gives_up_waiting_after_the_drain_window() {
         released >= 1,
         "stragglers are dropped once the window passes"
     );
-    assert!(!state().routers.contains_key(w));
+    assert!(!has_router(w));
 }
 
 #[tokio::test]

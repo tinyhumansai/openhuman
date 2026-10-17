@@ -33,6 +33,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
+use crate::storage::Scope;
+
 use tinyagents_tasks::{
     CompletionRecord, CompletionResult, CompletionRouter, CompletionState, CompletionStatus,
     CompletionStore, DriverCompletionStore, InMemoryCompletionStore, NotifyMode, RecordOutcome,
@@ -62,6 +64,37 @@ const RECORD_RETRIES: u32 = 3;
 /// Bound on the session -> thread cache; the oldest mapping is evicted first.
 const SESSION_THREADS_CAP: usize = 4096;
 
+/// Which durable queue a router sits on: the workspace **and** the storage
+/// scope it was opened under.
+///
+/// [`open_driver_store`] resolves a scope per call
+/// ([`crate::storage::current_scope`]), so one workspace holds one set of
+/// records per scope — a profile's queue is not another profile's. Caching a
+/// router by workspace alone handed the first scope's store to every later
+/// scope (#7687).
+pub(super) type RouterKey = (PathBuf, Scope);
+
+/// A thread id in [`HostState::thread_workspaces`]: the per-profile thread key
+/// ([`thread_index::key`]) and the storage scope the thread's completions were
+/// recorded under, so a thread-scoped operation reopens the store that holds
+/// them rather than the caller's own.
+pub(super) type ThreadKey = (String, Scope);
+
+/// The storage scope of this call: the one [`open_driver_store`] opens under.
+///
+/// # Errors
+///
+/// In SaaS mode when the call carries no profile. There is no bucket of its
+/// own to use, and borrowing another's is the reuse this keying exists to stop.
+pub(super) fn scope_now() -> anyhow::Result<Scope> {
+    crate::storage::current_scope().map_err(|error| anyhow::anyhow!("{error}"))
+}
+
+/// [`scope_now`] paired with the workspace, as a router's cache key.
+pub(super) fn router_key(workspace_dir: &Path) -> anyhow::Result<RouterKey> {
+    Ok((workspace_dir.to_path_buf(), scope_now()?))
+}
+
 /// A workspace's router plus the store it sits on (kept so boot recovery and
 /// purge can enumerate parents, which the router itself does not expose).
 pub(super) struct Entry {
@@ -71,11 +104,12 @@ pub(super) struct Entry {
 
 #[derive(Default)]
 pub(super) struct HostState {
-    /// One router per workspace.
-    pub(super) routers: HashMap<PathBuf, Arc<Entry>>,
-    /// Which workspace holds a thread's completions. Thread-scoped operations
-    /// (Stop, delete) carry no workspace, only a thread id.
-    pub(super) thread_workspaces: HashMap<String, PathBuf>,
+    /// One router per workspace **and storage scope**.
+    pub(super) routers: HashMap<RouterKey, Arc<Entry>>,
+    /// Which workspace holds a thread's completions, under which scope.
+    /// Thread-scoped operations (Stop, delete) carry no workspace, only a
+    /// thread id.
+    pub(super) thread_workspaces: HashMap<ThreadKey, PathBuf>,
     /// Parent session id -> chat thread id, for the idle gate (busy is tracked
     /// by session; delivery by thread).
     pub(super) session_threads: HashMap<String, String>,
@@ -89,8 +123,10 @@ pub(super) struct HostState {
     /// never reopen: a child that registers late, or a straggler that records
     /// after the delete sweep (the cooperative-abort race), is rejected for good.
     pub(super) deleted_threads: HashSet<String>,
-    /// Workspaces whose log boot recovery has already scanned this process.
-    pub(super) recovered_workspaces: HashSet<PathBuf>,
+    /// Workspace/scope pairs whose log boot recovery has already scanned this
+    /// process. Per scope: one profile's scan says nothing about another's
+    /// records in the same workspace.
+    pub(super) recovered_workspaces: HashSet<RouterKey>,
 }
 
 pub(super) fn state() -> std::sync::MutexGuard<'static, HostState> {
@@ -101,10 +137,18 @@ pub(super) fn state() -> std::sync::MutexGuard<'static, HostState> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// The durable completion queue of `workspace_dir` in the storage backend,
-/// under the calling tenant's scope.
-fn open_driver_store(workspace_dir: &Path) -> anyhow::Result<Arc<dyn CompletionStore>> {
-    let opened = crate::storage::local::open("background_completions", workspace_dir)?;
+/// The durable completion queue of `key`'s workspace in the storage backend,
+/// under `key`'s scope.
+///
+/// The scope is the key's, not the calling tenant's, so a store is reopened
+/// under the scope that holds its records even when the caller acts under
+/// another one (#7687).
+fn open_driver_store(key: &RouterKey) -> anyhow::Result<Arc<dyn CompletionStore>> {
+    let (workspace_dir, scope) = key;
+    let opened = crate::storage::local::Opened {
+        backend: crate::storage::local::backend_for(workspace_dir)?,
+        scope: scope.clone(),
+    };
     let scoped = opened.scoped()?;
     let store = DriverCompletionStore::new(Arc::clone(scoped.documents()))
         .map_err(|error| anyhow::anyhow!("start the completion store bridge: {error}"))?;
@@ -112,17 +156,52 @@ fn open_driver_store(workspace_dir: &Path) -> anyhow::Result<Arc<dyn CompletionS
 }
 
 fn entry_for(workspace_dir: &Path) -> Arc<Entry> {
-    if let Some(entry) = state().routers.get(workspace_dir) {
+    entry_for_resolved(workspace_dir, router_key(workspace_dir))
+}
+
+/// [`entry_for`] with the key resolution handed in, so the uncached-fallback
+/// rule is testable without the process-wide SaaS mode lock.
+fn entry_for_resolved(workspace_dir: &Path, key: anyhow::Result<RouterKey>) -> Arc<Entry> {
+    match key {
+        Ok(key) => entry_for_key(&key),
+        Err(error) => uncached_memory_entry(workspace_dir, &error),
+    }
+}
+
+/// An in-memory queue for a call whose scope would not resolve, deliberately
+/// **not** registered in `routers`.
+///
+/// Caching it would do the two things this keying exists to prevent: hand a
+/// scopeless call's bucket to the next scoped caller, and pin the workspace to
+/// memory for the rest of the process even though its durable store was never
+/// unreachable (#7687). A missing scope is a property of the call, not of the
+/// store, so it is answered per call and nothing here outlives it.
+fn uncached_memory_entry(workspace_dir: &Path, error: &anyhow::Error) -> Arc<Entry> {
+    log::error!(
+        "[background_completions] no storage scope for {}; serving an in-memory queue that is \
+         not registered, so nothing recorded through it is delivered or kept: {error:#}",
+        workspace_dir.display()
+    );
+    let store: Arc<dyn CompletionStore> = Arc::new(InMemoryCompletionStore::new());
+    Arc::new(Entry {
+        router: Arc::new(new_router(store.clone())),
+        store,
+    })
+}
+
+/// The entry for one (workspace, scope), opening its store on first use.
+pub(super) fn entry_for_key(key: &RouterKey) -> Arc<Entry> {
+    if let Some(entry) = state().routers.get(key) {
         return entry.clone();
     }
     // Opening replays the whole log, so it happens outside the state lock; this
     // dedicated lock keeps two callers from opening two writers on one log.
     static OPEN_LOCK: Mutex<()> = Mutex::new(());
     let _open = OPEN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    if let Some(entry) = state().routers.get(workspace_dir) {
+    if let Some(entry) = state().routers.get(key) {
         return entry.clone();
     }
-    let store: Arc<dyn CompletionStore> = match open_driver_store(workspace_dir) {
+    let store: Arc<dyn CompletionStore> = match open_driver_store(key) {
         Ok(store) => store,
         Err(error) => {
             // A backend that cannot be reached degrades to an in-memory
@@ -130,7 +209,7 @@ fn entry_for(workspace_dir: &Path) -> Arc<Entry> {
             log::error!(
                 "[background_completions] could not open the completion store for {}; using an \
                  in-memory queue (completions will not survive a restart): {error:#}",
-                workspace_dir.display()
+                key.0.display()
             );
             Arc::new(InMemoryCompletionStore::new())
         }
@@ -139,12 +218,11 @@ fn entry_for(workspace_dir: &Path) -> Arc<Entry> {
         router: Arc::new(new_router(store.clone())),
         store,
     });
-    state()
-        .routers
-        .insert(workspace_dir.to_path_buf(), entry.clone());
+    state().routers.insert(key.clone(), entry.clone());
     log::debug!(
-        "[background_completions] opened router workspace_dir={}",
-        workspace_dir.display()
+        "[background_completions] opened router workspace_dir={} scope={}",
+        key.0.display(),
+        key.1.as_str()
     );
     entry
 }
@@ -160,7 +238,13 @@ fn entry_for(workspace_dir: &Path) -> Arc<Entry> {
 fn degrade_to_memory(workspace_dir: &Path, failed: &Arc<CompletionRouter>) -> Arc<Entry> {
     static DEGRADE_LOCK: Mutex<()> = Mutex::new(());
     let _serial = DEGRADE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let old = entry_for(workspace_dir);
+    let key = match router_key(workspace_dir) {
+        Ok(key) => key,
+        // Nothing is registered for a scopeless call, so there is nothing to
+        // replace: the caller already holds an uncached in-memory queue.
+        Err(error) => return uncached_memory_entry(workspace_dir, &error),
+    };
+    let old = entry_for_key(&key);
     if !Arc::ptr_eq(&old.router, failed) {
         return old;
     }
@@ -175,12 +259,11 @@ fn degrade_to_memory(workspace_dir: &Path, failed: &Arc<CompletionRouter>) -> Ar
         router: Arc::new(new_router(store.clone())),
         store,
     });
-    state()
-        .routers
-        .insert(workspace_dir.to_path_buf(), entry.clone());
+    state().routers.insert(key.clone(), entry.clone());
     log::error!(
-        "[background_completions] degraded to an in-memory queue workspace_dir={}",
-        workspace_dir.display()
+        "[background_completions] degraded to an in-memory queue workspace_dir={} scope={}",
+        key.0.display(),
+        key.1.as_str()
     );
     entry
 }
@@ -477,10 +560,13 @@ pub(crate) fn discard_for_thread(
 ) -> usize {
     let seen = {
         let thread_key = key(ctx, thread_id);
+        let scope = scope_now().ok();
         let mut st = state();
         st.deleted_threads.insert(thread_key.clone());
         st.stopped_threads.remove(&thread_key);
-        st.thread_workspaces.contains_key(&thread_key)
+        // The index is per scope: a thread this scope never recorded under is
+        // not "seen" here, exactly as an unknown thread is not.
+        scope.is_some_and(|scope| st.thread_workspaces.contains_key(&(thread_key, scope)))
     };
     let entry = entry_for(workspace_dir);
     // Nothing in this process or on disk refers to the thread (an ordinary chat
@@ -614,12 +700,16 @@ pub(crate) fn mark_stopped_task_if_thread_stopped(
 ) -> bool {
     let entry = entry_for(workspace_dir);
     let thread_key = key(ctx, thread_id);
+    let scope = scope_now().ok();
     let (first_sight, mut stopped) = {
         let mut st = state();
-        let first_sight = st
-            .thread_workspaces
-            .insert(thread_key.clone(), workspace_dir.to_path_buf())
-            .is_none();
+        // A scopeless call records nothing durable, so it indexes nothing and
+        // is never the first sight that lifts an earlier process's marker.
+        let first_sight = scope.is_some_and(|scope| {
+            st.thread_workspaces
+                .insert((thread_key.clone(), scope), workspace_dir.to_path_buf())
+                .is_none()
+        });
         let stopped =
             st.stopped_threads.contains(&thread_key) || st.deleted_threads.contains(&thread_key);
         (first_sight, stopped)

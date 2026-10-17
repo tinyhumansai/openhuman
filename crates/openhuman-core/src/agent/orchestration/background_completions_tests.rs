@@ -689,3 +689,36 @@ async fn concurrent_degradation_installs_one_fallback() {
     );
     assert!(Arc::ptr_eq(&entry_for(w).router, &first.router));
 }
+
+/// A call that cannot resolve a storage scope is answered from a queue of its
+/// own that is never registered (#7687). Caching it would do both things the
+/// keying exists to stop: hand a scopeless call's bucket to the next scoped
+/// caller, and pin the workspace to memory for the rest of the process even
+/// though its durable store was never unreachable.
+#[test]
+fn a_scopeless_call_is_not_cached_as_a_queue() {
+    let _guard = test_guard();
+    let ws = workspace();
+    let scopeless = || entry_for_resolved(ws.path(), Err(anyhow::anyhow!("no tenant scope")));
+    let (first, second) = (scopeless(), scopeless());
+
+    assert!(
+        !Arc::ptr_eq(&first.router, &second.router),
+        "each scopeless call answers from its own queue"
+    );
+    assert!(
+        state()
+            .routers
+            .keys()
+            .all(|(dir, _)| dir.as_path() != ws.path()),
+        "nothing was registered for the workspace"
+    );
+
+    // The scoped call that follows opens the durable store, not the fallback.
+    let scoped = entry_for(ws.path());
+    assert!(!Arc::ptr_eq(&scoped.router, &first.router));
+    assert!(state()
+        .routers
+        .keys()
+        .any(|(dir, _)| dir.as_path() == ws.path()));
+}
