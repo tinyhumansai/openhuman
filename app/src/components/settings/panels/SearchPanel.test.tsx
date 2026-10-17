@@ -119,6 +119,21 @@ function provider(id: string, overrides: Record<string, unknown> = {}): Provider
       docs_url: 'https://docs.searxng.org/',
       base_url: 'http://localhost:8080',
     },
+    keenable: {
+      id: 'keenable',
+      label: 'Keenable',
+      enabled: false,
+      route: 'direct',
+      routes: ['direct'],
+      managed_available: true,
+      key_configured: false,
+      takes_key: true,
+      key_optional: true,
+      usable: false,
+      status: 'disabled',
+      roles: ['search', 'contents'],
+      docs_url: 'https://keenable.ai/console',
+    },
   };
   return { ...base[id], ...overrides };
 }
@@ -458,6 +473,58 @@ describe('SearchPanel — add a provider', () => {
       })
     );
     await waitFor(() => expect(screen.queryByTestId('search-connect-brave')).toBeNull());
+  });
+
+  test('a key-optional provider turns on in one click, without the Connect dialog', async () => {
+    hoisted.getSearchSettings.mockResolvedValue({
+      result: settings({ providers: [provider('exa'), provider('gemini'), provider('keenable')] }),
+    });
+    await renderPanel();
+    const direct = screen.getByTestId('search-catalog-direct');
+    expect(within(direct).getByTestId('search-catalog-keenable')).toHaveTextContent(
+      'settings.search.detailKeyOptional'
+    );
+    fireEvent.click(tile('keenable'));
+    await waitFor(() =>
+      expect(hoisted.updateSearchSettings).toHaveBeenCalledWith({
+        providers: { keenable: { enabled: true } },
+      })
+    );
+    expect(screen.queryByTestId('search-connect-keenable')).toBeNull();
+  });
+
+  test('a connected key-optional provider needs no key but can take one', async () => {
+    hoisted.getSearchSettings.mockResolvedValue({
+      result: settings({
+        providers: [
+          provider('exa'),
+          provider('gemini'),
+          provider('keenable', { enabled: true, usable: true, status: 'ready' }),
+        ],
+      }),
+    });
+    await renderPanel();
+    expect(screen.getByTestId('search-provider-keenable-detail')).toHaveTextContent(
+      'settings.search.detailKeyOptional'
+    );
+    expect(screen.queryByTestId('search-provider-keenable-status')).toBeNull();
+
+    await rowAction('keenable', 'settings.search.actionAddKey');
+    await screen.findByTestId('search-connect-keenable');
+    expect(screen.getByTestId('search-connect-keenable-key-optional')).toHaveTextContent(
+      'settings.search.optionalKeyHint'
+    );
+    const submit = screen.getByTestId('search-connect-keenable-submit');
+    expect(submit).toBeDisabled();
+    fireEvent.change(screen.getByTestId('search-connect-keenable-key'), {
+      target: { value: 'kn-key' },
+    });
+    fireEvent.click(submit);
+    await waitFor(() =>
+      expect(hoisted.updateSearchSettings).toHaveBeenCalledWith({
+        providers: { keenable: { api_key: 'kn-key' } },
+      })
+    );
   });
 
   test('cancelling the Connect dialog saves nothing', async () => {

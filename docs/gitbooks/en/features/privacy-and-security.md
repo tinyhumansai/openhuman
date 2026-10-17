@@ -56,7 +56,7 @@ Signing out does not delete stored memory. Neither does disconnecting an integra
 | Area | What the backend does |
 | --- | --- |
 | LLM calls | Proxies them under one subscription, then forwards to the underlying provider (Anthropic, OpenAI, Google and others) per the [model router](model-routing/README.md). |
-| Web search proxy | The native [web search tool](native-tools/web-search.md) can use the backend proxy, so you do not carry a search API key. Only Exa and Gemini have a managed route. Brave, Querit, Tavily, Seltz, Parallel, TinyFish and Gemini Deep Research are bring-your-own-key and go directly to that provider. SearXNG goes to the instance you configured. With Tavily selected, the `tavily_extract` tool also sends extraction requests, including the URLs being extracted, directly to Tavily. |
+| Web search proxy | The native [web search tool](native-tools/web-search.md) can use the backend proxy, so you do not carry a search API key. Only Exa and Gemini have a managed route. Brave, Querit, Tavily, Seltz, Parallel, TinyFish and Gemini Deep Research are bring-your-own-key and go directly to that provider. Keenable also goes directly to Keenable, with or without a key: without one it uses Keenable's keyless public endpoints, which are rate-limited per IP. SearXNG goes to the instance you configured. With Tavily selected, the `tavily_extract` tool also sends extraction requests, including the URLs being extracted, directly to Tavily. |
 | Integration OAuth and tool proxy | Stores tokens and brokers rate-limited requests for [the connected integrations](integrations/README.md). |
 | TTS streaming | Streams hosted [text-to-speech](native-tools/voice.md) audio. Audio is generated and discarded, not kept. |
 

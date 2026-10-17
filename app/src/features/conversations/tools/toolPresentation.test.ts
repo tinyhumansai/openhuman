@@ -93,6 +93,7 @@ describe('tool labels: regressions', () => {
       'querit_search',
       'parallel_search',
       'tinyfish_search',
+      'keenable_search',
     ]) {
       expect(done(name), name).toBe('Searched the web');
       expect(describeToolCall({ name }).body, name).toBe('webSearch');
