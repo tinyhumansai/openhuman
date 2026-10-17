@@ -241,9 +241,8 @@ async fn validate_path_expands_tilde_before_workspace_join() {
     // expect "Resolved path escapes workspace" — not "Failed to resolve path" (which would
     // indicate the literal ~/... was appended to workspace_dir and canonicalize failed there).
     let workspace = tempfile::tempdir().unwrap();
-    let home = dirs::home_dir().unwrap();
-    let target = home.join("openhuman_tilde_validate_path_test.txt");
-    std::fs::write(&target, "test").unwrap();
+    // The existing home directory is enough to test expansion; never write
+    // a fixed-name file into the developer's real home for a unit test.
     let policy = SecurityPolicy {
         workspace_dir: workspace.path().to_path_buf(),
         action_dir: workspace.path().to_path_buf(),
@@ -251,11 +250,12 @@ async fn validate_path_expands_tilde_before_workspace_join() {
         forbidden_paths: vec![],
         ..SecurityPolicy::default()
     };
-    let err = policy
-        .validate_path("~/openhuman_tilde_validate_path_test.txt")
-        .await
-        .unwrap_err();
-    let _ = std::fs::remove_file(&target);
+    let home = dirs::home_dir().unwrap();
+    assert_eq!(
+        policy.expand_tilde("~/openhuman_test.txt"),
+        home.join("openhuman_test.txt").to_string_lossy()
+    );
+    let err = policy.validate_path("~/.").await.unwrap_err();
     assert!(
         err.contains("Resolved path escapes workspace"),
         "expected workspace-escape error (tilde correctly expanded); got: {err}"
@@ -480,6 +480,30 @@ fn supervised_runs_approved_redirects_but_blocks_hidden_execution() {
 
     // Full is documented full-trust and skips the structural guard entirely.
     assert!(full_policy().check_gated_command("echo $(date)").is_ok());
+}
+
+#[test]
+fn unbounded_system_scans_are_blocked_even_in_full_autonomy() {
+    let p = full_policy();
+    // System sweeps blocked
+    assert!(p.check_gated_command("find / -name 'glut.h'").is_err());
+    assert!(p
+        .check_gated_command("find /System -name 'glut.h'")
+        .is_err());
+    assert!(p.check_gated_command("find /Library -name '*.h'").is_err());
+    assert!(p
+        .check_gated_command("find /Applications -name '*.h'")
+        .is_err());
+    assert!(p.check_gated_command("ls /System/Volumes/*").is_err());
+    assert!(p.check_gated_command("grep -r 'GL' /System").is_err());
+
+    // Project-local and standard commands allowed
+    assert!(p.check_gated_command("find . -name '*.cpp'").is_ok());
+    assert!(p.check_gated_command("find src -type f").is_ok());
+    assert!(p.check_gated_command("ls -la").is_ok());
+    assert!(p
+        .check_gated_command("curl -O https://example.com/lib.zip")
+        .is_ok());
 }
 
 /// The default projects home (`~/OpenHuman/projects`) must always be a
